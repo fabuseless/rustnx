@@ -254,3 +254,20 @@ def test_graph_wrapper():
     assert 1 in R and "x" not in R and [] not in R
     assert rustnx.to_networkx(R) is G
     assert nx.betweenness_centrality(R) == nx.betweenness_centrality(G)
+
+
+def test_unrecognized_rescale_falls_back(rustnx_priority, monkeypatch):
+    from networkx.algorithms.centrality import betweenness as nx_bc
+
+    from rustnx import algorithms
+
+    def future_rescale(betweenness, n, *, normalized, directed, new_required_arg):
+        raise AssertionError("rustnx must not call an unrecognized _rescale")
+
+    monkeypatch.setattr(nx_bc, "_rescale", future_rescale)
+    algorithms._rescale_params.cache_clear()
+    try:
+        with pytest.raises(NotImplementedError):
+            algorithms.betweenness_centrality(rustnx.from_networkx(nx.path_graph(5)))
+    finally:
+        algorithms._rescale_params.cache_clear()

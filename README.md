@@ -66,8 +66,9 @@ check that:
        pytest --pyargs networkx
    ```
 
-   Result: 6,766 passed and 0 failed, with over 300,000 calls handled by
-   rustnx.
+   Result: 6,766 passed and 0 failed on NetworkX 3.6.1, with over 300,000
+   calls handled by rustnx. CI runs both layers on NetworkX 3.4, 3.5 and the
+   latest release.
 
 Betweenness sums per-source contributions in parallel. It matches NetworkX
 to about 1e-15 relative error rather than bit-for-bit, and it gives the same
