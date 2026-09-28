@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Rust lint
+        run: |
+          cargo fmt --check
+          cargo clippy --release -- -D warnings
+      - name: Build and install
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install maturin networkx pytest numpy scipy
+          maturin develop --release
+      - name: Compare against NetworkX
+        run: |
+          source .venv/bin/activate
+          pytest -q
+      - name: NetworkX test suite with rustnx backend
+        run: |
+          source .venv/bin/activate
+          cd /tmp
+          NETWORKX_TEST_BACKEND=rustnx NETWORKX_FALLBACK_TO_NX=True \
+            python -m pytest -q -p no:cacheprovider --pyargs networkx
