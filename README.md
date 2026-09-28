@@ -66,9 +66,14 @@ check that:
        pytest --pyargs networkx
    ```
 
-   Result: 6,766 passed and 0 failed on NetworkX 3.6.1, with over 300,000
-   calls handled by rustnx. CI runs both layers on NetworkX 3.4, 3.5 and the
-   latest release.
+   Result: 0 failures on NetworkX 3.4.2, 3.5 and 3.7 (9,066 tests passed on
+   3.7), with over 300,000 calls handled by rustnx. CI runs both layers on
+   NetworkX 3.4, 3.5 and the latest release.
+
+rustnx checks every call against the installed NetworkX's own signature.
+If a newer NetworkX adds a parameter, rustnx ignores it while it is left at
+its default. If the caller actually uses it, rustnx hands the call back to
+NetworkX.
 
 Betweenness sums per-source contributions in parallel. It matches NetworkX
 to about 1e-15 relative error rather than bit-for-bit, and it gives the same

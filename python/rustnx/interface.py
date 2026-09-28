@@ -4,15 +4,13 @@ NetworkX looks up algorithms on this module by name, and calls
 ``convert_from_nx`` / ``convert_to_nx`` / ``can_run`` / ``should_run``.
 """
 
+import functools
 import inspect
 
-from . import algorithms
-from .algorithms import *  # noqa: F403
-from .graph import RustnxGraph, from_networkx, to_networkx
+import networkx as nx
 
-_SIGNATURES = {
-    name: inspect.signature(getattr(algorithms, name)) for name in algorithms.__all__
-}
+from . import algorithms
+from .graph import RustnxGraph, from_networkx, to_networkx
 
 # Parameters that may hold an edge attribute name (or a callable).
 _WEIGHT_PARAMS = ("weight", "distance")
@@ -55,19 +53,91 @@ def convert_to_nx(obj, *, name=None):
     return obj
 
 
+_SIMPLE_TYPES = (bool, int, float, str)
+
+
+def _is_default(value, param):
+    if value is param.default:
+        return True
+    default = param.default
+    return (
+        isinstance(default, _SIMPLE_TYPES)
+        and type(value) is type(default)
+        and value == default
+    )
+
+
+@functools.cache
+def _nx_signature(name):
+    return inspect.signature(getattr(nx, name))
+
+
+def _bind(name, args, kwargs):
+    """Bind a call to the installed NetworkX function's signature.
+
+    Returns ``(arguments, unsupported)``: the arguments rustnx implements,
+    and the names of any other arguments the caller actually set. NetworkX
+    adds parameters in new releases (e.g. ``closeness_centrality(sp=...)`` in
+    3.7) and passes every parameter to backends, so rustnx must tolerate ones
+    it doesn't know about. Raises ``TypeError`` if the call doesn't bind.
+    """
+    nx_sig = _nx_signature(name)
+    bound = nx_sig.bind(*args, **kwargs)
+    ours = _OUR_PARAMS[name]
+    arguments = {}
+    unsupported = []
+    for key, value in bound.arguments.items():
+        param = nx_sig.parameters[key]
+        if key == "backend":
+            continue
+        if param.kind is param.VAR_KEYWORD:
+            unsupported.extend(value)  # backend-specific keywords
+        elif key in ours:
+            arguments[key] = value
+        elif not _is_default(value, param):
+            unsupported.append(key)
+    return arguments, unsupported
+
+
+def _make_entry(name):
+    func = getattr(algorithms, name)
+
+    @functools.wraps(func)
+    def entry(*args, **kwargs):
+        try:
+            arguments, unsupported = _bind(name, args, kwargs)
+        except TypeError:
+            return func(*args, **kwargs)  # raise the usual error
+        if unsupported:
+            raise NotImplementedError(
+                f"rustnx does not support: {', '.join(unsupported)}"
+            )
+        return func(**arguments)
+
+    return entry
+
+
+_OUR_PARAMS = {
+    name: set(inspect.signature(getattr(algorithms, name)).parameters)
+    for name in algorithms.__all__
+}
+globals().update({name: _make_entry(name) for name in algorithms.__all__})
+
+
 def can_run(name, args, kwargs):
-    sig = _SIGNATURES.get(name)
-    if sig is None:
+    if name not in _OUR_PARAMS:
         return False
     try:
-        bound = sig.bind(*args, **kwargs)
+        arguments, unsupported = _bind(name, args, kwargs)
     except TypeError:
         return True  # let the call raise the usual error
-    G = bound.arguments.get("G")
+    if unsupported:
+        return f"unsupported arguments: {', '.join(unsupported)}"
+    G = arguments.get("G")
     if G is not None and G.is_multigraph():
         return "multigraphs are not supported yet"
     for param in _WEIGHT_PARAMS:
-        if callable(bound.arguments.get(param)):
+        if callable(arguments.get(param)):
             return "callable weights are not supported"
     return True
 

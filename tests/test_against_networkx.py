@@ -271,3 +271,33 @@ def test_unrecognized_rescale_falls_back(rustnx_priority, monkeypatch):
             algorithms.betweenness_centrality(rustnx.from_networkx(nx.path_graph(5)))
     finally:
         algorithms._rescale_params.cache_clear()
+
+
+def test_new_networkx_parameters_are_tolerated():
+    """NetworkX passes every parameter to backends, including ones added in
+    newer releases (closeness_centrality gained ``sp`` in 3.7)."""
+    import inspect
+
+    from rustnx import interface
+
+    G = nx.path_graph(5)
+    R = rustnx.from_networkx(G)
+    params = inspect.signature(nx.closeness_centrality).parameters
+    if "sp" not in params:
+        pytest.skip("installed NetworkX has no closeness_centrality(sp=...)")
+    # Left at its default: rustnx runs.
+    assert interface.closeness_centrality(R, sp=None) == nx.closeness_centrality(G)
+    # Actually used: rustnx declines, so NetworkX runs it.
+    sp = dict(nx.all_pairs_shortest_path_length(G))
+    assert interface.can_run("closeness_centrality", (G,), {"sp": sp}) != True  # noqa: E712
+    with pytest.raises(NotImplementedError):
+        interface.closeness_centrality(R, sp=sp)
+
+
+def test_backend_specific_keywords_decline():
+    from rustnx import interface
+
+    G = nx.path_graph(5)
+    assert isinstance(
+        interface.can_run("betweenness_centrality", (G,), {"made_up": 1}), str
+    )
