@@ -7,9 +7,18 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    name: test (Python ${{ matrix.python-version }}, NetworkX ${{ matrix.networkx }})
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.10", "3.13"]
+        # Oldest supported NetworkX, each release since, and the latest.
+        include:
+          - python-version: "3.10"
+            networkx: "3.4.*"
+          - python-version: "3.11"
+            networkx: "3.5.*"
+          - python-version: "3.13"
+            networkx: "latest"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -26,7 +35,12 @@ jobs:
         run: |
           python -m venv .venv
           source .venv/bin/activate
-          pip install maturin networkx pytest numpy scipy
+          if [ "${{ matrix.networkx }}" = latest ]; then
+            pip install maturin networkx pytest numpy scipy
+          else
+            pip install maturin "networkx==${{ matrix.networkx }}" pytest numpy scipy
+          fi
+          python -c "import networkx; print('NetworkX', networkx.__version__)"
           maturin develop --release
       - name: Compare against NetworkX
         run: |
