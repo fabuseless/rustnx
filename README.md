@@ -97,6 +97,25 @@ dict keyed by your original nodes, in NetworkX's order
 Neighbor order in the Rust arrays follows NetworkX's adjacency dicts exactly.
 That's why traversal order, tie-breaking and result ordering all match.
 
+## Releasing
+
+The `Wheels` workflow builds packages for Linux (x86-64, ARM), macOS (Intel,
+Apple Silicon) and Windows, plus a source package. It then installs each
+wheel on that platform and runs the test suite against it. The workflow runs
+on every pull request.
+
+To publish a release:
+
+1. One-time setup: on PyPI, add a
+   [trusted publisher](https://docs.pypi.org/trusted-publishers/) for
+   `fabuseless/rustnx`, workflow `wheels.yml`, environment `pypi`. Then create
+   an environment named `pypi` in the repo's GitHub settings. No API token is
+   needed.
+2. Set the version in `pyproject.toml` and `Cargo.toml`, and move the
+   changelog's *Unreleased* entries under the new version.
+3. Push a tag such as `v0.1.0a1`. If every build and test passes, the
+   workflow uploads the packages to PyPI.
+
 ## Development
 
 ```bash
