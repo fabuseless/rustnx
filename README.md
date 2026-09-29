@@ -124,3 +124,8 @@ Layout:
 - A native `rustnx.Graph` that lives in Rust, so there's no conversion at all.
 - Multigraph support.
 - A rustworkx-compatible API over the same core.
+
+## License
+
+BSD 3-Clause, the same license as NetworkX. See [LICENSE](LICENSE). Release
+notes are in [CHANGELOG.md](CHANGELOG.md).
