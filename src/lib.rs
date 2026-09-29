@@ -5,9 +5,11 @@
 
 mod algorithms;
 mod graph;
+mod serialize;
 
 use pyo3::exceptions::{PyIndexError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 
 use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
@@ -29,6 +31,32 @@ fn all_nodes(n: usize) -> Vec<u32> {
 impl CoreGraph {
     fn __len__(&self) -> usize {
         self.n
+    }
+
+    /// Pickle support: NetworkX keeps converted graphs in the original
+    /// graph's cache, so they must survive `pickle` and `copy.deepcopy`.
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let rebuild = py
+            .import("rustnx._core")?
+            .getattr("_core_graph_from_bytes")?;
+        let data = PyBytes::new(py, &serialize::to_bytes(self));
+        (rebuild, (data,)).into_pyobject(py)
+    }
+
+    #[pyo3(name = "load_exact_pred")]
+    fn py_load_exact_pred<'py>(
+        &self,
+        nodes: &Bound<'py, PyList>,
+        index: &Bound<'py, PyDict>,
+        pred: &Bound<'py, PyAny>,
+        weight_attrs: Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)>,
+    ) -> PyResult<()> {
+        self.load_exact_pred(nodes, index, pred, weight_attrs)
+    }
+
+    #[pyo3(name = "has_exact_pred")]
+    fn py_has_exact_pred(&self) -> bool {
+        self.has_exact_pred()
     }
 
     #[getter]
@@ -118,12 +146,12 @@ impl CoreGraph {
         sources: Option<Vec<u32>>,
     ) -> PyResult<Vec<f64>> {
         // NetworkX runs closeness on `G.reverse()` for directed graphs.
-        let w = self.weight_slice(distance, true)?;
+        let (adj, w) = self.reverse_exact(distance)?;
         let sources = sources.unwrap_or_else(|| all_nodes(self.n));
         for &s in &sources {
             self.check_index(s as usize)?;
         }
-        Ok(py.detach(|| centrality::closeness(self.adj(true), self.n, w, wf_improved, &sources))?)
+        Ok(py.detach(|| centrality::closeness(adj, self.n, w, wf_improved, &sources))?)
     }
 
     /// PageRank scores in node order, or `None` if it didn't converge.
@@ -205,5 +233,6 @@ impl CoreGraph {
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CoreGraph>()?;
     m.add_function(wrap_pyfunction!(graph::build_graph, m)?)?;
+    m.add_function(wrap_pyfunction!(serialize::_core_graph_from_bytes, m)?)?;
     Ok(())
 }

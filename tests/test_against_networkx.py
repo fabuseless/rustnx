@@ -502,3 +502,97 @@ def test_views_fall_back(rustnx_priority):
     assert list(nx.topological_sort(view)) == list(
         nx.topological_sort(view, backend="networkx")
     )
+
+
+# --- Conversion -----------------------------------------------------------------
+
+
+def _fresh_int(x):
+    """An int equal to x but (for large x) a different object."""
+    return int(str(x))
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        # Nodes 0..n-1 in order (fast path).
+        lambda: nx.gnm_random_graph(300, 900, seed=1, directed=True),
+        # Same labels, but not in order.
+        lambda: nx.DiGraph(
+            [(v, u) for u, v in nx.gnm_random_graph(300, 900, seed=2).edges]
+        ),
+        # Equal-but-not-identical int objects in the adjacency.
+        lambda: nx.DiGraph(
+            [(_fresh_int(u + 1000), _fresh_int(v + 1000))
+             for u, v in nx.gnm_random_graph(300, 900, seed=3).edges]
+        ),
+        # Strings, tuples and mixed types.
+        lambda: nx.relabel_nodes(
+            nx.gnm_random_graph(300, 900, seed=4, directed=True),
+            lambda v: (v, "x") if v % 3 == 0 else (f"s{v}" if v % 3 == 1 else v + 0.5),
+        ),
+    ],
+)
+def test_conversion_node_labels(make):
+    G = make()
+    for u, v, d in G.edges(data=True):
+        d["weight"] = (hash((u, v)) % 7) + 1
+    source = next(iter(G))
+    ours, ref = both(nx.single_source_dijkstra_path_length, G, source)
+    assert list(ours.items()) == list(ref.items())
+    ours, ref = both(nx.closeness_centrality, G, distance="weight")
+    assert ours == ref
+
+
+def test_bool_and_int_labels():
+    # True == 1 as dict keys: NetworkX treats them as the same node.
+    G = nx.Graph()
+    G.add_edges_from([(0, 1), (True, 2), (2, 3)])
+    ours, ref = both(nx.single_source_shortest_path_length, G, 0)
+    assert list(ours.items()) == list(ref.items())
+
+
+def test_exact_pred_requires_unchanged_graph():
+    from rustnx import algorithms
+
+    G = nx.DiGraph()
+    G.add_weighted_edges_from([(0, 1, 1), (1, 2, 2), (2, 0, 3)])
+    R = rustnx.from_networkx(G, ["weight"])
+    G.add_edge(2, 3, weight=1)  # clears G.__networkx_cache__
+    with pytest.raises(NotImplementedError, match="changed"):
+        algorithms.closeness_centrality(R, distance="weight")
+
+
+def test_pickle_and_deepcopy_after_rustnx():
+    import copy
+    import pickle
+
+    G = nx.DiGraph()
+    G.add_weighted_edges_from([(0, 1, 2), (1, 2, 3.5), (2, 0, 1), (2, 3, 1)])
+    pr = nx.pagerank(G, backend="rustnx")
+    cc = nx.closeness_centrality(G, distance="weight", backend="rustnx")
+    for H in [pickle.loads(pickle.dumps(G)), copy.deepcopy(G)]:
+        assert nx.pagerank(H, backend="rustnx") == pr
+        assert nx.closeness_centrality(H, distance="weight", backend="rustnx") == cc
+        (cached,) = H.__networkx_cache__["backends"]["rustnx"].values()
+        assert cached._source is H and cached._source_unchanged()
+
+
+def _pagerank_in_worker(G):
+    return nx.pagerank(G, backend="rustnx")
+
+
+def test_send_graph_to_another_process():
+    import multiprocessing
+
+    G = nx.gnm_random_graph(50, 150, seed=1, directed=True)
+    expected = nx.pagerank(G, backend="rustnx")  # caches a converted graph on G
+    with multiprocessing.get_context("spawn").Pool(1) as pool:
+        assert pool.apply(_pagerank_in_worker, (G,)) == expected
+
+
+def test_malformed_pickle_data_rejected():
+    from rustnx import _core
+
+    with pytest.raises(ValueError, match="malformed"):
+        _core._core_graph_from_bytes(b"RNX1" + b"\xff" * 20)

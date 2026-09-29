@@ -31,6 +31,12 @@ versions may change behavior.
   implement.
 - On small graphs (under 500 nodes), the linear-time functions stay in
   NetworkX, because it's faster there.
+- Converting a graph to rustnx is up to 3× faster. Directed graphs are read
+  once, not twice, and node lookups skip the Python dict for integer-labelled
+  graphs and for neighbor keys that are the same objects as the node keys.
+- Graphs that rustnx has worked on can be pickled and deep-copied (e.g. sent
+  to `multiprocessing` workers). Previously this failed, because NetworkX
+  caches rustnx's converted graph on the original graph.
 - Supports NetworkX 3.4 through 3.7 and Python 3.10+.
 - Prebuilt wheels for Linux (x86-64, ARM), macOS (Intel, Apple Silicon) and
   Windows, each tested on its platform, published to PyPI by pushing a

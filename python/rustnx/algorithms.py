@@ -219,6 +219,9 @@ def closeness_centrality(G, u=None, distance=None, wf_improved=True):
         else:
             msg = f"Node {u} not found in graph"
         sources = [_index_of(G, u, msg)]
+    if G.is_directed() and distance is not None:
+        # Tie order on the reversed graph affects the float sums.
+        G._ensure_exact_pred()
     values = G._core.closeness(distance, bool(wf_improved), sources)
     if u is not None:
         return values[0]

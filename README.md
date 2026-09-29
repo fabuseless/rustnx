@@ -50,9 +50,10 @@ turning it on never breaks working code.
 | `weakly_connected_components` | 200,000 / 1M (directed) | 0.39 s | 0.036 s | 11× |
 
 The rustnx column is a repeat call. The first call on a graph also converts
-it to rustnx's format, and NetworkX caches that conversion on the graph. For
-the heavy algorithms conversion is negligible. For linear-time ones the first
-call is roughly break-even.
+it to rustnx's format (about 0.15–0.25 s for a 1M-edge directed graph), and
+NetworkX caches that conversion on the graph. For the heavy algorithms
+conversion is negligible. For the linear-time ones, the first call is still
+faster than NetworkX, but by less.
 
 On small graphs (under 500 nodes), the linear-time functions stay in
 NetworkX automatically, because the dispatch overhead outweighs the work.
