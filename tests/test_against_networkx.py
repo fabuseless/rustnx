@@ -301,3 +301,204 @@ def test_backend_specific_keywords_decline():
     assert isinstance(
         interface.can_run("betweenness_centrality", (G,), {"made_up": 1}), str
     )
+
+
+# --- Directed components ------------------------------------------------------
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_strongly_connected_components(seed):
+    G = random_graph(seed, directed=True, weights="none")
+    ours, ref = both(lambda G, **kw: list(nx.strongly_connected_components(G, **kw)), G)
+    assert ours == ref  # same components in the same order
+    assert nx.number_strongly_connected_components(G, backend="rustnx") == len(ref)
+    assert nx.is_strongly_connected(G, backend="rustnx") == nx.is_strongly_connected(G)
+
+
+def test_strongly_connected_single_component():
+    # Exercises NetworkX's early exit when the whole graph is one SCC.
+    G = nx.DiGraph(nx.cycle_graph(50))
+    G.add_edges_from([(10, 3), (40, 20), (7, 30)])
+    ours, ref = both(lambda G, **kw: list(nx.strongly_connected_components(G, **kw)), G)
+    assert ours == ref and len(ours) == 1
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_weakly_connected_components(seed):
+    G = random_graph(seed, directed=True, weights="none")
+    ours, ref = both(lambda G, **kw: list(nx.weakly_connected_components(G, **kw)), G)
+    assert ours == ref
+    assert nx.number_weakly_connected_components(G, backend="rustnx") == len(ref)
+    assert nx.is_weakly_connected(G, backend="rustnx") == nx.is_weakly_connected(G)
+
+
+def test_directed_components_reject_undirected_and_null():
+    with pytest.raises(nx.NetworkXNotImplemented):
+        list(nx.strongly_connected_components(nx.path_graph(3), backend="rustnx"))
+    with pytest.raises(nx.NetworkXNotImplemented):
+        list(nx.weakly_connected_components(nx.path_graph(3), backend="rustnx"))
+    for func in [nx.is_strongly_connected, nx.is_weakly_connected]:
+        with pytest.raises(nx.NetworkXPointlessConcept):
+            func(nx.DiGraph(), backend="rustnx")
+
+
+# --- Topological order ----------------------------------------------------------
+
+
+def random_dag(seed):
+    G = random_graph(seed, directed=True, weights="none")
+    rng = random.Random(seed)
+    rank = {v: rng.random() for v in G}
+    G.remove_edges_from([(u, v) for u, v in G.edges if rank[u] >= rank[v]])
+    return G
+
+
+def collect_until_error(iterable):
+    out = []
+    try:
+        for item in iterable:
+            out.append(item)
+    except nx.NetworkXUnfeasible:
+        return out, "unfeasible"
+    return out, None
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_topological_sort(seed):
+    for G in [random_dag(seed), random_graph(seed, directed=True, weights="none")]:
+        for func in [nx.topological_sort, nx.topological_generations]:
+            ours = collect_until_error(func(G, backend="rustnx"))
+            ref = collect_until_error(func(G, backend="networkx"))
+            assert ours == ref  # same order, and same point of failure on cycles
+        assert nx.is_directed_acyclic_graph(
+            G, backend="rustnx"
+        ) == nx.is_directed_acyclic_graph(G)
+
+
+def test_topological_sort_undirected():
+    G = nx.path_graph(4)
+    with pytest.raises(nx.NetworkXError, match="undirected"):
+        list(nx.topological_sort(G, backend="rustnx"))
+    assert nx.is_directed_acyclic_graph(G, backend="rustnx") is False
+
+
+# --- PageRank ---------------------------------------------------------------------
+
+
+def assert_pagerank_close(ours, ref):
+    assert list(ours) == list(ref)
+    for key in ref:
+        assert ours[key] == pytest.approx(ref[key], rel=1e-9, abs=1e-12), key
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float", "missing"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_pagerank(seed, directed, weights):
+    G = random_graph(seed, directed, weights)
+    weight = None if weights == "none" else "weight"
+    ours, ref = both(nx.pagerank, G, weight=weight)
+    assert_pagerank_close(ours, ref)
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_pagerank_options(seed):
+    G = random_graph(seed, directed=True, weights="int")
+    rng = random.Random(seed)
+    nodes = list(G)
+    subset = rng.sample(nodes, max(1, len(nodes) // 3))
+    personalization = {v: rng.randint(0, 5) for v in subset}
+    personalization[subset[0]] = 1  # at least one non-zero
+    options = [
+        {"alpha": 0.5},
+        {"personalization": personalization},
+        {"nstart": {v: rng.random() for v in nodes}},
+        {"dangling": {v: rng.randint(1, 3) for v in subset}},
+        {"personalization": personalization, "dangling": personalization},
+        {"tol": 1e-10, "max_iter": 1000},
+    ]
+    for kwargs in options:
+        ours, ref = both(nx.pagerank, G, **kwargs)
+        assert_pagerank_close(ours, ref)
+
+
+def test_pagerank_errors():
+    G = nx.DiGraph(nx.path_graph(10))
+    with pytest.raises(nx.PowerIterationFailedConvergence):
+        nx.pagerank(G, max_iter=1, backend="rustnx")
+    with pytest.raises(ZeroDivisionError):
+        nx.pagerank(G, personalization={0: 0}, backend="rustnx")
+    assert nx.pagerank(nx.DiGraph(), backend="rustnx") == {}
+
+
+# --- Changing the graph during iteration ---------------------------------------
+
+
+def _mutate_during(algorithm, mutate):
+    DG = nx.DiGraph([(1, 2), (2, 3), (3, 4)])
+    first = True
+    for x in algorithm(DG):
+        if first:
+            first = False
+            mutate(DG, x)
+
+
+@pytest.mark.parametrize(
+    "mutate, error",
+    [
+        (lambda DG, x: DG.add_edge(5 - x, 5), RuntimeError),
+        (lambda DG, x: DG.remove_node(2), RuntimeError),
+        (lambda DG, x: DG.remove_node(4), nx.NetworkXUnfeasible),
+        (lambda DG, x: DG.add_edge(9, 10), None),
+    ],
+)
+def test_topological_sort_graph_changed(mutate, error):
+    """Matches NetworkX's behavior when the graph changes mid-iteration."""
+    for backend in ["rustnx", "networkx"]:
+
+        def algorithm(G):
+            return nx.topological_sort(G, backend=backend)
+
+        if error is None:
+            _mutate_during(algorithm, mutate)
+        else:
+            with pytest.raises(error):
+                _mutate_during(algorithm, mutate)
+
+
+def test_topological_sort_changed_before_iterating():
+    DG = nx.DiGraph([(1, 2), (2, 3)])
+    it = nx.topological_sort(DG, backend="rustnx")
+    DG.add_edge(0, 1)
+    assert list(it) == [0, 1, 2, 3]
+
+
+def test_components_graph_changed():
+    for func, G in [
+        (nx.connected_components, nx.Graph([(0, 1), (2, 3)])),
+        (nx.weakly_connected_components, nx.DiGraph([(0, 1), (2, 3)])),
+        (nx.strongly_connected_components, nx.DiGraph([(0, 1), (2, 3)])),
+    ]:
+        it = func(G, backend="rustnx")
+        next(it)
+        G.add_edge(1, 2)
+        with pytest.raises(RuntimeError, match="changed during iteration"):
+            list(it)
+
+
+def test_iteration_marker_is_cleaned_up():
+    G = nx.DiGraph([(0, 1), (1, 2)])
+    list(nx.topological_sort(G, backend="rustnx"))
+    list(nx.strongly_connected_components(G, backend="rustnx"))
+    assert not any(
+        isinstance(k, tuple) and k[0] == "rustnx-iteration"
+        for k in G.__networkx_cache__
+    )
+
+
+def test_views_fall_back(rustnx_priority):
+    G = nx.DiGraph(nx.path_graph(600, create_using=nx.DiGraph))
+    view = G.subgraph(range(550))
+    assert list(nx.topological_sort(view)) == list(
+        nx.topological_sort(view, backend="networkx")
+    )

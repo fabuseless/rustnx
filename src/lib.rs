@@ -9,8 +9,9 @@ mod graph;
 use pyo3::exceptions::{PyIndexError, PyValueError};
 use pyo3::prelude::*;
 
-use algorithms::centrality;
+use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
+use algorithms::{centrality, directed};
 use graph::CoreGraph;
 
 impl From<NegativeCycle> for PyErr {
@@ -123,6 +124,70 @@ impl CoreGraph {
             self.check_index(s as usize)?;
         }
         Ok(py.detach(|| centrality::closeness(self.adj(true), self.n, w, wf_improved, &sources))?)
+    }
+
+    /// PageRank scores in node order, or `None` if it didn't converge.
+    #[pyo3(signature = (alpha, personalization, max_iter, tol, nstart, weight, dangling))]
+    #[allow(clippy::too_many_arguments)]
+    fn pagerank(
+        &self,
+        py: Python<'_>,
+        alpha: f64,
+        personalization: Option<Vec<f64>>,
+        max_iter: usize,
+        tol: f64,
+        nstart: Option<Vec<f64>>,
+        weight: Option<&str>,
+        dangling: Option<Vec<f64>>,
+    ) -> PyResult<Option<Vec<f64>>> {
+        for v in [&personalization, &nstart, &dangling].into_iter().flatten() {
+            if v.len() != self.n {
+                return Err(PyValueError::new_err(
+                    "vector length must equal the node count",
+                ));
+            }
+        }
+        let input = PagerankInput {
+            n: self.n,
+            out_adj: &self.succ,
+            out_weights: self.weight_slice(weight, false)?,
+            in_adj: self.adj(true),
+            in_weights: self.weight_slice(weight, true)?,
+            alpha,
+            personalization,
+            nstart,
+            dangling,
+            max_iter,
+            tol,
+        };
+        Ok(py.detach(|| link_analysis::pagerank(input).ok()))
+    }
+
+    fn strongly_connected_components(&self, py: Python<'_>) -> Vec<Vec<u32>> {
+        py.detach(|| directed::strongly_connected_components(&self.succ, self.n))
+    }
+
+    fn weakly_connected_components(&self, py: Python<'_>) -> Vec<Vec<u32>> {
+        py.detach(|| directed::weakly_connected_components(&self.succ, self.adj(true), self.n))
+    }
+
+    /// In-degrees left after removing the out-edges of `processed` nodes:
+    /// the state of `nx.topological_generations` after those generations.
+    fn indegrees_after(&self, processed: Vec<u32>) -> PyResult<Vec<usize>> {
+        let pred = self.adj(true);
+        let mut indegree: Vec<usize> = (0..self.n).map(|v| pred.neighbors(v).len()).collect();
+        for &v in &processed {
+            self.check_index(v as usize)?;
+            for &child in self.succ.neighbors(v as usize) {
+                indegree[child as usize] -= 1;
+            }
+        }
+        Ok(indegree)
+    }
+
+    /// `(generations, has_cycle)`
+    fn topological_generations(&self, py: Python<'_>) -> (Vec<Vec<u32>>, bool) {
+        py.detach(|| directed::topological_generations(&self.succ, self.adj(true), self.n))
     }
 }
 

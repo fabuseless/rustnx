@@ -18,6 +18,14 @@ versions may change behavior.
   - `single_source_shortest_path_length` and
     `single_source_dijkstra_path_length`, with `cutoff`
   - `connected_components`, `number_connected_components`, `is_connected`
+  - `pagerank`, with every NetworkX option
+  - `strongly_connected_components` and `weakly_connected_components`, plus
+    their `number_*` and `is_*` variants
+  - `topological_sort`, `topological_generations`, `is_directed_acyclic_graph`
+- Generators (`topological_sort`, the component functions) notice when the
+  graph changes during iteration. `topological_sort` then behaves exactly as
+  NetworkX does; the component generators raise `RuntimeError` instead of
+  returning stale results.
 - Automatic fallback to NetworkX for anything unsupported: other functions,
   multigraphs, callable or non-numeric weights, and parameters rustnx doesn't
   implement.

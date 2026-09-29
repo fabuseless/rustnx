@@ -41,6 +41,13 @@ def cases(quick):
         nx.grid_2d_graph(400 // scale, 400 // scale)
     ))
     sparse = nx.gnm_random_graph(200_000 // scale, 300_000 // scale, seed=2)
+    web = weighted(nx.gnm_random_graph(
+        200_000 // scale, 1_000_000 // scale, seed=3, directed=True
+    ))
+    rng = random.Random(4)
+    rank = {v: rng.random() for v in web}
+    dag = nx.DiGraph((u, v) for u, v in web.edges if rank[u] < rank[v])
+    dag.add_nodes_from(web)
     return [
         ("betweenness_centrality", ba, lambda G, **kw: nx.betweenness_centrality(G, **kw)),
         ("betweenness_centrality (weighted)", ba_w,
@@ -52,6 +59,15 @@ def cases(quick):
          lambda G, **kw: nx.single_source_shortest_path_length(G, 0, **kw)),
         ("connected_components", sparse,
          lambda G, **kw: list(nx.connected_components(G, **kw))),
+        ("pagerank", web, lambda G, **kw: nx.pagerank(G, **kw)),
+        ("pagerank (weighted)", web,
+         lambda G, **kw: nx.pagerank(G, weight="weight", **kw)),
+        ("strongly_connected_components", web,
+         lambda G, **kw: list(nx.strongly_connected_components(G, **kw))),
+        ("weakly_connected_components", web,
+         lambda G, **kw: list(nx.weakly_connected_components(G, **kw))),
+        ("topological_sort", dag,
+         lambda G, **kw: list(nx.topological_sort(G, **kw))),
     ]
 
 

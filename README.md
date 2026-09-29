@@ -17,7 +17,7 @@ Nothing else changes. Anything rustnx doesn't support, such as other
 functions, multigraphs or callable weights, keeps running in NetworkX, so
 turning it on never breaks working code.
 
-## Supported algorithms (v0.1)
+## Supported algorithms
 
 | Function | Notes |
 |---|---|
@@ -26,6 +26,10 @@ turning it on never breaks working code.
 | `single_source_shortest_path_length` | Same nodes and same dict order as NetworkX, with `cutoff`. |
 | `single_source_dijkstra_path_length` | Same order as NetworkX, with `cutoff`. Integer weights give integer distances. Raises the same error on negative cycles. |
 | `connected_components`, `number_connected_components`, `is_connected` | Components come out in the same order as NetworkX. |
+| `pagerank` | All options: `alpha`, `personalization`, `nstart`, `dangling`, `weight`, `tol`, `max_iter`. Raises `PowerIterationFailedConvergence` like NetworkX. |
+| `strongly_connected_components`, `number_strongly_connected_components`, `is_strongly_connected` | Same components in the same order as NetworkX. |
+| `weakly_connected_components`, `number_weakly_connected_components`, `is_weakly_connected` | Same components in the same order as NetworkX. |
+| `topological_sort`, `topological_generations`, `is_directed_acyclic_graph` | Same order as NetworkX. If the graph changes mid-iteration, it raises the same errors as NetworkX. |
 
 ## Benchmarks
 
@@ -39,6 +43,11 @@ turning it on never breaks working code.
 | `single_source_dijkstra_path_length` | 160,000 / 319k | 0.38 s | 0.063 s | 6× |
 | `single_source_shortest_path_length` | 160,000 / 319k | 0.11 s | 0.020 s | 5× |
 | `connected_components` | 200,000 / 300k | 0.23 s | 0.040 s | 6× |
+| `pagerank` | 200,000 / 1M (directed) | 5.76 s | 0.024 s | **243×** |
+| `pagerank` (weighted) | 200,000 / 1M (directed) | 3.81 s | 0.024 s | **161×** |
+| `strongly_connected_components` | 200,000 / 1M (directed) | 1.96 s | 0.052 s | **38×** |
+| `topological_sort` | 200,000 / 499k (DAG) | 0.40 s | 0.023 s | 17× |
+| `weakly_connected_components` | 200,000 / 1M (directed) | 0.39 s | 0.036 s | 11× |
 
 The rustnx column is a repeat call. The first call on a graph also converts
 it to rustnx's format, and NetworkX caches that conversion on the graph. For
