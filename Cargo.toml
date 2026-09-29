@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 license = "BSD-3-Clause"
 description = "Rust-accelerated backend for NetworkX"
+repository = "https://github.com/fabuseless/rustnx"
+homepage = "https://github.com/fabuseless/rustnx"
+readme = "README.md"
 publish = false
 
 [lib]

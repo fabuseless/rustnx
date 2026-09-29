@@ -3,6 +3,11 @@ name: CI
 on:
   push:
   pull_request:
+  # Weekly run against the latest NetworkX, to catch breaking releases
+  # (like 3.7's new closeness_centrality parameter) before users do.
+  schedule:
+    - cron: "17 6 * * 1"  # Mondays 06:17 UTC
+  workflow_dispatch:
 
 jobs:
   test:
@@ -20,8 +25,8 @@ jobs:
           - python-version: "3.13"
             networkx: "latest"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - uses: dtolnay/rust-toolchain@stable

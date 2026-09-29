@@ -7,7 +7,8 @@ name = "rustnx"
 version = "0.1.0"
 description = "Rust-accelerated backend for NetworkX: same API, no code changes"
 readme = "README.md"
-license = { text = "BSD-3-Clause" }
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = ["networkx>=3.4"]
 classifiers = [
@@ -15,6 +16,12 @@ classifiers = [
     "Programming Language :: Rust",
     "Topic :: Scientific/Engineering :: Mathematics",
 ]
+
+[project.urls]
+Homepage = "https://github.com/fabuseless/rustnx"
+Repository = "https://github.com/fabuseless/rustnx"
+Issues = "https://github.com/fabuseless/rustnx/issues"
+Changelog = "https://github.com/fabuseless/rustnx/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 test = ["pytest", "numpy", "scipy"]
