@@ -9,7 +9,7 @@ use std::cmp::Reverse;
 
 use rayon::prelude::*;
 
-use super::traversal::{bfs_lengths, DijkstraState, HeapKey, MinHeap, NegativeCycle};
+use super::traversal::{DijkstraState, HeapKey, MinHeap, NegativeCycle};
 use crate::graph::Csr;
 
 const UNSET: u32 = u32::MAX;
@@ -242,14 +242,21 @@ pub fn closeness(
         c
     };
     match weights {
-        None => Ok(sources
-            .par_iter()
-            .map(|&s| {
-                let (_, levels) = bfs_lengths(adj, n, s as usize, f64::INFINITY);
-                let totsp: u64 = levels.iter().map(|&l| l as u64).sum();
-                score(levels.len(), totsp as f64)
-            })
-            .collect()),
+        None => {
+            // 64 BFS runs at a time, one per bit (see `BitParallelBfs`).
+            let per_batch: Vec<Vec<(usize, u64)>> = sources
+                .par_chunks(64)
+                .map_init(
+                    || BitParallelBfs::new(n),
+                    |state, batch| state.run(adj, batch),
+                )
+                .collect();
+            Ok(per_batch
+                .into_iter()
+                .flatten()
+                .map(|(reached, totsp)| score(reached, totsp as f64))
+                .collect())
+        }
         Some(w) => sources
             .par_iter()
             .map_init(
@@ -265,5 +272,75 @@ pub fn closeness(
                 },
             )
             .collect(),
+    }
+}
+
+/// Up to 64 breadth-first searches at once, one per bit of a `u64`.
+///
+/// Each node carries a bitmask of the searches that have reached it, so one
+/// pass over a node's edges advances every search at once. For closeness,
+/// which needs a BFS from every node, this cuts edge scans by up to 64x.
+/// Distances are the same as separate BFS runs, so reached-node counts and
+/// distance sums (and hence closeness) are identical.
+struct BitParallelBfs {
+    seen: Vec<u64>,
+    frontier: Vec<u64>,
+    next: Vec<u64>,
+}
+
+impl BitParallelBfs {
+    fn new(n: usize) -> Self {
+        BitParallelBfs {
+            seen: vec![0; n],
+            frontier: vec![0; n],
+            next: vec![0; n],
+        }
+    }
+
+    /// `(reached nodes, sum of distances)` for each source in `batch`.
+    fn run(&mut self, adj: &Csr, batch: &[u32]) -> Vec<(usize, u64)> {
+        debug_assert!(batch.len() <= 64);
+        let n = self.seen.len();
+        self.seen.fill(0);
+        self.frontier.fill(0);
+        let mut reached = vec![1usize; batch.len()];
+        let mut totals = vec![0u64; batch.len()];
+        for (bit, &s) in batch.iter().enumerate() {
+            self.seen[s as usize] |= 1 << bit;
+            self.frontier[s as usize] |= 1 << bit;
+        }
+        let mut level = 0u64;
+        loop {
+            level += 1;
+            self.next.fill(0);
+            for v in 0..n {
+                let f = self.frontier[v];
+                if f != 0 {
+                    for &w in adj.neighbors(v) {
+                        self.next[w as usize] |= f;
+                    }
+                }
+            }
+            let mut any = false;
+            for w in 0..n {
+                let new = self.next[w] & !self.seen[w];
+                self.frontier[w] = new;
+                if new != 0 {
+                    any = true;
+                    self.seen[w] |= new;
+                    let mut bits = new;
+                    while bits != 0 {
+                        let bit = bits.trailing_zeros() as usize;
+                        reached[bit] += 1;
+                        totals[bit] += level;
+                        bits &= bits - 1;
+                    }
+                }
+            }
+            if !any {
+                break;
+            }
+        }
+        reached.into_iter().zip(totals).collect()
     }
 }

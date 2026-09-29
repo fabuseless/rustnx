@@ -39,7 +39,7 @@ turning it on never breaks working code.
 |---|---|---|---|---|
 | `betweenness_centrality` | 4,000 nodes / 16k edges | 40.9 s | 0.38 s | **107×** |
 | `betweenness_centrality` (weighted) | 4,000 / 16k | 115.3 s | 1.24 s | **93×** |
-| `closeness_centrality` | 4,000 / 16k | 6.0 s | 0.11 s | **54×** |
+| `closeness_centrality` | 4,000 / 16k | 5.45 s | 0.0097 s | **562×** |
 | `single_source_dijkstra_path_length` | 160,000 / 319k | 0.38 s | 0.063 s | 6× |
 | `single_source_shortest_path_length` | 160,000 / 319k | 0.11 s | 0.020 s | 5× |
 | `connected_components` | 200,000 / 300k | 0.23 s | 0.040 s | 6× |
@@ -54,6 +54,28 @@ it to rustnx's format (about 0.15–0.25 s for a 1M-edge directed graph), and
 NetworkX caches that conversion on the graph. For the heavy algorithms
 conversion is negligible. For the linear-time ones, the first call is still
 faster than NetworkX, but by less.
+
+### Compared with other Rust backends
+
+`python benchmarks/compare.py` runs the same calls through each installed
+backend and checks every result against NetworkX (same machine, NetworkX
+3.6.1, rustworkx 0.18.1 via nx-rustworkx 0.2.1, franken-networkx 0.2.1).
+Times are repeat calls; the first call also includes conversion.
+
+| Function (graph) | rustnx | nx-rustworkx | FrankenNetworkX |
+|---|---|---|---|
+| `betweenness_centrality` (2k nodes) | **0.099 s** | 0.161 s | 8.23 s (no speedup) |
+| `closeness_centrality` (2k nodes) | **0.0030 s** | 0.104 s | 0.0031 s |
+| `pagerank` (100k nodes, 500k edges) | **0.014 s** | 0.212 s, *differs from NetworkX* | 0.063 s |
+| `single_source_dijkstra_path_length` (90k nodes) | **0.025 s** | 0.094 s | 0.123 s |
+| `connected_components` (200k nodes) | 0.040 s | 0.072 s | **0.036 s** |
+| `strongly_connected_components` (100k nodes) | **0.020 s** | 0.041 s, *different order* | 0.054 s |
+| `topological_sort` (100k nodes) | **0.010 s** | 0.019 s, *different order* | 0.040 s |
+
+rustnx is also the fastest on first calls for all seven, because its
+conversion is about 5–20× quicker than nx-rustworkx's and 25–55× quicker than
+FrankenNetworkX's. It matches NetworkX's output,
+including order, for all seven.
 
 On small graphs (under 500 nodes), the linear-time functions stay in
 NetworkX automatically, because the dispatch overhead outweighs the work.

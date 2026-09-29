@@ -34,6 +34,10 @@ versions may change behavior.
 - Converting a graph to rustnx is up to 3× faster. Directed graphs are read
   once, not twice, and node lookups skip the Python dict for integer-labelled
   graphs and for neighbor keys that are the same objects as the node keys.
+- `closeness_centrality` on unweighted graphs runs 64 BFS searches at once
+  (bit-parallel BFS): about 10× faster than before, with identical results.
+- `benchmarks/compare.py` compares rustnx with nx-rustworkx and
+  FrankenNetworkX, checking every result against NetworkX.
 - Graphs that rustnx has worked on can be pickled and deep-copied (e.g. sent
   to `multiprocessing` workers). Previously this failed, because NetworkX
   caches rustnx's converted graph on the original graph.
