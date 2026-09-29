@@ -24,3 +24,6 @@ versions may change behavior.
 - On small graphs (under 500 nodes), the linear-time functions stay in
   NetworkX, because it's faster there.
 - Supports NetworkX 3.4 through 3.7 and Python 3.10+.
+- Prebuilt wheels for Linux (x86-64, ARM), macOS (Intel, Apple Silicon) and
+  Windows, each tested on its platform, published to PyPI by pushing a
+  version tag.
