@@ -92,8 +92,10 @@ impl<'a> Reader<'a> {
         let n = self.len(8)?;
         let bytes = self.take(n * 8)?;
         Ok(bytes
-            .chunks_exact(8)
-            .map(|b| f64::from_le_bytes(b.try_into().expect("8 bytes")))
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|&b| f64::from_le_bytes(b))
             .collect())
     }
     fn csr(&mut self, n: usize) -> PyResult<Csr> {
@@ -104,8 +106,10 @@ impl<'a> Reader<'a> {
         let nt = self.len(4)?;
         let targets: Vec<u32> = self
             .take(nt * 4)?
-            .chunks_exact(4)
-            .map(|b| u32::from_le_bytes(b.try_into().expect("4 bytes")))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&b| u32::from_le_bytes(b))
             .collect();
         let valid = offsets.len() == n + 1
             && offsets.first() == Some(&0)
