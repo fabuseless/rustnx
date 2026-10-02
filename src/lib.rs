@@ -13,7 +13,7 @@ use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 
 use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
-use algorithms::{centrality, directed};
+use algorithms::{centrality, directed, distance};
 use graph::CoreGraph;
 
 impl From<NegativeCycle> for PyErr {
@@ -191,6 +191,77 @@ impl CoreGraph {
         Ok(py.detach(|| link_analysis::pagerank(input).ok()))
     }
 
+    /// `(reached, total distance, max distance)` per source, by bit-parallel BFS.
+    #[pyo3(signature = (sources=None))]
+    fn bfs_stats(
+        &self,
+        py: Python<'_>,
+        sources: Option<Vec<u32>>,
+    ) -> PyResult<Vec<(usize, u64, u32)>> {
+        let sources = self.sources_or_all(sources)?;
+        Ok(py.detach(|| {
+            distance::bfs_stats(&self.succ, self.n, &sources)
+                .into_iter()
+                .map(|s| (s.reached, s.total, s.max))
+                .collect()
+        }))
+    }
+
+    /// Per source `(reached, max distance)` or `None` on a negative cycle,
+    /// plus the NetworkX-ordered sum of all distances (`None` on any error).
+    #[pyo3(signature = (weight, sources=None))]
+    #[allow(clippy::type_complexity)]
+    fn dijkstra_stats(
+        &self,
+        py: Python<'_>,
+        weight: &str,
+        sources: Option<Vec<u32>>,
+    ) -> PyResult<(Vec<Option<(usize, f64)>>, Option<f64>)> {
+        let w = self
+            .weight_slice(Some(weight), false)?
+            .expect("weight given");
+        let sources = self.sources_or_all(sources)?;
+        Ok(py.detach(|| {
+            let (stats, total) = distance::dijkstra_stats(&self.succ, self.n, w, &sources);
+            let stats = stats
+                .into_iter()
+                .map(|r| r.ok().map(|s| (s.reached, s.max)))
+                .collect();
+            (stats, total)
+        }))
+    }
+
+    /// BFS orders and levels for each source (parallel).
+    fn bfs_many(
+        &self,
+        py: Python<'_>,
+        sources: Vec<u32>,
+        cutoff: f64,
+    ) -> PyResult<Vec<(Vec<u32>, Vec<u32>)>> {
+        let sources = self.sources_or_all(Some(sources))?;
+        Ok(py.detach(|| distance::bfs_many(&self.succ, self.n, &sources, cutoff)))
+    }
+
+    /// Dijkstra orders and distances per source, `None` on a negative cycle.
+    #[pyo3(signature = (sources, weight=None, cutoff=None))]
+    #[allow(clippy::type_complexity)]
+    fn dijkstra_many(
+        &self,
+        py: Python<'_>,
+        sources: Vec<u32>,
+        weight: Option<&str>,
+        cutoff: Option<f64>,
+    ) -> PyResult<Vec<Option<(Vec<u32>, Vec<f64>)>>> {
+        let w = self.weight_slice(weight, false)?;
+        let sources = self.sources_or_all(Some(sources))?;
+        Ok(py.detach(|| {
+            distance::dijkstra_many(&self.succ, self.n, w, &sources, cutoff)
+                .into_iter()
+                .map(Result::ok)
+                .collect()
+        }))
+    }
+
     fn strongly_connected_components(&self, py: Python<'_>) -> Vec<Vec<u32>> {
         py.detach(|| directed::strongly_connected_components(&self.succ, self.n))
     }
@@ -220,6 +291,14 @@ impl CoreGraph {
 }
 
 impl CoreGraph {
+    fn sources_or_all(&self, sources: Option<Vec<u32>>) -> PyResult<Vec<u32>> {
+        let sources = sources.unwrap_or_else(|| all_nodes(self.n));
+        for &v in &sources {
+            self.check_index(v as usize)?;
+        }
+        Ok(sources)
+    }
+
     fn check_index(&self, v: usize) -> PyResult<()> {
         if v < self.n {
             Ok(())

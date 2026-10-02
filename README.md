@@ -30,6 +30,9 @@ turning it on never breaks working code.
 | `strongly_connected_components`, `number_strongly_connected_components`, `is_strongly_connected` | Same components in the same order as NetworkX. |
 | `weakly_connected_components`, `number_weakly_connected_components`, `is_weakly_connected` | Same components in the same order as NetworkX. |
 | `topological_sort`, `topological_generations`, `is_directed_acyclic_graph` | Same order as NetworkX. If the graph changes mid-iteration, it raises the same errors as NetworkX. |
+| `eccentricity`, `diameter`, `radius`, `center`, `periphery` | Unweighted: bit-parallel BFS. Weighted: parallel Dijkstra. Same errors as NetworkX (disconnected graphs, negative weights). `usebounds=True`, `e=`/`sp=` and trees in `center` run in NetworkX. |
+| `average_shortest_path_length`, `wiener_index` | As above; weighted sums are added in NetworkX's order, so float results match exactly. |
+| `all_pairs_shortest_path_length`, `all_pairs_dijkstra_path_length` | Parallel, in batches; same order as NetworkX. |
 
 ## Benchmarks
 
@@ -48,6 +51,12 @@ turning it on never breaks working code.
 | `strongly_connected_components` | 200,000 / 1M (directed) | 1.96 s | 0.052 s | **38×** |
 | `topological_sort` | 200,000 / 499k (DAG) | 0.40 s | 0.023 s | 17× |
 | `weakly_connected_components` | 200,000 / 1M (directed) | 0.39 s | 0.036 s | 11× |
+| `diameter` | 5,000 / 15k | 11.2 s | 0.014 s | **807×** |
+| `average_shortest_path_length` | 5,000 / 15k | 10.8 s | 0.014 s | **783×** |
+| `wiener_index` | 5,000 / 15k | 10.0 s | 0.012 s | **829×** |
+| `eccentricity` (weighted) | 5,000 / 15k | 57.0 s | 1.41 s | 40× |
+| `all_pairs_dijkstra_path_length` | 5,000 / 15k | 60.2 s | 4.90 s | 12× |
+| `all_pairs_shortest_path_length` | 5,000 / 15k | 9.6 s | 2.56 s | 4× (building 25M Python dict entries dominates) |
 
 The rustnx column is a repeat call. The first call on a graph also converts
 it to rustnx's format (about 0.15–0.25 s for a 1M-edge directed graph), and

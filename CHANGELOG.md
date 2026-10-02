@@ -8,6 +8,12 @@ versions may change behavior.
 ## [Unreleased]
 
 ### Added
+- Distance measures: `eccentricity`, `diameter`, `radius`, `center`,
+  `periphery`, `average_shortest_path_length` and `wiener_index`. Unweighted
+  graphs use bit-parallel BFS (about 800× faster than NetworkX); weighted ones
+  use parallel Dijkstra (about 40×).
+- `all_pairs_shortest_path_length` and `all_pairs_dijkstra_path_length`,
+  computed in parallel batches.
 
 - NetworkX backend (opt in with `nx.config.backend_priority = ["rustnx"]`)
   with Rust implementations of:

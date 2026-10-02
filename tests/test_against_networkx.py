@@ -596,3 +596,133 @@ def test_malformed_pickle_data_rejected():
 
     with pytest.raises(ValueError, match="malformed"):
         _core._core_graph_from_bytes(b"RNX1" + b"\xff" * 20)
+
+
+# --- Distance measures ----------------------------------------------------------
+
+
+def outcome(func, *args, **kwargs):
+    """A function's result, or its exception type and arguments."""
+    try:
+        result = func(*args, **kwargs)
+        if hasattr(result, "__next__"):
+            result = [(k, list(v.items())) for k, v in result]
+        return ("ok", result)
+    except Exception as exc:  # compare errors too
+        return (type(exc), exc.args)
+
+
+def connected_random_graph(seed, directed, weights):
+    G = random_graph(seed, directed, weights)
+    if seed % 3 == 0:
+        return G  # often disconnected: exercises the errors
+    # Otherwise add a cycle through all nodes so it is (strongly) connected.
+    nodes = list(G)
+    for u, v in zip(nodes, nodes[1:] + nodes[:1]):
+        if not G.has_edge(u, v):
+            G.add_edge(u, v, weight=2)
+    return G
+
+
+DISTANCE_FUNCS = [
+    nx.eccentricity,
+    nx.diameter,
+    nx.radius,
+    nx.center,
+    nx.periphery,
+    nx.average_shortest_path_length,
+    nx.wiener_index,
+]
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_distance_measures(seed, directed, weights):
+    G = connected_random_graph(seed, directed, weights)
+    weight = None if weights == "none" else "weight"
+    for func in DISTANCE_FUNCS:
+        ours = outcome(func, G, weight=weight, backend="rustnx")
+        ref = outcome(func, G, weight=weight, backend="networkx")
+        assert ours == ref, func.__name__
+    v = next(iter(G))
+    assert outcome(nx.eccentricity, G, v=v, weight=weight, backend="rustnx") == outcome(
+        nx.eccentricity, G, v=v, weight=weight
+    )
+
+
+def test_distance_measures_negative_weights():
+    G = nx.DiGraph()
+    G.add_weighted_edges_from([(0, 1, 1), (1, 2, 1), (2, 0, -5), (0, 2, 3)])
+    for func in [nx.eccentricity, nx.average_shortest_path_length, nx.wiener_index]:
+        ours = outcome(func, G, weight="weight", backend="rustnx")
+        assert ours == outcome(func, G, weight="weight", backend="networkx")
+        assert ours[0] is ValueError
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_all_pairs_lengths(seed, directed, weights):
+    G = random_graph(seed, directed, weights)
+    for cutoff in [None, 1, 2.5]:
+        assert outcome(
+            nx.all_pairs_shortest_path_length, G, cutoff=cutoff, backend="rustnx"
+        ) == outcome(nx.all_pairs_shortest_path_length, G, cutoff=cutoff)
+        for weight in ["weight", None]:
+            ours = outcome(
+                nx.all_pairs_dijkstra_path_length, G, cutoff=cutoff, weight=weight,
+                backend="rustnx",
+            )
+            ref = outcome(
+                nx.all_pairs_dijkstra_path_length, G, cutoff=cutoff, weight=weight
+            )
+            assert ours == ref
+
+
+def test_all_pairs_larger_than_one_batch():
+    G = nx.gnm_random_graph(2500, 6000, seed=5)
+    ours = dict(nx.all_pairs_shortest_path_length(G, backend="rustnx"))
+    assert list(ours) == list(G)
+    ref = dict(nx.all_pairs_shortest_path_length(G))
+    assert all(list(ours[k].items()) == list(ref[k].items()) for k in ref)
+
+
+def test_all_pairs_graph_changed():
+    G = nx.path_graph(5)
+    it = nx.all_pairs_shortest_path_length(G, backend="rustnx")
+    next(it)
+    G.add_edge(0, 4)
+    with pytest.raises(RuntimeError, match="changed during iteration"):
+        list(it)
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda G: nx.diameter(G, usebounds=True),
+        lambda G: nx.center(nx.path_graph(7)),  # trees take NetworkX's tree path
+        lambda G: nx.eccentricity(G, sp=dict(nx.shortest_path_length(G))),
+        lambda G: nx.eccentricity(G, v=[0, 1]),
+        lambda G: nx.average_shortest_path_length(G, method="floyd-warshall"),
+        lambda G: outcome(nx.diameter, nx.Graph()),
+    ],
+)
+def test_distance_measures_fall_back(rustnx_priority, call):
+    G = nx.cycle_graph(8)
+    result = call(G)
+    old = nx.config.backend_priority.algos
+    nx.config.backend_priority.algos = []
+    try:
+        assert result == call(G)
+    finally:
+        nx.config.backend_priority.algos = old
+
+
+def test_backend_function_list_matches_implementations():
+    from rustnx import _info, algorithms, interface
+
+    assert sorted(_info.FUNCTIONS) == sorted(algorithms.__all__)
+    for name in algorithms.__all__:
+        assert hasattr(interface, name), name
+        assert hasattr(nx, name), name
