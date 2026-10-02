@@ -936,3 +936,38 @@ def test_edge_betweenness_small_graphs():
     for G in [nx.Graph(), nx.Graph([(0, 0)]), nx.path_graph(2), nx.DiGraph([(1, 0)])]:
         ours, ref = both(nx.edge_betweenness_centrality, G)
         assert_close_dicts(ours, ref)
+
+
+# --- rustnx.enable() ---------------------------------------------------------------
+
+
+@pytest.fixture
+def restore_config():
+    old = nx.config.backend_priority.algos, nx.config.fallback_to_nx
+    yield
+    nx.config.backend_priority.algos, nx.config.fallback_to_nx = old
+
+
+@pytest.mark.parametrize("before", [[], ["networkx"], ["rustnx", "networkx"], ["networkx", "rustnx"]])
+def test_enable_runs_rustnx_on_networkx_graphs(restore_config, monkeypatch, before):
+    # Regression: enable() used to add "networkx" to the priority list, which
+    # made NetworkX run every call on NetworkX graphs before rustnx could.
+    from rustnx import interface
+
+    calls = []
+    original = interface.pagerank
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(interface, "pagerank", counting)
+    nx.config.backend_priority.algos = before
+    rustnx.enable()
+    assert nx.config.backend_priority.algos == ["rustnx"]
+    G = nx.gnm_random_graph(600, 2000, seed=1)  # above the small-graph cutoff
+    assert nx.pagerank(G) == pytest.approx(nx.pagerank(G, backend="networkx"))
+    assert calls, "rustnx was not used"
+    # Unsupported functions still run in NetworkX.
+    assert nx.is_tree(G) is False
+

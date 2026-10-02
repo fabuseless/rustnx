@@ -7,6 +7,15 @@ versions may change behavior.
 
 ## [Unreleased]
 
+## [0.1.0a2] - 2026-10-02
+
+### Fixed
+- `rustnx.enable()` now actually runs rustnx on NetworkX graphs. It used to
+  add `"networkx"` to `nx.config.backend_priority`, and NetworkX tries a
+  listed backend that is also the input's own backend first, so every call
+  on a NetworkX graph ran in NetworkX. `enable()` now sets the priority to
+  `["rustnx"]` and turns on `nx.config.fallback_to_nx` for rustnx graphs.
+
 ## [0.1.0a1] - 2026-10-02
 
 First public pre-release.
