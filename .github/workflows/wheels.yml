@@ -107,7 +107,7 @@ jobs:
           merge-multiple: true
       - name: Install the built wheel
         run: |
-          python -m pip install networkx pytest numpy scipy
+          python -m pip install networkx pytest numpy scipy rustworkx
           python -m pip install --no-index --find-links dist rustnx
           python -c "import rustnx, networkx; print('rustnx', rustnx.__version__, 'on NetworkX', networkx.__version__)"
       - name: Run tests against the installed wheel

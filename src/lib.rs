@@ -6,6 +6,7 @@
 mod algorithms;
 mod graph;
 mod native;
+mod rx;
 mod serialize;
 
 use pyo3::exceptions::{PyIndexError, PyValueError};
@@ -235,7 +236,7 @@ impl CoreGraph {
     }
 
     /// PageRank scores in node order, or `None` if it didn't converge.
-    #[pyo3(signature = (alpha, personalization, max_iter, tol, nstart, weight, dangling))]
+    #[pyo3(signature = (alpha, personalization, max_iter, tol, nstart, weight, dangling, return_previous=false))]
     #[allow(clippy::too_many_arguments)]
     fn pagerank(
         &self,
@@ -247,6 +248,7 @@ impl CoreGraph {
         nstart: Option<Vec<f64>>,
         weight: Option<&str>,
         dangling: Option<Vec<f64>>,
+        return_previous: bool,
     ) -> PyResult<Option<Vec<f64>>> {
         for v in [&personalization, &nstart, &dangling].into_iter().flatten() {
             if v.len() != self.n {
@@ -267,20 +269,22 @@ impl CoreGraph {
             dangling,
             max_iter,
             tol,
+            return_previous,
         };
         Ok(py.detach(|| link_analysis::pagerank(input).ok()))
     }
 
     /// `(reached, total distance, max distance)` per source, by bit-parallel BFS.
-    #[pyo3(signature = (sources=None))]
+    #[pyo3(signature = (sources=None, reverse=false))]
     fn bfs_stats(
         &self,
         py: Python<'_>,
         sources: Option<Vec<u32>>,
+        reverse: bool,
     ) -> PyResult<Vec<(usize, u64, u32)>> {
         let sources = self.sources_or_all(sources)?;
         Ok(py.detach(|| {
-            distance::bfs_stats(&self.succ, self.n, &sources)
+            distance::bfs_stats(self.adj(reverse), self.n, &sources)
                 .into_iter()
                 .map(|s| (s.reached, s.total, s.max))
                 .collect()
@@ -342,6 +346,36 @@ impl CoreGraph {
         }))
     }
 
+    /// rustworkx's strongly connected components (petgraph Kosaraju order).
+    fn rx_scc(&self, py: Python<'_>) -> Vec<Vec<u32>> {
+        py.detach(|| rx::kosaraju_scc(&self.succ, self.adj(true), self.n))
+    }
+
+    /// rustworkx's topological order, or `None` on a cycle.
+    fn rx_toposort(&self, py: Python<'_>) -> Option<Vec<u32>> {
+        py.detach(|| rx::toposort(&self.succ, self.adj(true), self.n))
+    }
+
+    /// rustworkx Dijkstra lengths from `source` (NaN = unreached). Raises
+    /// ValueError, as rustworkx does, on a NaN or negative cost it reaches.
+    #[pyo3(signature = (source, goal=None))]
+    fn rx_dijkstra(
+        &self,
+        py: Python<'_>,
+        source: usize,
+        goal: Option<usize>,
+    ) -> PyResult<Vec<f64>> {
+        self.check_index(source)?;
+        let costs = self
+            .weight_slice(Some(rx::RX_WEIGHT), false)?
+            .expect("costs");
+        py.detach(|| rx::rx_dijkstra(&self.succ, self.n, costs, source, goal))
+            .map_err(|e| match e {
+                rx::CostError::NaN => PyValueError::new_err("NaN weights not supported."),
+                rx::CostError::Negative => PyValueError::new_err("Negative weights not supported."),
+            })
+    }
+
     fn strongly_connected_components(&self, py: Python<'_>) -> Vec<Vec<u32>> {
         py.detach(|| directed::strongly_connected_components(&self.succ, self.n))
     }
@@ -395,5 +429,6 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(serialize::_core_graph_from_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(native::build_native, m)?)?;
     m.add_function(wrap_pyfunction!(native::build_native_arrays, m)?)?;
+    m.add_function(wrap_pyfunction!(rx::build_rx, m)?)?;
     Ok(())
 }

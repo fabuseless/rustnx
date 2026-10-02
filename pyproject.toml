@@ -24,7 +24,7 @@ Issues = "https://github.com/fabuseless/rustnx/issues"
 Changelog = "https://github.com/fabuseless/rustnx/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-test = ["pytest", "numpy", "scipy"]
+test = ["pytest", "numpy", "scipy", "rustworkx"]
 
 [project.entry-points."networkx.backends"]
 rustnx = "rustnx.interface"

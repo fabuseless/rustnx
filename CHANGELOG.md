@@ -8,6 +8,10 @@ versions may change behavior.
 ## [Unreleased]
 
 ### Added
+- `rustnx.rx`, a rustworkx-compatible API (`PyGraph`, `PyDiGraph`, and
+  rustworkx-named algorithm functions) on the same Rust core. It matches
+  rustworkx's index reuse, multigraph rules, neighbor order and exceptions,
+  and is tested against rustworkx itself.
 - Native graphs: `rustnx.Graph` and `rustnx.DiGraph` are built directly in
   Rust from edge tuples, or from NumPy arrays with `from_arrays`. No
   conversion is needed, they use about 5× less memory than NetworkX graphs,
