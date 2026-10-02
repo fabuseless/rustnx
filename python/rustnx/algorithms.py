@@ -14,15 +14,22 @@ import networkx as nx
 from networkx.algorithms.centrality import betweenness as _nx_betweenness
 
 __all__ = [
+    "all_pairs_dijkstra",
+    "all_pairs_dijkstra_path",
     "all_pairs_dijkstra_path_length",
+    "all_pairs_shortest_path",
     "all_pairs_shortest_path_length",
     "average_shortest_path_length",
     "betweenness_centrality",
+    "bidirectional_shortest_path",
     "center",
     "closeness_centrality",
     "connected_components",
     "diameter",
+    "dijkstra_path",
+    "dijkstra_path_length",
     "eccentricity",
+    "has_path",
     "is_connected",
     "is_directed_acyclic_graph",
     "is_strongly_connected",
@@ -33,8 +40,14 @@ __all__ = [
     "pagerank",
     "periphery",
     "radius",
+    "shortest_path",
+    "shortest_path_length",
+    "single_source_dijkstra",
+    "single_source_dijkstra_path",
     "single_source_dijkstra_path_length",
+    "single_source_shortest_path",
     "single_source_shortest_path_length",
+    "single_target_shortest_path",
     "strongly_connected_components",
     "topological_generations",
     "topological_sort",
@@ -595,3 +608,263 @@ def all_pairs_dijkstra_path_length(G, cutoff=None, weight="weight"):
             yield lengths
 
     return _all_pairs(G, compute)
+
+
+# --- Shortest paths that return the paths ------------------------------------
+
+
+def _bfs_paths(G, s, cutoff, reverse=False):
+    """``{node: path}`` in discovery order; reversed searches give each path
+    from the node to ``s`` (NetworkX's ``single_target_shortest_path``)."""
+    if reverse and G.is_directed():
+        G._ensure_exact_pred()
+    order, parents = G._core.bfs_tree(s, float(cutoff), reverse)
+    return _tree_paths(G, order, parents, order, reverse)
+
+
+def _tree_paths(G, order, parents, key_order, reverse=False):
+    nodes = G._nodes
+    by_index = {order[0]: [nodes[order[0]]]}
+    for v, p in zip(order[1:], parents[1:]):
+        path = by_index[p]
+        by_index[v] = [nodes[v], *path] if reverse else [*path, nodes[v]]
+    return {nodes[i]: by_index[i] for i in key_order}
+
+
+@functools.cache
+def _dijkstra_paths_in_pop_order():
+    """Whether the installed NetworkX orders Dijkstra's paths dict by pop
+    order (3.6+) rather than by when each node was first reached."""
+    H = nx.DiGraph()
+    H.add_weighted_edges_from([(0, 1, 5), (0, 2, 1), (2, 1, 1), (1, 3, 1)])
+    paths = nx.single_source_dijkstra_path(H, 0, backend="networkx")
+    return list(paths) == [0, 2, 1, 3]
+
+
+def _dijkstra_tree(G, s, weight, cutoff=None, target=None, reverse=False):
+    weight, all_int, _ = _check_weight(G, weight)
+    if reverse and G.is_directed():
+        G._ensure_exact_pred()
+    order, dists, parents, seen = G._core.dijkstra_tree(
+        s,
+        weight,
+        None if cutoff is None else float(cutoff),
+        None if target is None else target,
+        reverse,
+    )
+    if all_int:
+        dists = [int(d) for d in dists]
+    dists[0] = 0  # NetworkX keeps the source distance as the int 0
+    return order, dists, parents, seen
+
+
+def _dijkstra_result(G, tree):
+    order, dists, parents, seen = tree
+    nodes = G._nodes
+    dist = dict(zip([nodes[i] for i in order], dists))
+    key_order = order if _dijkstra_paths_in_pop_order() else seen
+    return dist, _tree_paths(G, order, parents, key_order)
+
+
+def _dijkstra_target(G, s, t, weight, cutoff=None):
+    """``(distance, path)`` to ``t``, or ``None`` when ``t`` isn't reached."""
+    weight, all_int, _ = _check_weight(G, weight)
+    result = G._core.dijkstra_path(s, t, weight, None if cutoff is None else float(cutoff))
+    if result is None:
+        return None
+    dist, path = result
+    nodes = G._nodes
+    return int(dist) if all_int else dist, [nodes[i] for i in path]
+
+
+def single_source_shortest_path(G, source, cutoff=None):
+    s = _index_of(G, source, f"Source {source} not in G")
+    return _bfs_paths(G, s, math.inf if cutoff is None else cutoff)
+
+
+def single_target_shortest_path(G, target, cutoff=None):
+    t = _index_of(G, target, f"Target {target} not in G")
+    return _bfs_paths(G, t, math.inf if cutoff is None else cutoff, reverse=True)
+
+
+def single_source_dijkstra_path(G, source, cutoff=None, weight="weight"):
+    s = _index_of(G, source, f"Node {source} not found in graph")
+    return _dijkstra_result(G, _dijkstra_tree(G, s, weight, cutoff))[1]
+
+
+def single_source_dijkstra(G, source, target=None, cutoff=None, weight="weight"):
+    s = _index_of(G, source, f"Node {source} not found in graph")
+    if target is None:
+        return _dijkstra_result(G, _dijkstra_tree(G, s, weight, cutoff))
+    if target == source:
+        return 0, [target]
+    try:
+        t = G._index[target]
+    except (KeyError, TypeError):
+        t = None
+    result = None if t is None else _dijkstra_target(G, s, t, weight, cutoff)
+    if result is None:
+        if t is None:
+            # NetworkX searches the whole graph first: a negative cycle
+            # would raise before NoPath does.
+            _dijkstra_tree(G, s, weight, cutoff)
+        raise nx.NetworkXNoPath(f"No path to {target}.")
+    return result
+
+
+def dijkstra_path(G, source, target, weight="weight"):
+    return single_source_dijkstra(G, source, target=target, weight=weight)[1]
+
+
+def dijkstra_path_length(G, source, target, weight="weight"):
+    s = _index_of(G, source, f"Node {source} not found in graph")
+    if source == target:
+        return 0
+    try:
+        t = G._index[target]
+    except (KeyError, TypeError):
+        t = None
+    result = None if t is None else _dijkstra_target(G, s, t, weight)
+    if result is None:
+        if t is None:
+            _dijkstra_tree(G, s, weight)
+        raise nx.NetworkXNoPath(f"Node {target} not reachable from {source}")
+    return result[0]
+
+
+def bidirectional_shortest_path(G, source, target):
+    s = _index_of(G, source, f"Source {source} is not in G")
+    t = _index_of(G, target, f"Target {target} is not in G")
+    if G.is_directed():
+        G._ensure_exact_pred()
+    path = G._core.bidirectional_bfs(s, t)
+    if path is None:
+        raise nx.NetworkXNoPath(f"No path between {source} and {target}.")
+    nodes = G._nodes
+    return [nodes[i] for i in path]
+
+
+def has_path(G, source, target):
+    try:
+        bidirectional_shortest_path(G, source, target)
+    except nx.NetworkXNoPath:
+        return False
+    return True
+
+
+def all_pairs_shortest_path(G, cutoff=None):
+    cutoff = math.inf if cutoff is None else float(cutoff)
+
+    def compute(batch):
+        for order, parents in G._core.bfs_tree_many(batch, cutoff):
+            yield _tree_paths(G, order, parents, order)
+
+    return _all_pairs(G, compute)
+
+
+def _dijkstra_trees(G, batch, weight, cutoff):
+    weight, all_int, _ = _check_weight(G, weight)
+    for tree in G._core.dijkstra_tree_many(batch, weight, cutoff):
+        if tree is None:
+            raise ValueError(*_NEGATIVE_CYCLE)
+        order, dists, parents, seen = tree
+        if all_int:
+            dists = [int(d) for d in dists]
+        dists[0] = 0
+        yield order, dists, parents, seen
+
+
+def all_pairs_dijkstra_path(G, cutoff=None, weight="weight"):
+    _check_weight(G, weight)
+    cutoff = None if cutoff is None else float(cutoff)
+
+    def compute(batch):
+        for tree in _dijkstra_trees(G, batch, weight, cutoff):
+            yield _dijkstra_result(G, tree)[1]
+
+    return _all_pairs(G, compute)
+
+
+def all_pairs_dijkstra(G, cutoff=None, weight="weight"):
+    _check_weight(G, weight)
+    cutoff = None if cutoff is None else float(cutoff)
+
+    def compute(batch):
+        for tree in _dijkstra_trees(G, batch, weight, cutoff):
+            yield _dijkstra_result(G, tree)
+
+    return _all_pairs(G, compute)
+
+
+def _check_method(method):
+    if method not in ("dijkstra", "bellman-ford"):
+        raise ValueError(f"method not supported: {method}")
+    if method != "dijkstra":
+        raise NotImplementedError("rustnx has no Bellman-Ford")
+
+
+def shortest_path(G, source=None, target=None, weight=None, method="dijkstra"):
+    if method not in ("dijkstra", "bellman-ford"):
+        raise ValueError(f"method not supported: {method}")
+    if source is None and target is None:
+        # Returns a dict or an iterator depending on the NetworkX version.
+        raise NotImplementedError("rustnx leaves all-pairs shortest_path to NetworkX")
+    if weight is not None:
+        _check_method(method)
+    if source is None:
+        t = _index_of(G, target, _target_message(G, target, weight))
+        if weight is None:
+            paths = _bfs_paths(G, t, math.inf, reverse=True)
+        else:
+            tree = _dijkstra_tree(G, t, weight, reverse=True)
+            paths = _dijkstra_result(G, tree)[1]
+            paths = {v: p[::-1] for v, p in paths.items()}
+        return paths
+    if target is None:
+        if weight is None:
+            return single_source_shortest_path(G, source)
+        return single_source_dijkstra_path(G, source, weight=weight)
+    if weight is None:
+        return bidirectional_shortest_path(G, source, target)
+    # bidirectional_dijkstra breaks ties differently across NetworkX versions.
+    raise NotImplementedError("rustnx leaves bidirectional_dijkstra to NetworkX")
+
+
+def _target_message(G, target, weight):
+    # The reversed search runs single_source_* with the target as source.
+    if weight is None:
+        return f"Source {target} not in G"
+    return f"Node {target} not found in graph"
+
+
+def shortest_path_length(G, source=None, target=None, weight=None, method="dijkstra"):
+    if method not in ("dijkstra", "bellman-ford"):
+        raise ValueError(f"method not supported: {method}")
+    if weight is not None:
+        _check_method(method)
+    if source is None:
+        if target is None:
+            if weight is None:
+                return all_pairs_shortest_path_length(G)
+            return all_pairs_dijkstra_path_length(G, weight=weight)
+        if weight is None:
+            t = _index_of(G, target, f"Source {target} is not in G")
+            if G.is_directed():
+                G._ensure_exact_pred()
+            order, parents = G._core.bfs_tree(t, math.inf, True)
+            level = {order[0]: 0}
+            for v, p in zip(order[1:], parents[1:]):
+                level[v] = level[p] + 1
+            nodes = G._nodes
+            return {nodes[i]: level[i] for i in order}
+        t = _index_of(G, target, f"Node {target} not found in graph")
+        order, dists, _, _ = _dijkstra_tree(G, t, weight, reverse=True)
+        nodes = G._nodes
+        return dict(zip([nodes[i] for i in order], dists))
+    if target is None:
+        if weight is None:
+            return single_source_shortest_path_length(G, source)
+        return single_source_dijkstra_path_length(G, source, weight=weight)
+    if weight is None:
+        return len(bidirectional_shortest_path(G, source, target)) - 1
+    return dijkstra_path_length(G, source, target, weight)

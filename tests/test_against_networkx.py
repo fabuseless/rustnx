@@ -726,3 +726,116 @@ def test_backend_function_list_matches_implementations():
     for name in algorithms.__all__:
         assert hasattr(interface, name), name
         assert hasattr(nx, name), name
+
+
+# --- Shortest paths that return the paths ---------------------------------------
+
+
+def ordered(value):
+    """``value`` with dict order and generator contents made comparable."""
+    if isinstance(value, dict):
+        return [(k, ordered(v)) for k, v in value.items()]
+    if isinstance(value, (list, tuple)) or hasattr(value, "__next__"):
+        return [ordered(v) for v in value]
+    if isinstance(value, float) and value.is_integer():
+        return ("float", value)
+    return value
+
+
+def same_outcome(func, *args, **kwargs):
+    def run(backend):
+        try:
+            return ("ok", ordered(func(*args, backend=backend, **kwargs)))
+        except Exception as exc:
+            return (type(exc), exc.args)
+
+    ours, ref = run("rustnx"), run("networkx")
+    assert ours == ref
+    return ref
+
+
+def path_queries(G, rng):
+    nodes = list(G)
+    picks = rng.sample(nodes, min(4, len(nodes))) + ["not-a-node"]
+    return [(s, t) for s in picks for t in picks]
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_unweighted_paths(seed, directed):
+    G = random_graph(seed, directed, "none")
+    rng = random.Random(seed)
+    for s, t in path_queries(G, rng):
+        same_outcome(nx.bidirectional_shortest_path, G, s, t)
+        same_outcome(nx.has_path, G, s, t)
+        same_outcome(nx.shortest_path, G, s, t)
+        same_outcome(nx.shortest_path_length, G, s, t)
+    for v in list(G)[:4] + ["not-a-node"]:
+        for cutoff in [None, 0, 1, 2.5]:
+            same_outcome(nx.single_source_shortest_path, G, v, cutoff=cutoff)
+            same_outcome(nx.single_target_shortest_path, G, v, cutoff=cutoff)
+        same_outcome(nx.shortest_path, G, source=v)
+        same_outcome(nx.shortest_path, G, target=v)
+        same_outcome(nx.shortest_path_length, G, source=v)
+        same_outcome(nx.shortest_path_length, G, target=v)
+    for cutoff in [None, 1]:
+        same_outcome(nx.all_pairs_shortest_path, G, cutoff=cutoff)
+    same_outcome(nx.shortest_path_length, G)
+
+
+@pytest.mark.parametrize("weights", WEIGHTS)
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_dijkstra_paths(seed, directed, weights):
+    G = random_graph(seed, directed, weights)
+    rng = random.Random(seed)
+    for s, t in path_queries(G, rng):
+        same_outcome(nx.dijkstra_path, G, s, t)
+        same_outcome(nx.dijkstra_path_length, G, s, t)
+        same_outcome(nx.single_source_dijkstra, G, s, target=t)
+        same_outcome(nx.single_source_dijkstra, G, s, target=t, cutoff=2)
+        same_outcome(nx.shortest_path_length, G, s, t, weight="weight")
+    for v in list(G)[:4] + ["not-a-node"]:
+        for cutoff in [None, 0, 1, 2.5]:
+            same_outcome(nx.single_source_dijkstra_path, G, v, cutoff=cutoff)
+            same_outcome(nx.single_source_dijkstra, G, v, cutoff=cutoff)
+        same_outcome(nx.shortest_path, G, source=v, weight="weight")
+        same_outcome(nx.shortest_path, G, target=v, weight="weight")
+        same_outcome(nx.shortest_path_length, G, source=v, weight="weight")
+        same_outcome(nx.shortest_path_length, G, target=v, weight="weight")
+    for cutoff in [None, 2]:
+        same_outcome(nx.all_pairs_dijkstra_path, G, cutoff=cutoff)
+        same_outcome(nx.all_pairs_dijkstra, G, cutoff=cutoff)
+    same_outcome(nx.shortest_path_length, G, weight="weight")
+
+
+def test_dijkstra_path_ties_follow_networkx():
+    # Equal-length routes: NetworkX keeps the route found last before the
+    # node is finalized, and orders the paths dict by version.
+    G = nx.DiGraph()
+    G.add_weighted_edges_from([(0, 1, 5), (0, 2, 1), (2, 1, 1), (1, 3, 1), (0, 3, 3)])
+    same_outcome(nx.single_source_dijkstra_path, G, 0)
+    same_outcome(nx.single_source_dijkstra, G, 0)
+    same_outcome(nx.dijkstra_path, G, 0, 3)
+
+
+def test_paths_negative_weights():
+    G = nx.Graph()
+    G.add_weighted_edges_from([(0, 1, 1), (1, 2, -3), (2, 3, 1)])
+    G.add_node(9)
+    for target in [3, 9, "not-a-node"]:
+        same_outcome(nx.dijkstra_path, G, 0, target)
+        same_outcome(nx.dijkstra_path_length, G, 0, target)
+    same_outcome(nx.single_source_dijkstra_path, G, 0)
+    same_outcome(nx.all_pairs_dijkstra_path, G)
+    same_outcome(nx.shortest_path, G, target=3, weight="weight")
+
+
+def test_shortest_path_methods():
+    G = random_graph(3, True, "int")
+    same_outcome(nx.shortest_path, G, 0, 1, method="nope")
+    same_outcome(nx.shortest_path_length, G, 0, 1, method="nope")
+    with pytest.raises(NotImplementedError):
+        nx.shortest_path(G, 0, weight="weight", method="bellman-ford", backend="rustnx")
+    # weight=None ignores the method
+    same_outcome(nx.shortest_path, G, 0, method="bellman-ford")

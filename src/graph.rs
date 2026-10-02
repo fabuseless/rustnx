@@ -135,6 +135,34 @@ impl CoreGraph {
         Ok((&exact.csr, Some(w.as_slice())))
     }
 
+    /// Like `reverse_exact`, but exact even without weights: path-returning
+    /// searches break ties by neighbor order, so the reversed graph's rows
+    /// must be in NetworkX's `G._pred` order.
+    pub fn reverse_exact_order(&self, attr: Option<&str>) -> PyResult<(&Csr, Option<&[f64]>)> {
+        if !self.directed || self.pred_is_exact {
+            return Ok((self.adj(true), self.weight_slice(attr, true)?));
+        }
+        let exact = self
+            .exact_pred
+            .get()
+            .ok_or_else(|| PyNotImplementedError::new_err("exact predecessor order not loaded"))?;
+        let w = match attr {
+            None => None,
+            Some(a) => Some(
+                exact
+                    .weights
+                    .get(a)
+                    .ok_or_else(|| {
+                        PyNotImplementedError::new_err(format!(
+                            "edge attribute {a:?} was not converted"
+                        ))
+                    })?
+                    .as_slice(),
+            ),
+        };
+        Ok((&exact.csr, w))
+    }
+
     pub fn weights_info(&self, attr: Option<&str>) -> (bool, bool) {
         match attr.and_then(|a| self.weights.get(a)) {
             Some(w) => (w.all_int, w.has_hidden),

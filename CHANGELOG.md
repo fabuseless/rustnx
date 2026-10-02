@@ -26,6 +26,13 @@ versions may change behavior.
   use parallel Dijkstra (about 40×).
 - `all_pairs_shortest_path_length` and `all_pairs_dijkstra_path_length`,
   computed in parallel batches.
+- Shortest paths that return the paths: `shortest_path`,
+  `shortest_path_length`, `single_source_shortest_path`,
+  `single_target_shortest_path`, `bidirectional_shortest_path`, `has_path`,
+  `dijkstra_path`, `dijkstra_path_length`, `single_source_dijkstra`,
+  `single_source_dijkstra_path`, `all_pairs_shortest_path`,
+  `all_pairs_dijkstra_path` and `all_pairs_dijkstra`. They return the same
+  paths as NetworkX, ties included.
 
 - NetworkX backend (opt in with `nx.config.backend_priority = ["rustnx"]`)
   with Rust implementations of:

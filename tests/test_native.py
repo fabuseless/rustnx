@@ -129,12 +129,24 @@ def algorithm_calls(H, directed):
         "pagerank_missing_attr": lambda G, b: nx.pagerank(G, weight="nope", backend=b),
         "all_pairs": lambda G, b: nx.all_pairs_shortest_path_length(G, backend=b),
         "all_pairs_w": lambda G, b: nx.all_pairs_dijkstra_path_length(G, backend=b),
+        "all_paths": lambda G, b: nx.all_pairs_shortest_path(G, backend=b),
+        "all_paths_w": lambda G, b: nx.all_pairs_dijkstra_path(G, backend=b),
         "diameter": lambda G, b: nx.diameter(G, backend=b),
         "avg_spl_w": lambda G, b: nx.average_shortest_path_length(G, weight="weight", backend=b),
     }
     if src is not None:
         calls["bfs"] = lambda G, b: nx.single_source_shortest_path_length(G, src, backend=b)
         calls["dijkstra"] = lambda G, b: nx.single_source_dijkstra_path_length(G, src, backend=b)
+        calls["paths"] = lambda G, b: list(nx.single_source_shortest_path(G, src, backend=b).items())
+        calls["paths_w"] = lambda G, b: list(nx.single_source_dijkstra_path(G, src, backend=b).items())
+        calls["target_paths"] = lambda G, b: list(nx.shortest_path(G, target=src, backend=b).items())
+        calls["target_paths_w"] = lambda G, b: list(
+            nx.shortest_path(G, target=src, weight="weight", backend=b).items()
+        )
+        dst = list(H)[-1]
+        calls["pair"] = lambda G, b: nx.shortest_path(G, src, dst, backend=b)
+        calls["pair_w"] = lambda G, b: nx.dijkstra_path(G, src, dst, backend=b)
+        calls["has_path"] = lambda G, b: nx.has_path(G, dst, src, backend=b)
     if directed:
         calls["scc"] = lambda G, b: list(nx.strongly_connected_components(G, backend=b))
         calls["wcc"] = lambda G, b: list(nx.weakly_connected_components(G, backend=b))
