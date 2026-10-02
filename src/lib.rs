@@ -15,7 +15,7 @@ use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 
 use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
-use algorithms::{centrality, directed, distance};
+use algorithms::{centrality, cluster, directed, distance, paths};
 use graph::CoreGraph;
 
 impl From<NegativeCycle> for PyErr {
@@ -218,6 +218,22 @@ impl CoreGraph {
         }))
     }
 
+    /// Unscaled edge betweenness, one value per edge in `edges_in_order`.
+    #[pyo3(signature = (weight=None, sources=None))]
+    fn edge_betweenness(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+        sources: Option<Vec<u32>>,
+    ) -> PyResult<Vec<f64>> {
+        let w = self.weight_slice(weight, false)?;
+        let sources = self.sources_or_all(sources)?;
+        Ok(py.detach(|| {
+            let (edge_id, m) = self.edge_ids();
+            centrality::edge_betweenness(&self.succ, self.n, w, &edge_id, m, &sources)
+        }))
+    }
+
     #[pyo3(signature = (distance=None, wf_improved=true, sources=None))]
     fn closeness(
         &self,
@@ -346,6 +362,152 @@ impl CoreGraph {
         }))
     }
 
+    /// BFS discovery order and each node's discoverer (`NO_PARENT` for the
+    /// source). `reverse` searches the reversed graph in exact order.
+    #[pyo3(signature = (source, cutoff, reverse=false))]
+    fn bfs_tree(
+        &self,
+        py: Python<'_>,
+        source: usize,
+        cutoff: f64,
+        reverse: bool,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        self.check_index(source)?;
+        let adj = self.path_adj(None, reverse)?.0;
+        Ok(py.detach(|| paths::bfs_tree(adj, self.n, source, cutoff)))
+    }
+
+    /// Dijkstra with parents: `(order, dist, parent of each order entry,
+    /// first-seen order)`. Raises ValueError on a negative cycle.
+    #[pyo3(signature = (source, weight=None, cutoff=None, target=None, reverse=false))]
+    #[allow(clippy::type_complexity)]
+    fn dijkstra_tree(
+        &self,
+        py: Python<'_>,
+        source: usize,
+        weight: Option<&str>,
+        cutoff: Option<f64>,
+        target: Option<usize>,
+        reverse: bool,
+    ) -> PyResult<(Vec<u32>, Vec<f64>, Vec<u32>, Vec<u32>)> {
+        self.check_index(source)?;
+        let (adj, w) = self.path_adj(weight, reverse)?;
+        let t = py.detach(|| paths::dijkstra_tree(adj, self.n, w, source, cutoff, target))?;
+        let parents = t.order.iter().map(|&v| t.parent[v as usize]).collect();
+        Ok((t.order, t.dist, parents, t.seen_order))
+    }
+
+    /// Dijkstra from `source` until `target` is finalized: `(distance,
+    /// path)`, or `None` if `target` isn't reached.
+    #[pyo3(signature = (source, target, weight=None, cutoff=None))]
+    fn dijkstra_path(
+        &self,
+        py: Python<'_>,
+        source: usize,
+        target: usize,
+        weight: Option<&str>,
+        cutoff: Option<f64>,
+    ) -> PyResult<Option<(f64, Vec<u32>)>> {
+        self.check_index(source)?;
+        self.check_index(target)?;
+        let w = self.weight_slice(weight, false)?;
+        let t = py
+            .detach(|| paths::dijkstra_tree(&self.succ, self.n, w, source, cutoff, Some(target)))?;
+        if t.order.last() != Some(&(target as u32)) {
+            return Ok(None);
+        }
+        let mut path = vec![target as u32];
+        while *path.last().expect("non-empty") != source as u32 {
+            path.push(t.parent[*path.last().expect("non-empty") as usize]);
+        }
+        path.reverse();
+        Ok(Some((*t.dist.last().expect("non-empty"), path)))
+    }
+
+    /// Nodes reachable from `source` (following in-edges if `reverse`),
+    /// excluding `source` itself. In no particular order.
+    #[pyo3(signature = (source, reverse=false))]
+    fn reachable(&self, py: Python<'_>, source: usize, reverse: bool) -> PyResult<Vec<u32>> {
+        self.check_index(source)?;
+        let adj = self.adj(reverse);
+        let (mut order, _) = py.detach(|| paths::bfs_tree(adj, self.n, source, f64::INFINITY));
+        order.remove(0);
+        Ok(order)
+    }
+
+    /// `(t, d, db)` triangle counts per node (see `cluster::triangle_counts`),
+    /// for `nodes` or every node. `successors_only` counts a directed graph
+    /// with the undirected formula over its successors.
+    #[pyo3(signature = (nodes=None, successors_only=false))]
+    fn triangle_counts(
+        &self,
+        py: Python<'_>,
+        nodes: Option<Vec<u32>>,
+        successors_only: bool,
+    ) -> PyResult<Vec<(u64, u64, u64)>> {
+        let nodes = self.sources_or_all(nodes)?;
+        let pred = (self.directed && !successors_only).then(|| self.adj(true));
+        Ok(py.detach(|| cluster::triangle_counts(&self.succ, pred, self.n, &nodes)))
+    }
+
+    /// `bidirectional_shortest_path` as node positions, or `None` if no path.
+    fn bidirectional_bfs(
+        &self,
+        py: Python<'_>,
+        source: usize,
+        target: usize,
+    ) -> PyResult<Option<Vec<u32>>> {
+        self.check_index(source)?;
+        self.check_index(target)?;
+        let rev = self.path_adj(None, true)?.0;
+        Ok(py.detach(|| paths::bidirectional_bfs(&self.succ, rev, self.n, source, target)))
+    }
+
+    /// `bfs_tree` for each source, in parallel.
+    fn bfs_tree_many(
+        &self,
+        py: Python<'_>,
+        sources: Vec<u32>,
+        cutoff: f64,
+    ) -> PyResult<Vec<(Vec<u32>, Vec<u32>)>> {
+        let sources = self.sources_or_all(Some(sources))?;
+        Ok(py.detach(|| {
+            use rayon::prelude::*;
+            sources
+                .par_iter()
+                .map(|&s| paths::bfs_tree(&self.succ, self.n, s as usize, cutoff))
+                .collect()
+        }))
+    }
+
+    /// `dijkstra_tree` for each source, in parallel; `None` on a negative cycle.
+    #[pyo3(signature = (sources, weight=None, cutoff=None))]
+    #[allow(clippy::type_complexity)]
+    fn dijkstra_tree_many(
+        &self,
+        py: Python<'_>,
+        sources: Vec<u32>,
+        weight: Option<&str>,
+        cutoff: Option<f64>,
+    ) -> PyResult<Vec<Option<(Vec<u32>, Vec<f64>, Vec<u32>, Vec<u32>)>>> {
+        let sources = self.sources_or_all(Some(sources))?;
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| {
+            use rayon::prelude::*;
+            sources
+                .par_iter()
+                .map(|&s| {
+                    paths::dijkstra_tree(&self.succ, self.n, w, s as usize, cutoff, None)
+                        .ok()
+                        .map(|t| {
+                            let parents = t.order.iter().map(|&v| t.parent[v as usize]).collect();
+                            (t.order, t.dist, parents, t.seen_order)
+                        })
+                })
+                .collect()
+        }))
+    }
+
     /// rustworkx's strongly connected components (petgraph Kosaraju order).
     fn rx_scc(&self, py: Python<'_>) -> Vec<Vec<u32>> {
         py.detach(|| rx::kosaraju_scc(&self.succ, self.adj(true), self.n))
@@ -405,6 +567,60 @@ impl CoreGraph {
 }
 
 impl CoreGraph {
+    fn path_adj(
+        &self,
+        weight: Option<&str>,
+        reverse: bool,
+    ) -> PyResult<(&graph::Csr, Option<&[f64]>)> {
+        if reverse {
+            self.reverse_exact_order(weight)
+        } else {
+            Ok((&self.succ, self.weight_slice(weight, false)?))
+        }
+    }
+
+    /// For each arc of `succ`, the position of its edge in `edges_in_order`
+    /// (both arcs of an undirected edge share one), and the edge count.
+    fn edge_ids(&self) -> (Vec<u32>, usize) {
+        let m = self.succ.targets.len();
+        if self.directed {
+            return ((0..m as u32).collect(), m);
+        }
+        // An undirected edge {t, v} (t < v) is numbered while scanning row t;
+        // its mirror arc sits in row v. For a fixed v those edges are
+        // numbered in increasing t, so pair them with row v's arcs to
+        // smaller targets, sorted by target.
+        let low: Vec<Vec<u32>> = (0..self.n)
+            .map(|v| {
+                let mut arcs: Vec<u32> = self
+                    .succ
+                    .range(v)
+                    .filter(|&e| (self.succ.targets[e] as usize) < v)
+                    .map(|e| e as u32)
+                    .collect();
+                arcs.sort_unstable_by_key(|&e| self.succ.targets[e as usize]);
+                arcs
+            })
+            .collect();
+        let mut cursor = vec![0usize; self.n];
+        let mut ids = vec![0u32; m];
+        let mut next = 0u32;
+        for t in 0..self.n {
+            for e in self.succ.range(t) {
+                let v = self.succ.targets[e] as usize;
+                if v >= t {
+                    ids[e] = next;
+                    if v > t {
+                        ids[low[v][cursor[v]] as usize] = next;
+                        cursor[v] += 1;
+                    }
+                    next += 1;
+                }
+            }
+        }
+        (ids, next as usize)
+    }
+
     fn sources_or_all(&self, sources: Option<Vec<u32>>) -> PyResult<Vec<u32>> {
         let sources = sources.unwrap_or_else(|| all_nodes(self.n));
         for &v in &sources {

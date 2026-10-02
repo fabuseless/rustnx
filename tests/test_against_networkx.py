@@ -726,3 +726,213 @@ def test_backend_function_list_matches_implementations():
     for name in algorithms.__all__:
         assert hasattr(interface, name), name
         assert hasattr(nx, name), name
+
+
+# --- Shortest paths that return the paths ---------------------------------------
+
+
+def ordered(value):
+    """``value`` with dict order and generator contents made comparable."""
+    if isinstance(value, dict):
+        return [(k, ordered(v)) for k, v in value.items()]
+    if isinstance(value, (list, tuple)) or hasattr(value, "__next__"):
+        return [ordered(v) for v in value]
+    if isinstance(value, float) and value.is_integer():
+        return ("float", value)
+    return value
+
+
+def same_outcome(func, *args, **kwargs):
+    def run(backend):
+        try:
+            return ("ok", ordered(func(*args, backend=backend, **kwargs)))
+        except Exception as exc:
+            return (type(exc), exc.args)
+
+    ours, ref = run("rustnx"), run("networkx")
+    assert ours == ref
+    return ref
+
+
+def path_queries(G, rng):
+    nodes = list(G)
+    picks = rng.sample(nodes, min(4, len(nodes))) + ["not-a-node"]
+    return [(s, t) for s in picks for t in picks]
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_unweighted_paths(seed, directed):
+    G = random_graph(seed, directed, "none")
+    rng = random.Random(seed)
+    for s, t in path_queries(G, rng):
+        same_outcome(nx.bidirectional_shortest_path, G, s, t)
+        same_outcome(nx.has_path, G, s, t)
+        same_outcome(nx.shortest_path, G, s, t)
+        same_outcome(nx.shortest_path_length, G, s, t)
+    for v in list(G)[:4] + ["not-a-node"]:
+        for cutoff in [None, 0, 1, 2.5]:
+            same_outcome(nx.single_source_shortest_path, G, v, cutoff=cutoff)
+            same_outcome(nx.single_target_shortest_path, G, v, cutoff=cutoff)
+        same_outcome(nx.shortest_path, G, source=v)
+        same_outcome(nx.shortest_path, G, target=v)
+        same_outcome(nx.shortest_path_length, G, source=v)
+        same_outcome(nx.shortest_path_length, G, target=v)
+    for cutoff in [None, 1]:
+        same_outcome(nx.all_pairs_shortest_path, G, cutoff=cutoff)
+    same_outcome(nx.shortest_path_length, G)
+
+
+@pytest.mark.parametrize("weights", WEIGHTS)
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_dijkstra_paths(seed, directed, weights):
+    G = random_graph(seed, directed, weights)
+    rng = random.Random(seed)
+    for s, t in path_queries(G, rng):
+        same_outcome(nx.dijkstra_path, G, s, t)
+        same_outcome(nx.dijkstra_path_length, G, s, t)
+        same_outcome(nx.single_source_dijkstra, G, s, target=t)
+        same_outcome(nx.single_source_dijkstra, G, s, target=t, cutoff=2)
+        same_outcome(nx.shortest_path_length, G, s, t, weight="weight")
+    for v in list(G)[:4] + ["not-a-node"]:
+        for cutoff in [None, 0, 1, 2.5]:
+            same_outcome(nx.single_source_dijkstra_path, G, v, cutoff=cutoff)
+            same_outcome(nx.single_source_dijkstra, G, v, cutoff=cutoff)
+        same_outcome(nx.shortest_path, G, source=v, weight="weight")
+        same_outcome(nx.shortest_path, G, target=v, weight="weight")
+        same_outcome(nx.shortest_path_length, G, source=v, weight="weight")
+        same_outcome(nx.shortest_path_length, G, target=v, weight="weight")
+    for cutoff in [None, 2]:
+        same_outcome(nx.all_pairs_dijkstra_path, G, cutoff=cutoff)
+        same_outcome(nx.all_pairs_dijkstra, G, cutoff=cutoff)
+    same_outcome(nx.shortest_path_length, G, weight="weight")
+
+
+def test_dijkstra_path_ties_follow_networkx():
+    # Equal-length routes: NetworkX keeps the route found last before the
+    # node is finalized, and orders the paths dict by version.
+    G = nx.DiGraph()
+    G.add_weighted_edges_from([(0, 1, 5), (0, 2, 1), (2, 1, 1), (1, 3, 1), (0, 3, 3)])
+    same_outcome(nx.single_source_dijkstra_path, G, 0)
+    same_outcome(nx.single_source_dijkstra, G, 0)
+    same_outcome(nx.dijkstra_path, G, 0, 3)
+
+
+def test_paths_negative_weights():
+    G = nx.Graph()
+    G.add_weighted_edges_from([(0, 1, 1), (1, 2, -3), (2, 3, 1)])
+    G.add_node(9)
+    for target in [3, 9, "not-a-node"]:
+        same_outcome(nx.dijkstra_path, G, 0, target)
+        same_outcome(nx.dijkstra_path_length, G, 0, target)
+    same_outcome(nx.single_source_dijkstra_path, G, 0)
+    same_outcome(nx.all_pairs_dijkstra_path, G)
+    same_outcome(nx.shortest_path, G, target=3, weight="weight")
+
+
+def test_shortest_path_methods():
+    G = random_graph(3, True, "int")
+    same_outcome(nx.shortest_path, G, 0, 1, method="nope")
+    same_outcome(nx.shortest_path_length, G, 0, 1, method="nope")
+    with pytest.raises(NotImplementedError):
+        nx.shortest_path(G, 0, weight="weight", method="bellman-ford", backend="rustnx")
+    # weight=None ignores the method
+    same_outcome(nx.shortest_path, G, 0, method="bellman-ford")
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_descendants_ancestors(seed, directed):
+    G = random_graph(seed, directed, "none")
+    for v in list(G)[:5] + ["not-a-node"]:
+        same_outcome(nx.descendants, G, v)
+        same_outcome(nx.ancestors, G, v)
+
+
+# --- Clustering -----------------------------------------------------------------
+
+
+def exact(func, *args, **kwargs):
+    """Like ``same_outcome``, but floats must match bit for bit."""
+    def run(backend):
+        try:
+            result = func(*args, backend=backend, **kwargs)
+            if isinstance(result, dict):
+                result = [(k, type(v), v) for k, v in result.items()]
+            else:
+                result = (type(result), result)
+            return ("ok", result)
+        except Exception as exc:
+            return (type(exc), exc.args)
+
+    assert run("rustnx") == run("networkx")
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_clustering(seed, directed):
+    G = random_graph(seed, directed, "none")
+    if not directed:
+        # random_graph is sparse; add triangles.
+        nodes = list(G)
+        rng = random.Random(seed)
+        for _ in range(len(nodes)):
+            a, b, c = (rng.choice(nodes) for _ in range(3))
+            G.add_edges_from([(a, b), (b, c), (c, a)])
+    else:
+        G.add_edges_from([(v, u) for u, v in list(G.edges)[::3]])  # reciprocal
+    nodes = list(G)
+    subsets = [None, nodes[0], nodes[:5], nodes[3:1:-1] + nodes[:2], ["not-a-node", nodes[-1]], []]
+    for subset in subsets:
+        exact(nx.clustering, G, subset)
+        if not directed:
+            exact(nx.triangles, G, subset)
+        if subset is None or (isinstance(subset, list) and subset):
+            for count_zeros in [True, False]:
+                exact(nx.average_clustering, G, subset, count_zeros=count_zeros)
+    exact(nx.transitivity, G)
+    if directed:
+        exact(nx.triangles, G)
+
+
+def test_clustering_edge_cases():
+    for G in [nx.Graph(), nx.DiGraph(), nx.path_graph(3), nx.complete_graph(1)]:
+        exact(nx.clustering, G)
+        exact(nx.transitivity, G)
+        exact(nx.average_clustering, G)
+    G = nx.Graph([(0, 0), (0, 1), (1, 2), (2, 0)])  # self-loop
+    exact(nx.clustering, G)
+    exact(nx.triangles, G)
+    exact(nx.transitivity, G)
+
+
+# --- Edge betweenness -----------------------------------------------------------
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_edge_betweenness(seed, directed, weights):
+    G = random_graph(seed, directed, weights)
+    weight = None if weights == "none" else "weight"
+    for normalized in [True, False]:
+        ours, ref = both(
+            nx.edge_betweenness_centrality, G, normalized=normalized, weight=weight
+        )
+        assert_close_dicts(ours, ref)
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_edge_betweenness_sampled(seed):
+    G = random_graph(seed, directed=seed % 2 == 0, weights="int")
+    k = max(1, len(G) // 3)
+    for weight in [None, "weight"]:
+        ours, ref = both(nx.edge_betweenness_centrality, G, k=k, weight=weight, seed=seed)
+        assert_close_dicts(ours, ref)
+
+
+def test_edge_betweenness_small_graphs():
+    for G in [nx.Graph(), nx.Graph([(0, 0)]), nx.path_graph(2), nx.DiGraph([(1, 0)])]:
+        ours, ref = both(nx.edge_betweenness_centrality, G)
+        assert_close_dicts(ours, ref)

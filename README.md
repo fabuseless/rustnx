@@ -94,6 +94,7 @@ rx.dijkstra_shortest_path_lengths(g, 0, float)
 | Function | Notes |
 |---|---|
 | `betweenness_centrality` | Unweighted and weighted, `normalized`, `endpoints`, and `k` sampling (picks the same nodes as NetworkX for a given `seed`). Parallel. |
+| `edge_betweenness_centrality` | Unweighted and weighted, `normalized`, and `k` sampling (same nodes as NetworkX for a given `seed`). Parallel. Rescaled by the installed NetworkX's own code. |
 | `closeness_centrality` | Unweighted and `distance=`, `wf_improved`, single node `u=`. Parallel. Results are **bit-for-bit identical** to NetworkX. |
 | `single_source_shortest_path_length` | Same nodes and same dict order as NetworkX, with `cutoff`. |
 | `single_source_dijkstra_path_length` | Same order as NetworkX, with `cutoff`. Integer weights give integer distances. Raises the same error on negative cycles. |
@@ -105,6 +106,11 @@ rx.dijkstra_shortest_path_lengths(g, 0, float)
 | `eccentricity`, `diameter`, `radius`, `center`, `periphery` | Unweighted: bit-parallel BFS. Weighted: parallel Dijkstra. Same errors as NetworkX (disconnected graphs, negative weights). `usebounds=True`, `e=`/`sp=` and trees in `center` run in NetworkX. |
 | `average_shortest_path_length`, `wiener_index` | As above; weighted sums are added in NetworkX's order, so float results match exactly. |
 | `all_pairs_shortest_path_length`, `all_pairs_dijkstra_path_length` | Parallel, in batches; same order as NetworkX. |
+| `shortest_path`, `shortest_path_length`, `single_source_shortest_path`, `single_target_shortest_path`, `bidirectional_shortest_path`, `has_path` | The same paths as NetworkX, ties included, in the same dict order. `shortest_path` with no source and no target runs in NetworkX. |
+| `dijkstra_path`, `dijkstra_path_length`, `single_source_dijkstra`, `single_source_dijkstra_path` | The same paths as NetworkX, ties included. The paths dict follows the installed NetworkX's order, which changed in 3.6. Weighted `shortest_path` between two nodes uses `bidirectional_dijkstra`, which runs in NetworkX. |
+| `all_pairs_shortest_path`, `all_pairs_dijkstra_path`, `all_pairs_dijkstra` | Parallel, in batches. |
+| `descendants`, `ancestors` | Same sets and errors as NetworkX. |
+| `triangles`, `clustering`, `average_clustering`, `transitivity` | Unweighted, directed and undirected, with `nodes=`. Parallel. Results are **bit-for-bit identical** to NetworkX. Weighted clustering runs in NetworkX. |
 
 ## Benchmarks
 
@@ -114,6 +120,8 @@ rx.dijkstra_shortest_path_lengths(g, 0, float)
 |---|---|---|---|---|
 | `betweenness_centrality` | 4,000 nodes / 16k edges | 40.9 s | 0.38 s | **107×** |
 | `betweenness_centrality` (weighted) | 4,000 / 16k | 115.3 s | 1.24 s | **93×** |
+| `edge_betweenness_centrality` | 4,000 / 16k | 42.3 s | 0.46 s | **93×** |
+| `edge_betweenness_centrality` (weighted) | 4,000 / 16k | 106.8 s | 1.33 s | **80×** |
 | `closeness_centrality` | 4,000 / 16k | 5.45 s | 0.0097 s | **562×** |
 | `single_source_dijkstra_path_length` | 160,000 / 319k | 0.38 s | 0.063 s | 6× |
 | `single_source_shortest_path_length` | 160,000 / 319k | 0.11 s | 0.020 s | 5× |
@@ -129,6 +137,12 @@ rx.dijkstra_shortest_path_lengths(g, 0, float)
 | `eccentricity` (weighted) | 5,000 / 15k | 57.0 s | 1.41 s | 40× |
 | `all_pairs_dijkstra_path_length` | 5,000 / 15k | 60.2 s | 4.90 s | 12× |
 | `all_pairs_shortest_path_length` | 5,000 / 15k | 9.6 s | 2.56 s | 4× (building 25M Python dict entries dominates) |
+| `dijkstra_path` (50 pairs) | 200,000 / 1M | 117 s | 3.3 s | **35×** |
+| `single_source_dijkstra_path` | 200,000 / 1M | 4.56 s | 0.83 s | 5.5× |
+| `single_source_shortest_path` | 200,000 / 1M | 1.10 s | 0.57 s | 1.9× (building the path lists dominates) |
+| `clustering` | 100,000 / 500k (Barabási–Albert) | 5.09 s | 0.092 s | **55×** |
+| `transitivity` | 100,000 / 500k (Barabási–Albert) | 5.12 s | 0.088 s | **58×** |
+| `triangles` | 100,000 / 500k (Barabási–Albert) | 1.52 s | 0.091 s | 17× |
 
 The rustnx column is a repeat call. The first call on a graph also converts
 it to rustnx's format (about 0.15–0.25 s for a 1M-edge directed graph), and
@@ -250,12 +264,8 @@ Layout:
 
 ## Roadmap
 
-- More algorithms: `pagerank`, all-pairs shortest paths, `shortest_path`
-  (actual paths), `edge_betweenness_centrality`, `topological_sort`, strongly
-  and weakly connected components, `clustering`/`triangles`.
-- A native `rustnx.Graph` that lives in Rust, so there's no conversion at all.
+- More algorithms: `bidirectional_dijkstra`, weighted clustering.
 - Multigraph support.
-- A rustworkx-compatible API over the same core.
 
 ## License
 

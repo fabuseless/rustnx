@@ -32,6 +32,8 @@ struct BcState {
     seen: Vec<f64>,
     has_seen: Vec<bool>,
     preds: Vec<Vec<u32>>,
+    /// The arc (CSR position) each entry of `preds` arrived by.
+    pred_arcs: Vec<Vec<u32>>,
     touched: Vec<u32>,
     heap: MinHeap<(u32, u32)>,
 }
@@ -49,6 +51,7 @@ impl BcState {
             seen: vec![0.0; wn],
             has_seen: vec![false; wn],
             preds: vec![Vec::new(); wn],
+            pred_arcs: vec![Vec::new(); wn],
             touched: Vec::new(),
             heap: MinHeap::new(),
         }
@@ -91,6 +94,7 @@ impl BcState {
             self.has_seen[v] = false;
             self.sigma[v] = 0.0;
             self.preds[v].clear();
+            self.pred_arcs[v].clear();
         }
         self.touched.clear();
         self.order.clear();
@@ -127,9 +131,12 @@ impl BcState {
                     self.sigma[w] = 0.0;
                     self.preds[w].clear();
                     self.preds[w].push(v as u32);
+                    self.pred_arcs[w].clear();
+                    self.pred_arcs[w].push(e as u32);
                 } else if self.has_seen[w] && vw_dist == self.seen[w] {
                     self.sigma[w] += self.sigma[v];
                     self.preds[w].push(v as u32);
+                    self.pred_arcs[w].push(e as u32);
                 }
             }
         }
@@ -175,6 +182,86 @@ impl BcState {
             }
         }
     }
+    /// `_accumulate_edges`: adds each shortest-path DAG arc's share to
+    /// `edge_bc[edge_id[arc]]`.
+    fn accumulate_edges(
+        &mut self,
+        adj: &Csr,
+        weighted: bool,
+        edge_id: &[u32],
+        edge_bc: &mut [f64],
+    ) {
+        for &v in &self.order {
+            self.delta[v as usize] = 0.0;
+        }
+        if weighted {
+            for &w in self.order.iter().rev() {
+                let w = w as usize;
+                let coeff = (1.0 + self.delta[w]) / self.sigma[w];
+                for (&v, &arc) in self.preds[w].iter().zip(&self.pred_arcs[w]) {
+                    let c = self.sigma[v as usize] * coeff;
+                    edge_bc[edge_id[arc as usize] as usize] += c;
+                    self.delta[v as usize] += c;
+                }
+            }
+        } else {
+            // Every node one level further out is finished before `v`, so
+            // `v` can pull its share from its successors on the DAG.
+            for &v in self.order.iter().rev() {
+                let v = v as usize;
+                let next = self.level[v] + 1;
+                for e in adj.range(v) {
+                    let w = adj.targets[e] as usize;
+                    if self.level[w] == next {
+                        let c = self.sigma[v] * ((1.0 + self.delta[w]) / self.sigma[w]);
+                        edge_bc[edge_id[e] as usize] += c;
+                        self.delta[v] += c;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Unscaled edge betweenness summed over `sources`, indexed by edge id
+/// (`edge_id` maps each arc of `adj` to its edge; `num_edges` ids).
+pub fn edge_betweenness(
+    adj: &Csr,
+    n: usize,
+    weights: Option<&[f64]>,
+    edge_id: &[u32],
+    num_edges: usize,
+    sources: &[u32],
+) -> Vec<f64> {
+    if n == 0 || sources.is_empty() || num_edges == 0 {
+        return vec![0.0; num_edges];
+    }
+    let max_by_memory = (BLOCK_MEMORY / (8 * num_edges.max(n))).max(1);
+    let nblocks = MAX_BLOCKS.min(max_by_memory).min(sources.len());
+    let block_len = sources.len().div_ceil(nblocks);
+    let partials: Vec<Vec<f64>> = sources
+        .par_chunks(block_len)
+        .map(|block| {
+            let mut state = BcState::new(n, weights.is_some());
+            let mut bc = vec![0.0; num_edges];
+            for &s in block {
+                let s = s as usize;
+                match weights {
+                    Some(w) => state.dijkstra(adj, w, s),
+                    None => state.bfs(adj, s),
+                }
+                state.accumulate_edges(adj, weights.is_some(), edge_id, &mut bc);
+            }
+            bc
+        })
+        .collect();
+    let mut total = vec![0.0; num_edges];
+    for part in &partials {
+        for (t, p) in total.iter_mut().zip(part) {
+            *t += p;
+        }
+    }
+    total
 }
 
 /// Unscaled betweenness summed over `sources`.
