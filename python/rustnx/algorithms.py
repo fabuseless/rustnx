@@ -81,6 +81,10 @@ class _MutationGuard:
 
     def __init__(self, G):
         self.graph = G._source
+        if G._core.is_native():
+            # Native graphs are immutable: nothing can change.
+            self._cache = self._key = None
+            return
         self._cache = getattr(self.graph, "__networkx_cache__", None)
         # Views (subgraph, reverse, ...) keep their own cache, which changes
         # to the underlying graph don't clear.
@@ -92,11 +96,14 @@ class _MutationGuard:
         self._cache[self._key] = True
 
     def changed(self):
+        if self._key is None:
+            return False
         cache = getattr(self.graph, "__networkx_cache__", None)
         return cache is not self._cache or self._key not in cache
 
     def release(self):
-        self._cache.pop(self._key, None)
+        if self._key is not None:
+            self._cache.pop(self._key, None)
 
 
 def _components(G, comps):

@@ -12,9 +12,9 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-use crate::graph::{CoreGraph, Csr, ExactPred, Weights};
+use crate::graph::{CoreGraph, Csr, EdgeAttr, ExactPred, NativeEdges, Weights};
 
-const MAGIC: &[u8; 4] = b"RNX1";
+const MAGIC: &[u8; 4] = b"RNX2";
 
 #[derive(Default)]
 struct Writer(Vec<u8>);
@@ -25,6 +25,16 @@ impl Writer {
     }
     fn flag(&mut self, b: bool) {
         self.0.push(b as u8);
+    }
+    fn u32s(&mut self, v: &[u32]) {
+        self.u64(v.len() as u64);
+        for x in v {
+            self.0.extend_from_slice(&x.to_le_bytes());
+        }
+    }
+    fn bytes(&mut self, v: &[u8]) {
+        self.u64(v.len() as u64);
+        self.0.extend_from_slice(v);
     }
     fn str(&mut self, s: &str) {
         self.u64(s.len() as u64);
@@ -83,6 +93,20 @@ impl<'a> Reader<'a> {
             1 => Ok(true),
             _ => Err(malformed()),
         }
+    }
+    fn u32s(&mut self) -> PyResult<Vec<u32>> {
+        let n = self.len(4)?;
+        Ok(self
+            .take(n * 4)?
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&b| u32::from_le_bytes(b))
+            .collect())
+    }
+    fn bytes(&mut self) -> PyResult<Vec<u8>> {
+        let n = self.len(1)?;
+        Ok(self.take(n)?.to_vec())
     }
     fn str(&mut self) -> PyResult<String> {
         let n = self.len(1)?;
@@ -159,6 +183,19 @@ pub fn to_bytes(g: &CoreGraph) -> Vec<u8> {
             w.f64s(&exact.weights[name]);
         }
     }
+    w.flag(g.pred_is_exact);
+    w.flag(g.native.is_some());
+    if let Some(nat) = &g.native {
+        w.u32s(&nat.src);
+        w.u32s(&nat.dst);
+        w.u32s(&nat.succ_edge);
+        w.u64(nat.attrs.len() as u64);
+        for a in &nat.attrs {
+            w.str(&a.name);
+            w.f64s(&a.values);
+            w.bytes(&a.kinds);
+        }
+    }
     w.0
 }
 
@@ -209,6 +246,42 @@ pub fn from_bytes(data: &[u8]) -> PyResult<CoreGraph> {
         }
         let _ = exact_pred.set(ExactPred { csr, weights: ws });
     }
+    let pred_is_exact = r.flag()?;
+    let native = if r.flag()? {
+        let src = r.u32s()?;
+        let dst = r.u32s()?;
+        let succ_edge = r.u32s()?;
+        let ne = src.len();
+        if dst.len() != ne
+            || succ_edge.len() != m
+            || src.iter().chain(&dst).any(|&v| v as usize >= n)
+            || succ_edge.iter().any(|&e| e as usize >= ne)
+        {
+            return Err(malformed());
+        }
+        let mut attrs = Vec::new();
+        for _ in 0..r.len(1)? {
+            let name = r.str()?;
+            let values = r.f64s()?;
+            let kinds = r.bytes()?;
+            if values.len() != ne || kinds.len() != ne {
+                return Err(malformed());
+            }
+            attrs.push(EdgeAttr {
+                name,
+                values,
+                kinds,
+            });
+        }
+        Some(NativeEdges {
+            src,
+            dst,
+            attrs,
+            succ_edge,
+        })
+    } else {
+        None
+    };
     if r.pos != data.len() {
         return Err(malformed());
     }
@@ -218,7 +291,10 @@ pub fn from_bytes(data: &[u8]) -> PyResult<CoreGraph> {
         succ,
         pred,
         exact_pred,
+        pred_is_exact,
         weights,
+        native,
+        ones: OnceLock::new(),
     })
 }
 

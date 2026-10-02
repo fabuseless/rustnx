@@ -17,6 +17,42 @@ Nothing else changes. Anything rustnx doesn't support, such as other
 functions, multigraphs or callable weights, keeps running in NetworkX, so
 turning it on never breaks working code.
 
+## Native graphs: skip NetworkX entirely
+
+For big graphs, build the graph in Rust directly. There's no conversion
+step, and it uses a fraction of the memory:
+
+```python
+import networkx as nx
+import rustnx
+
+rustnx.enable()  # use rustnx where it can; everything else falls back to NetworkX
+
+G = rustnx.DiGraph([("a", "b", 2.5), ("b", "c", 1), ("c", "a", {"weight": 4})])
+nx.pagerank(G)                       # runs in Rust
+nx.is_tree(G)                        # not in rustnx: converted to NetworkX automatically
+
+G = rustnx.Graph.from_arrays(src, dst, weights)   # NumPy arrays; nodes 0..n-1
+```
+
+| 1M-edge directed graph | `networkx.DiGraph` | `rustnx.DiGraph(edges)` | `rustnx.DiGraph.from_arrays` |
+|---|---|---|---|
+| Build time | 10.0 s | 2.7 s | 0.48 s |
+| Memory | 323 MiB | ~65 MiB | ~47 MiB |
+| `pagerank`, first call | 4.1 s | 0.04 s | 0.04 s |
+
+- **The same results as NetworkX.** Nodes come in order of first
+  appearance, each node's neighbors in insertion order, and duplicate edges
+  merge as `add_edge` would. So every algorithm returns what it would on a
+  `networkx.Graph` built from the same edges.
+- **Read-only.** It has `nodes()`, `edges(data=True)`, `neighbors`,
+  `successors`, `predecessors`, `degree`, `has_edge`, `has_node` and `len`.
+  `G.to_networkx()` gives the full NetworkX API.
+- **Edge attributes must be numeric** (or `None`). Graphs can be pickled.
+- **Call `rustnx.enable()` first.** Without it, NetworkX raises
+  `NotImplementedError` when a rustnx graph reaches a function rustnx doesn't
+  implement, instead of converting it.
+
 ## Supported algorithms
 
 | Function | Notes |

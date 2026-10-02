@@ -8,6 +8,14 @@ versions may change behavior.
 ## [Unreleased]
 
 ### Added
+- Native graphs: `rustnx.Graph` and `rustnx.DiGraph` are built directly in
+  Rust from edge tuples, or from NumPy arrays with `from_arrays`. No
+  conversion is needed, they use about 5× less memory than NetworkX graphs,
+  and they give exactly the results of the equivalent `networkx.Graph`.
+  They're read-only, with a small NetworkX-like query API and
+  `to_networkx()`.
+- `rustnx.enable()` sets NetworkX's backend priority to rustnx, falling back
+  to NetworkX for everything else.
 - Distance measures: `eccentricity`, `diameter`, `radius`, `center`,
   `periphery`, `average_shortest_path_length` and `wiener_index`. Unweighted
   graphs use bit-parallel BFS (about 800× faster than NetworkX); weighted ones

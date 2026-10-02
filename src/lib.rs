@@ -5,6 +5,7 @@
 
 mod algorithms;
 mod graph;
+mod native;
 mod serialize;
 
 use pyo3::exceptions::{PyIndexError, PyValueError};
@@ -62,6 +63,85 @@ impl CoreGraph {
     #[getter]
     fn directed(&self) -> bool {
         self.directed
+    }
+
+    /// Built natively (not converted from a NetworkX graph).
+    fn is_native(&self) -> bool {
+        self.native.is_some()
+    }
+
+    /// Neighbors of `v` (successors for directed graphs), in NetworkX order.
+    fn neighbors(&self, v: usize) -> PyResult<Vec<u32>> {
+        self.check_index(v)?;
+        Ok(self.succ.neighbors(v).to_vec())
+    }
+
+    fn predecessors(&self, v: usize) -> PyResult<Vec<u32>> {
+        self.check_index(v)?;
+        Ok(self.adj(true).neighbors(v).to_vec())
+    }
+
+    fn has_edge(&self, u: usize, v: usize) -> PyResult<bool> {
+        self.check_index(u)?;
+        self.check_index(v)?;
+        Ok(self.succ.neighbors(u).contains(&(v as u32)))
+    }
+
+    /// NetworkX degrees: self-loops count twice; directed = in + out.
+    fn degrees(&self) -> Vec<usize> {
+        (0..self.n)
+            .map(|v| {
+                let out = self.succ.neighbors(v);
+                let loops = out.iter().filter(|&&w| w as usize == v).count();
+                if self.directed {
+                    out.len() + self.adj(true).neighbors(v).len()
+                } else {
+                    out.len() + loops
+                }
+            })
+            .collect()
+    }
+
+    /// Edges in `G.edges` order: `(u, v, edge id or None)` positions. For
+    /// undirected graphs each edge once, from its earlier endpoint.
+    #[allow(clippy::type_complexity)]
+    fn edges_in_order(&self) -> (Vec<u32>, Vec<u32>, Option<Vec<u32>>) {
+        let (mut us, mut vs) = (Vec::new(), Vec::new());
+        let mut ids = self.native.as_ref().map(|_| Vec::new());
+        for u in 0..self.n {
+            for e in self.succ.range(u) {
+                let v = self.succ.targets[e];
+                if self.directed || v as usize >= u {
+                    us.push(u as u32);
+                    vs.push(v);
+                    if let (Some(ids), Some(nat)) = (ids.as_mut(), self.native.as_ref()) {
+                        ids.push(nat.succ_edge[e]);
+                    }
+                }
+            }
+        }
+        (us, vs, ids)
+    }
+
+    /// Native graphs: edges in insertion order, and each attribute's
+    /// `(name, values, kinds)` per edge (kinds: 0 absent, 1 int, 2 float,
+    /// 3 None, 4 bool).
+    #[allow(clippy::type_complexity)]
+    fn native_edges(&self) -> Option<(Vec<u32>, Vec<u32>, Vec<(String, Vec<f64>, Vec<u8>)>)> {
+        self.native.as_ref().map(|nat| {
+            let attrs = nat
+                .attrs
+                .iter()
+                .map(|a| (a.name.clone(), a.values.clone(), a.kinds.clone()))
+                .collect();
+            (nat.src.clone(), nat.dst.clone(), attrs)
+        })
+    }
+
+    fn attribute_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.weights.keys().cloned().collect();
+        names.sort();
+        names
     }
 
     fn number_of_edges(&self) -> usize {
@@ -313,5 +393,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CoreGraph>()?;
     m.add_function(wrap_pyfunction!(graph::build_graph, m)?)?;
     m.add_function(wrap_pyfunction!(serialize::_core_graph_from_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(native::build_native, m)?)?;
+    m.add_function(wrap_pyfunction!(native::build_native_arrays, m)?)?;
     Ok(())
 }
