@@ -351,3 +351,58 @@ pub fn closeness(
             .collect(),
     }
 }
+
+/// `nx.harmonic_centrality` without transposition: for each node, the sum of
+/// `1 / d(v, u)` over `sources` in the given order, skipping `d == 0`, and
+/// only for nodes with `in_nbunch`. Distances are computed in parallel in
+/// blocks, but added sequentially in source order, so float sums match
+/// NetworkX exactly. Returns the sums and whether each node received any
+/// term (NetworkX keeps the int 0 otherwise).
+pub fn harmonic(
+    adj: &Csr,
+    n: usize,
+    weights: Option<&[f64]>,
+    sources: &[u32],
+    in_nbunch: &[bool],
+) -> Result<(Vec<f64>, Vec<bool>), NegativeCycle> {
+    let mut total = vec![0.0f64; n];
+    let mut touched = vec![false; n];
+    let block = (rayon::current_num_threads() * 4).max(1);
+    for chunk in sources.chunks(block) {
+        let results: Vec<Result<Vec<(u32, f64)>, NegativeCycle>> = chunk
+            .par_iter()
+            .map_init(
+                || DijkstraState::new(n),
+                |state, &s| match weights {
+                    None => {
+                        let (order, levels) =
+                            super::traversal::bfs_lengths(adj, n, s as usize, f64::INFINITY);
+                        Ok(order
+                            .into_iter()
+                            .zip(levels)
+                            .map(|(v, d)| (v, d as f64))
+                            .collect())
+                    }
+                    Some(w) => {
+                        state.run(adj, Some(w), s as usize, None)?;
+                        Ok(state
+                            .order
+                            .iter()
+                            .map(|&v| (v, state.dist[v as usize]))
+                            .collect())
+                    }
+                },
+            )
+            .collect();
+        for result in results {
+            for (u, d) in result? {
+                let u = u as usize;
+                if d != 0.0 && in_nbunch[u] {
+                    total[u] += 1.0 / d;
+                    touched[u] = true;
+                }
+            }
+        }
+    }
+    Ok((total, touched))
+}

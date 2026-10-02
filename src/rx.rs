@@ -96,6 +96,7 @@ pub fn build_rx(
                 pred: pred_edge.as_deref().map(gather),
                 all_int: false,
                 has_hidden: false,
+                any_int: false,
             },
         );
     }

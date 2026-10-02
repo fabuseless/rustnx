@@ -170,6 +170,10 @@ fn assemble(n: usize, b: Builder) -> CoreGraph {
     for attr in &b.attrs {
         let all_int = attr.kinds.iter().all(|&k| k != kind::FLOAT);
         let has_hidden = attr.kinds.contains(&kind::NONE);
+        let any_int = attr
+            .kinds
+            .iter()
+            .any(|&k| k == kind::ABSENT || k == kind::INT || k == kind::BOOL);
         weights.insert(
             attr.name.clone(),
             Weights {
@@ -179,6 +183,7 @@ fn assemble(n: usize, b: Builder) -> CoreGraph {
                     .map(|(_, edge_of)| entry_weights(attr, edge_of)),
                 all_int,
                 has_hidden,
+                any_int,
             },
         );
     }

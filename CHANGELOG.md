@@ -7,6 +7,22 @@ versions may change behavior.
 
 ## [Unreleased]
 
+### Added
+- `bidirectional_dijkstra`; weighted `shortest_path(G, source, target)` now
+  runs in Rust too.
+- `harmonic_centrality`, `eigenvector_centrality` and `katz_centrality`,
+  with results bit-for-bit identical to NetworkX.
+- `core_number`, `k_core` and `is_bipartite`.
+- `bfs_edges`, `dfs_edges` and `dfs_preorder_nodes`.
+
+### Fixed
+- Functions that return path lengths now hand graphs whose weights mix ints
+  and floats to NetworkX. NetworkX returns an int or a float depending on the
+  path; rustnx returned floats.
+- Graph subclasses that override how their structure is read (such as
+  NetworkX's internal `_AntiGraph`) are no longer converted, since rustnx
+  reads the underlying adjacency directly.
+
 ## [0.1.0a2] - 2026-10-02
 
 ### Fixed

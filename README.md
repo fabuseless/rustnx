@@ -107,10 +107,16 @@ rx.dijkstra_shortest_path_lengths(g, 0, float)
 | `average_shortest_path_length`, `wiener_index` | As above; weighted sums are added in NetworkX's order, so float results match exactly. |
 | `all_pairs_shortest_path_length`, `all_pairs_dijkstra_path_length` | Parallel, in batches; same order as NetworkX. |
 | `shortest_path`, `shortest_path_length`, `single_source_shortest_path`, `single_target_shortest_path`, `bidirectional_shortest_path`, `has_path` | The same paths as NetworkX, ties included, in the same dict order. `shortest_path` with no source and no target runs in NetworkX. |
-| `dijkstra_path`, `dijkstra_path_length`, `single_source_dijkstra`, `single_source_dijkstra_path` | The same paths as NetworkX, ties included. The paths dict follows the installed NetworkX's order, which changed in 3.6. Weighted `shortest_path` between two nodes uses `bidirectional_dijkstra`, which runs in NetworkX. |
+| `dijkstra_path`, `dijkstra_path_length`, `single_source_dijkstra`, `single_source_dijkstra_path` | The same paths as NetworkX, ties included. The paths dict follows the installed NetworkX's order, which changed in 3.6. If weights mix ints and floats, functions that return lengths run in NetworkX (whether a length is an int depends on the path). |
 | `all_pairs_shortest_path`, `all_pairs_dijkstra_path`, `all_pairs_dijkstra` | Parallel, in batches. |
 | `descendants`, `ancestors` | Same sets and errors as NetworkX. |
 | `triangles`, `clustering`, `average_clustering`, `transitivity` | Unweighted, directed and undirected, with `nodes=`. Parallel. Results are **bit-for-bit identical** to NetworkX. Weighted clustering runs in NetworkX. |
+| `bidirectional_dijkstra` | Same path and distance as NetworkX, ties included. Also used by weighted `shortest_path(G, source, target)`. |
+| `harmonic_centrality` | Unweighted and `distance=`, `sources=`. Parallel. **Bit-for-bit identical** to NetworkX. A small `nbunch` with many `sources` runs in NetworkX. |
+| `eigenvector_centrality`, `katz_centrality` | All options except Katz's `nstart` and per-node `beta`. **Bit-for-bit identical** to NetworkX, including when they stop. |
+| `core_number`, `k_core` | Same values and errors as NetworkX. `k_core` builds its subgraph in NetworkX, so the speedup is only in the core numbers. |
+| `is_bipartite` | Directed and undirected. |
+| `bfs_edges`, `dfs_edges`, `dfs_preorder_nodes` | Same order as NetworkX, with `depth_limit` and `reverse`. `sort_neighbors` runs in NetworkX. |
 
 ## Benchmarks
 
@@ -143,6 +149,15 @@ rx.dijkstra_shortest_path_lengths(g, 0, float)
 | `clustering` | 100,000 / 500k (Barabási–Albert) | 5.09 s | 0.092 s | **55×** |
 | `transitivity` | 100,000 / 500k (Barabási–Albert) | 5.12 s | 0.088 s | **58×** |
 | `triangles` | 100,000 / 500k (Barabási–Albert) | 1.52 s | 0.091 s | 17× |
+| `katz_centrality` | 200,000 / 1M (directed) | 13.3 s | 0.073 s | **180×** |
+| `core_number` | 200,000 / 1M | 2.88 s | 0.042 s | **69×** |
+| `eigenvector_centrality` | 200,000 / 1M | 10.3 s | 0.18 s | **57×** |
+| `harmonic_centrality` | 3,000 / 12k | 4.56 s | 0.14 s | **33×** |
+| `is_bipartite` | 200,000 / 400k (grid) | 0.33 s | 0.012 s | 27× |
+| `bfs_edges` | 200,000 / 1M | 2.46 s | 0.13 s | 20× |
+| `dfs_edges` | 200,000 / 1M | 2.49 s | 0.15 s | 17× |
+| `bidirectional_dijkstra` (20 pairs) | 200,000 / 1M | 0.24 s | 0.023 s | 11× |
+| `k_core` | 200,000 / 1M | 10.2 s | 7.4 s | 1.4× (copying the subgraph in NetworkX dominates) |
 
 The rustnx column is a repeat call. The first call on a graph also converts
 it to rustnx's format (about 0.15–0.25 s for a 1M-edge directed graph), and
@@ -264,7 +279,7 @@ Layout:
 
 ## Roadmap
 
-- More algorithms: `bidirectional_dijkstra`, weighted clustering.
+- More algorithms: see the todo table in [CLAUDE.md](CLAUDE.md).
 - Multigraph support.
 
 ## License

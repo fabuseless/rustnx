@@ -19,16 +19,23 @@ _WEIGHT_PARAMS = ("weight", "distance")
 # dispatching costs more than NetworkX spends running the algorithm.
 _LINEAR_TIME = {
     "ancestors",
+    "bfs_edges",
+    "bidirectional_dijkstra",
     "bidirectional_shortest_path",
     "connected_components",
+    "core_number",
     "descendants",
+    "dfs_edges",
+    "dfs_preorder_nodes",
     "dijkstra_path",
     "dijkstra_path_length",
     "has_path",
+    "is_bipartite",
     "is_connected",
     "is_directed_acyclic_graph",
     "is_strongly_connected",
     "is_weakly_connected",
+    "k_core",
     "number_connected_components",
     "number_strongly_connected_components",
     "number_weakly_connected_components",
@@ -46,6 +53,9 @@ _LINEAR_TIME = {
 }
 SMALL_GRAPH_NODES = 500
 
+# Functions that return subgraphs of the original NetworkX graph.
+_BUILDS_FROM_SOURCE = {"k_core"}
+
 
 def convert_from_nx(
     G,
@@ -60,6 +70,10 @@ def convert_from_nx(
     if isinstance(G, RustnxGraph):
         return G
     if preserve_edge_attrs is True:
+        if name in _BUILDS_FROM_SOURCE:
+            # These build their result from the original NetworkX graph, so
+            # its attributes don't need to be copied into Rust.
+            return from_networkx(G, {})
         # Arbitrary edge data (e.g. for callable weights) isn't stored in Rust.
         raise NotImplementedError("rustnx only stores numeric edge attributes")
     if isinstance(preserve_edge_attrs, dict):
