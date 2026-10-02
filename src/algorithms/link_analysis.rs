@@ -23,6 +23,9 @@ pub struct PagerankInput<'a> {
     pub dangling: Option<Vec<f64>>,
     pub max_iter: usize,
     pub tol: f64,
+    /// Return the iterate *before* the converging step (rustworkx's
+    /// behavior) instead of after it (NetworkX's).
+    pub return_previous: bool,
 }
 
 fn normalized(mut v: Vec<f64>) -> Vec<f64> {
@@ -96,7 +99,7 @@ pub fn pagerank(input: PagerankInput) -> Result<Vec<f64>, NoConvergence> {
         let err: f64 = next.iter().zip(&x).map(|(a, b)| (a - b).abs()).sum();
         std::mem::swap(&mut x, &mut next);
         if err < n as f64 * input.tol {
-            return Ok(x);
+            return Ok(if input.return_previous { next } else { x });
         }
     }
     Err(NoConvergence)

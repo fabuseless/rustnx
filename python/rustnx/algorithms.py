@@ -14,9 +14,15 @@ import networkx as nx
 from networkx.algorithms.centrality import betweenness as _nx_betweenness
 
 __all__ = [
+    "all_pairs_dijkstra_path_length",
+    "all_pairs_shortest_path_length",
+    "average_shortest_path_length",
     "betweenness_centrality",
+    "center",
     "closeness_centrality",
     "connected_components",
+    "diameter",
+    "eccentricity",
     "is_connected",
     "is_directed_acyclic_graph",
     "is_strongly_connected",
@@ -25,12 +31,15 @@ __all__ = [
     "number_strongly_connected_components",
     "number_weakly_connected_components",
     "pagerank",
+    "periphery",
+    "radius",
     "single_source_dijkstra_path_length",
     "single_source_shortest_path_length",
     "strongly_connected_components",
     "topological_generations",
     "topological_sort",
     "weakly_connected_components",
+    "wiener_index",
 ]
 
 
@@ -72,6 +81,10 @@ class _MutationGuard:
 
     def __init__(self, G):
         self.graph = G._source
+        if G._core.is_native():
+            # Native graphs are immutable: nothing can change.
+            self._cache = self._key = None
+            return
         self._cache = getattr(self.graph, "__networkx_cache__", None)
         # Views (subgraph, reverse, ...) keep their own cache, which changes
         # to the underlying graph don't clear.
@@ -83,11 +96,14 @@ class _MutationGuard:
         self._cache[self._key] = True
 
     def changed(self):
+        if self._key is None:
+            return False
         cache = getattr(self.graph, "__networkx_cache__", None)
         return cache is not self._cache or self._key not in cache
 
     def release(self):
-        self._cache.pop(self._key, None)
+        if self._key is not None:
+            self._cache.pop(self._key, None)
 
 
 def _components(G, comps):
@@ -392,3 +408,190 @@ def pagerank(
     if scores is None:
         raise nx.PowerIterationFailedConvergence(max_iter)
     return dict(zip(G._nodes, scores))
+
+
+# --- Distance measures ---------------------------------------------------------
+
+
+_NEGATIVE_CYCLE = ("Contradictory paths found:", "negative weights?")
+
+
+def _not_connected_error(G):
+    if G.is_directed():
+        msg = "Found infinite path length because the digraph is not strongly connected"
+    else:
+        msg = "Found infinite path length because the graph is not connected"
+    return nx.NetworkXError(msg)
+
+
+def _eccentricity_values(G, weight, sources=None):
+    """Eccentricities in source order, raising exactly as NetworkX would.
+
+    NetworkX computes source by source and raises at the first source that
+    either hits a negative cycle or doesn't reach every node; checking the
+    precomputed results in the same order raises the same error.
+    """
+    n = len(G)
+    if weight is None:
+        stats = G._core.bfs_stats(sources)
+        for reached, _, _ in stats:
+            if reached != n:
+                raise _not_connected_error(G)
+        return [mx for _, _, mx in stats]
+    weight, all_int, _ = _check_weight(G, weight)
+    stats, _ = G._core.dijkstra_stats(weight, sources)
+    values = []
+    for st in stats:
+        if st is None:
+            raise ValueError(*_NEGATIVE_CYCLE)
+        reached, mx = st
+        if reached != n:
+            raise _not_connected_error(G)
+        values.append(int(mx) if all_int else mx)
+    return values
+
+
+def eccentricity(G, v=None, sp=None, weight=None):
+    if sp is not None or len(G) == 0:
+        # Precomputed paths are cheap in Python; empty graphs differ by version.
+        raise NotImplementedError("rustnx computes eccentricity from scratch")
+    if v is None:
+        return dict(zip(G._nodes, _eccentricity_values(G, weight)))
+    if v in G:
+        return _eccentricity_values(G, weight, [G._index[v]])[0]
+    raise NotImplementedError("rustnx supports v=None or a single node")
+
+
+def _all_eccentricities(G, e, usebounds, weight):
+    if e is not None or len(G) == 0:
+        raise NotImplementedError("rustnx computes eccentricities from scratch")
+    if usebounds is True and not G.is_directed():
+        # NetworkX uses a different algorithm (with its own errors) here.
+        raise NotImplementedError("usebounds=True runs in NetworkX")
+    return dict(zip(G._nodes, _eccentricity_values(G, weight)))
+
+
+def diameter(G, e=None, usebounds=False, weight=None):
+    return max(_all_eccentricities(G, e, usebounds, weight).values())
+
+
+def radius(G, e=None, usebounds=False, weight=None):
+    return min(_all_eccentricities(G, e, usebounds, weight).values())
+
+
+def _is_tree(G):
+    if G.is_directed() or len(G) == 0:
+        return False
+    return G.number_of_edges() == len(G) - 1 and len(
+        G._core.connected_components()[0]
+    ) == len(G)
+
+
+def center(G, e=None, usebounds=False, weight=None):
+    if e is None and weight is None and _is_tree(G):
+        # NetworkX 3.7+ takes a tree-specific path with its own output order.
+        raise NotImplementedError("trees run in NetworkX")
+    ecc = _all_eccentricities(G, e, usebounds, weight)
+    r = min(ecc.values())
+    return [v for v in ecc if ecc[v] == r]
+
+
+def periphery(G, e=None, usebounds=False, weight=None):
+    ecc = _all_eccentricities(G, e, usebounds, weight)
+    d = max(ecc.values())
+    return [v for v in ecc if ecc[v] == d]
+
+
+def _is_strongly_or_plainly_connected(G):
+    if G.is_directed():
+        return len(G._core.strongly_connected_components()) == 1
+    return len(G._core.connected_components()) == 1
+
+
+def _distance_total(G, weight):
+    """Sum of all shortest path lengths, summed in NetworkX's order."""
+    if weight is None:
+        return sum(total for _, total, _ in G._core.bfs_stats(None))
+    weight, all_int, _ = _check_weight(G, weight)
+    stats, total = G._core.dijkstra_stats(weight, None)
+    if total is None:
+        raise ValueError(*_NEGATIVE_CYCLE)
+    return int(total) if all_int else total
+
+
+def average_shortest_path_length(G, weight=None, method=None):
+    if method is None:
+        method = "unweighted" if weight is None else "dijkstra"
+    if method not in ("unweighted", "dijkstra"):
+        raise NotImplementedError(f"method {method!r} runs in NetworkX")
+    n = len(G)
+    if n == 0:
+        raise NotImplementedError("the null graph runs in NetworkX")
+    if n == 1:
+        return 0
+    if G.is_directed() and not _is_strongly_or_plainly_connected(G):
+        raise nx.NetworkXError("Graph is not strongly connected.")
+    if not G.is_directed() and not _is_strongly_or_plainly_connected(G):
+        raise nx.NetworkXError("Graph is not connected.")
+    s = _distance_total(G, None if method == "unweighted" else weight)
+    return s / (n * (n - 1))
+
+
+def wiener_index(G, weight=None):
+    if len(G) == 0:
+        raise NotImplementedError("the null graph runs in NetworkX")
+    if not _is_strongly_or_plainly_connected(G):
+        return float("inf")
+    total = _distance_total(G, weight)
+    return total if G.is_directed() else total / 2
+
+
+# Sources per Rust call in the all-pairs generators: large enough to keep
+# every core busy, small enough to keep memory bounded.
+_ALL_PAIRS_BATCH = 1024
+
+
+def _all_pairs(G, compute):
+    guard = _MutationGuard(G)
+
+    def generate():
+        nodes = G._nodes
+        try:
+            for start in range(0, len(nodes), _ALL_PAIRS_BATCH):
+                batch = list(range(start, min(start + _ALL_PAIRS_BATCH, len(nodes))))
+                for s, lengths in zip(batch, compute(batch)):
+                    if guard.changed():
+                        raise RuntimeError("Graph changed during iteration")
+                    yield nodes[s], lengths
+        finally:
+            guard.release()
+
+    return generate()
+
+
+def all_pairs_shortest_path_length(G, cutoff=None):
+    cutoff = math.inf if cutoff is None else float(cutoff)
+    nodes = G._nodes
+
+    def compute(batch):
+        for order, levels in G._core.bfs_many(batch, cutoff):
+            yield dict(zip([nodes[i] for i in order], levels))
+
+    return _all_pairs(G, compute)
+
+
+def all_pairs_dijkstra_path_length(G, cutoff=None, weight="weight"):
+    weight, all_int, _ = _check_weight(G, weight)
+    cutoff = None if cutoff is None else float(cutoff)
+    nodes = G._nodes
+
+    def compute(batch):
+        for s, result in zip(batch, G._core.dijkstra_many(batch, weight, cutoff)):
+            if result is None:
+                raise ValueError(*_NEGATIVE_CYCLE)
+            order, dists = result
+            lengths = dict(zip([nodes[i] for i in order], map(int, dists) if all_int else dists))
+            lengths[nodes[s]] = 0  # NetworkX keeps the source distance as the int 0
+            yield lengths
+
+    return _all_pairs(G, compute)

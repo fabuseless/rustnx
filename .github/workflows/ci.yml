@@ -41,9 +41,9 @@ jobs:
           python -m venv .venv
           source .venv/bin/activate
           if [ "${{ matrix.networkx }}" = latest ]; then
-            pip install maturin networkx pytest numpy scipy
+            pip install maturin networkx pytest numpy scipy rustworkx
           else
-            pip install maturin "networkx==${{ matrix.networkx }}" pytest numpy scipy
+            pip install maturin "networkx==${{ matrix.networkx }}" pytest numpy scipy rustworkx
           fi
           python -c "import networkx; print('NetworkX', networkx.__version__)"
           maturin develop --release

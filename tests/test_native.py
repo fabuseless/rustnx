@@ -1,0 +1,257 @@
+"""rustnx.Graph / rustnx.DiGraph against networkx graphs built from the same edges.
+
+A native graph must behave exactly like a ``networkx.Graph`` built with
+``add_edge`` calls in the same order: same nodes, same adjacency order, same
+merged attributes for duplicate edges, and so the same algorithm results.
+"""
+
+import math
+import pickle
+import random
+
+import networkx as nx
+import pytest
+
+import rustnx
+
+
+def random_edges(seed, directed):
+    rng = random.Random(seed)
+    n = rng.randint(1, 30)
+    labels = list(range(n))
+    if rng.random() < 0.5:
+        labels = [f"n{i}" if i % 2 else (i, "t") for i in labels]
+    edges = []
+    for _ in range(rng.randint(0, 3 * n)):
+        u, v = rng.choice(labels), rng.choice(labels)
+        form = rng.random()
+        if form < 0.3:
+            edges.append((u, v))
+        elif form < 0.6:
+            edges.append((u, v, rng.choice([1, 2, 3, 0.5, 2.25])))
+        else:
+            d = {}
+            if rng.random() < 0.8:
+                d["weight"] = rng.choice([1, 2, 4, 1.5])
+            if rng.random() < 0.3:
+                d["cap"] = rng.randint(0, 9)
+            edges.append((u, v, d))
+    # Duplicates and reversed duplicates exercise NetworkX's merge rules.
+    for _ in range(rng.randint(0, 5)):
+        if edges:
+            e = rng.choice(edges)
+            edges.append((e[1], e[0]) + tuple(e[2:]) if rng.random() < 0.5 else e)
+    extra_nodes = [f"lonely{i}" for i in range(rng.randint(0, 2))]
+    return edges, extra_nodes
+
+
+def to_nx(edges, nodes, directed):
+    H = nx.DiGraph() if directed else nx.Graph()
+    H.add_nodes_from(nodes)
+    for e in edges:
+        if len(e) == 2:
+            H.add_edge(*e)
+        elif isinstance(e[2], dict):
+            H.add_edge(e[0], e[1], **e[2])
+        else:
+            H.add_edge(e[0], e[1], weight=e[2])
+    return H
+
+
+def build(seed, directed):
+    edges, nodes = random_edges(seed, directed)
+    cls = rustnx.DiGraph if directed else rustnx.Graph
+    return cls(edges, nodes=nodes), to_nx(edges, nodes, directed)
+
+
+def outcome(func):
+    try:
+        result = func()
+        if hasattr(result, "__next__"):
+            result = list(result)
+            result = [
+                (k, list(v.items())) if isinstance(v, dict) else (k, v)
+                for k, v in result
+            ] if result and isinstance(result[0], tuple) else result
+        return ("ok", result)
+    except Exception as exc:
+        return (type(exc), exc.args)
+
+
+def same(a, b):
+    """Equal, treating floats within 1e-12 as equal (parallel sums)."""
+    if a == b:
+        return True
+    if isinstance(a, dict) and isinstance(b, dict):
+        return list(a) == list(b) and all(same(a[k], b[k]) for k in a)
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return len(a) == len(b) and all(same(x, y) for x, y in zip(a, b))
+    if isinstance(a, float) and isinstance(b, float):
+        return math.isclose(a, b, rel_tol=1e-12, abs_tol=1e-12) or (
+            math.isnan(a) and math.isnan(b)
+        )
+    return False
+
+
+SEEDS = range(50)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_structure_matches_networkx(seed, directed):
+    G, H = build(seed, directed)
+    assert G.nodes() == list(H)
+    assert G.edges() == list(H.edges())
+    assert G.edges(data=True) == list(H.edges(data=True))
+    assert G.number_of_edges() == H.number_of_edges()
+    assert G.degree() == dict(H.degree())
+    for v in H:
+        assert list(G.neighbors(v)) == list(H.neighbors(v))
+        if directed:
+            assert list(G.predecessors(v)) == list(H.predecessors(v))
+    back = G.to_networkx()
+    assert list(back) == list(H)
+    assert list(back.edges(data=True)) == list(H.edges(data=True))
+    for v in H:  # adjacency order too
+        assert list(back.adj[v]) == list(H.adj[v])
+
+
+def algorithm_calls(H, directed):
+    nodes = list(H)
+    src = nodes[0] if nodes else None
+    calls = {
+        "betweenness": lambda G, b: nx.betweenness_centrality(G, backend=b),
+        "betweenness_w": lambda G, b: nx.betweenness_centrality(G, weight="weight", backend=b),
+        "closeness": lambda G, b: nx.closeness_centrality(G, backend=b),
+        "closeness_w": lambda G, b: nx.closeness_centrality(G, distance="weight", backend=b),
+        "pagerank": lambda G, b: nx.pagerank(G, backend=b),
+        "pagerank_cap": lambda G, b: nx.pagerank(G, weight="cap", backend=b),
+        "pagerank_missing_attr": lambda G, b: nx.pagerank(G, weight="nope", backend=b),
+        "all_pairs": lambda G, b: nx.all_pairs_shortest_path_length(G, backend=b),
+        "all_pairs_w": lambda G, b: nx.all_pairs_dijkstra_path_length(G, backend=b),
+        "diameter": lambda G, b: nx.diameter(G, backend=b),
+        "avg_spl_w": lambda G, b: nx.average_shortest_path_length(G, weight="weight", backend=b),
+    }
+    if src is not None:
+        calls["bfs"] = lambda G, b: nx.single_source_shortest_path_length(G, src, backend=b)
+        calls["dijkstra"] = lambda G, b: nx.single_source_dijkstra_path_length(G, src, backend=b)
+    if directed:
+        calls["scc"] = lambda G, b: list(nx.strongly_connected_components(G, backend=b))
+        calls["wcc"] = lambda G, b: list(nx.weakly_connected_components(G, backend=b))
+        calls["topo"] = lambda G, b: list(nx.topological_sort(G, backend=b))
+        calls["dag"] = lambda G, b: nx.is_directed_acyclic_graph(G, backend=b)
+    else:
+        calls["cc"] = lambda G, b: list(nx.connected_components(G, backend=b))
+    return calls
+
+
+@pytest.fixture
+def enabled():
+    old = nx.config.backend_priority.algos
+    rustnx.enable()
+    yield
+    nx.config.backend_priority.algos = old
+
+
+def check_all(G, H, directed):
+    for name, call in algorithm_calls(H, directed).items():
+        ours = outcome(lambda: call(G, "rustnx"))
+        if ours[0] is NotImplementedError:
+            # rustnx deliberately hands this case to NetworkX (e.g. empty
+            # graphs); through normal dispatch the native graph is converted.
+            ours = outcome(lambda: call(G, None))
+        ref = outcome(lambda: call(H, "networkx"))
+        assert same(ours, ref), name
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_algorithms_match_networkx(seed, directed, enabled):
+    G, H = build(seed, directed)
+    check_all(G, H, directed)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(20))
+def test_from_arrays(seed, directed, enabled):
+    rng = random.Random(seed)
+    n = rng.randint(1, 40)
+    m = rng.randint(0, 3 * n)
+    src = [rng.randrange(n) for _ in range(m)]
+    dst = [rng.randrange(n) for _ in range(m)]
+    w = [rng.choice([0.5, 1.0, 2.0]) for _ in range(m)]
+    cls = rustnx.DiGraph if directed else rustnx.Graph
+    G = cls.from_arrays(src, dst, w, num_nodes=n)
+    H = nx.DiGraph() if directed else nx.Graph()
+    H.add_nodes_from(range(n))
+    H.add_weighted_edges_from(zip(src, dst, w))
+    assert G.nodes() == list(H)
+    assert G.edges(data=True) == list(H.edges(data=True))
+    check_all(G, H, directed)
+
+
+def test_from_numpy_arrays():
+    np = pytest.importorskip("numpy")
+    src = np.array([0, 1, 2], dtype=np.int32)
+    dst = np.array([1, 2, 0], dtype=np.uint16)
+    G = rustnx.DiGraph.from_arrays(src, dst, np.array([1, 2, 3], dtype=np.float32))
+    assert G.edges(data=True) == [(0, 1, {"weight": 1.0}), (1, 2, {"weight": 2.0}), (2, 0, {"weight": 3.0})]
+    with pytest.raises(TypeError, match="integers"):
+        rustnx.Graph.from_arrays(np.array([0.5]), np.array([1]))
+    with pytest.raises(ValueError, match="num_nodes"):
+        rustnx.Graph.from_arrays([0, 5], [1, 2], num_nodes=3)
+
+
+def test_range_index_lookups():
+    G = rustnx.Graph.from_arrays([0, 1], [1, 2])
+    assert 1 in G and True in G and 1.0 in G
+    assert 3 not in G and -1 not in G and "1" not in G and 1.5 not in G
+    assert nx.single_source_shortest_path_length(G, True) == {True: 0, 0: 1, 2: 1}
+
+
+def test_invalid_input():
+    with pytest.raises(TypeError, match="numeric"):
+        rustnx.Graph([(0, 1, {"color": "red"})])
+    with pytest.raises(ValueError, match="NaN"):
+        rustnx.Graph([(0, 1, float("nan"))])
+    with pytest.raises(ValueError, match="2 or 3"):
+        rustnx.Graph([(0, 1, 2, 3)])
+    with pytest.raises(ValueError, match="None cannot be a node"):
+        rustnx.Graph([(None, 1)])
+    with pytest.raises(TypeError, match="strings"):
+        rustnx.Graph([(0, 1, {5: 1})])
+
+
+def test_unimplemented_functions_fall_back_with_enable():
+    G = rustnx.Graph([(0, 1), (1, 2)])
+    old = nx.config.backend_priority.algos
+    try:
+        nx.config.backend_priority.algos = []
+        with pytest.raises(NotImplementedError):
+            nx.is_tree(G)
+        rustnx.enable()
+        assert nx.config.backend_priority.algos[0] == "rustnx"
+        assert nx.is_tree(G) is True
+    finally:
+        nx.config.backend_priority.algos = old
+
+
+def test_pickle_native():
+    G = rustnx.DiGraph([("a", "b", 2), ("b", "c", {"weight": 1.5, "cap": 3})], kind="test")
+    H = pickle.loads(pickle.dumps(G))
+    assert H.graph == {"kind": "test"}
+    assert H.edges(data=True) == G.edges(data=True)
+    assert nx.closeness_centrality(H, distance="weight") == nx.closeness_centrality(
+        G.to_networkx(), distance="weight", backend="networkx"
+    )
+    A = rustnx.Graph.from_arrays([0, 1], [1, 2])
+    assert pickle.loads(pickle.dumps(A)).edges() == A.edges()
+
+
+def test_graph_attributes_and_repr():
+    G = rustnx.Graph([(1, 2)], name="g")
+    assert G.graph == {"name": "g"}
+    assert repr(G) == "<Graph (undirected) with 2 nodes and 1 edges>"
+    assert G.has_edge(2, 1) and not G.has_edge(1, 3)
+    with pytest.raises(nx.NetworkXError):
+        G.successors(1)

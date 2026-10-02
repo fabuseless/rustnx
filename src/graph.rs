@@ -60,7 +60,37 @@ pub struct CoreGraph {
     /// `exact_pred`, read from `G._pred` on demand.
     pub pred: Option<Csr>,
     pub exact_pred: OnceLock<ExactPred>,
+    /// `pred` is already in NetworkX's insertion order (native graphs).
+    pub pred_is_exact: bool,
     pub weights: HashMap<String, Weights>,
+    /// The original edges of a graph built natively (see `native.rs`).
+    pub native: Option<NativeEdges>,
+    /// Unit weights, for native graphs asked about an attribute no edge has.
+    pub ones: OnceLock<Vec<f64>>,
+}
+
+/// Values of one edge attribute, per edge, with the kind of each value.
+pub struct EdgeAttr {
+    pub name: String,
+    pub values: Vec<f64>,
+    pub kinds: Vec<u8>,
+}
+
+pub mod kind {
+    pub const ABSENT: u8 = 0;
+    pub const INT: u8 = 1;
+    pub const FLOAT: u8 = 2;
+    pub const NONE: u8 = 3;
+    pub const BOOL: u8 = 4;
+}
+
+/// Edges of a natively built graph, in insertion order.
+pub struct NativeEdges {
+    pub src: Vec<u32>,
+    pub dst: Vec<u32>,
+    pub attrs: Vec<EdgeAttr>,
+    /// Edge id of each `succ` entry.
+    pub succ_edge: Vec<u32>,
 }
 
 impl CoreGraph {
@@ -75,6 +105,11 @@ impl CoreGraph {
     /// Weights aligned with `adj(reverse)`, or `None` for unit weights.
     pub fn weight_slice(&self, attr: Option<&str>, reverse: bool) -> PyResult<Option<&[f64]>> {
         let Some(attr) = attr else { return Ok(None) };
+        if self.native.is_some() && !self.weights.contains_key(attr) {
+            // NetworkX treats a missing attribute as weight 1.
+            let m = self.succ.targets.len();
+            return Ok(Some(self.ones.get_or_init(|| vec![1.0; m]).as_slice()));
+        }
         let w = self.weights.get(attr).ok_or_else(|| {
             PyNotImplementedError::new_err(format!("edge attribute {attr:?} was not converted"))
         })?;
@@ -87,7 +122,7 @@ impl CoreGraph {
     /// Adjacency and weights for NetworkX's `G.reverse()`, exactly ordered.
     /// Weighted traversal of a directed graph needs `exact_pred` loaded.
     pub fn reverse_exact(&self, attr: Option<&str>) -> PyResult<(&Csr, Option<&[f64]>)> {
-        if !self.directed || attr.is_none() {
+        if !self.directed || attr.is_none() || self.pred_is_exact {
             return Ok((self.adj(true), self.weight_slice(attr, true)?));
         }
         let exact = self
@@ -373,7 +408,10 @@ pub fn build_graph<'py>(
         succ: succ_csr,
         pred: pred_csr,
         exact_pred: OnceLock::new(),
+        pred_is_exact: false,
         weights,
+        native: None,
+        ones: OnceLock::new(),
     })
 }
 
@@ -412,6 +450,6 @@ impl CoreGraph {
     }
 
     pub fn has_exact_pred(&self) -> bool {
-        !self.directed || self.exact_pred.get().is_some()
+        !self.directed || self.pred_is_exact || self.exact_pred.get().is_some()
     }
 }

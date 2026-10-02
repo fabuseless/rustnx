@@ -17,6 +17,78 @@ Nothing else changes. Anything rustnx doesn't support, such as other
 functions, multigraphs or callable weights, keeps running in NetworkX, so
 turning it on never breaks working code.
 
+## Native graphs: skip NetworkX entirely
+
+For big graphs, build the graph in Rust directly. There's no conversion
+step, and it uses a fraction of the memory:
+
+```python
+import networkx as nx
+import rustnx
+
+rustnx.enable()  # use rustnx where it can; everything else falls back to NetworkX
+
+G = rustnx.DiGraph([("a", "b", 2.5), ("b", "c", 1), ("c", "a", {"weight": 4})])
+nx.pagerank(G)                       # runs in Rust
+nx.is_tree(G)                        # not in rustnx: converted to NetworkX automatically
+
+G = rustnx.Graph.from_arrays(src, dst, weights)   # NumPy arrays; nodes 0..n-1
+```
+
+| 1M-edge directed graph | `networkx.DiGraph` | `rustnx.DiGraph(edges)` | `rustnx.DiGraph.from_arrays` |
+|---|---|---|---|
+| Build time | 10.0 s | 2.7 s | 0.48 s |
+| Memory | 323 MiB | ~65 MiB | ~47 MiB |
+| `pagerank`, first call | 4.1 s | 0.04 s | 0.04 s |
+
+- **The same results as NetworkX.** Nodes come in order of first
+  appearance, each node's neighbors in insertion order, and duplicate edges
+  merge as `add_edge` would. So every algorithm returns what it would on a
+  `networkx.Graph` built from the same edges.
+- **Read-only.** It has `nodes()`, `edges(data=True)`, `neighbors`,
+  `successors`, `predecessors`, `degree`, `has_edge`, `has_node` and `len`.
+  `G.to_networkx()` gives the full NetworkX API.
+- **Edge attributes must be numeric** (or `None`). Graphs can be pickled.
+- **Call `rustnx.enable()` first.** Without it, NetworkX raises
+  `NotImplementedError` when a rustnx graph reaches a function rustnx doesn't
+  implement, instead of converting it.
+
+## rustworkx-compatible API
+
+The same Rust core also serves rustworkx's API:
+
+```python
+import rustnx.rx as rx      # instead of: import rustworkx as rx
+
+g = rx.PyDiGraph()
+g.extend_from_weighted_edge_list([(0, 1, 2.0), (1, 2, 1.0), (2, 0, 4.0)])
+rx.strongly_connected_components(g)
+rx.dijkstra_shortest_path_lengths(g, 0, float)
+```
+
+- **It behaves the same, not just the same names.** `PyGraph` and
+  `PyDiGraph` follow rustworkx's index model. Indices of removed nodes and
+  edges are reused, most recently removed first. Graphs are multigraphs by
+  default, and `multigraph=False` merges duplicate edges as rustworkx does.
+  Neighbors are visited in petgraph's order, so order-dependent results
+  (`strongly_connected_components`, `topological_sort`) match rustworkx
+  exactly. Exceptions use rustworkx's names (`NullGraph`, `DAGHasCycle`,
+  `NoEdgeBetweenNodes`, `FailedToConverge` and so on).
+- **It's tested against the real rustworkx.** `tests/test_rx_api.py` applies
+  random sequences of adds and removals to both libraries and compares every
+  query and algorithm.
+- **Supported:** the core graph-building, editing and query methods, plus
+  `betweenness_centrality`, `closeness_centrality`, `pagerank`,
+  `dijkstra_shortest_path_lengths`, `all_pairs_dijkstra_path_lengths`, the
+  connected, strongly and weakly connected component functions,
+  `topological_sort`, `is_directed_acyclic_graph` and `networkx_converter`.
+  Not yet: subgraphs, `compose`, contraction, matrix and file I/O, and
+  `check_cycle=True`.
+- **Speed:** the algorithms are as fast as rustworkx's or faster
+  (betweenness 1.8×, closeness 23×, strong components 2.5×). Building graphs
+  is slower: the graph is stored in Python, so adding 500k edges takes 0.8 s,
+  against rustworkx's 0.04 s.
+
 ## Supported algorithms
 
 | Function | Notes |
@@ -30,6 +102,9 @@ turning it on never breaks working code.
 | `strongly_connected_components`, `number_strongly_connected_components`, `is_strongly_connected` | Same components in the same order as NetworkX. |
 | `weakly_connected_components`, `number_weakly_connected_components`, `is_weakly_connected` | Same components in the same order as NetworkX. |
 | `topological_sort`, `topological_generations`, `is_directed_acyclic_graph` | Same order as NetworkX. If the graph changes mid-iteration, it raises the same errors as NetworkX. |
+| `eccentricity`, `diameter`, `radius`, `center`, `periphery` | Unweighted: bit-parallel BFS. Weighted: parallel Dijkstra. Same errors as NetworkX (disconnected graphs, negative weights). `usebounds=True`, `e=`/`sp=` and trees in `center` run in NetworkX. |
+| `average_shortest_path_length`, `wiener_index` | As above; weighted sums are added in NetworkX's order, so float results match exactly. |
+| `all_pairs_shortest_path_length`, `all_pairs_dijkstra_path_length` | Parallel, in batches; same order as NetworkX. |
 
 ## Benchmarks
 
@@ -48,6 +123,12 @@ turning it on never breaks working code.
 | `strongly_connected_components` | 200,000 / 1M (directed) | 1.96 s | 0.052 s | **38×** |
 | `topological_sort` | 200,000 / 499k (DAG) | 0.40 s | 0.023 s | 17× |
 | `weakly_connected_components` | 200,000 / 1M (directed) | 0.39 s | 0.036 s | 11× |
+| `diameter` | 5,000 / 15k | 11.2 s | 0.014 s | **807×** |
+| `average_shortest_path_length` | 5,000 / 15k | 10.8 s | 0.014 s | **783×** |
+| `wiener_index` | 5,000 / 15k | 10.0 s | 0.012 s | **829×** |
+| `eccentricity` (weighted) | 5,000 / 15k | 57.0 s | 1.41 s | 40× |
+| `all_pairs_dijkstra_path_length` | 5,000 / 15k | 60.2 s | 4.90 s | 12× |
+| `all_pairs_shortest_path_length` | 5,000 / 15k | 9.6 s | 2.56 s | 4× (building 25M Python dict entries dominates) |
 
 The rustnx column is a repeat call. The first call on a graph also converts
 it to rustnx's format (about 0.15–0.25 s for a 1M-edge directed graph), and
