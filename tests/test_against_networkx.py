@@ -848,3 +848,60 @@ def test_descendants_ancestors(seed, directed):
     for v in list(G)[:5] + ["not-a-node"]:
         same_outcome(nx.descendants, G, v)
         same_outcome(nx.ancestors, G, v)
+
+
+# --- Clustering -----------------------------------------------------------------
+
+
+def exact(func, *args, **kwargs):
+    """Like ``same_outcome``, but floats must match bit for bit."""
+    def run(backend):
+        try:
+            result = func(*args, backend=backend, **kwargs)
+            if isinstance(result, dict):
+                result = [(k, type(v), v) for k, v in result.items()]
+            else:
+                result = (type(result), result)
+            return ("ok", result)
+        except Exception as exc:
+            return (type(exc), exc.args)
+
+    assert run("rustnx") == run("networkx")
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_clustering(seed, directed):
+    G = random_graph(seed, directed, "none")
+    if not directed:
+        # random_graph is sparse; add triangles.
+        nodes = list(G)
+        rng = random.Random(seed)
+        for _ in range(len(nodes)):
+            a, b, c = (rng.choice(nodes) for _ in range(3))
+            G.add_edges_from([(a, b), (b, c), (c, a)])
+    else:
+        G.add_edges_from([(v, u) for u, v in list(G.edges)[::3]])  # reciprocal
+    nodes = list(G)
+    subsets = [None, nodes[0], nodes[:5], nodes[3:1:-1] + nodes[:2], ["not-a-node", nodes[-1]], []]
+    for subset in subsets:
+        exact(nx.clustering, G, subset)
+        if not directed:
+            exact(nx.triangles, G, subset)
+        if subset is None or (isinstance(subset, list) and subset):
+            for count_zeros in [True, False]:
+                exact(nx.average_clustering, G, subset, count_zeros=count_zeros)
+    exact(nx.transitivity, G)
+    if directed:
+        exact(nx.triangles, G)
+
+
+def test_clustering_edge_cases():
+    for G in [nx.Graph(), nx.DiGraph(), nx.path_graph(3), nx.complete_graph(1)]:
+        exact(nx.clustering, G)
+        exact(nx.transitivity, G)
+        exact(nx.average_clustering, G)
+    G = nx.Graph([(0, 0), (0, 1), (1, 2), (2, 0)])  # self-loop
+    exact(nx.clustering, G)
+    exact(nx.triangles, G)
+    exact(nx.transitivity, G)

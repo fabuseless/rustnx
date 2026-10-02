@@ -15,7 +15,7 @@ use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 
 use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
-use algorithms::{centrality, directed, distance, paths};
+use algorithms::{centrality, cluster, directed, distance, paths};
 use graph::CoreGraph;
 
 impl From<NegativeCycle> for PyErr {
@@ -417,6 +417,21 @@ impl CoreGraph {
         let (mut order, _) = py.detach(|| paths::bfs_tree(adj, self.n, source, f64::INFINITY));
         order.remove(0);
         Ok(order)
+    }
+
+    /// `(t, d, db)` triangle counts per node (see `cluster::triangle_counts`),
+    /// for `nodes` or every node. `successors_only` counts a directed graph
+    /// with the undirected formula over its successors.
+    #[pyo3(signature = (nodes=None, successors_only=false))]
+    fn triangle_counts(
+        &self,
+        py: Python<'_>,
+        nodes: Option<Vec<u32>>,
+        successors_only: bool,
+    ) -> PyResult<Vec<(u64, u64, u64)>> {
+        let nodes = self.sources_or_all(nodes)?;
+        let pred = (self.directed && !successors_only).then(|| self.adj(true));
+        Ok(py.detach(|| cluster::triangle_counts(&self.succ, pred, self.n, &nodes)))
     }
 
     /// `bidirectional_shortest_path` as node positions, or `None` if no path.

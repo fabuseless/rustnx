@@ -20,11 +20,13 @@ __all__ = [
     "all_pairs_shortest_path",
     "all_pairs_shortest_path_length",
     "ancestors",
+    "average_clustering",
     "average_shortest_path_length",
     "betweenness_centrality",
     "bidirectional_shortest_path",
     "center",
     "closeness_centrality",
+    "clustering",
     "connected_components",
     "descendants",
     "diameter",
@@ -53,6 +55,8 @@ __all__ = [
     "strongly_connected_components",
     "topological_generations",
     "topological_sort",
+    "transitivity",
+    "triangles",
     "weakly_connected_components",
     "wiener_index",
 ]
@@ -888,3 +892,87 @@ def shortest_path_length(G, source=None, target=None, weight=None, method="dijks
     if weight is None:
         return len(bidirectional_shortest_path(G, source, target)) - 1
     return dijkstra_path_length(G, source, target, weight)
+
+
+# --- Clustering ----------------------------------------------------------------
+
+
+def _node_subset(G, nodes):
+    """Node positions for a NetworkX ``nbunch`` (nodes not in G are skipped)."""
+    if iter(nodes) is nodes:
+        # An iterator can't be re-read if NetworkX has to take over.
+        raise NotImplementedError("rustnx needs a reusable container of nodes")
+    index = G._index
+    picked = []
+    for v in nodes:
+        try:
+            i = index.get(v)
+        except TypeError:
+            raise NotImplementedError("unhashable node in nbunch") from None
+        if i is not None:
+            picked.append(i)
+    # Repeated nodes keep their first position, as in a dict.
+    return list(dict.fromkeys(picked))
+
+
+def _triangle_counts(G, nodes):
+    """``(single, positions, counts)``: whether ``nodes`` named one node,
+    which nodes were counted, and their ``(t, d, db)`` counts."""
+    if nodes is None:
+        return False, None, G._core.triangle_counts(None)
+    if nodes in G:
+        i = G._index[nodes]
+        return True, [i], G._core.triangle_counts([i])
+    positions = _node_subset(G, nodes)
+    return False, positions, G._core.triangle_counts(positions)
+
+
+def _per_node(G, positions, values, single):
+    if single:
+        return values[0]
+    nodes = G._nodes
+    keys = nodes if positions is None else [nodes[i] for i in positions]
+    return dict(zip(keys, values))
+
+
+def triangles(G, nodes=None):
+    _undirected_only(G)
+    single, positions, counts = _triangle_counts(G, nodes)
+    return _per_node(G, positions, [t // 2 for t, _, _ in counts], single)
+
+
+def _clustering_values(G, nodes, weight):
+    if weight is not None:
+        # Weighted clustering sums cube roots in set-iteration order.
+        raise NotImplementedError("rustnx supports unweighted clustering only")
+    single, positions, counts = _triangle_counts(G, nodes)
+    if G.is_directed():
+        values = [0 if t == 0 else t / ((d * (d - 1) - 2 * db) * 2) for t, d, db in counts]
+    else:
+        values = [0 if t == 0 else t / (d * (d - 1)) for t, d, _ in counts]
+    return single, positions, values
+
+
+def clustering(G, nodes=None, weight=None):
+    single, positions, values = _clustering_values(G, nodes, weight)
+    return _per_node(G, positions, values, single)
+
+
+def average_clustering(G, nodes=None, weight=None, count_zeros=True):
+    if nodes is not None and nodes in G:
+        raise NotImplementedError("NetworkX raises on a single node here")
+    _, _, c = _clustering_values(G, nodes, weight)
+    if not count_zeros:
+        c = [v for v in c if abs(v) > 0]
+    return sum(c) / len(c)
+
+
+def transitivity(G):
+    # On directed graphs NetworkX applies the undirected formula to
+    # successors only.
+    counts = G._core.triangle_counts(None, successors_only=True)
+    if not counts:
+        return 0
+    triangles = sum(t for t, _, _ in counts)
+    contri = sum(d * (d - 1) for _, d, _ in counts)
+    return 0 if triangles == 0 else triangles / contri

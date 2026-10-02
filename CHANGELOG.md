@@ -34,6 +34,8 @@ versions may change behavior.
   `all_pairs_dijkstra_path` and `all_pairs_dijkstra`. They return the same
   paths as NetworkX, ties included.
 - `descendants` and `ancestors`.
+- `triangles`, `clustering`, `average_clustering` and `transitivity`
+  (unweighted), with results identical to NetworkX.
 
 - NetworkX backend (opt in with `nx.config.backend_priority = ["rustnx"]`)
   with Rust implementations of:

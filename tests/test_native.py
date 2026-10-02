@@ -132,6 +132,9 @@ def algorithm_calls(H, directed):
         "all_paths": lambda G, b: nx.all_pairs_shortest_path(G, backend=b),
         "all_paths_w": lambda G, b: nx.all_pairs_dijkstra_path(G, backend=b),
         "diameter": lambda G, b: nx.diameter(G, backend=b),
+        "clustering": lambda G, b: list(nx.clustering(G, backend=b).items()),
+        "avg_clustering": lambda G, b: nx.average_clustering(G, backend=b),
+        "transitivity": lambda G, b: nx.transitivity(G, backend=b),
         "avg_spl_w": lambda G, b: nx.average_shortest_path_length(G, weight="weight", backend=b),
     }
     if src is not None:
@@ -156,6 +159,7 @@ def algorithm_calls(H, directed):
         calls["dag"] = lambda G, b: nx.is_directed_acyclic_graph(G, backend=b)
     else:
         calls["cc"] = lambda G, b: list(nx.connected_components(G, backend=b))
+        calls["triangles"] = lambda G, b: list(nx.triangles(G, backend=b).items())
     return calls
 
 
