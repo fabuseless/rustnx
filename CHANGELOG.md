@@ -7,6 +7,10 @@ versions may change behavior.
 
 ## [Unreleased]
 
+## [0.1.0a1] - 2026-10-02
+
+First public pre-release.
+
 ### Added
 - `rustnx.rx`, a rustworkx-compatible API (`PyGraph`, `PyDiGraph`, and
   rustworkx-named algorithm functions) on the same Rust core. It matches
