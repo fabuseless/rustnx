@@ -905,3 +905,34 @@ def test_clustering_edge_cases():
     exact(nx.clustering, G)
     exact(nx.triangles, G)
     exact(nx.transitivity, G)
+
+
+# --- Edge betweenness -----------------------------------------------------------
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_edge_betweenness(seed, directed, weights):
+    G = random_graph(seed, directed, weights)
+    weight = None if weights == "none" else "weight"
+    for normalized in [True, False]:
+        ours, ref = both(
+            nx.edge_betweenness_centrality, G, normalized=normalized, weight=weight
+        )
+        assert_close_dicts(ours, ref)
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_edge_betweenness_sampled(seed):
+    G = random_graph(seed, directed=seed % 2 == 0, weights="int")
+    k = max(1, len(G) // 3)
+    for weight in [None, "weight"]:
+        ours, ref = both(nx.edge_betweenness_centrality, G, k=k, weight=weight, seed=seed)
+        assert_close_dicts(ours, ref)
+
+
+def test_edge_betweenness_small_graphs():
+    for G in [nx.Graph(), nx.Graph([(0, 0)]), nx.path_graph(2), nx.DiGraph([(1, 0)])]:
+        ours, ref = both(nx.edge_betweenness_centrality, G)
+        assert_close_dicts(ours, ref)

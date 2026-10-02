@@ -36,6 +36,8 @@ versions may change behavior.
 - `descendants` and `ancestors`.
 - `triangles`, `clustering`, `average_clustering` and `transitivity`
   (unweighted), with results identical to NetworkX.
+- `edge_betweenness_centrality` (unweighted and weighted, `k` sampling), run
+  in parallel.
 
 - NetworkX backend (opt in with `nx.config.backend_priority = ["rustnx"]`)
   with Rust implementations of:

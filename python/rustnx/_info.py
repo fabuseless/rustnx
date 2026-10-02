@@ -24,6 +24,7 @@ FUNCTIONS = {
     "dijkstra_path": {},
     "dijkstra_path_length": {},
     "eccentricity": {},
+    "edge_betweenness_centrality": {},
     "has_path": {},
     "is_connected": {},
     "is_directed_acyclic_graph": {},

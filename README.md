@@ -94,6 +94,7 @@ rx.dijkstra_shortest_path_lengths(g, 0, float)
 | Function | Notes |
 |---|---|
 | `betweenness_centrality` | Unweighted and weighted, `normalized`, `endpoints`, and `k` sampling (picks the same nodes as NetworkX for a given `seed`). Parallel. |
+| `edge_betweenness_centrality` | Unweighted and weighted, `normalized`, and `k` sampling (same nodes as NetworkX for a given `seed`). Parallel. Rescaled by the installed NetworkX's own code. |
 | `closeness_centrality` | Unweighted and `distance=`, `wf_improved`, single node `u=`. Parallel. Results are **bit-for-bit identical** to NetworkX. |
 | `single_source_shortest_path_length` | Same nodes and same dict order as NetworkX, with `cutoff`. |
 | `single_source_dijkstra_path_length` | Same order as NetworkX, with `cutoff`. Integer weights give integer distances. Raises the same error on negative cycles. |
@@ -119,6 +120,8 @@ rx.dijkstra_shortest_path_lengths(g, 0, float)
 |---|---|---|---|---|
 | `betweenness_centrality` | 4,000 nodes / 16k edges | 40.9 s | 0.38 s | **107×** |
 | `betweenness_centrality` (weighted) | 4,000 / 16k | 115.3 s | 1.24 s | **93×** |
+| `edge_betweenness_centrality` | 4,000 / 16k | 42.3 s | 0.46 s | **93×** |
+| `edge_betweenness_centrality` (weighted) | 4,000 / 16k | 106.8 s | 1.33 s | **80×** |
 | `closeness_centrality` | 4,000 / 16k | 5.45 s | 0.0097 s | **562×** |
 | `single_source_dijkstra_path_length` | 160,000 / 319k | 0.38 s | 0.063 s | 6× |
 | `single_source_shortest_path_length` | 160,000 / 319k | 0.11 s | 0.020 s | 5× |
@@ -261,8 +264,7 @@ Layout:
 
 ## Roadmap
 
-- More algorithms: `edge_betweenness_centrality`, `bidirectional_dijkstra`,
-  weighted clustering.
+- More algorithms: `bidirectional_dijkstra`, weighted clustering.
 - Multigraph support.
 
 ## License

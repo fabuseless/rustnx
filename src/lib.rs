@@ -218,6 +218,22 @@ impl CoreGraph {
         }))
     }
 
+    /// Unscaled edge betweenness, one value per edge in `edges_in_order`.
+    #[pyo3(signature = (weight=None, sources=None))]
+    fn edge_betweenness(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+        sources: Option<Vec<u32>>,
+    ) -> PyResult<Vec<f64>> {
+        let w = self.weight_slice(weight, false)?;
+        let sources = self.sources_or_all(sources)?;
+        Ok(py.detach(|| {
+            let (edge_id, m) = self.edge_ids();
+            centrality::edge_betweenness(&self.succ, self.n, w, &edge_id, m, &sources)
+        }))
+    }
+
     #[pyo3(signature = (distance=None, wf_improved=true, sources=None))]
     fn closeness(
         &self,
@@ -561,6 +577,48 @@ impl CoreGraph {
         } else {
             Ok((&self.succ, self.weight_slice(weight, false)?))
         }
+    }
+
+    /// For each arc of `succ`, the position of its edge in `edges_in_order`
+    /// (both arcs of an undirected edge share one), and the edge count.
+    fn edge_ids(&self) -> (Vec<u32>, usize) {
+        let m = self.succ.targets.len();
+        if self.directed {
+            return ((0..m as u32).collect(), m);
+        }
+        // An undirected edge {t, v} (t < v) is numbered while scanning row t;
+        // its mirror arc sits in row v. For a fixed v those edges are
+        // numbered in increasing t, so pair them with row v's arcs to
+        // smaller targets, sorted by target.
+        let low: Vec<Vec<u32>> = (0..self.n)
+            .map(|v| {
+                let mut arcs: Vec<u32> = self
+                    .succ
+                    .range(v)
+                    .filter(|&e| (self.succ.targets[e] as usize) < v)
+                    .map(|e| e as u32)
+                    .collect();
+                arcs.sort_unstable_by_key(|&e| self.succ.targets[e as usize]);
+                arcs
+            })
+            .collect();
+        let mut cursor = vec![0usize; self.n];
+        let mut ids = vec![0u32; m];
+        let mut next = 0u32;
+        for t in 0..self.n {
+            for e in self.succ.range(t) {
+                let v = self.succ.targets[e] as usize;
+                if v >= t {
+                    ids[e] = next;
+                    if v > t {
+                        ids[low[v][cursor[v]] as usize] = next;
+                        cursor[v] += 1;
+                    }
+                    next += 1;
+                }
+            }
+        }
+        (ids, next as usize)
     }
 
     fn sources_or_all(&self, sources: Option<Vec<u32>>) -> PyResult<Vec<u32>> {

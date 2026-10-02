@@ -33,6 +33,7 @@ __all__ = [
     "dijkstra_path",
     "dijkstra_path_length",
     "eccentricity",
+    "edge_betweenness_centrality",
     "has_path",
     "is_connected",
     "is_directed_acyclic_graph",
@@ -243,6 +244,45 @@ def betweenness_centrality(
     return rescale(
         dict(zip(G._nodes, raw)), n, **{name: available[name] for name in names}
     )
+
+
+@functools.cache
+def _edge_rescale():
+    """How the installed NetworkX rescales edge betweenness: ``_rescale_e``
+    before 3.6, the shared ``_rescale`` after. ``None`` if unrecognized."""
+    func = getattr(nx.edge_betweenness_centrality, "orig_func", None)
+    try:
+        source = inspect.getsource(func)
+    except (OSError, TypeError):
+        return None
+    if "_rescale_e(" in source and hasattr(_nx_betweenness, "_rescale_e"):
+        return lambda b, n, normalized, directed, sampled: _nx_betweenness._rescale_e(
+            b, n, normalized=normalized, directed=directed
+        )
+    if "sampled_nodes=None if k is None else nodes" in source:
+        return lambda b, n, normalized, directed, sampled: _nx_betweenness._rescale(
+            b, n, normalized=normalized, directed=directed, sampled_nodes=sampled
+        )
+    return None
+
+
+def edge_betweenness_centrality(G, k=None, normalized=True, weight=None, seed=None):
+    rescale = _edge_rescale()
+    if rescale is None:
+        raise NotImplementedError("unrecognized NetworkX edge betweenness rescaling")
+    weight, _, has_hidden = _check_weight(G, weight)
+    if weight is not None and has_hidden:
+        raise NotImplementedError("rustnx does not support None edge weights here")
+    sampled = sources = None
+    if k is not None:
+        # As in betweenness_centrality, `seed` is already a `random.Random`.
+        sampled = seed.sample(list(G._nodes), k)
+        sources = [G._index[v] for v in sampled]
+    raw = G._core.edge_betweenness(weight, sources)
+    us, vs, _ = G._core.edges_in_order()
+    nodes = G._nodes
+    betweenness = dict(zip([(nodes[u], nodes[v]) for u, v in zip(us, vs)], raw))
+    return rescale(betweenness, len(G), normalized, G.is_directed(), sampled)
 
 
 def closeness_centrality(G, u=None, distance=None, wf_improved=True):

@@ -122,6 +122,10 @@ def algorithm_calls(H, directed):
     calls = {
         "betweenness": lambda G, b: nx.betweenness_centrality(G, backend=b),
         "betweenness_w": lambda G, b: nx.betweenness_centrality(G, weight="weight", backend=b),
+        "edge_betweenness": lambda G, b: list(nx.edge_betweenness_centrality(G, backend=b).items()),
+        "edge_betweenness_w": lambda G, b: list(
+            nx.edge_betweenness_centrality(G, weight="weight", backend=b).items()
+        ),
         "closeness": lambda G, b: nx.closeness_centrality(G, backend=b),
         "closeness_w": lambda G, b: nx.closeness_centrality(G, distance="weight", backend=b),
         "pagerank": lambda G, b: nx.pagerank(G, backend=b),
