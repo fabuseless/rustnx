@@ -30,16 +30,27 @@ __all__ = [
 def enable(fallback=True):
     """Make NetworkX use rustnx for every function rustnx supports.
 
+    Puts rustnx first in ``nx.config.backend_priority.algos``. NetworkX
+    graphs are converted to rustnx (and the conversion cached) for supported
+    functions; everything else runs in NetworkX as usual.
+
+    ``"networkx"`` is removed from the priority list if present: NetworkX
+    tries a backend that is both listed there and the input's own backend
+    before any other, so listing it would stop rustnx from ever running on
+    NetworkX graphs.
+
     With ``fallback=True`` (the default), rustnx graphs (``rustnx.Graph``)
     passed to functions rustnx doesn't implement are converted to NetworkX
-    automatically, instead of raising. Equivalent to
-    ``NETWORKX_BACKEND_PRIORITY=rustnx,networkx``.
+    automatically instead of raising (``nx.config.fallback_to_nx``).
+    Equivalent to ``NETWORKX_BACKEND_PRIORITY=rustnx`` plus
+    ``NETWORKX_FALLBACK_TO_NX=1``.
     """
     import networkx as nx
 
-    algos = [name for name in nx.config.backend_priority.algos if name != "rustnx"]
-    algos.insert(0, "rustnx")
-    if fallback and "networkx" not in algos:
-        algos.append("networkx")
-    nx.config.backend_priority.algos = algos
-__version__ = "0.1.0a1"
+    others = [n for n in nx.config.backend_priority.algos if n not in ("rustnx", "networkx")]
+    nx.config.backend_priority.algos = ["rustnx", *others]
+    if fallback:
+        nx.config.fallback_to_nx = True
+
+
+__version__ = "0.1.0a2"
