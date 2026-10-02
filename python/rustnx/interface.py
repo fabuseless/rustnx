@@ -20,9 +20,18 @@ _WEIGHT_PARAMS = ("weight", "distance")
 _LINEAR_TIME = {
     "connected_components",
     "is_connected",
+    "is_directed_acyclic_graph",
+    "is_strongly_connected",
+    "is_weakly_connected",
     "number_connected_components",
+    "number_strongly_connected_components",
+    "number_weakly_connected_components",
     "single_source_dijkstra_path_length",
     "single_source_shortest_path_length",
+    "strongly_connected_components",
+    "topological_generations",
+    "topological_sort",
+    "weakly_connected_components",
 }
 SMALL_GRAPH_NODES = 500
 

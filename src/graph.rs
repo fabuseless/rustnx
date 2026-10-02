@@ -5,7 +5,9 @@
 //! NetworkX does. That is what lets results (and dict ordering) match.
 
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 use std::ops::Range;
+use std::sync::OnceLock;
 
 use pyo3::exceptions::{PyNotImplementedError, PyValueError};
 use pyo3::prelude::*;
@@ -40,13 +42,24 @@ pub struct Weights {
     pub has_hidden: bool,
 }
 
+/// Predecessor rows in NetworkX's own `G._pred` order, with weights.
+pub struct ExactPred {
+    pub csr: Csr,
+    pub weights: HashMap<String, Vec<f64>>,
+}
+
 #[pyclass(frozen, module = "rustnx._core")]
 pub struct CoreGraph {
     pub n: usize,
     pub directed: bool,
     pub succ: Csr,
-    /// Predecessor rows; only stored for directed graphs.
+    /// Predecessor rows (directed graphs only), built by transposing `succ`,
+    /// so in-edges are ordered by source position rather than by NetworkX's
+    /// insertion order. Only weighted directed closeness can tell the
+    /// difference (tie order changes the last bits of a float sum); it uses
+    /// `exact_pred`, read from `G._pred` on demand.
     pub pred: Option<Csr>,
+    pub exact_pred: OnceLock<ExactPred>,
     pub weights: HashMap<String, Weights>,
 }
 
@@ -69,6 +82,22 @@ impl CoreGraph {
             (Some(pred), true) => pred.as_slice(),
             _ => w.succ.as_slice(),
         }))
+    }
+
+    /// Adjacency and weights for NetworkX's `G.reverse()`, exactly ordered.
+    /// Weighted traversal of a directed graph needs `exact_pred` loaded.
+    pub fn reverse_exact(&self, attr: Option<&str>) -> PyResult<(&Csr, Option<&[f64]>)> {
+        if !self.directed || attr.is_none() {
+            return Ok((self.adj(true), self.weight_slice(attr, true)?));
+        }
+        let exact = self
+            .exact_pred
+            .get()
+            .ok_or_else(|| PyNotImplementedError::new_err("exact predecessor order not loaded"))?;
+        let w = attr.and_then(|a| exact.weights.get(a)).ok_or_else(|| {
+            PyNotImplementedError::new_err(format!("edge attribute {attr:?} was not converted"))
+        })?;
+        Ok((&exact.csr, Some(w.as_slice())))
     }
 
     pub fn weights_info(&self, attr: Option<&str>) -> (bool, bool) {
@@ -124,6 +153,86 @@ fn parse_weight(value: &Bound<'_, PyAny>, all_int: &mut bool, hidden: &mut bool)
     )))
 }
 
+/// Hasher for object addresses: they are already well spread apart, so a
+/// single multiply beats SipHash by a wide margin.
+#[derive(Default)]
+struct PtrHasher(u64);
+
+impl Hasher for PtrHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, _: &[u8]) {
+        unreachable!("PtrHasher only hashes usize")
+    }
+
+    fn write_usize(&mut self, x: usize) {
+        self.0 = ((x as u64) >> 4).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+}
+
+/// Resolves a neighbor key from an adjacency dict to its node position.
+///
+/// A dict lookup per edge dominates conversion time, so two shortcuts come
+/// first. Both only ever return an answer the dict lookup would also give.
+struct NodeIndex<'a, 'py> {
+    index: &'a Bound<'py, PyDict>,
+    /// Nodes are exactly the ints `0..n` in order, so an int key is its own
+    /// position.
+    range_ints: bool,
+    n: usize,
+    /// Positions of the node objects themselves, by address. Neighbor keys
+    /// are usually the very same objects as the node keys.
+    by_ptr: HashMap<usize, u32, BuildHasherDefault<PtrHasher>>,
+}
+
+impl<'a, 'py> NodeIndex<'a, 'py> {
+    fn new(nodes: &Bound<'py, PyList>, index: &'a Bound<'py, PyDict>) -> PyResult<Self> {
+        let n = nodes.len();
+        let mut range_ints = true;
+        for (i, node) in nodes.iter().enumerate() {
+            if !node.is_exact_instance_of::<PyInt>() || node.extract::<usize>().ok() != Some(i) {
+                range_ints = false;
+                break;
+            }
+        }
+        let mut by_ptr = HashMap::default();
+        if !range_ints {
+            by_ptr.reserve(n);
+            for (i, node) in nodes.iter().enumerate() {
+                by_ptr.insert(node.as_ptr() as usize, i as u32);
+            }
+        }
+        Ok(NodeIndex {
+            index,
+            range_ints,
+            n,
+            by_ptr,
+        })
+    }
+
+    #[inline]
+    fn resolve(&self, key: &Bound<'py, PyAny>) -> PyResult<u32> {
+        if self.range_ints {
+            if key.is_exact_instance_of::<PyInt>() {
+                if let Ok(i) = key.extract::<usize>() {
+                    if i < self.n {
+                        return Ok(i as u32);
+                    }
+                }
+            }
+        } else if let Some(&i) = self.by_ptr.get(&(key.as_ptr() as usize)) {
+            return Ok(i);
+        }
+        let idx = self
+            .index
+            .get_item(key)?
+            .ok_or_else(|| PyValueError::new_err("adjacency refers to a node missing from G"))?;
+        idx.extract::<u32>()
+    }
+}
+
 struct Attr<'py> {
     name: Bound<'py, PyAny>,
     default: Bound<'py, PyAny>,
@@ -132,7 +241,7 @@ struct Attr<'py> {
 /// Read one adjacency mapping (`G._adj` or `G._pred`) into CSR form.
 fn read_adj<'py>(
     nodes: &Bound<'py, PyList>,
-    index: &Bound<'py, PyDict>,
+    index: &NodeIndex<'_, 'py>,
     adj: &Bound<'py, PyAny>,
     attrs: &[Attr<'py>],
     flags: &mut [(bool, bool)],
@@ -146,10 +255,7 @@ fn read_adj<'py>(
                          nbr: &Bound<'py, PyAny>,
                          data: &Bound<'py, PyAny>|
      -> PyResult<()> {
-        let idx = index
-            .get_item(nbr)?
-            .ok_or_else(|| PyValueError::new_err("adjacency refers to a node missing from G"))?;
-        targets.push(idx.extract::<u32>()?);
+        targets.push(index.resolve(nbr)?);
         for (k, attr) in attrs.iter().enumerate() {
             let value = match data.cast::<PyDict>() {
                 Ok(d) => d
@@ -181,35 +287,70 @@ fn read_adj<'py>(
     Ok((Csr { offsets, targets }, values))
 }
 
+/// In-edge rows for a directed graph, ordered by source position, with each
+/// weight array permuted to match.
+fn transpose(succ: &Csr, n: usize, values: &[Vec<f64>]) -> (Csr, Vec<Vec<f64>>) {
+    let m = succ.targets.len();
+    let mut offsets = vec![0usize; n + 1];
+    for &t in &succ.targets {
+        offsets[t as usize + 1] += 1;
+    }
+    for v in 0..n {
+        offsets[v + 1] += offsets[v];
+    }
+    let mut next = offsets.clone();
+    let mut targets = vec![0u32; m];
+    let mut order = vec![0usize; m];
+    for u in 0..n {
+        for e in succ.range(u) {
+            let t = succ.targets[e] as usize;
+            let slot = next[t];
+            next[t] += 1;
+            targets[slot] = u as u32;
+            order[slot] = e;
+        }
+    }
+    let values = values
+        .iter()
+        .map(|vals| order.iter().map(|&e| vals[e]).collect())
+        .collect();
+    (Csr { offsets, targets }, values)
+}
+
+fn to_attrs<'py>(weight_attrs: Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)>) -> Vec<Attr<'py>> {
+    weight_attrs
+        .into_iter()
+        .map(|(name, default)| Attr { name, default })
+        .collect()
+}
+
 /// Build a `CoreGraph` from NetworkX internals.
 ///
-/// `nodes` is `list(G)`, `index` maps node -> position in `nodes`, and
-/// `weight_attrs` is a list of `(attribute name, default value)` pairs.
+/// `nodes` is `list(G)`, `index` maps node -> position in `nodes`, `succ` is
+/// `G._adj`, and `weight_attrs` is a list of `(attribute name, default)`.
 #[pyfunction]
-#[pyo3(signature = (nodes, index, succ, pred, weight_attrs))]
+#[pyo3(signature = (nodes, index, succ, directed, weight_attrs))]
 pub fn build_graph<'py>(
     nodes: &Bound<'py, PyList>,
     index: &Bound<'py, PyDict>,
     succ: &Bound<'py, PyAny>,
-    pred: Option<&Bound<'py, PyAny>>,
+    directed: bool,
     weight_attrs: Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)>,
 ) -> PyResult<CoreGraph> {
     if nodes.len() >= u32::MAX as usize {
         return Err(PyNotImplementedError::new_err("graph has too many nodes"));
     }
-    let attrs: Vec<Attr> = weight_attrs
-        .into_iter()
-        .map(|(name, default)| Attr { name, default })
-        .collect();
+    let n = nodes.len();
+    let attrs = to_attrs(weight_attrs);
     let mut flags = vec![(true, false); attrs.len()];
+    let index = NodeIndex::new(nodes, index)?;
 
-    let (succ_csr, succ_vals) = read_adj(nodes, index, succ, &attrs, &mut flags)?;
-    let (pred_csr, mut pred_vals) = match pred {
-        Some(pred) => {
-            let (csr, vals) = read_adj(nodes, index, pred, &attrs, &mut flags)?;
-            (Some(csr), vals.into_iter().map(Some).collect())
-        }
-        None => (None, attrs.iter().map(|_| None).collect::<Vec<_>>()),
+    let (succ_csr, succ_vals) = read_adj(nodes, &index, succ, &attrs, &mut flags)?;
+    let (pred_csr, mut pred_vals) = if directed {
+        let (csr, vals) = transpose(&succ_csr, n, &succ_vals);
+        (Some(csr), vals.into_iter().map(Some).collect())
+    } else {
+        (None, attrs.iter().map(|_| None).collect::<Vec<_>>())
     };
 
     let mut weights = HashMap::new();
@@ -227,10 +368,50 @@ pub fn build_graph<'py>(
     }
 
     Ok(CoreGraph {
-        n: nodes.len(),
-        directed: pred_csr.is_some(),
+        n,
+        directed,
         succ: succ_csr,
         pred: pred_csr,
+        exact_pred: OnceLock::new(),
         weights,
     })
+}
+
+impl CoreGraph {
+    /// Read `G._pred` so that reverse traversals follow NetworkX's exact
+    /// in-edge order. The caller must pass the same nodes, index and weight
+    /// attributes used to build this graph, from an unchanged graph.
+    pub fn load_exact_pred<'py>(
+        &self,
+        nodes: &Bound<'py, PyList>,
+        index: &Bound<'py, PyDict>,
+        pred: &Bound<'py, PyAny>,
+        weight_attrs: Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)>,
+    ) -> PyResult<()> {
+        if !self.directed || self.exact_pred.get().is_some() {
+            return Ok(());
+        }
+        if nodes.len() != self.n {
+            return Err(PyValueError::new_err("node list does not match this graph"));
+        }
+        let attrs = to_attrs(weight_attrs);
+        let mut flags = vec![(true, false); attrs.len()];
+        let index = NodeIndex::new(nodes, index)?;
+        let (csr, vals) = read_adj(nodes, &index, pred, &attrs, &mut flags)?;
+        if csr.targets.len() != self.succ.targets.len() {
+            return Err(PyValueError::new_err(
+                "predecessors do not match this graph",
+            ));
+        }
+        let mut weights = HashMap::new();
+        for (attr, vals) in attrs.iter().zip(vals) {
+            weights.insert(attr.name.extract::<String>()?, vals);
+        }
+        let _ = self.exact_pred.set(ExactPred { csr, weights });
+        Ok(())
+    }
+
+    pub fn has_exact_pred(&self) -> bool {
+        !self.directed || self.exact_pred.get().is_some()
+    }
 }

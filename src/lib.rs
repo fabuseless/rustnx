@@ -5,12 +5,15 @@
 
 mod algorithms;
 mod graph;
+mod serialize;
 
 use pyo3::exceptions::{PyIndexError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 
-use algorithms::centrality;
+use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
+use algorithms::{centrality, directed};
 use graph::CoreGraph;
 
 impl From<NegativeCycle> for PyErr {
@@ -28,6 +31,32 @@ fn all_nodes(n: usize) -> Vec<u32> {
 impl CoreGraph {
     fn __len__(&self) -> usize {
         self.n
+    }
+
+    /// Pickle support: NetworkX keeps converted graphs in the original
+    /// graph's cache, so they must survive `pickle` and `copy.deepcopy`.
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let rebuild = py
+            .import("rustnx._core")?
+            .getattr("_core_graph_from_bytes")?;
+        let data = PyBytes::new(py, &serialize::to_bytes(self));
+        (rebuild, (data,)).into_pyobject(py)
+    }
+
+    #[pyo3(name = "load_exact_pred")]
+    fn py_load_exact_pred<'py>(
+        &self,
+        nodes: &Bound<'py, PyList>,
+        index: &Bound<'py, PyDict>,
+        pred: &Bound<'py, PyAny>,
+        weight_attrs: Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)>,
+    ) -> PyResult<()> {
+        self.load_exact_pred(nodes, index, pred, weight_attrs)
+    }
+
+    #[pyo3(name = "has_exact_pred")]
+    fn py_has_exact_pred(&self) -> bool {
+        self.has_exact_pred()
     }
 
     #[getter]
@@ -117,12 +146,76 @@ impl CoreGraph {
         sources: Option<Vec<u32>>,
     ) -> PyResult<Vec<f64>> {
         // NetworkX runs closeness on `G.reverse()` for directed graphs.
-        let w = self.weight_slice(distance, true)?;
+        let (adj, w) = self.reverse_exact(distance)?;
         let sources = sources.unwrap_or_else(|| all_nodes(self.n));
         for &s in &sources {
             self.check_index(s as usize)?;
         }
-        Ok(py.detach(|| centrality::closeness(self.adj(true), self.n, w, wf_improved, &sources))?)
+        Ok(py.detach(|| centrality::closeness(adj, self.n, w, wf_improved, &sources))?)
+    }
+
+    /// PageRank scores in node order, or `None` if it didn't converge.
+    #[pyo3(signature = (alpha, personalization, max_iter, tol, nstart, weight, dangling))]
+    #[allow(clippy::too_many_arguments)]
+    fn pagerank(
+        &self,
+        py: Python<'_>,
+        alpha: f64,
+        personalization: Option<Vec<f64>>,
+        max_iter: usize,
+        tol: f64,
+        nstart: Option<Vec<f64>>,
+        weight: Option<&str>,
+        dangling: Option<Vec<f64>>,
+    ) -> PyResult<Option<Vec<f64>>> {
+        for v in [&personalization, &nstart, &dangling].into_iter().flatten() {
+            if v.len() != self.n {
+                return Err(PyValueError::new_err(
+                    "vector length must equal the node count",
+                ));
+            }
+        }
+        let input = PagerankInput {
+            n: self.n,
+            out_adj: &self.succ,
+            out_weights: self.weight_slice(weight, false)?,
+            in_adj: self.adj(true),
+            in_weights: self.weight_slice(weight, true)?,
+            alpha,
+            personalization,
+            nstart,
+            dangling,
+            max_iter,
+            tol,
+        };
+        Ok(py.detach(|| link_analysis::pagerank(input).ok()))
+    }
+
+    fn strongly_connected_components(&self, py: Python<'_>) -> Vec<Vec<u32>> {
+        py.detach(|| directed::strongly_connected_components(&self.succ, self.n))
+    }
+
+    fn weakly_connected_components(&self, py: Python<'_>) -> Vec<Vec<u32>> {
+        py.detach(|| directed::weakly_connected_components(&self.succ, self.adj(true), self.n))
+    }
+
+    /// In-degrees left after removing the out-edges of `processed` nodes:
+    /// the state of `nx.topological_generations` after those generations.
+    fn indegrees_after(&self, processed: Vec<u32>) -> PyResult<Vec<usize>> {
+        let pred = self.adj(true);
+        let mut indegree: Vec<usize> = (0..self.n).map(|v| pred.neighbors(v).len()).collect();
+        for &v in &processed {
+            self.check_index(v as usize)?;
+            for &child in self.succ.neighbors(v as usize) {
+                indegree[child as usize] -= 1;
+            }
+        }
+        Ok(indegree)
+    }
+
+    /// `(generations, has_cycle)`
+    fn topological_generations(&self, py: Python<'_>) -> (Vec<Vec<u32>>, bool) {
+        py.detach(|| directed::topological_generations(&self.succ, self.adj(true), self.n))
     }
 }
 
@@ -140,5 +233,6 @@ impl CoreGraph {
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CoreGraph>()?;
     m.add_function(wrap_pyfunction!(graph::build_graph, m)?)?;
+    m.add_function(wrap_pyfunction!(serialize::_core_graph_from_bytes, m)?)?;
     Ok(())
 }
