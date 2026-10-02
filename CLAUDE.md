@@ -21,6 +21,10 @@ errors) on NetworkX 3.4, 3.5 and 3.7; anything rustnx can't match raises
 
 - **No emojis.** Don't use emojis anywhere: replies, the todo list, docs,
   code comments or commit messages.
+- **No session links.** Never put Claude Code session URLs
+  (`claude.ai/code/session_...`) in commit messages, PR or issue
+  descriptions, comments, or any file in the repo. That includes the
+  `Claude-Session:` commit trailer; a `Co-Authored-By:` line is fine.
 - **Always display the todo list as a table.** Whenever the todo list (the
   "To do" section below) is shown, use a Markdown table with the columns
   `#`, `Item`, `Status`, `Group`, `Owner` and `Notes`. `Status` is one of
