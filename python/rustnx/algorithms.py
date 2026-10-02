@@ -19,12 +19,14 @@ __all__ = [
     "all_pairs_dijkstra_path_length",
     "all_pairs_shortest_path",
     "all_pairs_shortest_path_length",
+    "ancestors",
     "average_shortest_path_length",
     "betweenness_centrality",
     "bidirectional_shortest_path",
     "center",
     "closeness_centrality",
     "connected_components",
+    "descendants",
     "diameter",
     "dijkstra_path",
     "dijkstra_path_length",
@@ -742,6 +744,24 @@ def bidirectional_shortest_path(G, source, target):
         raise nx.NetworkXNoPath(f"No path between {source} and {target}.")
     nodes = G._nodes
     return [nodes[i] for i in path]
+
+
+def _reachable(G, source, reverse):
+    kind = "digraph" if G.is_directed() else "graph"
+    try:
+        s = G._index[source]
+    except KeyError:
+        raise nx.NetworkXError(f"The node {source} is not in the {kind}.") from None
+    nodes = G._nodes
+    return {nodes[i] for i in G._core.reachable(s, reverse)}
+
+
+def descendants(G, source):
+    return _reachable(G, source, False)
+
+
+def ancestors(G, source):
+    return _reachable(G, source, True)
 
 
 def has_path(G, source, target):

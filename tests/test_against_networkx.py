@@ -839,3 +839,12 @@ def test_shortest_path_methods():
         nx.shortest_path(G, 0, weight="weight", method="bellman-ford", backend="rustnx")
     # weight=None ignores the method
     same_outcome(nx.shortest_path, G, 0, method="bellman-ford")
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_descendants_ancestors(seed, directed):
+    G = random_graph(seed, directed, "none")
+    for v in list(G)[:5] + ["not-a-node"]:
+        same_outcome(nx.descendants, G, v)
+        same_outcome(nx.ancestors, G, v)

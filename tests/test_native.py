@@ -147,6 +147,8 @@ def algorithm_calls(H, directed):
         calls["pair"] = lambda G, b: nx.shortest_path(G, src, dst, backend=b)
         calls["pair_w"] = lambda G, b: nx.dijkstra_path(G, src, dst, backend=b)
         calls["has_path"] = lambda G, b: nx.has_path(G, dst, src, backend=b)
+        calls["descendants"] = lambda G, b: nx.descendants(G, src, backend=b)
+        calls["ancestors"] = lambda G, b: nx.ancestors(G, src, backend=b)
     if directed:
         calls["scc"] = lambda G, b: list(nx.strongly_connected_components(G, backend=b))
         calls["wcc"] = lambda G, b: list(nx.weakly_connected_components(G, backend=b))

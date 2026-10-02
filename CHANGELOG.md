@@ -33,6 +33,7 @@ versions may change behavior.
   `single_source_dijkstra_path`, `all_pairs_shortest_path`,
   `all_pairs_dijkstra_path` and `all_pairs_dijkstra`. They return the same
   paths as NetworkX, ties included.
+- `descendants` and `ancestors`.
 
 - NetworkX backend (opt in with `nx.config.backend_priority = ["rustnx"]`)
   with Rust implementations of:

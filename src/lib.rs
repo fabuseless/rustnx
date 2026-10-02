@@ -408,6 +408,17 @@ impl CoreGraph {
         Ok(Some((*t.dist.last().expect("non-empty"), path)))
     }
 
+    /// Nodes reachable from `source` (following in-edges if `reverse`),
+    /// excluding `source` itself. In no particular order.
+    #[pyo3(signature = (source, reverse=false))]
+    fn reachable(&self, py: Python<'_>, source: usize, reverse: bool) -> PyResult<Vec<u32>> {
+        self.check_index(source)?;
+        let adj = self.adj(reverse);
+        let (mut order, _) = py.detach(|| paths::bfs_tree(adj, self.n, source, f64::INFINITY));
+        order.remove(0);
+        Ok(order)
+    }
+
     /// `bidirectional_shortest_path` as node positions, or `None` if no path.
     fn bidirectional_bfs(
         &self,

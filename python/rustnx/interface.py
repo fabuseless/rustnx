@@ -18,8 +18,10 @@ _WEIGHT_PARAMS = ("weight", "distance")
 # Linear-time algorithms where, on small graphs, converting to rustnx and
 # dispatching costs more than NetworkX spends running the algorithm.
 _LINEAR_TIME = {
+    "ancestors",
     "bidirectional_shortest_path",
     "connected_components",
+    "descendants",
     "dijkstra_path",
     "dijkstra_path_length",
     "has_path",

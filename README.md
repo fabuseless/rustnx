@@ -108,6 +108,7 @@ rx.dijkstra_shortest_path_lengths(g, 0, float)
 | `shortest_path`, `shortest_path_length`, `single_source_shortest_path`, `single_target_shortest_path`, `bidirectional_shortest_path`, `has_path` | The same paths as NetworkX, ties included, in the same dict order. `shortest_path` with no source and no target runs in NetworkX. |
 | `dijkstra_path`, `dijkstra_path_length`, `single_source_dijkstra`, `single_source_dijkstra_path` | The same paths as NetworkX, ties included. The paths dict follows the installed NetworkX's order, which changed in 3.6. Weighted `shortest_path` between two nodes uses `bidirectional_dijkstra`, which runs in NetworkX. |
 | `all_pairs_shortest_path`, `all_pairs_dijkstra_path`, `all_pairs_dijkstra` | Parallel, in batches. |
+| `descendants`, `ancestors` | Same sets and errors as NetworkX. |
 
 ## Benchmarks
 
@@ -257,7 +258,7 @@ Layout:
 ## Roadmap
 
 - More algorithms: `edge_betweenness_centrality`, `clustering`/`triangles`,
-  `descendants`/`ancestors`, `bidirectional_dijkstra`.
+  `bidirectional_dijkstra`.
 - Multigraph support.
 
 ## License
