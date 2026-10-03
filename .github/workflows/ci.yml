@@ -61,3 +61,25 @@ jobs:
           cd /tmp
           NETWORKX_TEST_BACKEND=rustnx NETWORKX_FALLBACK_TO_NX=True \
             python -m pytest -q -p no:cacheprovider --pyargs networkx
+
+  # Speedups over NetworkX must stay above floors, and calls must really run
+  # in Rust (catches silent fallbacks like 0.1.0a1's enable() bug). Results
+  # appear in the job summary.
+  speed-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and install
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install maturin networkx numpy scipy
+          maturin develop --release
+      - name: Speed and dispatch guard
+        run: |
+          source .venv/bin/activate
+          python benchmarks/guard.py
