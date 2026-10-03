@@ -20,6 +20,7 @@ OUTPUT = ROOT / "docs" / "API.md"
 
 SECTIONS = [
     ("Centrality", [
+        "degree_centrality", "in_degree_centrality", "out_degree_centrality",
         "betweenness_centrality", "edge_betweenness_centrality", "closeness_centrality",
         "harmonic_centrality", "eigenvector_centrality", "katz_centrality", "pagerank",
     ]),
@@ -41,9 +42,12 @@ SECTIONS = [
     ]),
     ("Components", [
         "connected_components", "number_connected_components", "is_connected",
+        "node_connected_component", "articulation_points", "biconnected_components",
+        "biconnected_component_edges", "is_biconnected",
         "strongly_connected_components", "number_strongly_connected_components",
         "is_strongly_connected", "weakly_connected_components",
         "number_weakly_connected_components", "is_weakly_connected",
+        "attracting_components", "number_attracting_components", "is_attracting_component",
     ]),
     ("Directed acyclic graphs", [
         "topological_sort", "topological_generations", "is_directed_acyclic_graph",
@@ -52,7 +56,12 @@ SECTIONS = [
     ("Cores, coloring and communities", [
         "core_number", "k_core", "is_bipartite", "greedy_color", "label_propagation_communities",
     ]),
-    ("Traversal", ["bfs_edges", "bfs_tree", "dfs_edges", "dfs_tree", "dfs_preorder_nodes"]),
+    ("Traversal", [
+        "bfs_edges", "bfs_tree", "bfs_predecessors", "bfs_successors", "bfs_layers",
+        "descendants_at_distance", "dfs_edges", "dfs_tree", "dfs_preorder_nodes",
+        "dfs_postorder_nodes", "dfs_predecessors", "dfs_successors",
+    ]),
+    ("Trees", ["is_tree", "is_forest"]),
     ("Spanning trees", [
         "minimum_spanning_edges", "maximum_spanning_edges",
         "minimum_spanning_tree", "maximum_spanning_tree",
@@ -101,6 +110,12 @@ NOTES = {
     "dfs_edges": "`sort_neighbors` falls back.",
     "dfs_tree": "`sort_neighbors` falls back.",
     "dfs_preorder_nodes": "`sort_neighbors` falls back.",
+    "dfs_postorder_nodes": "`sort_neighbors` falls back.",
+    "dfs_predecessors": "`sort_neighbors` falls back.",
+    "dfs_successors": "`sort_neighbors` falls back.",
+    "bfs_predecessors": "`sort_neighbors` falls back. Gives the installed NetworkX's deprecation warning (3.7+).",
+    "bfs_successors": "`sort_neighbors` falls back.",
+    "bfs_layers": "The first layer follows the installed NetworkX's order.",
     "minimum_spanning_edges": "Kruskal; Prim and Borůvka fall back. Yields the graph's own edge data dicts.",
     "maximum_spanning_edges": "Kruskal; Prim and Borůvka fall back. Yields the graph's own edge data dicts.",
     "minimum_spanning_tree": "Kruskal; Prim and Borůvka fall back.",

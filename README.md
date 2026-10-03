@@ -163,6 +163,16 @@ NetworkX, is in [docs/API.md](docs/API.md).
 | `minimum_spanning_edges`, `maximum_spanning_edges`, `minimum_spanning_tree`, `maximum_spanning_tree` | Kruskal's algorithm (the default), with the same edges in the same order, ties included; yields the graph's own edge data dicts. Prim and Borůvka run in NetworkX. |
 | `all_shortest_paths` | Unweighted and Dijkstra. Paths are generated lazily in Rust, in NetworkX's order (which differs before 3.7 when zero-weight cycles exist). |
 | `greedy_color`, `label_propagation_communities` | `greedy_color` with the default `largest_first` strategy; other strategies run in NetworkX. |
+| `degree_centrality`, `in_degree_centrality`, `out_degree_centrality` | Same values as NetworkX. |
+| `node_connected_component`, `articulation_points`, `biconnected_components`, `biconnected_component_edges`, `is_biconnected` | Same order as NetworkX, including the order inside each returned set. |
+| `attracting_components`, `number_attracting_components`, `is_attracting_component` | Same components in the same order as NetworkX. |
+| `bfs_predecessors`, `bfs_successors`, `bfs_layers`, `descendants_at_distance` | Same order as NetworkX, including each version's first layer in `bfs_layers` and the 3.7 deprecation warning of `bfs_predecessors`. |
+| `dfs_postorder_nodes`, `dfs_predecessors`, `dfs_successors` | Same order as NetworkX, with `depth_limit`. `sort_neighbors` runs in NetworkX. |
+| `is_tree`, `is_forest` | Same results and errors as NetworkX. |
+
+The rest of NetworkX's functions run in NetworkX. [docs/COVERAGE.md](docs/COVERAGE.md)
+lists every function NetworkX lets a backend implement and which ones rustnx
+does.
 
 ### Multigraphs
 
@@ -170,7 +180,7 @@ NetworkX, is in [docs/API.md](docs/API.md).
 code sees a multigraph only through its neighbors and, for weights, the
 minimum over parallel edges: components, traversals, the shortest path
 family, betweenness, closeness and harmonic centrality, the distance measures,
-and `is_bipartite`. Other functions (for example `pagerank`, which sums
+biconnected and attracting components, and `is_bipartite`. Other functions (for example `pagerank`, which sums
 parallel weights, or degree-based ones) run in NetworkX.
 
 ## Benchmarks

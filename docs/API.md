@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 65 NetworkX functions. Call them as usual (for
+rustnx implements 85 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -21,6 +21,9 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 
 | Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
 |---|---|---|---|---|
+| `nx.degree_centrality` | none | no | NetworkX |  |
+| `nx.in_degree_centrality` | none | no | NetworkX |  |
+| `nx.out_degree_centrality` | none | no | NetworkX |  |
 | `nx.betweenness_centrality` | `k`, `normalized`, `weight`, `endpoints`, `seed` | yes | rustnx | Parallel. Matches NetworkX to about 1e-15 (sums in a different order). `k` picks the same nodes as NetworkX for a given `seed`. `None` weights fall back. |
 | `nx.edge_betweenness_centrality` | `k`, `normalized`, `weight`, `seed` | no | rustnx | Parallel. Matches NetworkX to about 1e-15. `None` weights fall back. |
 | `nx.closeness_centrality` | `u`, `distance`, `wf_improved` | yes | rustnx | Bit-for-bit identical. |
@@ -84,12 +87,20 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.connected_components` | none | yes | NetworkX |  |
 | `nx.number_connected_components` | none | yes | NetworkX |  |
 | `nx.is_connected` | none | yes | NetworkX |  |
+| `nx.node_connected_component` | `n` | yes | NetworkX |  |
+| `nx.articulation_points` | none | yes | NetworkX |  |
+| `nx.biconnected_components` | none | yes | NetworkX |  |
+| `nx.biconnected_component_edges` | none | yes | NetworkX |  |
+| `nx.is_biconnected` | none | yes | NetworkX |  |
 | `nx.strongly_connected_components` | none | yes | NetworkX |  |
 | `nx.number_strongly_connected_components` | none | yes | NetworkX |  |
 | `nx.is_strongly_connected` | none | yes | NetworkX |  |
 | `nx.weakly_connected_components` | none | yes | NetworkX |  |
 | `nx.number_weakly_connected_components` | none | yes | NetworkX |  |
 | `nx.is_weakly_connected` | none | yes | NetworkX |  |
+| `nx.attracting_components` | none | yes | NetworkX |  |
+| `nx.number_attracting_components` | none | yes | NetworkX |  |
+| `nx.is_attracting_component` | none | yes | NetworkX |  |
 
 ### Directed acyclic graphs
 
@@ -124,9 +135,23 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 |---|---|---|---|---|
 | `nx.bfs_edges` | `source`, `reverse`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. |
 | `nx.bfs_tree` | `source`, `reverse`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. |
+| `nx.bfs_predecessors` | `source`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. Gives the installed NetworkX's deprecation warning (3.7+). |
+| `nx.bfs_successors` | `source`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. |
+| `nx.bfs_layers` | `sources` | yes | NetworkX | The first layer follows the installed NetworkX's order. |
+| `nx.descendants_at_distance` | `source`, `distance` | yes | NetworkX |  |
 | `nx.dfs_edges` | `source`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. |
 | `nx.dfs_tree` | `source`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. |
 | `nx.dfs_preorder_nodes` | `source`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. |
+| `nx.dfs_postorder_nodes` | `source`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. |
+| `nx.dfs_predecessors` | `source`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. |
+| `nx.dfs_successors` | `source`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. |
+
+### Trees
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.is_tree` | none | no | NetworkX |  |
+| `nx.is_forest` | none | no | NetworkX |  |
 
 ### Spanning trees
 

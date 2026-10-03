@@ -8,9 +8,11 @@ makes NetworkX fall back to its own implementation.
 import functools
 from collections import defaultdict
 import inspect
+from itertools import chain
 import math
 import operator
 import sys
+import warnings
 
 import networkx as nx
 from networkx.algorithms.centrality import betweenness as _nx_betweenness
@@ -23,11 +25,18 @@ __all__ = [
     "all_pairs_shortest_path_length",
     "all_shortest_paths",
     "ancestors",
+    "articulation_points",
+    "attracting_components",
     "average_clustering",
     "average_shortest_path_length",
     "betweenness_centrality",
     "bfs_edges",
+    "bfs_layers",
+    "bfs_predecessors",
+    "bfs_successors",
     "bfs_tree",
+    "biconnected_component_edges",
+    "biconnected_components",
     "bidirectional_dijkstra",
     "bidirectional_shortest_path",
     "center",
@@ -35,9 +44,14 @@ __all__ = [
     "clustering",
     "connected_components",
     "core_number",
+    "degree_centrality",
     "descendants",
+    "descendants_at_distance",
     "dfs_edges",
+    "dfs_postorder_nodes",
+    "dfs_predecessors",
     "dfs_preorder_nodes",
+    "dfs_successors",
     "dfs_tree",
     "diameter",
     "dijkstra_path",
@@ -48,10 +62,15 @@ __all__ = [
     "greedy_color",
     "harmonic_centrality",
     "has_path",
+    "in_degree_centrality",
+    "is_attracting_component",
+    "is_biconnected",
     "is_bipartite",
     "is_connected",
     "is_directed_acyclic_graph",
+    "is_forest",
     "is_strongly_connected",
+    "is_tree",
     "is_weakly_connected",
     "k_core",
     "katz_centrality",
@@ -60,9 +79,12 @@ __all__ = [
     "maximum_spanning_tree",
     "minimum_spanning_edges",
     "minimum_spanning_tree",
+    "node_connected_component",
+    "number_attracting_components",
     "number_connected_components",
     "number_strongly_connected_components",
     "number_weakly_connected_components",
+    "out_degree_centrality",
     "pagerank",
     "periphery",
     "radius",
@@ -336,9 +358,26 @@ def closeness_centrality(G, u=None, distance=None, wf_improved=True):
 # --- Directed components ------------------------------------------------------
 
 
+@functools.cache
+def _scc_early_exit():
+    """Whether the installed NetworkX's ``strongly_connected_components``
+    (3.7+) stops early when the whole graph is one component. That changes
+    the order it fills that component's set in, and so the set's iteration
+    order."""
+    try:
+        source = inspect.getsource(nx.strongly_connected_components.orig_func)
+    except (AttributeError, OSError, TypeError):
+        return True
+    return "root_low" in source
+
+
+def _scc(G):
+    return G._core.strongly_connected_components(_scc_early_exit())
+
+
 def strongly_connected_components(G):
     _directed_only(G)
-    return _components(G, G._core.strongly_connected_components())
+    return _components(G, _scc(G))
 
 
 def number_strongly_connected_components(G):
@@ -1478,3 +1517,279 @@ def label_propagation_communities(G):
     for node, label in zip(nodes, labels):
         clusters[label].add(node)
     return clusters.values()
+
+
+# --- More traversal ----------------------------------------------------------------
+
+
+@functools.cache
+def _bfs_predecessors_deprecation():
+    """The DeprecationWarning message the installed NetworkX gives for
+    ``bfs_predecessors`` (3.7+), or ``None``."""
+    H = nx.Graph([(0, 1)])
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        list(nx.bfs_predecessors(H, 0, backend="networkx"))
+    for w in caught:
+        if issubclass(w.category, DeprecationWarning):
+            return str(w.message)
+    return None
+
+
+def bfs_predecessors(G, source, depth_limit=None, sort_neighbors=None):
+    edges = bfs_edges(G, source, depth_limit=depth_limit, sort_neighbors=sort_neighbors)
+    deprecation = _bfs_predecessors_deprecation()
+
+    def generate():
+        if deprecation is not None:
+            warnings.warn(deprecation, category=DeprecationWarning, stacklevel=2)
+        for s, t in edges:
+            yield t, s
+
+    return generate()
+
+
+def bfs_successors(G, source, depth_limit=None, sort_neighbors=None):
+    edges = bfs_edges(G, source, depth_limit=depth_limit, sort_neighbors=sort_neighbors)
+
+    def generate():
+        # As in NetworkX, the first parent is the caller's `source` object.
+        parent = source
+        children = []
+        for p, c in edges:
+            if p == parent:
+                children.append(c)
+                continue
+            yield parent, children
+            children = [c]
+            parent = p
+        yield parent, children
+
+    return generate()
+
+
+@functools.cache
+def _bfs_layers_list_first():
+    """Whether the installed NetworkX (3.4) takes the first layer as
+    ``list(sources)`` before building the visited set from ``sources``
+    (later releases use ``list(set(sources))``). With an iterator the
+    visited set then starts empty."""
+    H = nx.Graph()
+    H.add_node(0)
+    return next(nx.bfs_layers(H, [0, 0], backend="networkx")) == [0, 0]
+
+
+def bfs_layers(G, sources):
+    def produce():
+        starts = sources
+        if starts in G:
+            starts = [starts]
+        # Built exactly as NetworkX builds them, so the first layer (and an
+        # iterator `sources`) behaves the same.
+        if _bfs_layers_list_first():
+            current = list(starts)
+            visited = set(starts)
+        else:
+            visited = set(starts)
+            current = list(visited)
+        for source in current:
+            if source not in G:
+                raise nx.NetworkXError(f"The node {source} is not in the graph.")
+        if not current:
+            return
+        index = G._index
+        later, ends = G._core.bfs_layers([index[v] for v in current], [index[v] for v in visited])
+        yield current
+        nodes = G._nodes
+        begin = 0
+        for end in ends:
+            yield [nodes[i] for i in later[begin:end]]
+            begin = end
+
+    return _traversal(G, produce)
+
+
+def descendants_at_distance(G, source, distance):
+    if source not in G:
+        raise nx.NetworkXError(f"The node {source} is not in the graph.")
+    # NetworkX compares each layer number `i` with `distance`.
+    if isinstance(distance, float) and distance.is_integer():
+        distance = int(distance)
+    try:
+        distance = operator.index(distance)
+    except TypeError:
+        raise NotImplementedError("rustnx needs an integer distance") from None
+    if distance < 0:
+        return set()
+    if distance == 0:
+        return {source}
+    # A BFS cut off at `distance`, like NetworkX stopping at that layer.
+    order, levels = G._core.bfs_lengths(G._index[source], float(distance))
+    nodes = G._nodes
+    return {nodes[v] for v, level in zip(order, levels) if level == distance}
+
+
+def dfs_postorder_nodes(G, source=None, depth_limit=None, *, sort_neighbors=None):
+    if sort_neighbors is not None:
+        raise NotImplementedError("rustnx does not support sort_neighbors")
+    depth = _depth_limit(G, depth_limit)
+    if source is None:
+        s, missing, starts = 0, None, None
+    else:
+        s, missing = _start(G, source)
+        starts = [s]
+
+    def produce():
+        if s is None:
+            raise missing
+        nodes = G._nodes
+        for v in G._core.dfs_postorder(starts, depth):
+            yield nodes[v]
+
+    return _traversal(G, produce)
+
+
+def dfs_predecessors(G, source=None, depth_limit=None, *, sort_neighbors=None):
+    return {t: s for s, t in dfs_edges(G, source, depth_limit, sort_neighbors=sort_neighbors)}
+
+
+def dfs_successors(G, source=None, depth_limit=None, *, sort_neighbors=None):
+    d = defaultdict(list)
+    for s, t in dfs_edges(G, source=source, depth_limit=depth_limit, sort_neighbors=sort_neighbors):
+        d[s].append(t)
+    return dict(d)
+
+
+# --- More components ---------------------------------------------------------------
+
+
+def node_connected_component(G, n):
+    _undirected_only(G)
+    seen = {n}  # the caller's object, as in NetworkX (and its TypeError)
+    try:
+        s = G._index[n]
+    except KeyError:
+        raise KeyError(n) from None
+    order, _ = G._core.bfs_lengths(s, math.inf)
+    nodes = G._nodes
+    seen.update([nodes[i] for i in order[1:]])
+    return seen
+
+
+def articulation_points(G):
+    _undirected_only(G)
+
+    def produce():
+        nodes = G._nodes
+        for v in G._core.articulation_points():
+            yield nodes[v]
+
+    return _traversal(G, produce)
+
+
+def _biconnected_edges(G):
+    """Each biconnected component as a list of ``(u, v)`` edges."""
+    us, vs, ends = G._core.biconnected_components()
+    nodes = G._nodes
+    begin = 0
+    for end in ends:
+        yield [(nodes[us[i]], nodes[vs[i]]) for i in range(begin, end)]
+        begin = end
+
+
+def biconnected_component_edges(G):
+    _undirected_only(G)
+    return _traversal(G, lambda: _biconnected_edges(G))
+
+
+def biconnected_components(G):
+    _undirected_only(G)
+
+    def produce():
+        for edges in _biconnected_edges(G):
+            yield set(chain.from_iterable(edges))
+
+    return _traversal(G, produce)
+
+
+def is_biconnected(G):
+    _undirected_only(G)
+    return G._core.is_biconnected()
+
+
+def attracting_components(G):
+    _directed_only(G)
+    comps = G._core.attracting_components(_scc_early_exit())
+    guard = _MutationGuard(G)
+
+    def generate():
+        # NetworkX computes every component when iteration starts, so only a
+        # change before then matters.
+        try:
+            changed = guard.changed()
+        finally:
+            guard.release()
+        if changed:
+            yield from nx.attracting_components(guard.graph, backend="networkx")
+            return
+        nodes = G._nodes
+        for comp in comps:
+            yield {nodes[i] for i in comp}
+
+    return generate()
+
+
+def number_attracting_components(G):
+    _directed_only(G)
+    return len(G._core.attracting_components(_scc_early_exit()))
+
+
+def is_attracting_component(G):
+    _directed_only(G)
+    comps = G._core.attracting_components(_scc_early_exit())
+    return len(comps) == 1 and len(comps[0]) == len(G)
+
+
+# --- Degree centrality and trees ---------------------------------------------------
+
+
+def _degree_centrality(G, degrees):
+    if len(G) <= 1:
+        return {n: 1 for n in G._nodes}
+    s = 1.0 / (len(G) - 1.0)
+    return {n: d * s for n, d in zip(G._nodes, degrees)}
+
+
+def degree_centrality(G):
+    return _degree_centrality(G, G._core.degrees())
+
+
+def in_degree_centrality(G):
+    _directed_only(G)
+    return _degree_centrality(G, G._core.in_out_degrees()[0])
+
+
+def out_degree_centrality(G):
+    _directed_only(G)
+    return _degree_centrality(G, G._core.in_out_degrees()[1])
+
+
+def _component_count(G):
+    if G.is_directed():
+        return len(G._core.weakly_connected_components())
+    return len(G._core.connected_components())
+
+
+def is_tree(G):
+    n = len(G)
+    if n == 0:
+        raise nx.NetworkXPointlessConcept("G has no nodes.")
+    return n - 1 == G._core.number_of_edges() and _component_count(G) == 1
+
+
+def is_forest(G):
+    if len(G) == 0:
+        raise nx.NetworkXPointlessConcept("G has no nodes.")
+    # Every component has at least (size - 1) edges, so each has exactly
+    # that many (NetworkX's test) if and only if the totals agree.
+    return G._core.number_of_edges() == len(G) - _component_count(G)

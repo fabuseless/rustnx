@@ -5,9 +5,11 @@ use crate::graph::Csr;
 /// Strongly connected components in NetworkX's output order.
 ///
 /// Port of the iterative Tarjan variant in NetworkX 3.7
-/// (`strongly_connected_components`), including its early exit when the
-/// whole graph turns out to be one component.
-pub fn strongly_connected_components(succ: &Csr, n: usize) -> Vec<Vec<u32>> {
+/// (`strongly_connected_components`). With `early_exit` it stops, as 3.7
+/// does, once the whole graph turns out to be one component; that only
+/// changes the order of that component's nodes (the order NetworkX fills
+/// its set in). NetworkX 3.4 to 3.6 have no early exit.
+pub fn strongly_connected_components(succ: &Csr, n: usize, early_exit: bool) -> Vec<Vec<u32>> {
     const UNSET: u32 = 0;
     let mut comps = Vec::new();
     if n == 0 {
@@ -54,7 +56,7 @@ pub fn strongly_connected_components(succ: &Csr, n: usize) -> Vec<Vec<u32>> {
                 if !found[w] && lowlink[v] > lowlink[w] {
                     dfs_lead[top] = false;
                     lowlink[v] = lowlink[w];
-                    if lowlink[v] == root_low && index as usize == n {
+                    if early_exit && lowlink[v] == root_low && index as usize == n {
                         // Every node is preordered and v links to the root:
                         // the whole graph is one SCC.
                         let mut scc: Vec<u32> = comp_stack.iter().map(|&u| u as u32).collect();

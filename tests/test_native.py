@@ -149,6 +149,11 @@ def algorithm_calls(H, directed):
         "avg_clustering": lambda G, b: nx.average_clustering(G, backend=b),
         "transitivity": lambda G, b: nx.transitivity(G, backend=b),
         "avg_spl_w": lambda G, b: nx.average_shortest_path_length(G, weight="weight", backend=b),
+        "degree_centrality": lambda G, b: list(nx.degree_centrality(G, backend=b).items()),
+        "is_tree": lambda G, b: nx.is_tree(G, backend=b),
+        "is_forest": lambda G, b: nx.is_forest(G, backend=b),
+        "dfs_postorder": lambda G, b: list(nx.dfs_postorder_nodes(G, backend=b)),
+        "dfs_successors": lambda G, b: list(nx.dfs_successors(G, backend=b).items()),
     }
     if src is not None:
         calls["bfs"] = lambda G, b: nx.single_source_shortest_path_length(G, src, backend=b)
@@ -172,16 +177,26 @@ def algorithm_calls(H, directed):
         calls["all_sp"] = lambda G, b: list(nx.all_shortest_paths(G, src, dst, backend=b))
         calls["all_sp_w"] = lambda G, b: list(nx.all_shortest_paths(G, src, dst, weight="weight", backend=b))
         calls["ancestors"] = lambda G, b: nx.ancestors(G, src, backend=b)
+        calls["bfs_layers"] = lambda G, b: list(nx.bfs_layers(G, src, backend=b))
+        calls["bfs_successors"] = lambda G, b: list(nx.bfs_successors(G, src, backend=b))
+        calls["at_distance"] = lambda G, b: nx.descendants_at_distance(G, src, 2, backend=b)
     if directed:
         calls["scc"] = lambda G, b: list(nx.strongly_connected_components(G, backend=b))
         calls["wcc"] = lambda G, b: list(nx.weakly_connected_components(G, backend=b))
         calls["topo"] = lambda G, b: list(nx.topological_sort(G, backend=b))
         calls["dag"] = lambda G, b: nx.is_directed_acyclic_graph(G, backend=b)
+        calls["attracting"] = lambda G, b: list(nx.attracting_components(G, backend=b))
+        calls["in_degree_centrality"] = lambda G, b: list(nx.in_degree_centrality(G, backend=b).items())
     else:
         calls["cc"] = lambda G, b: list(nx.connected_components(G, backend=b))
         calls["mst"] = lambda G, b: [(u, v) for u, v in nx.minimum_spanning_edges(G, data=False, backend=b)]
         calls["label_prop"] = lambda G, b: [sorted(map(str, c)) for c in nx.community.label_propagation_communities(G, backend=b)]
         calls["triangles"] = lambda G, b: list(nx.triangles(G, backend=b).items())
+        calls["articulation"] = lambda G, b: list(nx.articulation_points(G, backend=b))
+        calls["biconnected"] = lambda G, b: list(nx.biconnected_component_edges(G, backend=b))
+        calls["is_biconnected"] = lambda G, b: nx.is_biconnected(G, backend=b)
+        if src is not None:
+            calls["node_cc"] = lambda G, b: nx.node_connected_component(G, src, backend=b)
     return calls
 
 
@@ -263,16 +278,16 @@ def test_invalid_input():
 
 
 def test_unimplemented_functions_fall_back_with_enable():
-    G = rustnx.Graph([(0, 1), (1, 2)])
+    G = rustnx.DiGraph([(0, 1), (1, 2)])
     old = nx.config.backend_priority.algos, nx.config.fallback_to_nx
     try:
         nx.config.backend_priority.algos = []
         nx.config.fallback_to_nx = False
         with pytest.raises(NotImplementedError):
-            nx.is_tree(G)
+            nx.is_arborescence(G)
         rustnx.enable()
         assert nx.config.backend_priority.algos[0] == "rustnx"
-        assert nx.is_tree(G) is True
+        assert nx.is_arborescence(G) is True
     finally:
         nx.config.backend_priority.algos, nx.config.fallback_to_nx = old
 

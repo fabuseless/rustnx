@@ -616,6 +616,112 @@ impl CoreGraph {
         }))
     }
 
+    /// `nx.bfs_layers` after the first layer: later nodes in yield order and
+    /// where each layer ends.
+    fn bfs_layers(
+        &self,
+        py: Python<'_>,
+        starts: Vec<u32>,
+        visited: Vec<u32>,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        let starts = self.sources_or_all(Some(starts))?;
+        let visited = self.sources_or_all(Some(visited))?;
+        Ok(py.detach(|| traversal::bfs_layers(&self.succ, self.n, &starts, &visited)))
+    }
+
+    /// `nx.dfs_postorder_nodes` from `starts` (all nodes if `None`).
+    #[pyo3(signature = (starts, depth_limit))]
+    fn dfs_postorder(
+        &self,
+        py: Python<'_>,
+        starts: Option<Vec<u32>>,
+        depth_limit: i64,
+    ) -> PyResult<Vec<u32>> {
+        let starts = self.sources_or_all(starts)?;
+        Ok(py.detach(|| traversal::dfs_postorder(&self.succ, self.n, &starts, depth_limit)))
+    }
+
+    /// `nx.articulation_points` in yield order.
+    fn articulation_points(&self, py: Python<'_>) -> Vec<u32> {
+        match py.detach(|| structure::biconnected(&self.succ, self.n, false)) {
+            structure::Biconnected::Articulation(points) => points,
+            structure::Biconnected::Components(..) => unreachable!(),
+        }
+    }
+
+    /// `nx.biconnected_component_edges`: all components' edges as
+    /// `(us, vs)`, and where each component ends.
+    #[allow(clippy::type_complexity)]
+    fn biconnected_components(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+        match py.detach(|| structure::biconnected(&self.succ, self.n, true)) {
+            structure::Biconnected::Components(edges, ends) => {
+                let (us, vs) = edges.into_iter().unzip();
+                (us, vs, ends)
+            }
+            structure::Biconnected::Articulation(_) => unreachable!(),
+        }
+    }
+
+    /// `nx.is_biconnected`: exactly one biconnected component, covering
+    /// every node.
+    fn is_biconnected(&self, py: Python<'_>) -> bool {
+        match py.detach(|| structure::biconnected(&self.succ, self.n, true)) {
+            structure::Biconnected::Components(edges, ends) => {
+                if ends.len() != 1 {
+                    return false;
+                }
+                let mut seen = vec![false; self.n];
+                let mut count = 0;
+                for (u, v) in edges {
+                    for w in [u, v] {
+                        if !seen[w as usize] {
+                            seen[w as usize] = true;
+                            count += 1;
+                        }
+                    }
+                }
+                count == self.n
+            }
+            structure::Biconnected::Articulation(_) => unreachable!(),
+        }
+    }
+
+    /// Strongly connected components (NetworkX order) with no edge leaving
+    /// them: `nx.attracting_components`.
+    #[pyo3(signature = (early_exit=true))]
+    fn attracting_components(&self, py: Python<'_>, early_exit: bool) -> Vec<Vec<u32>> {
+        py.detach(|| {
+            let comps = directed::strongly_connected_components(&self.succ, self.n, early_exit);
+            let mut comp_of = vec![0usize; self.n];
+            for (i, comp) in comps.iter().enumerate() {
+                for &v in comp {
+                    comp_of[v as usize] = i;
+                }
+            }
+            comps
+                .into_iter()
+                .enumerate()
+                .filter(|(i, comp)| {
+                    comp.iter().all(|&v| {
+                        self.succ
+                            .neighbors(v as usize)
+                            .iter()
+                            .all(|&w| comp_of[w as usize] == *i)
+                    })
+                })
+                .map(|(_, comp)| comp)
+                .collect()
+        })
+    }
+
+    /// `(in_degrees, out_degrees)` of a directed graph (self-loops once each).
+    fn in_out_degrees(&self) -> (Vec<usize>, Vec<usize>) {
+        let pred = self.adj(true);
+        (0..self.n)
+            .map(|v| (pred.neighbors(v).len(), self.succ.neighbors(v).len()))
+            .unzip()
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -769,8 +875,10 @@ impl CoreGraph {
             })
     }
 
-    fn strongly_connected_components(&self, py: Python<'_>) -> Vec<Vec<u32>> {
-        py.detach(|| directed::strongly_connected_components(&self.succ, self.n))
+    /// `early_exit`: see `directed::strongly_connected_components`.
+    #[pyo3(signature = (early_exit=true))]
+    fn strongly_connected_components(&self, py: Python<'_>, early_exit: bool) -> Vec<Vec<u32>> {
+        py.detach(|| directed::strongly_connected_components(&self.succ, self.n, early_exit))
     }
 
     fn weakly_connected_components(&self, py: Python<'_>) -> Vec<Vec<u32>> {
