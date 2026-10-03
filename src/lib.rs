@@ -9,11 +9,12 @@ mod native;
 mod rx;
 mod serialize;
 
-use pyo3::exceptions::{PyIndexError, PyValueError};
+use pyo3::exceptions::{PyIndexError, PyNotImplementedError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 
 use algorithms::link_analysis::{self, PagerankInput};
+use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{centrality, cluster, directed, distance, paths, spectral, structure};
 use graph::CoreGraph;
@@ -722,6 +723,272 @@ impl CoreGraph {
             .unzip()
     }
 
+    // --- Batch 2: shortest paths ---
+
+    /// Dijkstra from several sources: `(order, dist, parent of each order
+    /// entry, first-seen order, order indices of unparented nodes)`.
+    #[pyo3(signature = (sources, weight=None, cutoff=None))]
+    #[allow(clippy::type_complexity)]
+    fn dijkstra_forest(
+        &self,
+        py: Python<'_>,
+        sources: Vec<u32>,
+        weight: Option<&str>,
+        cutoff: Option<f64>,
+    ) -> PyResult<(Vec<u32>, Vec<f64>, Vec<u32>, Vec<u32>, Vec<u32>)> {
+        let sources = self.sources_or_all(Some(sources))?;
+        let w = self.weight_slice(weight, false)?;
+        let t = py.detach(|| {
+            more_paths::dijkstra_forest(&self.succ, self.n, w, &sources, cutoff, None)
+        })?;
+        let parents: Vec<u32> = t.order.iter().map(|&v| t.parent[v as usize]).collect();
+        let roots = (0..parents.len() as u32)
+            .filter(|&k| parents[k as usize] == paths::NO_PARENT)
+            .collect();
+        Ok((t.order, t.dist, parents, t.seen_order, roots))
+    }
+
+    /// Multi-source Dijkstra until `target` is popped: `(distance, path)`,
+    /// or `None` if `target` isn't reached.
+    #[pyo3(signature = (sources, target, weight=None, cutoff=None))]
+    fn dijkstra_forest_path(
+        &self,
+        py: Python<'_>,
+        sources: Vec<u32>,
+        target: usize,
+        weight: Option<&str>,
+        cutoff: Option<f64>,
+    ) -> PyResult<Option<(f64, Vec<u32>)>> {
+        let sources = self.sources_or_all(Some(sources))?;
+        self.check_index(target)?;
+        let w = self.weight_slice(weight, false)?;
+        let t = py.detach(|| {
+            more_paths::dijkstra_forest(&self.succ, self.n, w, &sources, cutoff, Some(target))
+        })?;
+        if t.order.last() != Some(&(target as u32)) {
+            return Ok(None);
+        }
+        let mut path = vec![target as u32];
+        loop {
+            let p = t.parent[*path.last().expect("non-empty") as usize];
+            if p == paths::NO_PARENT {
+                break;
+            }
+            path.push(p);
+        }
+        path.reverse();
+        Ok(Some((*t.dist.last().expect("non-empty"), path)))
+    }
+
+    /// `dijkstra_predecessor_and_distance`: `(pop order, distances, pred key
+    /// order, pred lists flattened, where each list ends)`.
+    #[pyo3(signature = (source, weight=None, cutoff=None))]
+    #[allow(clippy::type_complexity)]
+    fn dijkstra_pred_dist(
+        &self,
+        py: Python<'_>,
+        source: usize,
+        weight: Option<&str>,
+        cutoff: Option<f64>,
+    ) -> PyResult<(Vec<u32>, Vec<f64>, Vec<u32>, Vec<u32>, Vec<u32>)> {
+        self.check_index(source)?;
+        let w = self.weight_slice(weight, false)?;
+        let (order, dist, pred) =
+            py.detach(|| more_paths::dijkstra_pred_dist(&self.succ, self.n, w, source, cutoff))?;
+        let (flat, ends) = pred.flatten();
+        Ok((order, dist, pred.order, flat, ends))
+    }
+
+    /// `nx.predecessor`: `(discovery order, levels, pred lists flattened,
+    /// where each list ends)`.
+    #[pyo3(signature = (source, max_level=None))]
+    #[allow(clippy::type_complexity)]
+    fn bfs_pred(
+        &self,
+        py: Python<'_>,
+        source: usize,
+        max_level: Option<u32>,
+    ) -> PyResult<(Vec<u32>, Vec<u32>, Vec<u32>, Vec<u32>)> {
+        self.check_index(source)?;
+        let (levels, pred) =
+            py.detach(|| more_paths::bfs_pred(&self.succ, self.n, source, max_level));
+        let (flat, ends) = pred.flatten();
+        Ok((pred.order, levels, flat, ends))
+    }
+
+    /// `single_target_shortest_path_length`: BFS over in-edges in exact order.
+    fn bfs_lengths_reverse(
+        &self,
+        py: Python<'_>,
+        target: usize,
+        cutoff: f64,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        self.check_index(target)?;
+        let adj = self.path_adj(None, true)?.0;
+        Ok(py.detach(|| traversal::bfs_lengths(adj, self.n, target, cutoff)))
+    }
+
+    /// Predecessor lists from `source` for `_build_paths_from_predecessors`:
+    /// `kind` 0 = `nx.predecessor`, 1 = Dijkstra (ValueError on a negative
+    /// cycle), 2 = `bellman_ford_predecessor_and_distance` (`None` on a
+    /// negative cycle).
+    #[pyo3(signature = (source, kind, weight=None))]
+    fn pred_paths(
+        &self,
+        py: Python<'_>,
+        source: usize,
+        kind: u8,
+        weight: Option<&str>,
+    ) -> PyResult<Option<PredPaths>> {
+        self.check_index(source)?;
+        let w = self.weight_slice(weight, false)?;
+        let pred = match kind {
+            0 => py.detach(|| more_paths::bfs_pred(&self.succ, self.n, source, None).1),
+            1 => {
+                py.detach(|| more_paths::dijkstra_pred_dist(&self.succ, self.n, w, source, None))?
+                    .2
+            }
+            _ => match py.detach(|| self.bf_preds(w, source, false)) {
+                Some(pred) => pred,
+                None => return Ok(None),
+            },
+        };
+        Ok(Some(PredPaths {
+            pred,
+            source: source as u32,
+        }))
+    }
+
+    /// `_inner_bellman_ford` from `source`, or `None` on a negative cycle:
+    /// `(dist key order, distances, flat, ends)`. `mode` 0 gives the pred
+    /// lists, 1 the first path to every node (`_bellman_ford`'s `paths`), 2
+    /// the first path to `target` only (none if unreached), 3 nothing.
+    /// `single_node_shortcut`: `bellman_ford_predecessor_and_distance`
+    /// returns at once for a one-node graph.
+    #[pyo3(signature = (source, weight, heuristic, single_node_shortcut, mode, target=None))]
+    #[allow(clippy::type_complexity, clippy::too_many_arguments)]
+    fn bellman_ford(
+        &self,
+        py: Python<'_>,
+        source: usize,
+        weight: Option<&str>,
+        heuristic: bool,
+        single_node_shortcut: bool,
+        mode: u8,
+        target: Option<usize>,
+    ) -> PyResult<Option<(Vec<u32>, Vec<f64>, Vec<u32>, Vec<u32>)>> {
+        self.check_index(source)?;
+        if let Some(t) = target {
+            self.check_index(t)?;
+        }
+        let w = self.weight_slice(weight, false)?;
+        py.detach(|| {
+            if single_node_shortcut && self.n == 1 {
+                return Ok(Some((vec![source as u32], vec![0.0], vec![], vec![0])));
+            }
+            let bf = more_paths::bellman_ford(&self.succ, self.n, w, source, heuristic);
+            if bf.cycle.is_some() {
+                return Ok(None);
+            }
+            let (flat, ends) = self.bf_output(&bf, source, mode, target)?;
+            Ok(Some((bf.order, bf.dist, flat, ends)))
+        })
+    }
+
+    /// `bellman_ford` (heuristic on, `mode` 1 or 3) for each source, in
+    /// parallel; `None` on a negative cycle.
+    #[pyo3(signature = (sources, weight, mode))]
+    #[allow(clippy::type_complexity)]
+    fn bellman_ford_many(
+        &self,
+        py: Python<'_>,
+        sources: Vec<u32>,
+        weight: Option<&str>,
+        mode: u8,
+    ) -> PyResult<Vec<Option<(Vec<u32>, Vec<f64>, Vec<u32>, Vec<u32>)>>> {
+        let sources = self.sources_or_all(Some(sources))?;
+        let w = self.weight_slice(weight, false)?;
+        py.detach(|| {
+            use rayon::prelude::*;
+            sources
+                .par_iter()
+                .map(|&s| {
+                    let bf = more_paths::bellman_ford(&self.succ, self.n, w, s as usize, true);
+                    if bf.cycle.is_some() {
+                        return Ok(None);
+                    }
+                    let (flat, ends) = self.bf_output(&bf, s as usize, mode, None)?;
+                    Ok(Some((bf.order, bf.dist, flat, ends)))
+                })
+                .collect()
+        })
+    }
+
+    /// Whether some self-loop has a negative weight.
+    #[pyo3(signature = (weight=None))]
+    fn negative_selfloop(&self, weight: Option<&str>) -> PyResult<bool> {
+        let w = self.weight_slice(weight, false)?;
+        Ok(more_paths::negative_selfloop(&self.succ, self.n, w))
+    }
+
+    /// Whether some edge has a negative weight.
+    #[pyo3(signature = (weight=None))]
+    fn has_negative_weight(&self, weight: Option<&str>) -> PyResult<bool> {
+        let w = self.weight_slice(weight, false)?;
+        Ok(w.is_some_and(|w| w.iter().any(|&x| x < 0.0)))
+    }
+
+    /// `find_negative_cycle`: the cycle, or `None` if none is detected.
+    /// Raises NotImplementedError where NetworkX reaches code it never
+    /// expects to (its errors there are accidental).
+    #[pyo3(signature = (source, weight=None))]
+    fn find_negative_cycle(
+        &self,
+        py: Python<'_>,
+        source: usize,
+        weight: Option<&str>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        self.check_index(source)?;
+        let w = self.weight_slice(weight, false)?;
+        py.detach(|| {
+            let bf = more_paths::bellman_ford(&self.succ, self.n, w, source, true);
+            let Some(v) = bf.cycle else { return Ok(None) };
+            more_paths::negative_cycle_from(&bf.pred.lists, self.n, v)
+                .map(Some)
+                .ok_or_else(|| PyNotImplementedError::new_err("negative cycle not identified"))
+        })
+    }
+
+    /// `nx.negative_edge_cycle` for a graph with edges.
+    #[pyo3(signature = (weight=None, heuristic=true))]
+    fn negative_edge_cycle(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+        heuristic: bool,
+    ) -> PyResult<bool> {
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| {
+            more_paths::negative_edge_cycle(&self.succ, self.n, w, self.directed, heuristic)
+        }))
+    }
+
+    /// `nx.astar_path` with no heuristic: `(path, edge weights)`, or `None`.
+    #[pyo3(signature = (source, target, weight=None, cutoff=None))]
+    fn astar(
+        &self,
+        py: Python<'_>,
+        source: usize,
+        target: usize,
+        weight: Option<&str>,
+        cutoff: Option<f64>,
+    ) -> PyResult<Option<(Vec<u32>, Vec<f64>)>> {
+        self.check_index(source)?;
+        self.check_index(target)?;
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| more_paths::astar(&self.succ, self.n, w, source, target, cutoff)))
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -906,6 +1173,63 @@ impl CoreGraph {
 }
 
 impl CoreGraph {
+    /// `bellman_ford_predecessor_and_distance`'s pred lists (`None` on a
+    /// negative cycle). The caller checks for negative self-loops first.
+    fn bf_preds(
+        &self,
+        w: Option<&[f64]>,
+        source: usize,
+        heuristic: bool,
+    ) -> Option<more_paths::PredLists> {
+        if self.n == 1 {
+            return Some(more_paths::PredLists::new(1, source));
+        }
+        let bf = more_paths::bellman_ford(&self.succ, self.n, w, source, heuristic);
+        bf.cycle.is_none().then_some(bf.pred)
+    }
+
+    /// The flat lists `bellman_ford` returns for `mode` (see there).
+    fn bf_output(
+        &self,
+        bf: &more_paths::BellmanFord,
+        source: usize,
+        mode: u8,
+        target: Option<usize>,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        let dsts: Vec<u32> = match mode {
+            0 => return Ok(bf.pred.flatten()),
+            1 => bf.order.clone(),
+            2 => target
+                .filter(|&t| bf.pred.reached[t])
+                .map(|t| vec![t as u32])
+                .unwrap_or_default(),
+            _ => return Ok((Vec::new(), Vec::new())),
+        };
+        let mut on_path = vec![false; self.n];
+        let (mut flat, mut ends) = (Vec::new(), Vec::new());
+        for dst in dsts {
+            // Only the first path is used, which is the same with and
+            // without the pre-3.7 "skip ends the pass" behaviour.
+            let found = more_paths::paths_from_preds(
+                &bf.pred.lists,
+                source as u32,
+                dst,
+                false,
+                1,
+                &mut on_path,
+                &mut flat,
+                &mut ends,
+            );
+            if found == 0 {
+                // NetworkX would raise StopIteration here.
+                return Err(PyNotImplementedError::new_err("no path from predecessors"));
+            }
+        }
+        Ok((flat, ends))
+    }
+}
+
+impl CoreGraph {
     fn path_adj(
         &self,
         weight: Option<&str>,
@@ -977,6 +1301,60 @@ impl CoreGraph {
     }
 }
 
+/// Predecessor lists from one source, for `_build_paths_from_predecessors`.
+#[pyclass(module = "rustnx._core", frozen)]
+pub struct PredPaths {
+    pred: more_paths::PredLists,
+    source: u32,
+}
+
+#[pymethods]
+impl PredPaths {
+    /// Keys of NetworkX's `pred` dict, in order.
+    fn order(&self) -> Vec<u32> {
+        self.pred.order.clone()
+    }
+
+    /// Every path to each of `targets` (unreached ones are skipped):
+    /// `(targets reached, paths flattened, path ends, where each target's
+    /// paths end)`.
+    #[allow(clippy::type_complexity)]
+    fn all_paths(
+        &self,
+        py: Python<'_>,
+        targets: Vec<u32>,
+        skip_ends_pass: bool,
+    ) -> PyResult<(Vec<u32>, Vec<u32>, Vec<u32>, Vec<u32>)> {
+        let n = self.pred.lists.len();
+        if targets.iter().any(|&t| t as usize >= n) {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        Ok(py.detach(|| {
+            let mut on_path = vec![false; n];
+            let (mut reached, mut flat, mut ends, mut groups) =
+                (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+            for t in targets {
+                if !self.pred.reached[t as usize] {
+                    continue;
+                }
+                reached.push(t);
+                more_paths::paths_from_preds(
+                    &self.pred.lists,
+                    self.source,
+                    t,
+                    skip_ends_pass,
+                    usize::MAX,
+                    &mut on_path,
+                    &mut flat,
+                    &mut ends,
+                );
+                groups.push(ends.len() as u32);
+            }
+            (reached, flat, ends, groups)
+        }))
+    }
+}
+
 /// Lazy iterator over `all_shortest_paths` results (node positions).
 #[pyclass(module = "rustnx._core")]
 pub struct AllPaths(paths::PathsFromPreds);
@@ -998,6 +1376,7 @@ fn _py_sum(values: Vec<f64>, compensated: bool) -> f64 {
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CoreGraph>()?;
     m.add_class::<AllPaths>()?;
+    m.add_class::<PredPaths>()?;
     m.add_function(wrap_pyfunction!(graph::build_graph, m)?)?;
     m.add_function(wrap_pyfunction!(serialize::_core_graph_from_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(native::build_native, m)?)?;
