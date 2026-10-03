@@ -1,0 +1,18 @@
+# Weekly dependency update PRs, grouped so each ecosystem opens at most one
+# PR a week. CI runs on each; merge when green.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      rust-crates:
+        patterns: ["*"]

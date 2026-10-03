@@ -130,6 +130,9 @@ rx.dijkstra_shortest_path_lengths(g, 0, float)
 
 ## Supported algorithms
 
+The full list, with every parameter rustnx handles and what falls back to
+NetworkX, is in [docs/API.md](docs/API.md).
+
 | Function | Notes |
 |---|---|
 | `betweenness_centrality` | Unweighted and weighted, `normalized`, `endpoints`, and `k` sampling (picks the same nodes as NetworkX for a given `seed`). Parallel. |
