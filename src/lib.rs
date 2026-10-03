@@ -15,8 +15,9 @@ use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 
 use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
-use algorithms::{centrality, cluster, directed, distance, paths, spectral, structure};
+use algorithms::{centrality, cluster, dag, directed, distance, paths, spectral, structure};
 use graph::CoreGraph;
+use rayon::prelude::*;
 
 impl From<NegativeCycle> for PyErr {
     fn from(_: NegativeCycle) -> PyErr {
@@ -722,6 +723,237 @@ impl CoreGraph {
             .unzip()
     }
 
+    // --- Batch 3: DAGs, traversal and components ---
+
+    /// `nx.dag_longest_path`: `(has_cycle, path)`; the path is `None` when
+    /// distances get too large for exact f64 sums. `weight=None` gives every
+    /// edge the weight `constant`.
+    #[pyo3(signature = (weight, constant))]
+    fn dag_longest_path(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+        constant: f64,
+    ) -> PyResult<(bool, Option<Vec<u32>>)> {
+        let (pred, w) = self.path_adj(weight, true)?;
+        Ok(py.detach(|| {
+            let (generations, cycle) =
+                directed::topological_generations(&self.succ, self.adj(true), self.n);
+            if cycle {
+                return (true, None);
+            }
+            let topo: Vec<u32> = generations.into_iter().flatten().collect();
+            (false, dag::longest_path(pred, w, constant, &topo))
+        }))
+    }
+
+    /// Weights of the edges along `path` (one value per step).
+    fn path_weights(&self, path: Vec<u32>, weight: &str) -> PyResult<Vec<f64>> {
+        let w = self.weight_slice(Some(weight), false)?.expect("weights");
+        let mut out = Vec::with_capacity(path.len().saturating_sub(1));
+        for pair in path.windows(2) {
+            self.check_index(pair[0] as usize)?;
+            let e = self
+                .succ
+                .range(pair[0] as usize)
+                .find(|&e| self.succ.targets[e] == pair[1])
+                .ok_or_else(|| PyValueError::new_err("not an edge"))?;
+            out.push(w[e]);
+        }
+        Ok(out)
+    }
+
+    /// `nx.lexicographical_topological_sort` with each node's rank in sort
+    /// order: `(order, has_cycle)`.
+    fn lexicographical_topological_sort(
+        &self,
+        py: Python<'_>,
+        rank: Vec<u32>,
+    ) -> PyResult<(Vec<u32>, bool)> {
+        if rank.len() != self.n {
+            return Err(PyValueError::new_err("one rank per node"));
+        }
+        Ok(py.detach(|| dag::lexicographical_topological_sort(&self.succ, self.adj(true), &rank)))
+    }
+
+    /// `nx.all_topological_sorts`, one sort at a time.
+    fn all_topological_sorts(&self) -> AllTopoSorts {
+        AllTopoSorts(dag::AllTopologicalSorts::new(&self.succ, self.adj(true), self.n))
+    }
+
+    /// `nx.transitive_reduction`: `None` if the graph has a cycle, else for
+    /// each arc whether it is kept.
+    fn transitive_reduction(&self, py: Python<'_>) -> Option<Vec<bool>> {
+        py.detach(|| {
+            let (_, cycle) = directed::topological_generations(&self.succ, self.adj(true), self.n);
+            (!cycle).then(|| dag::transitive_reduction(&self.succ, self.n))
+        })
+    }
+
+    /// For `nx.transitive_closure`: per source, the heads of `edge_bfs`
+    /// (`edge_bfs=true`) or the `descendants` in insertion order.
+    fn closure_heads(
+        &self,
+        py: Python<'_>,
+        sources: Vec<u32>,
+        edge_bfs: bool,
+    ) -> PyResult<Vec<Vec<u32>>> {
+        let sources = self.sources_or_all(Some(sources))?;
+        Ok(py.detach(|| {
+            sources
+                .par_iter()
+                .map(|&v| dag::closure_heads(&self.succ, self.n, self.directed, v as usize, edge_bfs))
+                .collect()
+        }))
+    }
+
+    /// State for `nx.transitive_closure_dag`.
+    fn closure_dag(&self) -> ClosureDag {
+        ClosureDag(dag::ClosureDag::new(&self.succ, self.n))
+    }
+
+    /// `nx.dag.root_to_leaf_paths`, one path at a time.
+    fn root_to_leaf_paths(&self) -> RootLeafPaths {
+        RootLeafPaths(dag::RootLeafPaths::new(&self.succ, self.adj(true), self.n))
+    }
+
+    /// `nx.dag_to_branching` on a DAG: each tree node's original node and
+    /// parent (`u32::MAX` for none), in NetworkX's numbering.
+    fn dag_to_branching(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
+        py.detach(|| {
+            let mut paths = dag::RootLeafPaths::new(&self.succ, self.adj(true), self.n);
+            dag::branching(&mut paths)
+        })
+    }
+
+    /// `nx.dag.colliders` / `v_structures` from node `start`, about `limit`
+    /// triples at a time: `(flat triples, next start)`.
+    fn colliders(
+        &self,
+        py: Python<'_>,
+        start: usize,
+        limit: usize,
+        v_structures: bool,
+    ) -> PyResult<(Vec<u32>, usize)> {
+        let pred = self.reverse_exact_order(None)?.0;
+        Ok(py.detach(|| dag::colliders(&self.succ, pred, self.n, start, limit, v_structures)))
+    }
+
+    /// The BFS of NetworkX 3.4 to 3.6's `is_aperiodic` from node 0:
+    /// `(nodes reached, gcd)`.
+    fn aperiodic_bfs(&self, py: Python<'_>) -> PyResult<(usize, u64)> {
+        self.check_index(0)?;
+        Ok(py.detach(|| dag::aperiodic_bfs(&self.succ, self.n, 0)))
+    }
+
+    /// `nx.dfs_labeled_edges` from `starts` (all nodes if `None`):
+    /// `(us, vs, labels)`.
+    #[allow(clippy::type_complexity)]
+    #[pyo3(signature = (starts, depth_limit))]
+    fn dfs_labeled_edges(
+        &self,
+        py: Python<'_>,
+        starts: Option<Vec<u32>>,
+        depth_limit: i64,
+    ) -> PyResult<(Vec<u32>, Vec<u32>, Vec<u8>)> {
+        let starts = self.sources_or_all(starts)?;
+        Ok(py.detach(|| unzip3(dag::dfs_labeled(&self.succ, self.n, &starts, depth_limit))))
+    }
+
+    /// `nx.bfs_labeled_edges` from `sources` (`u32::MAX` marks a missing
+    /// one): `(us, vs, labels, position of the missing source reached)`.
+    #[allow(clippy::type_complexity)]
+    fn bfs_labeled_edges(
+        &self,
+        py: Python<'_>,
+        sources: Vec<u32>,
+    ) -> PyResult<(Vec<u32>, Vec<u32>, Vec<u8>, Option<usize>)> {
+        for &s in &sources {
+            if s != dag::MISSING {
+                self.check_index(s as usize)?;
+            }
+        }
+        Ok(py.detach(|| {
+            let (edges, missing) = dag::bfs_labeled(&self.succ, self.n, self.directed, &sources);
+            let (us, vs, labels) = unzip3(edges);
+            (us, vs, labels, missing)
+        }))
+    }
+
+    /// `nx.edge_bfs` (or `edge_dfs` with `dfs`) from `starts`, following
+    /// out-edges (`out`) and/or in-edges (`inward`, directed graphs):
+    /// `(us, vs, labels)`.
+    #[allow(clippy::type_complexity)]
+    fn edge_traversal(
+        &self,
+        py: Python<'_>,
+        starts: Vec<u32>,
+        out: bool,
+        inward: bool,
+        dfs: bool,
+    ) -> PyResult<(Vec<u32>, Vec<u32>, Vec<u8>)> {
+        let starts = self.sources_or_all(Some(starts))?;
+        let inward = inward && self.directed;
+        let pred = if inward { Some(self.reverse_exact_order(None)?.0) } else { None };
+        Ok(py.detach(|| {
+            let (succ_id, edges) = self.edge_ids();
+            let pred_id = pred.map(|p| dag::pred_arc_ids(&self.succ, p, self.n));
+            let src = dag::EdgeSource {
+                succ: &self.succ,
+                succ_id: &succ_id,
+                pred: pred.zip(pred_id.as_deref()),
+                out: out || !self.directed,
+                inward,
+                edges,
+            };
+            let found = if dfs {
+                dag::edge_dfs(&src, self.n, &starts)
+            } else {
+                dag::edge_bfs(&src, self.n, &starts)
+            };
+            unzip3(found)
+        }))
+    }
+
+    /// `nx.kosaraju_strongly_connected_components` from `source` (all
+    /// nodes if `None`); `stack_order`: NetworkX 3.7's version.
+    #[pyo3(signature = (source, stack_order))]
+    fn kosaraju(
+        &self,
+        py: Python<'_>,
+        source: Option<u32>,
+        stack_order: bool,
+    ) -> PyResult<Vec<Vec<u32>>> {
+        let starts = self.sources_or_all(source.map(|s| vec![s]))?;
+        let pred = self.reverse_exact_order(None)?.0;
+        Ok(py.detach(|| {
+            let post = traversal::dfs_postorder(pred, self.n, &starts, self.n as i64);
+            dag::kosaraju(&self.succ, self.n, post, stack_order)
+        }))
+    }
+
+    /// `nx.condensation`: the strongly connected components (NetworkX
+    /// order) and the condensed edges `(us, vs)` in insertion order.
+    #[allow(clippy::type_complexity)]
+    fn condensation(&self, py: Python<'_>, early_exit: bool) -> (Vec<Vec<u32>>, Vec<u32>, Vec<u32>) {
+        py.detach(|| {
+            let comps = directed::strongly_connected_components(&self.succ, self.n, early_exit);
+            let comp = dag::component_of(&comps, self.n);
+            let (us, vs) = dag::condensation_edges(&self.succ, self.n, &comp)
+                .into_iter()
+                .unzip();
+            (comps, us, vs)
+        })
+    }
+
+    /// `nx.is_semiconnected` for a weakly connected, non-empty graph.
+    fn is_semiconnected(&self, py: Python<'_>) -> bool {
+        py.detach(|| {
+            let comps = directed::strongly_connected_components(&self.succ, self.n, true);
+            dag::is_semiconnected(&self.succ, self.n, &comps)
+        })
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -988,6 +1220,68 @@ impl AllPaths {
     }
 }
 
+/// Lazy iterator over `all_topological_sorts` results (node positions).
+#[pyclass(module = "rustnx._core")]
+pub struct AllTopoSorts(dag::AllTopologicalSorts);
+
+#[pymethods]
+impl AllTopoSorts {
+    /// `(False, None)` when a cycle stops the search, else `(True, sort)`
+    /// (`None` once all sorts are out).
+    fn next_sort(&mut self) -> (bool, Option<Vec<u32>>) {
+        match self.0.next_sort() {
+            Ok(sort) => (true, sort),
+            Err(dag::HasCycle) => (false, None),
+        }
+    }
+}
+
+/// `nx.transitive_closure_dag`'s growing closure.
+#[pyclass(module = "rustnx._core")]
+pub struct ClosureDag(dag::ClosureDag);
+
+#[pymethods]
+impl ClosureDag {
+    fn layer2(&mut self, v: usize) -> PyResult<Vec<u32>> {
+        if v >= self.0.rows.len() {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        Ok(self.0.layer2(v))
+    }
+
+    fn append(&mut self, v: usize, heads: Vec<u32>) -> PyResult<()> {
+        let n = self.0.rows.len();
+        if v >= n || heads.iter().any(|&h| h as usize >= n) {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        self.0.rows[v].extend(heads);
+        Ok(())
+    }
+}
+
+/// Lazy iterator over `root_to_leaf_paths` results (node positions).
+#[pyclass(module = "rustnx._core")]
+pub struct RootLeafPaths(dag::RootLeafPaths);
+
+#[pymethods]
+impl RootLeafPaths {
+    fn next_path(&mut self) -> Option<Vec<u32>> {
+        self.0.next_path()
+    }
+}
+
+fn unzip3(items: Vec<(u32, u32, u8)>) -> (Vec<u32>, Vec<u32>, Vec<u8>) {
+    let mut us = Vec::with_capacity(items.len());
+    let mut vs = Vec::with_capacity(items.len());
+    let mut labels = Vec::with_capacity(items.len());
+    for (u, v, l) in items {
+        us.push(u);
+        vs.push(v);
+        labels.push(l);
+    }
+    (us, vs, labels)
+}
+
 /// CPython's float `sum()` (exposed for tests).
 #[pyfunction]
 fn _py_sum(values: Vec<f64>, compensated: bool) -> f64 {
@@ -998,6 +1292,9 @@ fn _py_sum(values: Vec<f64>, compensated: bool) -> f64 {
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CoreGraph>()?;
     m.add_class::<AllPaths>()?;
+    m.add_class::<AllTopoSorts>()?;
+    m.add_class::<ClosureDag>()?;
+    m.add_class::<RootLeafPaths>()?;
     m.add_function(wrap_pyfunction!(graph::build_graph, m)?)?;
     m.add_function(wrap_pyfunction!(serialize::_core_graph_from_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(native::build_native, m)?)?;

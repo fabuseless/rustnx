@@ -1,5 +1,6 @@
 pub mod centrality;
 pub mod cluster;
+pub mod dag;
 pub mod directed;
 pub mod distance;
 pub mod link_analysis;
