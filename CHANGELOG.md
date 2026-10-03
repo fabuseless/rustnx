@@ -35,6 +35,7 @@ versions may change behavior.
 - A speed and dispatch guard in CI (`benchmarks/guard.py`): speedups over
   NetworkX must stay above floors, and calls must really run in Rust.
 - Issue forms for bug reports and function requests.
+- Dependabot: weekly grouped update PRs for GitHub Actions and Rust crates.
 
 ### Fixed
 - Functions that return path lengths now hand graphs whose weights mix ints

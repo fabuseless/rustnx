@@ -68,8 +68,8 @@ errors) on NetworkX 3.4, 3.5 and 3.7; anything rustnx can't match raises
 | 22 | `CONTRIBUTING.md` | Done | Release quality | Claude | |
 | 23 | `SECURITY.md` | Done | Release quality | Claude | Reports go through GitHub private vulnerability reporting (item 27) |
 | 24 | Turn on "Automatically delete head branches" | Done | Release quality | Owner | |
-| 25 | Enable Dependabot for CI actions | To do | Release quality | Owner | Optional |
+| 25 | Enable Dependabot for CI actions | Done | Release quality | Claude | `.github/dependabot.yml`: weekly grouped PRs for GitHub Actions and Rust crates |
 | 26 | Release `0.1.0` (drop the alpha label) after feedback | To do | Release quality | Owner + Claude | |
 | 27 | Turn on private vulnerability reporting | Done | Release quality | Owner | `SECURITY.md` points to it |
 
-Suggested order: 25 (owner), a `0.1.0a3` pre-release of the unreleased work, then 3 (announcement), then 17 (remaining multigraph functions), then 26.
+Suggested order: a `0.1.0a3` pre-release of the unreleased work, then 3 (announcement), then 17 (remaining multigraph functions), then 26.
