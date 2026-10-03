@@ -14,6 +14,11 @@ versions may change behavior.
   with results bit-for-bit identical to NetworkX.
 - `core_number`, `k_core` and `is_bipartite`.
 - `bfs_edges`, `dfs_edges` and `dfs_preorder_nodes`.
+- `bfs_tree` and `dfs_tree`.
+- `minimum_spanning_edges`, `maximum_spanning_edges`, `minimum_spanning_tree`
+  and `maximum_spanning_tree` (Kruskal).
+- `all_shortest_paths`, with paths generated lazily.
+- `greedy_color` (`largest_first`) and `label_propagation_communities`.
 
 ### Fixed
 - Functions that return path lengths now hand graphs whose weights mix ints
@@ -22,6 +27,12 @@ versions may change behavior.
 - Graph subclasses that override how their structure is read (such as
   NetworkX's internal `_AntiGraph`) are no longer converted, since rustnx
   reads the underlying adjacency directly.
+- A cached conversion that NetworkX made for a function keeping all
+  attributes on the NetworkX side could be reused without the edge weights a
+  later call needed; missing weights are now converted on demand.
+- Functions that live in NetworkX subpackages (such as
+  `nx.community.label_propagation_communities`) are now found when binding
+  arguments.
 
 ## [0.1.0a2] - 2026-10-02
 

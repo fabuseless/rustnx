@@ -6,6 +6,7 @@ makes NetworkX fall back to its own implementation.
 """
 
 import functools
+from collections import defaultdict
 import inspect
 import math
 import operator
@@ -20,11 +21,13 @@ __all__ = [
     "all_pairs_dijkstra_path_length",
     "all_pairs_shortest_path",
     "all_pairs_shortest_path_length",
+    "all_shortest_paths",
     "ancestors",
     "average_clustering",
     "average_shortest_path_length",
     "betweenness_centrality",
     "bfs_edges",
+    "bfs_tree",
     "bidirectional_dijkstra",
     "bidirectional_shortest_path",
     "center",
@@ -35,12 +38,14 @@ __all__ = [
     "descendants",
     "dfs_edges",
     "dfs_preorder_nodes",
+    "dfs_tree",
     "diameter",
     "dijkstra_path",
     "dijkstra_path_length",
     "eccentricity",
     "edge_betweenness_centrality",
     "eigenvector_centrality",
+    "greedy_color",
     "harmonic_centrality",
     "has_path",
     "is_bipartite",
@@ -50,6 +55,11 @@ __all__ = [
     "is_weakly_connected",
     "k_core",
     "katz_centrality",
+    "label_propagation_communities",
+    "maximum_spanning_edges",
+    "maximum_spanning_tree",
+    "minimum_spanning_edges",
+    "minimum_spanning_tree",
     "number_connected_components",
     "number_strongly_connected_components",
     "number_weakly_connected_components",
@@ -90,6 +100,8 @@ def _check_weight(G, attr, distances=False):
     """
     if callable(attr):
         raise NotImplementedError("rustnx does not support callable weights")
+    if attr is not None:
+        G._ensure_weight(attr)
     all_int, has_hidden = G._core.weight_info(attr)
     if distances and G._core.weight_mixed(attr):
         raise NotImplementedError("edge weights mix ints and floats")
@@ -1301,3 +1313,168 @@ def dfs_edges(G, source=None, depth_limit=None, *, sort_neighbors=None):
 
 def dfs_preorder_nodes(G, source=None, depth_limit=None, *, sort_neighbors=None):
     return _dfs(G, source, depth_limit, sort_neighbors, preorder=True)
+
+
+def bfs_tree(G, source, reverse=False, depth_limit=None, sort_neighbors=None):
+    edges = bfs_edges(G, source, reverse=reverse, depth_limit=depth_limit, sort_neighbors=sort_neighbors)
+    T = nx.DiGraph()
+    T.add_node(source)
+    T.add_edges_from(edges)
+    return T
+
+
+def dfs_tree(G, source=None, depth_limit=None, *, sort_neighbors=None):
+    edges = dfs_edges(G, source, depth_limit, sort_neighbors=sort_neighbors)
+    T = nx.DiGraph()
+    if source is None:
+        T.add_nodes_from(G._nodes)
+    else:
+        T.add_node(source)
+    T.add_edges_from(edges)
+    return T
+
+
+# --- Spanning trees --------------------------------------------------------------
+
+
+def _mst_algorithms():
+    # NetworkX's own table (it also accepts e.g. "borůvka").
+    from networkx.algorithms.tree import mst
+
+    return getattr(mst, "ALGORITHMS", {"kruskal": None, "prim": None, "boruvka": None})
+
+
+def _spanning_edges(G, algorithm, weight, data, maximum):
+    if G.is_directed():
+        raise nx.NetworkXNotImplemented("not implemented for directed type")
+    try:
+        known = algorithm in _mst_algorithms()
+    except TypeError:
+        raise NotImplementedError("unhashable algorithm") from None
+    if not known:
+        raise ValueError(f"{algorithm} is not a valid choice for an algorithm.")
+    if algorithm != "kruskal":
+        # Prim starts from `set(G).pop()`, which follows hash order.
+        raise NotImplementedError("rustnx implements Kruskal's algorithm only")
+    base = _networkx_graph(G)
+    _unhidden_weight(G, weight)
+    us, vs = G._core.kruskal(weight, maximum)
+    guard = _MutationGuard(G)
+    nodes = G._nodes
+    adj = base._adj
+
+    def generate():
+        try:
+            for u, v in zip(us, vs):
+                if guard.changed():
+                    raise RuntimeError("Graph changed during iteration")
+                a, b = nodes[u], nodes[v]
+                yield (a, b, adj[a][b]) if data else (a, b)
+        finally:
+            guard.release()
+
+    return generate()
+
+
+def minimum_spanning_edges(G, algorithm="kruskal", weight="weight", keys=True, data=True, ignore_nan=False):
+    return _spanning_edges(G, algorithm, weight, data, maximum=False)
+
+
+def maximum_spanning_edges(G, algorithm="kruskal", weight="weight", keys=True, data=True, ignore_nan=False):
+    return _spanning_edges(G, algorithm, weight, data, maximum=True)
+
+
+def _spanning_tree(G, weight, algorithm, maximum):
+    edges = _spanning_edges(G, algorithm, weight, True, maximum)
+    base = _networkx_graph(G)
+    T = base.__class__()
+    T.graph.update(base.graph)
+    T.add_nodes_from(base.nodes.items())
+    T.add_edges_from(edges)
+    return T
+
+
+def minimum_spanning_tree(G, weight="weight", algorithm="kruskal", ignore_nan=False):
+    return _spanning_tree(G, weight, algorithm, maximum=False)
+
+
+def maximum_spanning_tree(G, weight="weight", algorithm="kruskal", ignore_nan=False):
+    return _spanning_tree(G, weight, algorithm, maximum=True)
+
+
+# --- all_shortest_paths ----------------------------------------------------------
+
+
+@functools.cache
+def _path_skip_ends_pass():
+    """Whether the installed NetworkX (before 3.7) ends a pass of
+    ``_build_paths_from_predecessors`` when it skips a predecessor already on
+    the path, which re-yields paths through zero-weight cycles."""
+    H = nx.DiGraph()
+    H.add_weighted_edges_from([(0, 1, 0), (1, 0, 0), (1, 2, 1), (0, 2, 1), (2, 3, 0)])
+    return len(list(nx.all_shortest_paths(H, 0, 3, weight="weight", backend="networkx"))) == 4
+
+
+def all_shortest_paths(G, source, target, weight=None, method="dijkstra"):
+    method = "unweighted" if weight is None else method
+    if method == "unweighted":
+        s = _index_of(G, source, f"Source {source} not in G")
+    elif method == "dijkstra":
+        s = _index_of(G, source, f"Node {source} is not found in the graph")
+        weight, _, _ = _check_weight(G, weight)
+    elif method == "bellman-ford":
+        raise NotImplementedError("rustnx has no Bellman-Ford")
+    else:
+        raise ValueError(f"method not supported: {method}")
+    try:
+        t = G._index.get(target)
+    except TypeError:
+        raise NotImplementedError("unhashable target") from None
+    paths = None if t is None else G._core.all_shortest_paths(
+        s, t, weight if method == "dijkstra" else None, _path_skip_ends_pass()
+    )
+
+    def generate():
+        if paths is None:
+            raise nx.NetworkXNoPath(f"Target {target} cannot be reached from given sources")
+        nodes = G._nodes
+        while (p := paths.next_path()) is not None:
+            path = [nodes[i] for i in p]
+            path[-1] = target  # NetworkX starts the search from the caller's object
+            yield path
+
+    return generate()
+
+
+# --- Coloring and communities ----------------------------------------------------
+
+
+def greedy_color(G, strategy="largest_first", interchange=False):
+    if len(G) == 0:
+        return {}
+    if not isinstance(strategy, str) or strategy != "largest_first" or interchange:
+        raise NotImplementedError("rustnx implements the largest_first strategy only")
+    order, colors = G._core.greedy_color()
+    nodes = G._nodes
+    return {nodes[i]: colors[i] for i in order}
+
+
+def label_propagation_communities(G):
+    _undirected_only(G)
+    order, colors = G._core.greedy_color()
+    nodes = G._nodes
+    # NetworkX visits each color class as a set, so build the same sets and
+    # let Python decide the visiting order.
+    coloring = {}
+    for i in order:
+        c = colors[i]
+        if c in coloring:
+            coloring[c].add(nodes[i])
+        else:
+            coloring[c] = {nodes[i]}
+    index = G._index
+    labels = G._core.label_propagation([index[n] for members in coloring.values() for n in members])
+    clusters = defaultdict(set)
+    for node, label in zip(nodes, labels):
+        clusters[label].add(node)
+    return clusters.values()

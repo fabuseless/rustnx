@@ -18,8 +18,10 @@ _WEIGHT_PARAMS = ("weight", "distance")
 # Linear-time algorithms where, on small graphs, converting to rustnx and
 # dispatching costs more than NetworkX spends running the algorithm.
 _LINEAR_TIME = {
+    "all_shortest_paths",
     "ancestors",
     "bfs_edges",
+    "bfs_tree",
     "bidirectional_dijkstra",
     "bidirectional_shortest_path",
     "connected_components",
@@ -27,8 +29,10 @@ _LINEAR_TIME = {
     "descendants",
     "dfs_edges",
     "dfs_preorder_nodes",
+    "dfs_tree",
     "dijkstra_path",
     "dijkstra_path_length",
+    "greedy_color",
     "has_path",
     "is_bipartite",
     "is_connected",
@@ -36,6 +40,11 @@ _LINEAR_TIME = {
     "is_strongly_connected",
     "is_weakly_connected",
     "k_core",
+    "label_propagation_communities",
+    "maximum_spanning_edges",
+    "maximum_spanning_tree",
+    "minimum_spanning_edges",
+    "minimum_spanning_tree",
     "number_connected_components",
     "number_strongly_connected_components",
     "number_weakly_connected_components",
@@ -54,7 +63,13 @@ _LINEAR_TIME = {
 SMALL_GRAPH_NODES = 500
 
 # Functions that return subgraphs of the original NetworkX graph.
-_BUILDS_FROM_SOURCE = {"k_core"}
+_BUILDS_FROM_SOURCE = {
+    "k_core",
+    "maximum_spanning_edges",
+    "maximum_spanning_tree",
+    "minimum_spanning_edges",
+    "minimum_spanning_tree",
+}
 
 
 def convert_from_nx(
@@ -73,7 +88,7 @@ def convert_from_nx(
         if name in _BUILDS_FROM_SOURCE:
             # These build their result from the original NetworkX graph, so
             # its attributes don't need to be copied into Rust.
-            return from_networkx(G, {})
+            return from_networkx(G, edge_attrs or {})
         # Arbitrary edge data (e.g. for callable weights) isn't stored in Rust.
         raise NotImplementedError("rustnx only stores numeric edge attributes")
     if isinstance(preserve_edge_attrs, dict):
@@ -101,9 +116,16 @@ def _is_default(value, param):
     )
 
 
+def _nx_function(name):
+    """The installed NetworkX's dispatchable function called ``name`` (some,
+    like ``label_propagation_communities``, live in subpackages)."""
+    registry = getattr(nx.utils.backends, "_registered_algorithms", {})
+    return registry[name] if name in registry else getattr(nx, name)
+
+
 @functools.cache
 def _nx_signature(name):
-    return inspect.signature(getattr(nx, name))
+    return inspect.signature(_nx_function(name))
 
 
 def _bind(name, args, kwargs):

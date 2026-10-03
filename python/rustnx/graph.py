@@ -52,6 +52,25 @@ class RustnxGraph:
             self._nodes, self._index, self._source._pred, self._weight_attrs
         )
 
+    def _ensure_weight(self, attr):
+        """Make sure edge attribute ``attr`` is converted (missing values
+        count as 1, NetworkX's default), converting it now if needed.
+
+        NetworkX may hand over a cached conversion made for a different
+        call, e.g. one that kept all attributes on the NetworkX side.
+        """
+        if self._core.is_native() or any(name == attr for name, _ in self._weight_attrs):
+            return
+        if not isinstance(attr, str):
+            raise NotImplementedError("rustnx only supports string edge attribute names")
+        if not self._source_unchanged():
+            raise NotImplementedError("the graph changed since it was converted")
+        attrs = dict(self._weight_attrs)
+        attrs[attr] = 1
+        fresh = from_networkx(self._source, attrs)
+        self._core = fresh._core
+        self._weight_attrs = fresh._weight_attrs
+
     def is_directed(self):
         return self._core.directed
 

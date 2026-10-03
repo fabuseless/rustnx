@@ -725,7 +725,7 @@ def test_backend_function_list_matches_implementations():
     assert sorted(_info.FUNCTIONS) == sorted(algorithms.__all__)
     for name in algorithms.__all__:
         assert hasattr(interface, name), name
-        assert hasattr(nx, name), name
+        assert interface._nx_function(name) is not None, name
 
 
 # --- Shortest paths that return the paths ---------------------------------------
@@ -1195,3 +1195,90 @@ def test_graph_subclass_overriding_structure_is_not_converted():
         label = "just adds an attribute"
 
     rustnx.from_networkx(Plain(G))  # still converted
+
+
+# --- Trees, spanning trees, all_shortest_paths, coloring, communities -------------
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_bfs_dfs_tree(seed, directed):
+    G = graph_for(seed, directed)
+    for source in list(G)[:3] + ["missing"]:
+        for depth in [None, 1, 2]:
+            exact_outcome(nx.bfs_tree, G, source, depth_limit=depth)
+            exact_outcome(nx.dfs_tree, G, source, depth_limit=depth)
+    exact_outcome(nx.dfs_tree, G)
+    if directed:
+        exact_outcome(nx.bfs_tree, G, list(G)[0], reverse=True)
+
+
+@pytest.mark.parametrize("weights", WEIGHTS)
+@pytest.mark.parametrize("seed", SEEDS)
+def test_spanning_trees(seed, weights):
+    G = graph_for(seed, False, "int" if weights == "missing" else weights)
+    if weights == "missing":
+        for i, (_, _, d) in enumerate(G.edges(data=True)):
+            if i % 2:
+                del d["weight"]
+    for _, _, d in G.edges(data=True):
+        d["label"] = "keep me"  # non-numeric attributes must come through
+    weight = None if weights == "none" else "weight"
+    for func in [nx.minimum_spanning_edges, nx.maximum_spanning_edges]:
+        exact_outcome(func, G, weight=weight)
+        exact_outcome(func, G, weight=weight, data=False)
+        exact_outcome(func, G, algorithm="prim", weight=weight)  # falls back
+        exact_outcome(func, G, algorithm="nope")
+    for func in [nx.minimum_spanning_tree, nx.maximum_spanning_tree]:
+        exact_outcome(func, G, weight=weight)
+    # The yielded data dicts are the graph's own, as in NetworkX.
+    edges = list(nx.minimum_spanning_edges(G, backend="rustnx"))
+    if edges:
+        u, v, d = edges[0]
+        assert d is G[u][v]
+    exact_outcome(nx.minimum_spanning_edges, G.to_directed())
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_all_shortest_paths(seed, directed, weights):
+    G = graph_for(seed, directed, weights)
+    weight = None if weights == "none" else "weight"
+    rng = random.Random(seed)
+    for s, t in path_queries(G, rng):
+        exact_outcome(nx.all_shortest_paths, G, s, t, weight=weight)
+    nodes = list(G)
+    if nodes:
+        exact_outcome(nx.all_shortest_paths, G, nodes[0], nodes[-1], weight="weight", method="nope")
+
+
+def test_all_shortest_paths_ties_and_zero_weights():
+    G = nx.grid_2d_graph(4, 4)  # many equal-length paths
+    exact_outcome(nx.all_shortest_paths, G, (0, 0), (3, 3))
+    H = nx.DiGraph()
+    H.add_weighted_edges_from([(0, 1, 0), (1, 0, 0), (1, 2, 1), (0, 2, 1), (2, 3, 0)])
+    exact_outcome(nx.all_shortest_paths, H, 0, 3, weight="weight")
+    exact_outcome(nx.all_shortest_paths, H, 3, 0, weight="weight")
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_greedy_color_and_label_propagation(seed, directed):
+    G = graph_for(seed, directed)
+    exact_outcome(nx.greedy_color, G)
+    exact_outcome(nx.greedy_color, G, strategy="smallest_last")  # falls back
+    if not directed:
+        def communities(G, **kw):
+            return [sorted(map(str, c)) for c in nx.community.label_propagation_communities(G, **kw)]
+
+        exact_outcome(communities, G)
+        exact_outcome(lambda G, **kw: list(nx.community.label_propagation_communities(G, **kw)), G)
+    if directed:
+        exact_outcome(nx.community.label_propagation_communities, G)
+
+
+def test_spanning_tree_algorithm_names():
+    G = nx.path_graph(5)
+    for name in ["kruskal", "prim", "boruvka", "borůvka", "nope"]:
+        exact_outcome(lambda G, **kw: list(nx.minimum_spanning_edges(G, algorithm=name, **kw)), G)

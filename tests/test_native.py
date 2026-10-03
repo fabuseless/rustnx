@@ -142,6 +142,7 @@ def algorithm_calls(H, directed):
         "eigenvector": lambda G, b: list(nx.eigenvector_centrality(G, max_iter=1000, backend=b).items()),
         "katz": lambda G, b: list(nx.katz_centrality(G, alpha=0.02, backend=b).items()),
         "is_bipartite": lambda G, b: nx.is_bipartite(G, backend=b),
+        "greedy_color": lambda G, b: list(nx.greedy_color(G, backend=b).items()),
         "core_number": lambda G, b: list(nx.core_number(G, backend=b).items()),
         "k_core": lambda G, b: sorted(map(str, nx.k_core(G, backend=b).edges)),
         "clustering": lambda G, b: list(nx.clustering(G, backend=b).items()),
@@ -167,6 +168,9 @@ def algorithm_calls(H, directed):
         calls["bfs_edges"] = lambda G, b: list(nx.bfs_edges(G, src, backend=b))
         calls["dfs_edges"] = lambda G, b: list(nx.dfs_edges(G, src, backend=b))
         calls["dfs_preorder"] = lambda G, b: list(nx.dfs_preorder_nodes(G, backend=b))
+        calls["bfs_tree"] = lambda G, b: list(nx.bfs_tree(G, src, backend=b).edges)
+        calls["all_sp"] = lambda G, b: list(nx.all_shortest_paths(G, src, dst, backend=b))
+        calls["all_sp_w"] = lambda G, b: list(nx.all_shortest_paths(G, src, dst, weight="weight", backend=b))
         calls["ancestors"] = lambda G, b: nx.ancestors(G, src, backend=b)
     if directed:
         calls["scc"] = lambda G, b: list(nx.strongly_connected_components(G, backend=b))
@@ -175,6 +179,8 @@ def algorithm_calls(H, directed):
         calls["dag"] = lambda G, b: nx.is_directed_acyclic_graph(G, backend=b)
     else:
         calls["cc"] = lambda G, b: list(nx.connected_components(G, backend=b))
+        calls["mst"] = lambda G, b: [(u, v) for u, v in nx.minimum_spanning_edges(G, data=False, backend=b)]
+        calls["label_prop"] = lambda G, b: [sorted(map(str, c)) for c in nx.community.label_propagation_communities(G, backend=b)]
         calls["triangles"] = lambda G, b: list(nx.triangles(G, backend=b).items())
     return calls
 
