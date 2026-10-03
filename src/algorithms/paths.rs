@@ -182,3 +182,92 @@ pub fn bidirectional_bfs(succ: &Csr, pred: &Csr, n: usize, s: usize, t: usize) -
     }
     Some(path)
 }
+
+pub enum BidirectionalError {
+    NoPath,
+    Contradictory,
+}
+
+/// `nx.bidirectional_dijkstra` for `source != target`: the distance and
+/// path. `succ`/`pred` are the forward adjacency and the reverse adjacency in
+/// NetworkX's exact order (the same rows for undirected graphs), with
+/// weights aligned to each (`None` = all 1). NaN weights hide edges. One
+/// counter breaks heap ties across both directions, as in NetworkX.
+pub fn bidirectional_dijkstra(
+    adj: [(&Csr, Option<&[f64]>); 2],
+    n: usize,
+    source: usize,
+    target: usize,
+) -> Result<(f64, Vec<u32>), BidirectionalError> {
+    let mut dist = [vec![f64::NAN; n], vec![f64::NAN; n]];
+    let mut done = [vec![false; n], vec![false; n]];
+    let mut seen = [vec![f64::INFINITY; n], vec![f64::INFINITY; n]];
+    let mut has_seen = [vec![false; n], vec![false; n]];
+    let mut pred = [vec![NO_PARENT; n], vec![NO_PARENT; n]];
+    let mut fringe: [BinaryHeap<Reverse<(HeapKey, u32)>>; 2] =
+        [BinaryHeap::new(), BinaryHeap::new()];
+    let mut counter = 0u64;
+    for (d, s) in [(0, source), (1, target)] {
+        seen[d][s] = 0.0;
+        has_seen[d][s] = true;
+        fringe[d].push(Reverse((HeapKey(0.0, counter), s as u32)));
+        counter += 1;
+    }
+    let mut finaldist: Option<f64> = None;
+    let mut meet = NO_PARENT;
+    let mut dir = 1;
+    while !fringe[0].is_empty() && !fringe[1].is_empty() {
+        dir = 1 - dir;
+        let Reverse((HeapKey(d, _), v)) = fringe[dir].pop().expect("non-empty");
+        let v = v as usize;
+        if done[dir][v] {
+            continue;
+        }
+        done[dir][v] = true;
+        dist[dir][v] = d;
+        if done[1 - dir][v] {
+            let meet = meet as usize;
+            let mut path = Vec::new();
+            let mut cur = meet as u32;
+            while cur != NO_PARENT {
+                path.push(cur);
+                cur = pred[0][cur as usize];
+            }
+            path.reverse();
+            let mut cur = pred[1][meet];
+            while cur != NO_PARENT {
+                path.push(cur);
+                cur = pred[1][cur as usize];
+            }
+            return Ok((finaldist.expect("set when both searches met"), path));
+        }
+        let (rows, weights) = adj[dir];
+        for e in rows.range(v) {
+            let w = rows.targets[e] as usize;
+            let cost = weights.map_or(1.0, |ws| ws[e]);
+            if cost.is_nan() {
+                continue;
+            }
+            let vw = d + cost;
+            if done[dir][w] {
+                if vw < dist[dir][w] {
+                    return Err(BidirectionalError::Contradictory);
+                }
+            } else if !has_seen[dir][w] || vw < seen[dir][w] {
+                seen[dir][w] = vw;
+                has_seen[dir][w] = true;
+                fringe[dir].push(Reverse((HeapKey(vw, counter), w as u32)));
+                counter += 1;
+                pred[dir][w] = v as u32;
+                if has_seen[1 - dir][w] {
+                    let total = vw + seen[1 - dir][w];
+                    if finaldist.is_none_or(|f| f > total) {
+                        finaldist = Some(total);
+                        meet = w as u32;
+                    }
+                }
+            }
+        }
+    }
+    Err(BidirectionalError::NoPath)
+}

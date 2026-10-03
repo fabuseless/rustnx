@@ -9,6 +9,7 @@ import functools
 import inspect
 import math
 import operator
+import sys
 
 import networkx as nx
 from networkx.algorithms.centrality import betweenness as _nx_betweenness
@@ -23,22 +24,32 @@ __all__ = [
     "average_clustering",
     "average_shortest_path_length",
     "betweenness_centrality",
+    "bfs_edges",
+    "bidirectional_dijkstra",
     "bidirectional_shortest_path",
     "center",
     "closeness_centrality",
     "clustering",
     "connected_components",
+    "core_number",
     "descendants",
+    "dfs_edges",
+    "dfs_preorder_nodes",
     "diameter",
     "dijkstra_path",
     "dijkstra_path_length",
     "eccentricity",
     "edge_betweenness_centrality",
+    "eigenvector_centrality",
+    "harmonic_centrality",
     "has_path",
+    "is_bipartite",
     "is_connected",
     "is_directed_acyclic_graph",
     "is_strongly_connected",
     "is_weakly_connected",
+    "k_core",
+    "katz_centrality",
     "number_connected_components",
     "number_strongly_connected_components",
     "number_weakly_connected_components",
@@ -70,11 +81,18 @@ def _index_of(G, node, message):
         raise nx.NodeNotFound(message) from None
 
 
-def _check_weight(G, attr):
-    """Validate a weight argument; return ``(attr, all_int)``."""
+def _check_weight(G, attr, distances=False):
+    """Validate a weight argument; return ``(attr, all_int, has_hidden)``.
+
+    ``distances=True`` is for functions that return path lengths: if the
+    attribute mixes ints and floats, NetworkX returns an int or a float
+    depending on the path, which rustnx doesn't track, so it declines.
+    """
     if callable(attr):
         raise NotImplementedError("rustnx does not support callable weights")
     all_int, has_hidden = G._core.weight_info(attr)
+    if distances and G._core.weight_mixed(attr):
+        raise NotImplementedError("edge weights mix ints and floats")
     return attr, all_int, has_hidden
 
 
@@ -183,7 +201,7 @@ def single_source_shortest_path_length(G, source, cutoff=None):
 
 def single_source_dijkstra_path_length(G, source, cutoff=None, weight="weight"):
     s = _index_of(G, source, f"Node {source} not found in graph")
-    weight, all_int, _ = _check_weight(G, weight)
+    weight, all_int, _ = _check_weight(G, weight, distances=True)
     order, dists = G._core.dijkstra_lengths(
         s, weight, None if cutoff is None else float(cutoff)
     )
@@ -497,7 +515,7 @@ def _eccentricity_values(G, weight, sources=None):
             if reached != n:
                 raise _not_connected_error(G)
         return [mx for _, _, mx in stats]
-    weight, all_int, _ = _check_weight(G, weight)
+    weight, all_int, _ = _check_weight(G, weight, distances=True)
     stats, _ = G._core.dijkstra_stats(weight, sources)
     values = []
     for st in stats:
@@ -571,7 +589,7 @@ def _distance_total(G, weight):
     """Sum of all shortest path lengths, summed in NetworkX's order."""
     if weight is None:
         return sum(total for _, total, _ in G._core.bfs_stats(None))
-    weight, all_int, _ = _check_weight(G, weight)
+    weight, all_int, _ = _check_weight(G, weight, distances=True)
     stats, total = G._core.dijkstra_stats(weight, None)
     if total is None:
         raise ValueError(*_NEGATIVE_CYCLE)
@@ -640,7 +658,7 @@ def all_pairs_shortest_path_length(G, cutoff=None):
 
 
 def all_pairs_dijkstra_path_length(G, cutoff=None, weight="weight"):
-    weight, all_int, _ = _check_weight(G, weight)
+    weight, all_int, _ = _check_weight(G, weight, distances=True)
     cutoff = None if cutoff is None else float(cutoff)
     nodes = G._nodes
 
@@ -687,8 +705,10 @@ def _dijkstra_paths_in_pop_order():
     return list(paths) == [0, 2, 1, 3]
 
 
-def _dijkstra_tree(G, s, weight, cutoff=None, target=None, reverse=False):
-    weight, all_int, _ = _check_weight(G, weight)
+def _dijkstra_tree(G, s, weight, cutoff=None, target=None, reverse=False, lengths=True):
+    # `lengths=False`: the caller only uses the paths, so int/float mixing
+    # (which only affects the lengths' types) doesn't matter.
+    weight, all_int, _ = _check_weight(G, weight, distances=lengths)
     if reverse and G.is_directed():
         G._ensure_exact_pred()
     order, dists, parents, seen = G._core.dijkstra_tree(
@@ -712,9 +732,9 @@ def _dijkstra_result(G, tree):
     return dist, _tree_paths(G, order, parents, key_order)
 
 
-def _dijkstra_target(G, s, t, weight, cutoff=None):
+def _dijkstra_target(G, s, t, weight, cutoff=None, lengths=True):
     """``(distance, path)`` to ``t``, or ``None`` when ``t`` isn't reached."""
-    weight, all_int, _ = _check_weight(G, weight)
+    weight, all_int, _ = _check_weight(G, weight, distances=lengths)
     result = G._core.dijkstra_path(s, t, weight, None if cutoff is None else float(cutoff))
     if result is None:
         return None
@@ -735,31 +755,31 @@ def single_target_shortest_path(G, target, cutoff=None):
 
 def single_source_dijkstra_path(G, source, cutoff=None, weight="weight"):
     s = _index_of(G, source, f"Node {source} not found in graph")
-    return _dijkstra_result(G, _dijkstra_tree(G, s, weight, cutoff))[1]
+    return _dijkstra_result(G, _dijkstra_tree(G, s, weight, cutoff, lengths=False))[1]
 
 
-def single_source_dijkstra(G, source, target=None, cutoff=None, weight="weight"):
+def single_source_dijkstra(G, source, target=None, cutoff=None, weight="weight", *, _lengths=True):
     s = _index_of(G, source, f"Node {source} not found in graph")
     if target is None:
-        return _dijkstra_result(G, _dijkstra_tree(G, s, weight, cutoff))
+        return _dijkstra_result(G, _dijkstra_tree(G, s, weight, cutoff, lengths=_lengths))
     if target == source:
         return 0, [target]
     try:
         t = G._index[target]
     except (KeyError, TypeError):
         t = None
-    result = None if t is None else _dijkstra_target(G, s, t, weight, cutoff)
+    result = None if t is None else _dijkstra_target(G, s, t, weight, cutoff, lengths=_lengths)
     if result is None:
         if t is None:
             # NetworkX searches the whole graph first: a negative cycle
             # would raise before NoPath does.
-            _dijkstra_tree(G, s, weight, cutoff)
+            _dijkstra_tree(G, s, weight, cutoff, lengths=_lengths)
         raise nx.NetworkXNoPath(f"No path to {target}.")
     return result
 
 
 def dijkstra_path(G, source, target, weight="weight"):
-    return single_source_dijkstra(G, source, target=target, weight=weight)[1]
+    return single_source_dijkstra(G, source, target=target, weight=weight, _lengths=False)[1]
 
 
 def dijkstra_path_length(G, source, target, weight="weight"):
@@ -826,8 +846,8 @@ def all_pairs_shortest_path(G, cutoff=None):
     return _all_pairs(G, compute)
 
 
-def _dijkstra_trees(G, batch, weight, cutoff):
-    weight, all_int, _ = _check_weight(G, weight)
+def _dijkstra_trees(G, batch, weight, cutoff, lengths):
+    weight, all_int, _ = _check_weight(G, weight, distances=lengths)
     for tree in G._core.dijkstra_tree_many(batch, weight, cutoff):
         if tree is None:
             raise ValueError(*_NEGATIVE_CYCLE)
@@ -843,18 +863,18 @@ def all_pairs_dijkstra_path(G, cutoff=None, weight="weight"):
     cutoff = None if cutoff is None else float(cutoff)
 
     def compute(batch):
-        for tree in _dijkstra_trees(G, batch, weight, cutoff):
+        for tree in _dijkstra_trees(G, batch, weight, cutoff, lengths=False):
             yield _dijkstra_result(G, tree)[1]
 
     return _all_pairs(G, compute)
 
 
 def all_pairs_dijkstra(G, cutoff=None, weight="weight"):
-    _check_weight(G, weight)
+    _check_weight(G, weight, distances=True)  # before iteration starts
     cutoff = None if cutoff is None else float(cutoff)
 
     def compute(batch):
-        for tree in _dijkstra_trees(G, batch, weight, cutoff):
+        for tree in _dijkstra_trees(G, batch, weight, cutoff, lengths=True):
             yield _dijkstra_result(G, tree)
 
     return _all_pairs(G, compute)
@@ -880,7 +900,7 @@ def shortest_path(G, source=None, target=None, weight=None, method="dijkstra"):
         if weight is None:
             paths = _bfs_paths(G, t, math.inf, reverse=True)
         else:
-            tree = _dijkstra_tree(G, t, weight, reverse=True)
+            tree = _dijkstra_tree(G, t, weight, reverse=True, lengths=False)
             paths = _dijkstra_result(G, tree)[1]
             paths = {v: p[::-1] for v, p in paths.items()}
         return paths
@@ -890,8 +910,7 @@ def shortest_path(G, source=None, target=None, weight=None, method="dijkstra"):
         return single_source_dijkstra_path(G, source, weight=weight)
     if weight is None:
         return bidirectional_shortest_path(G, source, target)
-    # bidirectional_dijkstra breaks ties differently across NetworkX versions.
-    raise NotImplementedError("rustnx leaves bidirectional_dijkstra to NetworkX")
+    return _bidirectional_dijkstra(G, source, target, weight, lengths=False)[1]
 
 
 def _target_message(G, target, weight):
@@ -1016,3 +1035,269 @@ def transitivity(G):
     triangles = sum(t for t, _, _ in counts)
     contri = sum(d * (d - 1) for _, d, _ in counts)
     return 0 if triangles == 0 else triangles / contri
+
+
+def bidirectional_dijkstra(G, source, target, weight="weight"):
+    return _bidirectional_dijkstra(G, source, target, weight, lengths=True)
+
+
+def _bidirectional_dijkstra(G, source, target, weight, lengths):
+    s = _index_of(G, source, f"Source {source} is not in G")
+    t = _index_of(G, target, f"Target {target} is not in G")
+    if source == target:
+        return 0, [source]
+    weight, all_int, _ = _check_weight(G, weight, distances=lengths)
+    if G.is_directed():
+        G._ensure_exact_pred()
+    found = G._core.bidirectional_dijkstra(s, t, weight)
+    if found is None:
+        raise nx.NetworkXNoPath(f"No path between {source} and {target}.")
+    dist, path = found
+    nodes = G._nodes
+    return int(dist) if all_int else dist, [nodes[i] for i in path]
+
+
+# --- Centrality: harmonic, eigenvector, Katz -------------------------------------
+
+
+# Python 3.12 made sum() of floats use compensated summation; convergence
+# checks that call sum() must add the same way.
+_COMPENSATED_SUM = sys.version_info >= (3, 12)
+
+
+def _nbunch_list(G, nbunch):
+    """``list(G.nbunch_iter(nbunch))``, keeping the caller's node objects."""
+    if nbunch in G:
+        return [nbunch]
+    if iter(nbunch) is nbunch:
+        raise NotImplementedError("rustnx needs a reusable container of nodes")
+    picked = []
+    for v in nbunch:
+        try:
+            if v in G._index:
+                picked.append(v)
+        except TypeError:
+            raise NotImplementedError("unhashable node in nbunch") from None
+    return picked
+
+
+def harmonic_centrality(G, nbunch=None, distance=None, sources=None):
+    # Built exactly as NetworkX builds them, so they iterate in the same order.
+    nbunch = set(_nbunch_list(G, nbunch) if nbunch is not None else G._nodes)
+    sources = set(_nbunch_list(G, sources) if sources is not None else G._nodes)
+    if len(nbunch) < len(sources):
+        # NetworkX swaps the roles here and adds terms in set-intersection
+        # order, which differs by version.
+        raise NotImplementedError("rustnx computes harmonic centrality for many targets")
+    distance, _, _ = _check_weight(G, distance)
+    index = G._index
+    in_nbunch = [False] * len(G)
+    for u in nbunch:
+        in_nbunch[index[u]] = True
+    total, touched = G._core.harmonic([index[v] for v in sources], in_nbunch, distance)
+    centrality = {u: 0 for u in nbunch}
+    for u in centrality:
+        i = index[u]
+        if touched[i]:
+            centrality[u] = total[i]
+    return centrality
+
+
+def _iterations(max_iter):
+    try:
+        return max(operator.index(max_iter), 0)
+    except TypeError:
+        raise NotImplementedError("max_iter must be an integer") from None
+
+
+def _unhidden_weight(G, weight):
+    weight, _, has_hidden = _check_weight(G, weight)
+    if weight is not None and has_hidden:
+        raise NotImplementedError("rustnx does not support None edge weights here")
+    return weight
+
+
+def eigenvector_centrality(G, max_iter=100, tol=1e-06, nstart=None, weight=None):
+    if len(G) == 0:
+        raise nx.NetworkXPointlessConcept("cannot compute centrality for the null graph")
+    if nstart is None:
+        nstart = {v: 1 for v in G._nodes}
+    elif len(nstart) != len(G) or not all(v in G for v in nstart):
+        raise NotImplementedError("nstart must give a value for every node")
+    if all(v == 0 for v in nstart.values()):
+        raise nx.NetworkXError("initial vector cannot have all zero values")
+    nstart_sum = sum(nstart.values())
+    x = {k: v / nstart_sum for k, v in nstart.items()}
+    if not all(type(v) is float for v in x.values()):
+        raise NotImplementedError("rustnx needs a float start vector")
+    weight = _unhidden_weight(G, weight if weight else None)
+    index = G._index
+    order = [index[k] for k in x]
+    x0 = [0.0] * len(G)
+    for i, v in zip(order, x.values()):
+        x0[i] = v
+    result = G._core.eigenvector(
+        order, x0, weight, _iterations(max_iter), float(tol), math.hypot, _COMPENSATED_SUM
+    )
+    if result is None:
+        raise nx.PowerIterationFailedConvergence(max_iter)
+    return {k: result[i] for k, i in zip(x, order)}
+
+
+def katz_centrality(
+    G, alpha=0.1, beta=1.0, max_iter=1000, tol=1e-06, nstart=None, normalized=True, weight=None
+):
+    if len(G) == 0:
+        return {}
+    if nstart is not None:
+        raise NotImplementedError("rustnx starts Katz from zero")
+    try:
+        beta = float(beta)
+    except (TypeError, ValueError, AttributeError):
+        raise NotImplementedError("rustnx supports a scalar beta") from None
+    if type(alpha) not in (int, float):
+        raise NotImplementedError("rustnx supports a real alpha")
+    weight = _unhidden_weight(G, weight)
+    n = len(G)
+    x = G._core.katz(
+        list(range(n)), float(alpha), beta, weight, _iterations(max_iter), float(tol), _COMPENSATED_SUM
+    )
+    if x is None:
+        raise nx.PowerIterationFailedConvergence(max_iter)
+    if normalized:
+        try:
+            s = 1.0 / math.hypot(*x)
+        except ZeroDivisionError:
+            s = 1.0
+    else:
+        s = 1
+    return dict(zip(G._nodes, [v * s for v in x]))
+
+
+# --- Cores and bipartiteness -------------------------------------------------------
+
+
+def core_number(G):
+    core = G._core.core_number()
+    if core is None:
+        raise nx.NetworkXNotImplemented(
+            "Input graph has self loops which is not permitted; "
+            "Consider using G.remove_edges_from(nx.selfloop_edges(G))."
+        )
+    return dict(zip(G._nodes, core))
+
+
+def _networkx_graph(G):
+    """The NetworkX graph ``G`` stands for, to build subgraphs from."""
+    if G._core.is_native():
+        return G.to_networkx()
+    if not G._source_unchanged():
+        raise NotImplementedError("the graph changed since it was converted")
+    return G._source
+
+
+def k_core(G, k=None, core_number=None):
+    base = _networkx_graph(G)
+    core = globals()["core_number"](G) if core_number is None else core_number
+    if k is None:
+        k = max(core.values())
+    return base.subgraph(v for v in core if core[v] >= k).copy()
+
+
+def is_bipartite(G):
+    return G._core.is_bipartite()
+
+
+# --- Traversal -------------------------------------------------------------------
+
+
+def _depth_limit(G, depth_limit):
+    if depth_limit is None:
+        return len(G)
+    try:
+        return operator.index(depth_limit)
+    except TypeError:
+        raise NotImplementedError("depth_limit must be an integer") from None
+
+
+def _start(G, source, reverse=False):
+    """``(position or None, error)`` for a traversal start; NetworkX raises
+    the error lazily, when iteration reaches the missing node."""
+    try:
+        hash(source)
+    except TypeError:
+        raise NotImplementedError("unhashable source") from None
+    kind = "digraph" if G.is_directed() else "graph"
+    return G._index.get(source), nx.NetworkXError(f"The node {source} is not in the {kind}.")
+
+
+def _traversal(G, produce):
+    guard = _MutationGuard(G)
+
+    def generate():
+        try:
+            for item in produce():
+                if guard.changed():
+                    raise RuntimeError("Graph changed during iteration")
+                yield item
+        finally:
+            guard.release()
+
+    return generate()
+
+
+def bfs_edges(G, source, reverse=False, depth_limit=None, sort_neighbors=None):
+    if sort_neighbors is not None:
+        raise NotImplementedError("rustnx does not support sort_neighbors")
+    s, missing = _start(G, source)
+    depth = _depth_limit(G, depth_limit)
+    reverse = bool(reverse) and G.is_directed()
+    if reverse:
+        G._ensure_exact_pred()
+
+    def produce():
+        if s is None:
+            raise missing
+        parents, children = G._core.bfs_edges(s, depth, reverse)
+        nodes = G._nodes
+        for p, c in zip(parents, children):
+            yield nodes[p], nodes[c]
+
+    return _traversal(G, produce)
+
+
+def _dfs(G, source, depth_limit, sort_neighbors, preorder):
+    if sort_neighbors is not None:
+        raise NotImplementedError("rustnx does not support sort_neighbors")
+    depth = _depth_limit(G, depth_limit)
+    if source is None:
+        s, missing, starts = 0, None, None
+    else:
+        s, missing = _start(G, source)
+        starts = [s]
+
+    def produce():
+        if s is None:
+            if preorder:
+                yield source  # NetworkX yields the start before looking it up
+            raise missing
+        parents, children = G._core.dfs_forward(starts, depth)
+        nodes = G._nodes
+        for p, c in zip(parents, children):
+            if p == c:  # a new start
+                if preorder:
+                    yield nodes[p]
+            elif preorder:
+                yield nodes[c]
+            else:
+                yield nodes[p], nodes[c]
+
+    return _traversal(G, produce)
+
+
+def dfs_edges(G, source=None, depth_limit=None, *, sort_neighbors=None):
+    return _dfs(G, source, depth_limit, sort_neighbors, preorder=False)
+
+
+def dfs_preorder_nodes(G, source=None, depth_limit=None, *, sort_neighbors=None):
+    return _dfs(G, source, depth_limit, sort_neighbors, preorder=True)

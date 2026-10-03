@@ -205,6 +205,10 @@ class _RangeIndex:
     def __contains__(self, key):
         return self._position(key) is not None
 
+    def get(self, key, default=None):
+        i = self._position(key)
+        return default if i is None else i
+
     def __len__(self):
         return self.n
 
@@ -296,6 +300,28 @@ def _float64_bytes(values):
     return np.ascontiguousarray(values, dtype="<f8").tobytes()
 
 
+# Methods through which NetworkX algorithms read a graph's structure. rustnx
+# reads `G._adj` directly, so a subclass overriding any of these (such as
+# NetworkX's own `_AntiGraph`, which presents the complement graph) would be
+# converted wrongly.
+_STRUCTURE_METHODS = (
+    "__iter__", "__contains__", "__len__", "__getitem__", "adj", "succ", "pred",
+    "nodes", "edges", "degree", "neighbors", "successors", "predecessors",
+    "adjacency", "has_edge", "has_node", "number_of_nodes", "nbunch_iter",
+)
+
+
+def _overrides_structure(G):
+    base = nx.DiGraph if G.is_directed() else nx.Graph
+    cls = type(G)
+    if cls is base:
+        return False
+    return any(
+        getattr(cls, name, None) is not getattr(base, name, None)
+        for name in _STRUCTURE_METHODS
+    )
+
+
 def from_networkx(G, weights=()):
     """Convert a NetworkX ``Graph`` or ``DiGraph``.
 
@@ -304,6 +330,10 @@ def from_networkx(G, weights=()):
     """
     if G.is_multigraph():
         raise NotImplementedError("rustnx does not support multigraphs yet")
+    if _overrides_structure(G):
+        raise NotImplementedError(
+            f"{type(G).__name__} overrides how its structure is read"
+        )
     if not isinstance(weights, dict):
         weights = dict.fromkeys(weights, 1)
     if any(not isinstance(attr, str) for attr in weights):

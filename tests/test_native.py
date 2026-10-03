@@ -75,6 +75,8 @@ def outcome(func):
             ] if result and isinstance(result[0], tuple) else result
         return ("ok", result)
     except Exception as exc:
+        if isinstance(exc, nx.PowerIterationFailedConvergence):
+            return (type(exc), str(exc))  # its args hold the exception itself
         return (type(exc), exc.args)
 
 
@@ -136,6 +138,12 @@ def algorithm_calls(H, directed):
         "all_paths": lambda G, b: nx.all_pairs_shortest_path(G, backend=b),
         "all_paths_w": lambda G, b: nx.all_pairs_dijkstra_path(G, backend=b),
         "diameter": lambda G, b: nx.diameter(G, backend=b),
+        "harmonic": lambda G, b: list(nx.harmonic_centrality(G, backend=b).items()),
+        "eigenvector": lambda G, b: list(nx.eigenvector_centrality(G, max_iter=1000, backend=b).items()),
+        "katz": lambda G, b: list(nx.katz_centrality(G, alpha=0.02, backend=b).items()),
+        "is_bipartite": lambda G, b: nx.is_bipartite(G, backend=b),
+        "core_number": lambda G, b: list(nx.core_number(G, backend=b).items()),
+        "k_core": lambda G, b: sorted(map(str, nx.k_core(G, backend=b).edges)),
         "clustering": lambda G, b: list(nx.clustering(G, backend=b).items()),
         "avg_clustering": lambda G, b: nx.average_clustering(G, backend=b),
         "transitivity": lambda G, b: nx.transitivity(G, backend=b),
@@ -155,6 +163,10 @@ def algorithm_calls(H, directed):
         calls["pair_w"] = lambda G, b: nx.dijkstra_path(G, src, dst, backend=b)
         calls["has_path"] = lambda G, b: nx.has_path(G, dst, src, backend=b)
         calls["descendants"] = lambda G, b: nx.descendants(G, src, backend=b)
+        calls["bidir_dijkstra"] = lambda G, b: nx.bidirectional_dijkstra(G, src, dst, backend=b)
+        calls["bfs_edges"] = lambda G, b: list(nx.bfs_edges(G, src, backend=b))
+        calls["dfs_edges"] = lambda G, b: list(nx.dfs_edges(G, src, backend=b))
+        calls["dfs_preorder"] = lambda G, b: list(nx.dfs_preorder_nodes(G, backend=b))
         calls["ancestors"] = lambda G, b: nx.ancestors(G, src, backend=b)
     if directed:
         calls["scc"] = lambda G, b: list(nx.strongly_connected_components(G, backend=b))

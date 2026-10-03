@@ -15,7 +15,7 @@ use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 
 use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
-use algorithms::{centrality, cluster, directed, distance, paths};
+use algorithms::{centrality, cluster, directed, distance, paths, spectral, structure};
 use graph::CoreGraph;
 
 impl From<NegativeCycle> for PyErr {
@@ -162,6 +162,12 @@ impl CoreGraph {
     #[pyo3(signature = (attr=None))]
     fn weight_info(&self, attr: Option<&str>) -> (bool, bool) {
         self.weights_info(attr)
+    }
+
+    /// Whether an edge attribute mixes int and float values.
+    #[pyo3(signature = (attr=None))]
+    fn weight_mixed(&self, attr: Option<&str>) -> bool {
+        self.weights_mixed(attr)
     }
 
     fn bfs_lengths(
@@ -450,6 +456,164 @@ impl CoreGraph {
         Ok(py.detach(|| cluster::triangle_counts(&self.succ, pred, self.n, &nodes)))
     }
 
+    /// Core numbers in node order, or `None` if the graph has self-loops.
+    fn core_number(&self, py: Python<'_>) -> Option<Vec<u32>> {
+        let pred = self.directed.then(|| self.adj(true));
+        py.detach(|| {
+            if structure::has_self_loops(&self.succ, self.n) {
+                None
+            } else {
+                Some(structure::core_number(&self.succ, pred, self.n))
+            }
+        })
+    }
+
+    fn is_bipartite(&self, py: Python<'_>) -> bool {
+        let pred = self.directed.then(|| self.adj(true));
+        py.detach(|| structure::is_bipartite(&self.succ, pred, self.n))
+    }
+
+    /// `eigenvector_centrality` from the normalized start vector `x0` (by
+    /// node position), iterating nodes in `order`; `hypot` is Python's
+    /// `math.hypot`. `None` if it doesn't converge.
+    #[pyo3(signature = (order, x0, weight, max_iter, tol, hypot, compensated_sum))]
+    #[allow(clippy::too_many_arguments)]
+    fn eigenvector(
+        &self,
+        py: Python<'_>,
+        order: Vec<u32>,
+        x0: Vec<f64>,
+        weight: Option<&str>,
+        max_iter: usize,
+        tol: f64,
+        hypot: Bound<'_, PyAny>,
+        compensated_sum: bool,
+    ) -> PyResult<Option<Vec<f64>>> {
+        let order = self.sources_or_all(Some(order))?;
+        if x0.len() != self.n {
+            return Err(PyValueError::new_err("x0 must have one value per node"));
+        }
+        let it = spectral::Iteration {
+            adj: &self.succ,
+            weights: self.weight_slice(weight, false)?,
+            order: &order,
+            max_iter,
+            tol,
+            compensated_sum,
+        };
+        it.eigenvector(x0, |values| {
+            hypot.call1(PyTuple::new(py, values)?)?.extract::<f64>()
+        })
+    }
+
+    /// `katz_centrality` before normalization, with scalar `beta` and a
+    /// zero start vector. `None` if it doesn't converge.
+    #[pyo3(signature = (order, alpha, beta, weight, max_iter, tol, compensated_sum))]
+    #[allow(clippy::too_many_arguments)]
+    fn katz(
+        &self,
+        py: Python<'_>,
+        order: Vec<u32>,
+        alpha: f64,
+        beta: f64,
+        weight: Option<&str>,
+        max_iter: usize,
+        tol: f64,
+        compensated_sum: bool,
+    ) -> PyResult<Option<Vec<f64>>> {
+        let order = self.sources_or_all(Some(order))?;
+        let it = spectral::Iteration {
+            adj: &self.succ,
+            weights: self.weight_slice(weight, false)?,
+            order: &order,
+            max_iter,
+            tol,
+            compensated_sum,
+        };
+        Ok(py.detach(|| it.katz(vec![0.0; self.n], alpha, beta)))
+    }
+
+    /// Harmonic centrality sums (see `centrality::harmonic`).
+    #[pyo3(signature = (sources, in_nbunch, weight=None))]
+    fn harmonic(
+        &self,
+        py: Python<'_>,
+        sources: Vec<u32>,
+        in_nbunch: Vec<bool>,
+        weight: Option<&str>,
+    ) -> PyResult<(Vec<f64>, Vec<bool>)> {
+        let sources = self.sources_or_all(Some(sources))?;
+        if in_nbunch.len() != self.n {
+            return Err(PyValueError::new_err(
+                "in_nbunch must have one value per node",
+            ));
+        }
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| centrality::harmonic(&self.succ, self.n, w, &sources, &in_nbunch))?)
+    }
+
+    /// `bidirectional_dijkstra` for `source != target`: `(distance, path)`
+    /// or `None` if there is no path. Directed graphs need the exact
+    /// predecessor order loaded.
+    #[pyo3(signature = (source, target, weight=None))]
+    fn bidirectional_dijkstra(
+        &self,
+        py: Python<'_>,
+        source: usize,
+        target: usize,
+        weight: Option<&str>,
+    ) -> PyResult<Option<(f64, Vec<u32>)>> {
+        self.check_index(source)?;
+        self.check_index(target)?;
+        let forward = (&self.succ, self.weight_slice(weight, false)?);
+        let backward = self.path_adj(weight, true)?;
+        match py
+            .detach(|| paths::bidirectional_dijkstra([forward, backward], self.n, source, target))
+        {
+            Ok(found) => Ok(Some(found)),
+            Err(paths::BidirectionalError::NoPath) => Ok(None),
+            Err(paths::BidirectionalError::Contradictory) => Err(PyValueError::new_err(
+                "Contradictory paths found: negative weights?",
+            )),
+        }
+    }
+
+    /// `generic_bfs_edges` tree edges as `(parents, children)`. `reverse`
+    /// follows in-edges in exact order (directed graphs).
+    #[pyo3(signature = (source, depth_limit, reverse=false))]
+    fn bfs_edges(
+        &self,
+        py: Python<'_>,
+        source: usize,
+        depth_limit: i64,
+        reverse: bool,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        self.check_index(source)?;
+        let adj = self.path_adj(None, reverse && self.directed)?.0;
+        Ok(py.detach(|| {
+            traversal::bfs_edges(adj, self.n, source, depth_limit)
+                .into_iter()
+                .unzip()
+        }))
+    }
+
+    /// DFS forward edges from `starts` (all nodes if `None`), with
+    /// `(start, start)` marking each new start.
+    #[pyo3(signature = (starts, depth_limit))]
+    fn dfs_forward(
+        &self,
+        py: Python<'_>,
+        starts: Option<Vec<u32>>,
+        depth_limit: i64,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        let starts = self.sources_or_all(starts)?;
+        Ok(py.detach(|| {
+            traversal::dfs_forward(&self.succ, self.n, &starts, depth_limit)
+                .into_iter()
+                .unzip()
+        }))
+    }
+
     /// `bidirectional_shortest_path` as node positions, or `None` if no path.
     fn bidirectional_bfs(
         &self,
@@ -638,6 +802,12 @@ impl CoreGraph {
     }
 }
 
+/// CPython's float `sum()` (exposed for tests).
+#[pyfunction]
+fn _py_sum(values: Vec<f64>, compensated: bool) -> f64 {
+    spectral::py_sum(values.into_iter(), compensated)
+}
+
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CoreGraph>()?;
@@ -646,5 +816,6 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(native::build_native, m)?)?;
     m.add_function(wrap_pyfunction!(native::build_native_arrays, m)?)?;
     m.add_function(wrap_pyfunction!(rx::build_rx, m)?)?;
+    m.add_function(wrap_pyfunction!(_py_sum, m)?)?;
     Ok(())
 }

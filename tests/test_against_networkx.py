@@ -620,7 +620,7 @@ def connected_random_graph(seed, directed, weights):
     nodes = list(G)
     for u, v in zip(nodes, nodes[1:] + nodes[:1]):
         if not G.has_edge(u, v):
-            G.add_edge(u, v, weight=2)
+            G.add_edge(u, v, weight=2.0 if weights == "float" else 2)
     return G
 
 
@@ -971,3 +971,227 @@ def test_enable_runs_rustnx_on_networkx_graphs(restore_config, monkeypatch, befo
     # Unsupported functions still run in NetworkX.
     assert nx.is_tree(G) is False
 
+
+
+# --- Ten more algorithms ------------------------------------------------------------
+
+
+def test_py_sum_matches_builtin_sum():
+    from rustnx import _core
+    from rustnx.algorithms import _COMPENSATED_SUM
+
+    rng = random.Random(0)
+    for _ in range(2000):
+        values = [rng.choice([1e16, -1e16, 1.0, 1e-16, 0.1, -0.0]) * rng.random() for _ in range(rng.randint(0, 30))]
+        values += [rng.uniform(-1, 1) for _ in range(rng.randint(0, 5))]
+        rng.shuffle(values)
+        assert _core._py_sum(values, _COMPENSATED_SUM) == sum(values) or (
+            math.isnan(sum(values))
+        ), values
+
+
+def exact_outcome(func, *args, **kwargs):
+    """Both backends' results (or errors), with generators expanded and
+    float values compared bit for bit, including int-vs-float."""
+    def norm(value):
+        if hasattr(value, "__next__"):
+            out = []
+            try:
+                for item in value:
+                    out.append(norm(item))
+            except Exception as exc:
+                out.append(("raised", type(exc), exc.args))
+            return ("iter", out)
+        if isinstance(value, dict):
+            return ("dict", [(k, norm(v)) for k, v in value.items()])
+        if isinstance(value, (list, tuple)):
+            return (type(value).__name__, [norm(v) for v in value])
+        if isinstance(value, nx.Graph):
+            return ("graph", type(value).__name__, list(value.nodes(data=True)), list(value.edges(data=True)), value.graph)
+        return (type(value).__name__, value)
+
+    def run(backend):
+        try:
+            extra = {} if backend is None else {"backend": backend}
+            return ("ok", norm(func(*args, **extra, **kwargs)))
+        except Exception as exc:
+            if isinstance(exc, nx.PowerIterationFailedConvergence):
+                return (type(exc), str(exc))  # its args hold the exception itself
+            return (type(exc), exc.args)
+
+    ours = run("rustnx")
+    if ours[0] is NotImplementedError:
+        # A case rustnx hands to NetworkX: check it falls back cleanly.
+        old = nx.config.backend_priority.algos
+        nx.config.backend_priority.algos = ["rustnx"]
+        try:
+            ours = run(None)
+        finally:
+            nx.config.backend_priority.algos = old
+    ref = run("networkx")
+    assert ours == ref
+    return ref
+
+
+def graph_for(seed, directed, weights="none"):
+    G = random_graph(seed, directed, weights)
+    nodes = list(G)
+    rng = random.Random(seed)
+    # Denser variety: cycles, reciprocal edges.
+    for _ in range(len(nodes) // 2):
+        a, b = rng.choice(nodes), rng.choice(nodes)
+        if a != b:
+            if weights == "none":
+                G.add_edge(a, b)
+            elif weights == "float":
+                G.add_edge(a, b, weight=rng.choice([0.5, 1.25, 2.0, 3.5]))
+            else:
+                G.add_edge(a, b, weight=rng.randint(1, 4))
+    return G
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_mixed_int_float_weights_fall_back(seed, restore_config):
+    # NetworkX returns int or float lengths depending on the path when
+    # weights mix both; rustnx hands these calls to NetworkX.
+    G = graph_for(seed, seed % 2 == 0, "int")
+    for i, (u, v, d) in enumerate(G.edges(data=True)):
+        if i % 3 == 0:
+            d["weight"] = d["weight"] + 0.5
+    nx.config.backend_priority.algos = ["rustnx"]
+    nodes = list(G)
+    s, t = nodes[0], nodes[-1]
+    calls = [
+        lambda: nx.single_source_dijkstra_path_length(G, s),
+        lambda: nx.single_source_dijkstra(G, s),
+        lambda: dict(nx.all_pairs_dijkstra_path_length(G)),
+        lambda: nx.bidirectional_dijkstra(G, s, t),
+        lambda: nx.dijkstra_path_length(G, s, t),
+        lambda: nx.shortest_path_length(G, s, weight="weight"),
+    ]
+    for call in calls:
+        try:
+            ours = ("ok", ordered(call()))
+        except Exception as exc:
+            ours = (type(exc), exc.args)
+        nx.config.backend_priority.algos = []
+        try:
+            try:
+                ref = ("ok", ordered(call()))
+            except Exception as exc:
+                ref = (type(exc), exc.args)
+        finally:
+            nx.config.backend_priority.algos = ["rustnx"]
+        assert ours == ref
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_core_number_k_core_bipartite(seed, directed):
+    G = graph_for(seed, directed)
+    exact_outcome(nx.core_number, G)  # self-loops raise like NetworkX
+    H = G.copy()
+    H.remove_edges_from(list(nx.selfloop_edges(H)))
+    exact_outcome(nx.core_number, H)
+    for k in [None, 0, 1, 2, 3]:
+        exact_outcome(nx.k_core, H, k=k)
+    exact_outcome(nx.is_bipartite, G)
+    exact_outcome(nx.is_bipartite, H)
+    B = nx.bipartite.random_graph(seed % 7 + 1, seed % 5 + 2, 0.4, seed=seed, directed=directed)
+    exact_outcome(nx.is_bipartite, B)
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_bidirectional_dijkstra(seed, directed, weights):
+    G = graph_for(seed, directed, weights)
+    rng = random.Random(seed)
+    for s, t in path_queries(G, rng):
+        exact_outcome(nx.bidirectional_dijkstra, G, s, t)
+        exact_outcome(nx.shortest_path, G, s, t, weight="weight")
+
+
+def test_bidirectional_dijkstra_negative_weights():
+    G = nx.Graph()
+    G.add_weighted_edges_from([(0, 1, 1), (1, 2, -3), (2, 3, 1), (3, 4, 1)])
+    for t in [2, 3, 4]:
+        exact_outcome(nx.bidirectional_dijkstra, G, 0, t)
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_harmonic_centrality(seed, directed, weights):
+    G = graph_for(seed, directed, weights)
+    distance = None if weights == "none" else "weight"
+    nodes = list(G)
+    exact_outcome(nx.harmonic_centrality, G, distance=distance)
+    exact_outcome(nx.harmonic_centrality, G, sources=nodes[:3], distance=distance)
+    exact_outcome(nx.harmonic_centrality, G, nbunch=nodes[0])  # transposed: falls back
+    exact_outcome(nx.harmonic_centrality, G, nbunch=nodes, sources=nodes[::2] + ["missing"])
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_eigenvector_and_katz(seed, directed, weights):
+    G = graph_for(seed, directed, weights)
+    weight = None if weights == "none" else "weight"
+    exact_outcome(nx.eigenvector_centrality, G, weight=weight, max_iter=500)
+    exact_outcome(nx.eigenvector_centrality, G, weight=weight, max_iter=3)  # fails to converge
+    nodes = list(G)
+    nstart = {v: 1 + i % 3 for i, v in enumerate(reversed(nodes))}
+    exact_outcome(nx.eigenvector_centrality, G, nstart=nstart, weight=weight, max_iter=500)
+    for alpha in [0.01, 0.05, 0.1]:
+        for normalized in [True, False]:
+            exact_outcome(nx.katz_centrality, G, alpha=alpha, weight=weight, normalized=normalized)
+    exact_outcome(nx.katz_centrality, G, alpha=0.9, max_iter=50)  # may not converge
+
+
+def test_spectral_edge_cases():
+    for G in [nx.Graph(), nx.DiGraph(), nx.Graph([(0, 1)]), nx.empty_graph(3), nx.DiGraph([(0, 1), (1, 2)])]:
+        exact_outcome(nx.eigenvector_centrality, G)
+        exact_outcome(nx.katz_centrality, G)
+        exact_outcome(nx.harmonic_centrality, G)
+    exact_outcome(nx.eigenvector_centrality, nx.path_graph(3), nstart={0: 0, 1: 0, 2: 0})
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_traversals(seed, directed):
+    G = graph_for(seed, directed)
+    nodes = list(G)
+    for source in nodes[:3] + ["missing"]:
+        for depth in [None, 0, 1, 2]:
+            exact_outcome(nx.bfs_edges, G, source, depth_limit=depth)
+            exact_outcome(nx.dfs_edges, G, source, depth_limit=depth)
+            exact_outcome(nx.dfs_preorder_nodes, G, source, depth_limit=depth)
+        if directed:
+            exact_outcome(nx.bfs_edges, G, source, reverse=True)
+    for depth in [None, 1]:
+        exact_outcome(nx.dfs_edges, G, depth_limit=depth)
+        exact_outcome(nx.dfs_preorder_nodes, G, depth_limit=depth)
+
+
+def test_traversal_graph_changed():
+    G = nx.path_graph(10)
+    it = nx.bfs_edges(G, 0, backend="rustnx")
+    next(it)
+    G.add_edge(0, 5)
+    with pytest.raises(RuntimeError):
+        list(it)
+
+
+def test_graph_subclass_overriding_structure_is_not_converted():
+    from networkx.algorithms.approximation.kcomponents import _AntiGraph
+
+    G = nx.karate_club_graph()
+    A = _AntiGraph(nx.complement(G))  # presents G itself
+    with pytest.raises(NotImplementedError):
+        rustnx.from_networkx(A)
+
+    class Plain(nx.Graph):
+        label = "just adds an attribute"
+
+    rustnx.from_networkx(Plain(G))  # still converted

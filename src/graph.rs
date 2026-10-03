@@ -40,6 +40,10 @@ pub struct Weights {
     pub pred: Option<Vec<f64>>,
     pub all_int: bool,
     pub has_hidden: bool,
+    /// Some value is an int (missing values count: they default to 1).
+    /// With `!all_int`, NetworkX's distances are ints or floats depending
+    /// on the path.
+    pub any_int: bool,
 }
 
 /// Predecessor rows in NetworkX's own `G._pred` order, with weights.
@@ -169,9 +173,21 @@ impl CoreGraph {
             None => (true, false),
         }
     }
+
+    /// Whether an attribute mixes int and float values, so that NetworkX's
+    /// path lengths are ints or floats depending on the path taken.
+    pub fn weights_mixed(&self, attr: Option<&str>) -> bool {
+        attr.and_then(|a| self.weights.get(a))
+            .is_some_and(|w| w.any_int && !w.all_int)
+    }
 }
 
-fn parse_weight(value: &Bound<'_, PyAny>, all_int: &mut bool, hidden: &mut bool) -> PyResult<f64> {
+fn parse_weight(
+    value: &Bound<'_, PyAny>,
+    all_int: &mut bool,
+    hidden: &mut bool,
+    any_int: &mut bool,
+) -> PyResult<f64> {
     if value.is_none() {
         *hidden = true;
         return Ok(f64::NAN);
@@ -196,6 +212,7 @@ fn parse_weight(value: &Bound<'_, PyAny>, all_int: &mut bool, hidden: &mut bool)
                 "integer edge weight is too large",
             ));
         }
+        *any_int = true;
         return Ok(i as f64);
     }
     // NumPy floating scalars that don't subclass float (e.g. float32).
@@ -307,7 +324,7 @@ fn read_adj<'py>(
     index: &NodeIndex<'_, 'py>,
     adj: &Bound<'py, PyAny>,
     attrs: &[Attr<'py>],
-    flags: &mut [(bool, bool)],
+    flags: &mut [(bool, bool, bool)],
 ) -> PyResult<(Csr, Vec<Vec<f64>>)> {
     let mut offsets = Vec::with_capacity(nodes.len() + 1);
     let mut targets = Vec::new();
@@ -326,8 +343,8 @@ fn read_adj<'py>(
                     .unwrap_or_else(|| attr.default.clone()),
                 Err(_) => data.call_method1("get", (&attr.name, &attr.default))?,
             };
-            let (all_int, hidden) = &mut flags[k];
-            values[k].push(parse_weight(&value, all_int, hidden)?);
+            let (all_int, hidden, any_int) = &mut flags[k];
+            values[k].push(parse_weight(&value, all_int, hidden, any_int)?);
         }
         Ok(())
     };
@@ -405,7 +422,7 @@ pub fn build_graph<'py>(
     }
     let n = nodes.len();
     let attrs = to_attrs(weight_attrs);
-    let mut flags = vec![(true, false); attrs.len()];
+    let mut flags = vec![(true, false, false); attrs.len()];
     let index = NodeIndex::new(nodes, index)?;
 
     let (succ_csr, succ_vals) = read_adj(nodes, &index, succ, &attrs, &mut flags)?;
@@ -418,7 +435,7 @@ pub fn build_graph<'py>(
 
     let mut weights = HashMap::new();
     for (k, (attr, succ)) in attrs.iter().zip(succ_vals).enumerate() {
-        let (all_int, has_hidden) = flags[k];
+        let (all_int, has_hidden, any_int) = flags[k];
         weights.insert(
             attr.name.extract::<String>()?,
             Weights {
@@ -426,6 +443,7 @@ pub fn build_graph<'py>(
                 pred: pred_vals[k].take(),
                 all_int,
                 has_hidden,
+                any_int,
             },
         );
     }
@@ -461,7 +479,7 @@ impl CoreGraph {
             return Err(PyValueError::new_err("node list does not match this graph"));
         }
         let attrs = to_attrs(weight_attrs);
-        let mut flags = vec![(true, false); attrs.len()];
+        let mut flags = vec![(true, false, false); attrs.len()];
         let index = NodeIndex::new(nodes, index)?;
         let (csr, vals) = read_adj(nodes, &index, pred, &attrs, &mut flags)?;
         if csr.targets.len() != self.succ.targets.len() {

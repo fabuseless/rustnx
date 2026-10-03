@@ -14,7 +14,9 @@ use pyo3::types::PyBytes;
 
 use crate::graph::{CoreGraph, Csr, EdgeAttr, ExactPred, NativeEdges, Weights};
 
-const MAGIC: &[u8; 4] = b"RNX2";
+const MAGIC: &[u8; 4] = b"RNX3";
+/// The previous format, without the `any_int` weight flag.
+const MAGIC_V2: &[u8; 4] = b"RNX2";
 
 #[derive(Default)]
 struct Writer(Vec<u8>);
@@ -170,6 +172,7 @@ pub fn to_bytes(g: &CoreGraph) -> Vec<u8> {
         }
         w.flag(wt.all_int);
         w.flag(wt.has_hidden);
+        w.flag(wt.any_int);
     }
     let exact = g.exact_pred.get();
     w.flag(exact.is_some());
@@ -201,9 +204,11 @@ pub fn to_bytes(g: &CoreGraph) -> Vec<u8> {
 
 pub fn from_bytes(data: &[u8]) -> PyResult<CoreGraph> {
     let mut r = Reader { data, pos: 0 };
-    if r.take(4)? != MAGIC {
-        return Err(malformed());
-    }
+    let v2 = match r.take(4)? {
+        m if m == MAGIC => false,
+        m if m == MAGIC_V2 => true,
+        _ => return Err(malformed()),
+    };
     let n = usize::try_from(r.u64()?).map_err(|_| malformed())?;
     let directed = r.flag()?;
     let succ = r.csr(n)?;
@@ -222,6 +227,8 @@ pub fn from_bytes(data: &[u8]) -> PyResult<CoreGraph> {
         }
         let all_int = r.flag()?;
         let has_hidden = r.flag()?;
+        // Unknown in the old format: assume ints may be present.
+        let any_int = if v2 { true } else { r.flag()? };
         weights.insert(
             name,
             Weights {
@@ -229,6 +236,7 @@ pub fn from_bytes(data: &[u8]) -> PyResult<CoreGraph> {
                 pred: pred_w,
                 all_int,
                 has_hidden,
+                any_int,
             },
         );
     }
