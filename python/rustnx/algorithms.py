@@ -2100,8 +2100,8 @@ def _global_reaching_warnings():
 
 
 def _reaching_weight(G, weight):
-    """Checks for weighted reaching centrality: the source graph and
-    ``G.size(weight)``. Raises NetworkX's error for negative weights."""
+    """Checks for weighted reaching centrality; returns ``G.size(weight)``.
+    Raises NetworkX's error for negative weights."""
     _, _, has_hidden = _check_weight(G, weight)
     if has_hidden:
         raise NotImplementedError("rustnx does not support None edge weights here")
@@ -2119,13 +2119,13 @@ def _reaching_weight(G, weight):
     if not (kinds <= {int} or kinds <= {float}):
         # Path weight sums then switch between int and float.
         raise NotImplementedError("rustnx needs all-int or all-float weights")
-    return source, source.size(weight=weight)
+    return source.size(weight=weight)
 
 
 _SINGLE_SELF_LOOP = "local_reaching_centrality of a single node with self-loop not well-defined"
 
 
-def _reaching_values(G, sources, weight, normalized, total_weight, source_graph):
+def _reaching_values(G, sources, weight, normalized, total_weight):
     n = len(G)
     core = G._core
     if weight is None:
@@ -2136,7 +2136,8 @@ def _reaching_values(G, sources, weight, normalized, total_weight, source_graph)
     sums = core.reaching_weighted(
         sources, weight, total_weight, _dijkstra_paths_in_pop_order(), _COMPENSATED_SUM
     )
-    norm = source_graph.size(weight=weight) / source_graph.size() if normalized else 1
+    # NetworkX's `G.size(weight=weight) / G.size()`; the first is `total_weight`.
+    norm = total_weight / core.number_of_edges() if normalized else 1
     return [s / norm / (n - 1) for s in sums]
 
 
@@ -2145,30 +2146,28 @@ def local_reaching_centrality(G, v, paths=None, weight=None, normalized=True):
         raise NotImplementedError("rustnx computes the paths itself")
     s = _positions(G, [v])[0]
     if weight is None:
-        source = None
         total_weight = G._core.number_of_edges()
     else:
-        source, total_weight = _reaching_weight(G, weight)
+        total_weight = _reaching_weight(G, weight)
     if total_weight > 0 and len(G) == 1:
         raise nx.NetworkXError(_SINGLE_SELF_LOOP)
     if total_weight <= 0:
         raise nx.NetworkXError("Size of G must be positive")
-    return _reaching_values(G, [s], weight, normalized, total_weight, source)[0]
+    return _reaching_values(G, [s], weight, normalized, total_weight)[0]
 
 
 def global_reaching_centrality(G, weight=None, normalized=True):
     if weight is None:
-        source = None
         total_weight = G._core.number_of_edges()
     else:
-        source, total_weight = _reaching_weight(G, weight)
+        total_weight = _reaching_weight(G, weight)
     if total_weight <= 0:
         raise nx.NetworkXError("Size of G must be positive")
     for category, message in _global_reaching_warnings():
         warnings.warn(message, category, stacklevel=2)
     if len(G) == 1:
         raise nx.NetworkXError(_SINGLE_SELF_LOOP)
-    lrc = _reaching_values(G, list(range(len(G))), weight, normalized, total_weight, source)
+    lrc = _reaching_values(G, list(range(len(G))), weight, normalized, total_weight)
     max_lrc = max(lrc)
     return sum(max_lrc - c for c in lrc) / (len(G) - 1)
 
