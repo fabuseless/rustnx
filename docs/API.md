@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 85 NetworkX functions. Call them as usual (for
+rustnx implements 99 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -31,6 +31,25 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.eigenvector_centrality` | `max_iter`, `tol`, `nstart`, `weight` | no | rustnx | Bit-for-bit identical. `nstart` must give a value for every node. |
 | `nx.katz_centrality` | `alpha`, `beta`, `max_iter`, `tol`, `nstart`, `normalized`, `weight` | no | rustnx | Bit-for-bit identical. `nstart` and a per-node `beta` fall back. |
 | `nx.pagerank` | `alpha`, `personalization`, `max_iter`, `tol`, `nstart`, `weight`, `dangling` | no | rustnx | Parallel on large graphs. `None` weights fall back. |
+
+### Centrality: subsets, groups and more
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.betweenness_centrality_subset` | `sources`, `targets`, `normalized`, `weight` | yes | rustnx | Parallel. Bit-for-bit identical (per-source sums are added in source order). Missing sources and `None` weights fall back. |
+| `nx.edge_betweenness_centrality_subset` | `sources`, `targets`, `normalized`, `weight` | no | rustnx | Parallel. Bit-for-bit identical. Missing sources, tuple node labels and `None` weights fall back. |
+| `nx.newman_betweenness_centrality` | `v`, `cutoff`, `normalized`, `weight` | yes | rustnx | Also reachable as `nx.load_centrality`. Parallel. Bit-for-bit identical. Only int or str node labels (NetworkX sorts nodes on ties); others fall back. |
+| `nx.edge_load_centrality` | `cutoff` | no | rustnx | Parallel. Bit-for-bit identical. |
+| `nx.percolation_centrality` | `attribute`, `states`, `weight` | no | rustnx | Parallel. Bit-for-bit identical. Non-numeric states, 2-node graphs and states that would divide by zero fall back. |
+| `nx.group_betweenness_centrality` | `C`, `normalized`, `weight`, `endpoints` | no | rustnx | Bit-for-bit identical, following the installed NetworkX's algorithm (3.7 changed it). Cases where NetworkX raises `KeyError` (directed graphs before 3.7) fall back, as does the null graph. |
+| `nx.group_closeness_centrality` | `S`, `weight` | no | NetworkX | Negative weights fall back. |
+| `nx.group_degree_centrality` | `S` | no | NetworkX | Missing nodes and one-shot iterators fall back. |
+| `nx.group_in_degree_centrality` | `S` | no | NetworkX | Missing nodes and one-shot iterators fall back. |
+| `nx.group_out_degree_centrality` | `S` | no | NetworkX | Missing nodes and one-shot iterators fall back. |
+| `nx.local_reaching_centrality` | `v`, `paths`, `weight`, `normalized` | no | NetworkX | `paths` falls back. Weighted: all edges need an int or float weight (not mixed, not zero), else it falls back. |
+| `nx.global_reaching_centrality` | `weight`, `normalized` | no | rustnx | Weighted: as `local_reaching_centrality`. Gives the installed NetworkX's warnings (3.4). |
+| `nx.voterank` | `number_of_nodes` | no | rustnx | Bit-for-bit identical. |
+| `nx.dispersion` | `u`, `v`, `normalized`, `alpha`, `b`, `c` | no | rustnx | Undirected graphs without self-loops; others fall back (NetworkX's count then depends on set order). |
 
 ### Shortest paths: lengths
 

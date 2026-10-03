@@ -15,7 +15,9 @@ use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 
 use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
-use algorithms::{centrality, centrality_more, cluster, directed, distance, paths, spectral, structure};
+use algorithms::{
+    centrality, centrality_more, cluster, directed, distance, paths, spectral, structure,
+};
 use graph::CoreGraph;
 
 impl From<NegativeCycle> for PyErr {
@@ -773,7 +775,9 @@ impl CoreGraph {
         cutoff: Option<f64>,
     ) -> PyResult<Vec<f64>> {
         if rank.len() != self.n {
-            return Err(PyValueError::new_err("rank length must equal the node count"));
+            return Err(PyValueError::new_err(
+                "rank length must equal the node count",
+            ));
         }
         let w = self.weight_slice(weight, false)?;
         Ok(py.detach(|| centrality_more::load(&self.succ, self.n, w, cutoff, &rank))?)
@@ -801,7 +805,9 @@ impl CoreGraph {
         weight: Option<&str>,
     ) -> PyResult<Vec<f64>> {
         if states.len() != self.n {
-            return Err(PyValueError::new_err("states length must equal the node count"));
+            return Err(PyValueError::new_err(
+                "states length must equal the node count",
+            ));
         }
         let w = self.weight_slice(weight, false)?;
         Ok(py.detach(|| centrality_more::percolation(&self.succ, self.n, w, &states, total)))
@@ -811,7 +817,14 @@ impl CoreGraph {
     fn voterank(&self, py: Python<'_>, number: usize, avg_degree: f64) -> Vec<u32> {
         let (us, vs, _) = self.edges_in_order();
         py.detach(|| {
-            centrality_more::voterank(&self.succ, self.n, self.directed, (&us, &vs), number, avg_degree)
+            centrality_more::voterank(
+                &self.succ,
+                self.n,
+                self.directed,
+                (&us, &vs),
+                number,
+                avg_degree,
+            )
         })
     }
 
@@ -855,7 +868,11 @@ impl CoreGraph {
     #[pyo3(signature = (group, reverse=false))]
     fn group_degree(&self, group: Vec<u32>, reverse: bool) -> PyResult<usize> {
         let group = self.sources_or_all(Some(group))?;
-        Ok(centrality_more::group_degree(self.adj(reverse), self.n, &group))
+        Ok(centrality_more::group_degree(
+            self.adj(reverse),
+            self.n,
+            &group,
+        ))
     }
 
     /// `group_closeness_centrality`'s sum of distances from `group` (on the
@@ -911,7 +928,13 @@ impl CoreGraph {
         let w = self.weight_slice(Some(weight), false)?.expect("weighted");
         Ok(py.detach(|| {
             centrality_more::reaching_weighted(
-                &self.succ, self.n, w, total, &sources, pop_order, compensated,
+                &self.succ,
+                self.n,
+                w,
+                total,
+                &sources,
+                pop_order,
+                compensated,
             )
         }))
     }
@@ -926,9 +949,15 @@ impl CoreGraph {
     ) -> PyResult<GroupPre> {
         let set_v = self.sources_or_all(Some(set_v))?;
         let w = self.weight_slice(weight, false)?;
-        let data = py.detach(|| centrality_more::group_preprocessing(&self.succ, self.n, w, &set_v));
-        let rev_reach = py.detach(|| centrality_more::reverse_reach_counts(self.adj(true), self.n, &set_v));
-        Ok(GroupPre { data, k: set_v.len(), rev_reach })
+        let data =
+            py.detach(|| centrality_more::group_preprocessing(&self.succ, self.n, w, &set_v));
+        let rev_reach =
+            py.detach(|| centrality_more::reverse_reach_counts(self.adj(true), self.n, &set_v));
+        Ok(GroupPre {
+            data,
+            k: set_v.len(),
+            rev_reach,
+        })
     }
 
     /// `greedy_color` (largest_first): processing order and each node's color.
@@ -1228,7 +1257,10 @@ impl GroupPre {
         y_orders: Option<Vec<Vec<u32>>>,
     ) -> PyResult<Option<Vec<f64>>> {
         let k = self.k as u32;
-        if group.iter().chain(y_orders.iter().flatten().flatten()).any(|&v| v >= k)
+        if group
+            .iter()
+            .chain(y_orders.iter().flatten().flatten())
+            .any(|&v| v >= k)
             || y_orders.as_ref().is_some_and(|y| y.len() != group.len())
         {
             return Err(PyIndexError::new_err("group position out of range"));

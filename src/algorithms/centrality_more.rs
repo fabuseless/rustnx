@@ -61,7 +61,10 @@ impl PySum {
     #[inline]
     fn add(self, x: f64, compensated: bool) -> PySum {
         if !compensated {
-            return PySum { s: self.s + x, c: 0.0 };
+            return PySum {
+                s: self.s + x,
+                c: 0.0,
+            };
         }
         let t = self.s + x;
         let c = if self.s.abs() >= x.abs() {
@@ -734,7 +737,11 @@ pub fn dispersion_pair(adj: &Csr, st: &mut DispersionState, u: usize, v: usize) 
             if st.in_a[t] == mark_a {
                 continue;
             }
-            if adj.neighbors(t).iter().all(|&y| st.in_a[y as usize] != mark_a) {
+            if adj
+                .neighbors(t)
+                .iter()
+                .all(|&y| st.in_a[y as usize] != mark_a)
+            {
                 total += 1;
             }
         }
@@ -826,8 +833,7 @@ pub fn reaching_unweighted(
     sources
         .par_iter()
         .map(|&s| {
-            let (order, levels) =
-                super::traversal::bfs_lengths(adj, n, s as usize, f64::INFINITY);
+            let (order, levels) = super::traversal::bfs_lengths(adj, n, s as usize, f64::INFINITY);
             let mut sum = PySum::ZERO;
             for &d in &levels[1..] {
                 sum = sum.add(1.0 / d as f64, compensated);
@@ -946,7 +952,6 @@ pub fn reaching_weighted(
         .collect()
 }
 
-
 /// `_group_preprocessing` restricted to the group nodes `set_v` (all
 /// `K x K` row-major matrices, indexed by position in `set_v`).
 pub struct GroupData {
@@ -972,7 +977,9 @@ pub fn group_preprocessing(
     let k = set_v.len();
     let weighted = weights.is_some();
     let half = |x: f64| if weighted { x / 2.0 } else { x };
-    let rows: Vec<(Vec<f64>, Vec<f64>, Vec<bool>, Vec<u32>, u32)> = set_v
+    // One row of each matrix per group node, and `len(D[x])`.
+    type Row = (Vec<f64>, Vec<f64>, Vec<bool>, Vec<u32>, u32);
+    let rows: Vec<Row> = set_v
         .par_iter()
         .map_init(
             || Spt::new(n),
@@ -1136,15 +1143,27 @@ pub fn group_main(
                         let v_in_dy = reached[at(y, v)];
                         let y_in_dv = reached[at(v, y)];
                         // Order x-y-v
-                        if v_in_dy && d[at(x, v)] == d[at(x, y)] + d[at(y, v)] && sig_xv != 0.0 && y != v {
+                        if v_in_dy
+                            && d[at(x, v)] == d[at(x, y)] + d[at(y, v)]
+                            && sig_xv != 0.0
+                            && y != v
+                        {
                             pm[at(x, y)] -= pm[at(x, v)] * sig_xy * sm[at(y, v)] / sig_xv;
                         }
                         // Order v-x-y
-                        if x_in_dv && d[at(v, y)] == d[at(v, x)] + d[at(x, y)] && sig_vy != 0.0 && x != v {
+                        if x_in_dv
+                            && d[at(v, y)] == d[at(v, x)] + d[at(x, y)]
+                            && sig_vy != 0.0
+                            && x != v
+                        {
                             pm[at(x, y)] -= pm[at(v, y)] * sig_vx * sig_xy / sig_vy;
                         }
                         // Order x-v-y
-                        if v_in_dx && y_in_dv && d[at(x, y)] == d[at(x, v)] + d[at(v, y)] && sig_xy != 0.0 {
+                        if v_in_dx
+                            && y_in_dv
+                            && d[at(x, y)] == d[at(x, v)] + d[at(v, y)]
+                            && sig_xy != 0.0
+                        {
                             let sig_xvy = sig_xv * sig_vy;
                             pm[at(x, y)] *= 1.0 - sig_xvy / sig_xy;
                             sm[at(x, y)] -= sig_xvy;
