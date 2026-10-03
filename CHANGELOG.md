@@ -7,6 +7,8 @@ versions may change behavior.
 
 ## [Unreleased]
 
+## [0.1.0a3] - 2026-10-03
+
 ### Added
 - `bidirectional_dijkstra`; weighted `shortest_path(G, source, target)` now
   runs in Rust too.

@@ -53,4 +53,4 @@ def enable(fallback=True):
         nx.config.fallback_to_nx = True
 
 
-__version__ = "0.1.0a2"
+__version__ = "0.1.0a3"
