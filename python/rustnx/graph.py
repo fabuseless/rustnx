@@ -23,7 +23,13 @@ class RustnxGraph:
 
     __networkx_backend__ = "rustnx"
 
-    def __init__(self, core, nodes, index, graph_attrs, source, weight_attrs=()):
+    # Converted from a MultiGraph/MultiDiGraph: neighbors appear once and edge
+    # weights are the minimum over parallel edges, as NetworkX's shortest
+    # path code sees them. Only functions with the same semantics accept it.
+    _multigraph = False
+
+    def __init__(self, core, nodes, index, graph_attrs, source, weight_attrs=(), multigraph=False):
+        self._multigraph = multigraph
         self._core = core
         self._nodes = nodes
         self._index = index
@@ -49,7 +55,7 @@ class RustnxGraph:
         if not self._source_unchanged():
             raise NotImplementedError("the graph changed since it was converted")
         self._core.load_exact_pred(
-            self._nodes, self._index, self._source._pred, self._weight_attrs
+            self._nodes, self._index, self._source._pred, self._weight_attrs, self._multigraph
         )
 
     def _ensure_weight(self, attr):
@@ -67,7 +73,7 @@ class RustnxGraph:
             raise NotImplementedError("the graph changed since it was converted")
         attrs = dict(self._weight_attrs)
         attrs[attr] = 1
-        fresh = from_networkx(self._source, attrs)
+        fresh = from_networkx(self._source, attrs, multigraph_ok=self._multigraph)
         self._core = fresh._core
         self._weight_attrs = fresh._weight_attrs
 
@@ -153,7 +159,7 @@ class RustnxGraph:
         return dicts
 
     def is_multigraph(self):
-        return False
+        return self._multigraph
 
     def number_of_nodes(self):
         return len(self._nodes)
@@ -331,7 +337,10 @@ _STRUCTURE_METHODS = (
 
 
 def _overrides_structure(G):
-    base = nx.DiGraph if G.is_directed() else nx.Graph
+    if G.is_multigraph():
+        base = nx.MultiDiGraph if G.is_directed() else nx.MultiGraph
+    else:
+        base = nx.DiGraph if G.is_directed() else nx.Graph
     cls = type(G)
     if cls is base:
         return False
@@ -341,14 +350,17 @@ def _overrides_structure(G):
     )
 
 
-def from_networkx(G, weights=()):
+def from_networkx(G, weights=(), *, multigraph_ok=False):
     """Convert a NetworkX ``Graph`` or ``DiGraph``.
 
     ``weights`` is an iterable of edge attribute names, or a mapping of
     attribute name to the default used when an edge lacks it (default ``1``).
+    ``multigraph_ok`` also accepts multigraphs, collapsing parallel edges to
+    the minimum weight (only some functions accept the result).
     """
-    if G.is_multigraph():
-        raise NotImplementedError("rustnx does not support multigraphs yet")
+    multigraph = G.is_multigraph()
+    if multigraph and not multigraph_ok:
+        raise NotImplementedError("rustnx does not support multigraphs here")
     if _overrides_structure(G):
         raise NotImplementedError(
             f"{type(G).__name__} overrides how its structure is read"
@@ -360,8 +372,8 @@ def from_networkx(G, weights=()):
     nodes = list(G)
     index = {node: i for i, node in enumerate(nodes)}
     weight_attrs = list(weights.items())
-    core = _core.build_graph(nodes, index, G._adj, G.is_directed(), weight_attrs)
-    return RustnxGraph(core, nodes, index, G.graph, G, weight_attrs)
+    core = _core.build_graph(nodes, index, G._adj, G.is_directed(), weight_attrs, multigraph)
+    return RustnxGraph(core, nodes, index, G.graph, G, weight_attrs, multigraph)
 
 
 def _snapshot_token(G):

@@ -46,14 +46,16 @@ impl CoreGraph {
     }
 
     #[pyo3(name = "load_exact_pred")]
+    #[pyo3(signature = (nodes, index, pred, weight_attrs, multigraph=false))]
     fn py_load_exact_pred<'py>(
         &self,
         nodes: &Bound<'py, PyList>,
         index: &Bound<'py, PyDict>,
         pred: &Bound<'py, PyAny>,
         weight_attrs: Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)>,
+        multigraph: bool,
     ) -> PyResult<()> {
-        self.load_exact_pred(nodes, index, pred, weight_attrs)
+        self.load_exact_pred(nodes, index, pred, weight_attrs, multigraph)
     }
 
     #[pyo3(name = "has_exact_pred")]

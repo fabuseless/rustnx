@@ -122,6 +122,15 @@ rx.dijkstra_shortest_path_lengths(g, 0, float)
 | `all_shortest_paths` | Unweighted and Dijkstra. Paths are generated lazily in Rust, in NetworkX's order (which differs before 3.7 when zero-weight cycles exist). |
 | `greedy_color`, `label_propagation_communities` | `greedy_color` with the default `largest_first` strategy; other strategies run in NetworkX. |
 
+### Multigraphs
+
+`MultiGraph` and `MultiDiGraph` run in Rust for the functions whose NetworkX
+code sees a multigraph only through its neighbors and, for weights, the
+minimum over parallel edges: components, traversals, the shortest path
+family, betweenness, closeness and harmonic centrality, the distance measures,
+and `is_bipartite`. Other functions (for example `pagerank`, which sums
+parallel weights, or degree-based ones) run in NetworkX.
+
 ## Benchmarks
 
 `python benchmarks/bench.py` on a 4-core machine (NetworkX 3.6.1):
@@ -289,7 +298,7 @@ Layout:
 ## Roadmap
 
 - More algorithms: see the todo table in [CLAUDE.md](CLAUDE.md).
-- Multigraph support.
+- Multigraph support for the remaining functions (`pagerank`, degree-based ones).
 
 ## License
 
