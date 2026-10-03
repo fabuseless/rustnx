@@ -61,10 +61,19 @@ SECTIONS = [
         "descendants_at_distance", "dfs_edges", "dfs_tree", "dfs_preorder_nodes",
         "dfs_postorder_nodes", "dfs_predecessors", "dfs_successors",
     ]),
-    ("Trees", ["is_tree", "is_forest"]),
+    ("Trees", ["is_tree", "is_forest", "is_arborescence", "is_branching", "to_prufer_sequence"]),
     ("Spanning trees", [
         "minimum_spanning_edges", "maximum_spanning_edges",
-        "minimum_spanning_tree", "maximum_spanning_tree",
+        "minimum_spanning_tree", "maximum_spanning_tree", "kruskal_mst_edges",
+    ]),
+    ("Structural tests", [
+        "bridges", "has_bridges", "local_bridges", "chain_decomposition",
+        "isolates", "is_isolate", "number_of_isolates", "is_regular", "is_k_regular",
+        "is_tournament", "immediate_dominators", "dominance_frontiers",
+    ]),
+    ("Cycles and Euler tours", [
+        "is_eulerian", "has_eulerian_path", "is_semieulerian", "eulerian_circuit",
+        "eulerian_path", "cycle_basis", "find_cycle", "girth",
     ]),
 ]
 
@@ -120,11 +129,29 @@ NOTES = {
     "maximum_spanning_edges": "Kruskal; Prim and Borůvka fall back. Yields the graph's own edge data dicts.",
     "minimum_spanning_tree": "Kruskal; Prim and Borůvka fall back.",
     "maximum_spanning_tree": "Kruskal; Prim and Borůvka fall back.",
+    "kruskal_mst_edges": "`partition` falls back. Yields the graph's own edge data dicts.",
+    "to_prufer_sequence": "Bit-for-bit identical.",
+    "bridges": "`root` falls back (NetworkX then lists a subgraph copy's edges, in set order).",
+    "local_bridges": "Spans with float, mixed or negative weights fall back.",
+    "chain_decomposition": "Computed when iteration starts, as NetworkX does.",
+    "is_isolate": "A node not in the graph falls back (NetworkX's answer differs by version).",
+    "is_k_regular": "A non-integer `k` falls back.",
+    "immediate_dominators": "Follows the installed NetworkX on whether `start` is included (3.7 leaves it out).",
+    "dominance_frontiers": "Follows the installed NetworkX's version (3.7 adds `start` last). Sets iterate in NetworkX's order.",
+    "eulerian_circuit": "Computed when iteration starts, as NetworkX does. A `source` not in the graph falls back.",
+    "eulerian_path": "Computed when iteration starts, as NetworkX does. A `source` not in the graph falls back.",
+    "has_eulerian_path": "A `source` not in the graph falls back.",
+    "cycle_basis": "A `root` not in the graph falls back.",
+    "find_cycle": "A `source` that isn't one node of the graph, and invalid orientations on directed graphs, fall back.",
 }
 
 
 def location(name):
-    return "nx.community" if name == "label_propagation_communities" else "nx"
+    return {
+        "label_propagation_communities": "nx.community",
+        "kruskal_mst_edges": "nx.tree.mst",
+        "is_tournament": "nx.tournament",
+    }.get(name, "nx")
 
 
 def parameters(name):

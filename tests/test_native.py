@@ -154,6 +154,13 @@ def algorithm_calls(H, directed):
         "is_forest": lambda G, b: nx.is_forest(G, backend=b),
         "dfs_postorder": lambda G, b: list(nx.dfs_postorder_nodes(G, backend=b)),
         "dfs_successors": lambda G, b: list(nx.dfs_successors(G, backend=b).items()),
+        "isolates": lambda G, b: list(nx.isolates(G, backend=b)),
+        "is_regular": lambda G, b: nx.is_regular(G, backend=b),
+        "is_eulerian": lambda G, b: nx.is_eulerian(G, backend=b),
+        "find_cycle": lambda G, b: nx.find_cycle(G, orientation="ignore", backend=b),
+        "kruskal_mst_edges": lambda G, b: list(
+            nx.algorithms.tree.mst.kruskal_mst_edges(G, True, data=False, backend=b)
+        ),
     }
     if src is not None:
         calls["bfs"] = lambda G, b: nx.single_source_shortest_path_length(G, src, backend=b)
@@ -187,6 +194,12 @@ def algorithm_calls(H, directed):
         calls["dag"] = lambda G, b: nx.is_directed_acyclic_graph(G, backend=b)
         calls["attracting"] = lambda G, b: list(nx.attracting_components(G, backend=b))
         calls["in_degree_centrality"] = lambda G, b: list(nx.in_degree_centrality(G, backend=b).items())
+        calls["is_arborescence"] = lambda G, b: nx.is_arborescence(G, backend=b)
+        if src is not None:
+            calls["idom"] = lambda G, b: list(nx.immediate_dominators(G, src, backend=b).items())
+            calls["frontiers"] = lambda G, b: [
+                (k, list(v)) for k, v in nx.dominance_frontiers(G, src, backend=b).items()
+            ]
     else:
         calls["cc"] = lambda G, b: list(nx.connected_components(G, backend=b))
         calls["mst"] = lambda G, b: [(u, v) for u, v in nx.minimum_spanning_edges(G, data=False, backend=b)]
@@ -195,6 +208,11 @@ def algorithm_calls(H, directed):
         calls["articulation"] = lambda G, b: list(nx.articulation_points(G, backend=b))
         calls["biconnected"] = lambda G, b: list(nx.biconnected_component_edges(G, backend=b))
         calls["is_biconnected"] = lambda G, b: nx.is_biconnected(G, backend=b)
+        calls["bridges"] = lambda G, b: list(nx.bridges(G, backend=b))
+        calls["chains"] = lambda G, b: list(nx.chain_decomposition(G, backend=b))
+        calls["cycle_basis"] = lambda G, b: nx.cycle_basis(G, backend=b)
+        calls["girth"] = lambda G, b: nx.girth(G, backend=b)
+        calls["local_bridges"] = lambda G, b: list(nx.local_bridges(G, backend=b))
         if src is not None:
             calls["node_cc"] = lambda G, b: nx.node_connected_component(G, src, backend=b)
     return calls
@@ -284,10 +302,10 @@ def test_unimplemented_functions_fall_back_with_enable():
         nx.config.backend_priority.algos = []
         nx.config.fallback_to_nx = False
         with pytest.raises(NotImplementedError):
-            nx.is_arborescence(G)
+            nx.is_semiconnected(G)
         rustnx.enable()
         assert nx.config.backend_priority.algos[0] == "rustnx"
-        assert nx.is_arborescence(G) is True
+        assert nx.is_semiconnected(G) is True
     finally:
         nx.config.backend_priority.algos, nx.config.fallback_to_nx = old
 
