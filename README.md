@@ -14,7 +14,7 @@ nx.betweenness_centrality(G)              # runs in Rust: 0.4s instead of 41s
 ```
 
 Nothing else changes. Anything rustnx doesn't support, such as other
-functions, multigraphs or callable weights, keeps running in NetworkX, so
+functions, multigraphs in functions that treat parallel edges specially, or callable weights, keeps running in NetworkX, so
 turning it on never breaks working code.
 
 ## Native graphs: skip NetworkX entirely
