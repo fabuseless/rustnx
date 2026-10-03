@@ -41,6 +41,7 @@ maturin develop --release                 # rebuild after every Rust change
 cargo fmt --check
 cargo clippy --release -- -D warnings
 pytest                                    # comparisons against NetworkX
+python benchmarks/guard.py                # speed floors and dispatch checks
 
 # NetworkX's own test suite, with supported calls routed through rustnx:
 cd /tmp && NETWORKX_TEST_BACKEND=rustnx NETWORKX_FALLBACK_TO_NX=True \
@@ -74,9 +75,13 @@ locally too, since that is where most mismatches show up.
    weights, self-loops, non-integer labels, missing nodes and error cases.
    Compare outputs exactly, including order and types; the `exact_outcome`
    helper does this. Add a native-graph case in `tests/test_native.py`.
-6. **Document it** in the README's supported algorithms table, add a benchmark
-   row if it is notably faster, and add a CHANGELOG entry under
-   "Unreleased".
+6. **Document it**: add it to `SECTIONS` (and a note to `NOTES`, if anything
+   falls back) in `scripts/gen_api_docs.py`, then run
+   `python scripts/gen_api_docs.py` to regenerate `docs/API.md` (a test checks
+   it is up to date). Add it to the README's supported algorithms table, a
+   benchmark row if it is notably faster, and a CHANGELOG entry under
+   "Unreleased". If it is a key function, consider adding it to
+   `benchmarks/guard.py`, which CI runs to catch slowdowns.
 
 ## Pull requests
 

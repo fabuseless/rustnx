@@ -29,6 +29,12 @@ versions may change behavior.
 - README section "When rustnx helps, and when it doesn't", covering
   conversion cost, caching, small graphs and inputs that run in NetworkX.
 - `CONTRIBUTING.md` and `SECURITY.md`.
+- `docs/API.md`: every supported function with the parameters rustnx handles,
+  multigraph support, the small-graph rule and what falls back to NetworkX.
+  It is generated from the code by `scripts/gen_api_docs.py`.
+- A speed and dispatch guard in CI (`benchmarks/guard.py`): speedups over
+  NetworkX must stay above floors, and calls must really run in Rust.
+- Issue forms for bug reports and function requests.
 
 ### Fixed
 - Functions that return path lengths now hand graphs whose weights mix ints
