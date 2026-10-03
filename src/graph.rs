@@ -182,15 +182,17 @@ impl CoreGraph {
     }
 }
 
-fn parse_weight(
-    value: &Bound<'_, PyAny>,
-    all_int: &mut bool,
-    hidden: &mut bool,
-    any_int: &mut bool,
-) -> PyResult<f64> {
+#[derive(Clone, Copy, PartialEq)]
+enum ValueKind {
+    Hidden,
+    Int,
+    Float,
+}
+
+/// One edge attribute value as a number, and what Python type it was.
+fn parse_value(value: &Bound<'_, PyAny>) -> PyResult<(f64, ValueKind)> {
     if value.is_none() {
-        *hidden = true;
-        return Ok(f64::NAN);
+        return Ok((f64::NAN, ValueKind::Hidden));
     }
     if let Ok(f) = value.cast::<PyFloat>() {
         let x = f.value();
@@ -199,8 +201,7 @@ fn parse_weight(
                 "NaN edge weights are not supported",
             ));
         }
-        *all_int = false;
-        return Ok(x);
+        return Ok((x, ValueKind::Float));
     }
     // Python ints (and bools) must be exact in f64 for results to match.
     if value.cast::<PyInt>().is_ok() || value.hasattr("__index__")? {
@@ -212,8 +213,7 @@ fn parse_weight(
                 "integer edge weight is too large",
             ));
         }
-        *any_int = true;
-        return Ok(i as f64);
+        return Ok((i as f64, ValueKind::Int));
     }
     // NumPy floating scalars that don't subclass float (e.g. float32).
     if value.hasattr("dtype")? {
@@ -223,14 +223,21 @@ fn parse_weight(
                     "NaN edge weights are not supported",
                 ));
             }
-            *all_int = false;
-            return Ok(x);
+            return Ok((x, ValueKind::Float));
         }
     }
     Err(PyNotImplementedError::new_err(format!(
         "unsupported edge weight type: {}",
         value.get_type().name()?
     )))
+}
+
+fn record(kind: ValueKind, all_int: &mut bool, hidden: &mut bool, any_int: &mut bool) {
+    match kind {
+        ValueKind::Hidden => *hidden = true,
+        ValueKind::Int => *any_int = true,
+        ValueKind::Float => *all_int = false,
+    }
 }
 
 /// Hasher for object addresses: they are already well spread apart, so a
@@ -325,6 +332,7 @@ fn read_adj<'py>(
     adj: &Bound<'py, PyAny>,
     attrs: &[Attr<'py>],
     flags: &mut [(bool, bool, bool)],
+    multigraph: bool,
 ) -> PyResult<(Csr, Vec<Vec<f64>>)> {
     let mut offsets = Vec::with_capacity(nodes.len() + 1);
     let mut targets = Vec::new();
@@ -336,15 +344,46 @@ fn read_adj<'py>(
                          data: &Bound<'py, PyAny>|
      -> PyResult<()> {
         targets.push(index.resolve(nbr)?);
-        for (k, attr) in attrs.iter().enumerate() {
-            let value = match data.cast::<PyDict>() {
-                Ok(d) => d
+        let get = |d: &Bound<'py, PyAny>, attr: &Attr<'py>| -> PyResult<Bound<'py, PyAny>> {
+            match d.cast::<PyDict>() {
+                Ok(d) => Ok(d
                     .get_item(&attr.name)?
-                    .unwrap_or_else(|| attr.default.clone()),
-                Err(_) => data.call_method1("get", (&attr.name, &attr.default))?,
+                    .unwrap_or_else(|| attr.default.clone())),
+                Err(_) => d.call_method1("get", (&attr.name, &attr.default)),
+            }
+        };
+        for (k, attr) in attrs.iter().enumerate() {
+            let (x, kind) = if multigraph {
+                // `data` maps edge keys to attribute dicts. NetworkX's
+                // multigraph weight is `min(attr.get(weight, 1) for attr in
+                // data.values())`: the first smallest value, keeping its type.
+                let mut best: Option<(f64, ValueKind)> = None;
+                let mut count = 0;
+                for item in data.call_method0("values")?.try_iter()? {
+                    let (x, kind) = parse_value(&get(&item?, attr)?)?;
+                    count += 1;
+                    best = match best {
+                        Some((bx, bk)) if bk != ValueKind::Hidden && kind != ValueKind::Hidden => {
+                            Some(if x < bx { (x, kind) } else { (bx, bk) })
+                        }
+                        None => Some((x, kind)),
+                        Some(_) => {
+                            return Err(PyNotImplementedError::new_err(
+                                "None weights among parallel edges",
+                            ))
+                        }
+                    };
+                }
+                if count == 0 {
+                    return Err(PyNotImplementedError::new_err("edge without keys"));
+                }
+                best.expect("at least one edge")
+            } else {
+                parse_value(&get(data, attr)?)?
             };
             let (all_int, hidden, any_int) = &mut flags[k];
-            values[k].push(parse_weight(&value, all_int, hidden, any_int)?);
+            record(kind, all_int, hidden, any_int);
+            values[k].push(x);
         }
         Ok(())
     };
@@ -409,13 +448,14 @@ fn to_attrs<'py>(weight_attrs: Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)>) -> V
 /// `nodes` is `list(G)`, `index` maps node -> position in `nodes`, `succ` is
 /// `G._adj`, and `weight_attrs` is a list of `(attribute name, default)`.
 #[pyfunction]
-#[pyo3(signature = (nodes, index, succ, directed, weight_attrs))]
+#[pyo3(signature = (nodes, index, succ, directed, weight_attrs, multigraph=false))]
 pub fn build_graph<'py>(
     nodes: &Bound<'py, PyList>,
     index: &Bound<'py, PyDict>,
     succ: &Bound<'py, PyAny>,
     directed: bool,
     weight_attrs: Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)>,
+    multigraph: bool,
 ) -> PyResult<CoreGraph> {
     if nodes.len() >= u32::MAX as usize {
         return Err(PyNotImplementedError::new_err("graph has too many nodes"));
@@ -425,7 +465,7 @@ pub fn build_graph<'py>(
     let mut flags = vec![(true, false, false); attrs.len()];
     let index = NodeIndex::new(nodes, index)?;
 
-    let (succ_csr, succ_vals) = read_adj(nodes, &index, succ, &attrs, &mut flags)?;
+    let (succ_csr, succ_vals) = read_adj(nodes, &index, succ, &attrs, &mut flags, multigraph)?;
     let (pred_csr, mut pred_vals) = if directed {
         let (csr, vals) = transpose(&succ_csr, n, &succ_vals);
         (Some(csr), vals.into_iter().map(Some).collect())
@@ -471,6 +511,7 @@ impl CoreGraph {
         index: &Bound<'py, PyDict>,
         pred: &Bound<'py, PyAny>,
         weight_attrs: Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)>,
+        multigraph: bool,
     ) -> PyResult<()> {
         if !self.directed || self.exact_pred.get().is_some() {
             return Ok(());
@@ -481,7 +522,7 @@ impl CoreGraph {
         let attrs = to_attrs(weight_attrs);
         let mut flags = vec![(true, false, false); attrs.len()];
         let index = NodeIndex::new(nodes, index)?;
-        let (csr, vals) = read_adj(nodes, &index, pred, &attrs, &mut flags)?;
+        let (csr, vals) = read_adj(nodes, &index, pred, &attrs, &mut flags, multigraph)?;
         if csr.targets.len() != self.succ.targets.len() {
             return Err(PyValueError::new_err(
                 "predecessors do not match this graph",

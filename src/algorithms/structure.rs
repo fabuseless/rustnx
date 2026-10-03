@@ -93,3 +93,140 @@ pub fn is_bipartite(succ: &Csr, pred: Option<&Csr>, n: usize) -> bool {
     }
     true
 }
+
+/// `nx.greedy_color` with the default `largest_first` strategy: nodes in
+/// processing order (degree descending, ties in node order) and the color of
+/// each node position. `degree` is NetworkX's `G.degree` (self-loops count
+/// twice); colors avoid those of already-colored successors.
+pub fn greedy_color(succ: &Csr, n: usize, degree: &[usize]) -> (Vec<u32>, Vec<u32>) {
+    let mut order: Vec<u32> = (0..n as u32).collect();
+    order.sort_by(|&a, &b| degree[b as usize].cmp(&degree[a as usize])); // stable
+    const NONE: u32 = u32::MAX;
+    let mut color = vec![NONE; n];
+    let mut used: Vec<u32> = Vec::new(); // mark[c] == stamp means color c is taken
+    for (stamp, &u) in order.iter().enumerate() {
+        let stamp = stamp as u32 + 1;
+        for &v in succ.neighbors(u as usize) {
+            let c = color[v as usize];
+            if c != NONE {
+                let c = c as usize;
+                if c >= used.len() {
+                    used.resize(c + 1, 0);
+                }
+                used[c] = stamp;
+            }
+        }
+        let mut c = 0;
+        while c < used.len() && used[c] == stamp {
+            c += 1;
+        }
+        color[u as usize] = c as u32;
+    }
+    (order, color)
+}
+
+/// The most frequent labels among `v`'s neighbors, counted with repetition
+/// as `Counter(labeling[q] for q in G[v])`, into `best`.
+fn most_frequent(
+    adj: &Csr,
+    v: usize,
+    label: &[u32],
+    count: &mut [u32],
+    touched: &mut Vec<u32>,
+    best: &mut Vec<u32>,
+) {
+    best.clear();
+    let mut max = 0;
+    for &q in adj.neighbors(v) {
+        let l = label[q as usize] as usize;
+        if count[l] == 0 {
+            touched.push(l as u32);
+        }
+        count[l] += 1;
+        max = max.max(count[l]);
+    }
+    for &l in touched.iter() {
+        if count[l as usize] == max {
+            best.push(l);
+        }
+        count[l as usize] = 0;
+    }
+    touched.clear();
+}
+
+/// `label_propagation_communities`' semi-synchronous updates, visiting nodes
+/// in `order` (color classes in NetworkX's iteration order). Returns each
+/// node's final label (labels start as node positions).
+pub fn label_propagation(adj: &Csr, n: usize, order: &[u32]) -> Vec<u32> {
+    let mut label: Vec<u32> = (0..n as u32).collect();
+    let mut count = vec![0u32; n];
+    let mut touched = Vec::new();
+    let mut best = Vec::new();
+    loop {
+        let mut complete = true;
+        for v in 0..n {
+            if adj.neighbors(v).is_empty() {
+                continue;
+            }
+            most_frequent(adj, v, &label, &mut count, &mut touched, &mut best);
+            if !best.contains(&label[v]) {
+                complete = false;
+                break;
+            }
+        }
+        if complete {
+            return label;
+        }
+        for &v in order {
+            let v = v as usize;
+            if adj.neighbors(v).is_empty() {
+                continue; // `{labeling[node]}`: nothing changes
+            }
+            most_frequent(adj, v, &label, &mut count, &mut touched, &mut best);
+            if best.len() == 1 {
+                label[v] = best[0];
+            } else if !best.contains(&label[v]) {
+                label[v] = *best.iter().max().expect("non-empty");
+            }
+        }
+    }
+}
+
+/// Kruskal's spanning forest as `nx.kruskal_mst_edges` builds it: edges
+/// `(u, v, weight)` in `G.edges` order, stably sorted by weight (descending
+/// for a maximum tree), kept when they join two components. Returns the
+/// indices of the kept edges in yield order.
+pub fn kruskal(n: usize, edges: &[(u32, u32, f64)], maximum: bool) -> Vec<u32> {
+    let mut idx: Vec<u32> = (0..edges.len() as u32).collect();
+    idx.sort_by(|&a, &b| {
+        let (wa, wb) = (edges[a as usize].2, edges[b as usize].2);
+        let ord = wa.partial_cmp(&wb).expect("no NaN weights");
+        if maximum {
+            ord.reverse()
+        } else {
+            ord
+        }
+    });
+    let mut parent: Vec<u32> = (0..n as u32).collect();
+    fn find(parent: &mut [u32], mut x: u32) -> u32 {
+        while parent[x as usize] != x {
+            let p = parent[x as usize];
+            parent[x as usize] = parent[p as usize];
+            x = p;
+        }
+        x
+    }
+    let mut kept = Vec::new();
+    for i in idx {
+        let (u, v, _) = edges[i as usize];
+        let (ru, rv) = (find(&mut parent, u), find(&mut parent, v));
+        if ru != rv {
+            parent[ru as usize] = rv;
+            kept.push(i);
+            if kept.len() + 1 == n {
+                break;
+            }
+        }
+    }
+    kept
+}

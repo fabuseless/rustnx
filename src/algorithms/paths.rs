@@ -271,3 +271,168 @@ pub fn bidirectional_dijkstra(
     }
     Err(BidirectionalError::NoPath)
 }
+
+/// `nx.predecessor(G, source)`: every node reached by BFS with all its
+/// predecessors one level closer, in discovery order (`None` = unreached).
+pub fn bfs_predecessors(adj: &Csr, n: usize, source: usize) -> Vec<Option<Vec<u32>>> {
+    let mut level = vec![u32::MAX; n];
+    let mut pred: Vec<Option<Vec<u32>>> = vec![None; n];
+    level[source] = 0;
+    pred[source] = Some(Vec::new());
+    let mut this_level = vec![source as u32];
+    let mut depth = 0u32;
+    while !this_level.is_empty() {
+        depth += 1;
+        let mut next = Vec::new();
+        for &v in &this_level {
+            for &w in adj.neighbors(v as usize) {
+                let wi = w as usize;
+                if level[wi] == u32::MAX {
+                    level[wi] = depth;
+                    pred[wi] = Some(vec![v]);
+                    next.push(w);
+                } else if level[wi] == depth {
+                    pred[wi].as_mut().expect("seen").push(v);
+                }
+            }
+        }
+        this_level = next;
+    }
+    pred
+}
+
+/// `nx.dijkstra_predecessor_and_distance(G, source)`'s predecessor lists,
+/// including equal-length predecessors found after a node is finalized.
+/// NaN weights hide edges.
+pub fn dijkstra_predecessors(
+    adj: &Csr,
+    n: usize,
+    weights: Option<&[f64]>,
+    source: usize,
+) -> Result<Vec<Option<Vec<u32>>>, NegativeCycle> {
+    let mut done = vec![false; n];
+    let mut dist = vec![0.0; n];
+    let mut seen = vec![f64::INFINITY; n];
+    let mut has_seen = vec![false; n];
+    let mut pred: Vec<Option<Vec<u32>>> = vec![None; n];
+    let mut heap: BinaryHeap<Reverse<(HeapKey, u32)>> = BinaryHeap::new();
+    let mut counter = 0u64;
+    seen[source] = 0.0;
+    has_seen[source] = true;
+    pred[source] = Some(Vec::new());
+    heap.push(Reverse((HeapKey(0.0, counter), source as u32)));
+    while let Some(Reverse((HeapKey(d, _), v))) = heap.pop() {
+        let v = v as usize;
+        if done[v] {
+            continue;
+        }
+        done[v] = true;
+        dist[v] = d;
+        for e in adj.range(v) {
+            let u = adj.targets[e] as usize;
+            let cost = weights.map_or(1.0, |w| w[e]);
+            if cost.is_nan() {
+                continue;
+            }
+            let vu = d + cost;
+            if done[u] {
+                if vu < dist[u] {
+                    return Err(NegativeCycle);
+                } else if vu == dist[u] {
+                    pred[u].as_mut().expect("seen").push(v as u32);
+                }
+            } else if !has_seen[u] || vu < seen[u] {
+                seen[u] = vu;
+                has_seen[u] = true;
+                counter += 1;
+                heap.push(Reverse((HeapKey(vu, counter), u as u32)));
+                pred[u] = Some(vec![v as u32]);
+            } else if vu == seen[u] {
+                pred[u].as_mut().expect("seen").push(v as u32);
+            }
+        }
+    }
+    Ok(pred)
+}
+
+/// `_build_paths_from_predecessors({source}, target, pred)` as a resumable
+/// search: each `next_path` call returns the next path (source first).
+pub struct PathsFromPreds {
+    pred: Vec<Option<Vec<u32>>>,
+    source: u32,
+    path: Vec<u32>,
+    next_pred: Vec<usize>,
+    on_path: Vec<bool>,
+    /// The current pass already yielded; resume with its step.
+    yielded: bool,
+    /// NetworkX before 3.7: skipping a predecessor already on the path ends
+    /// the pass, so the next pass re-checks (and re-yields at) the source.
+    skip_ends_pass: bool,
+}
+
+impl PathsFromPreds {
+    /// `None` if `target` wasn't reached.
+    pub fn new(
+        pred: Vec<Option<Vec<u32>>>,
+        source: u32,
+        target: u32,
+        skip_ends_pass: bool,
+    ) -> Option<Self> {
+        pred[target as usize].as_ref()?;
+        let mut on_path = vec![false; pred.len()];
+        on_path[target as usize] = true;
+        Some(PathsFromPreds {
+            pred,
+            source,
+            path: vec![target],
+            next_pred: vec![0],
+            on_path,
+            yielded: false,
+            skip_ends_pass,
+        })
+    }
+
+    pub fn next_path(&mut self) -> Option<Vec<u32>> {
+        loop {
+            let node = *self.path.last()?;
+            // NetworkX checks at the top of every pass, including when it
+            // returns to a node after exploring below it.
+            if !self.yielded && node == self.source {
+                self.yielded = true;
+                return Some(self.path.iter().rev().copied().collect());
+            }
+            self.yielded = false;
+            let preds = self.pred[node as usize].as_deref().unwrap_or(&[]);
+            let i = self.next_pred.last_mut().expect("parallel to path");
+            let mut pushed = None;
+            let mut skipped = false;
+            while *i < preds.len() {
+                let p = preds[*i];
+                *i += 1;
+                if !self.on_path[p as usize] {
+                    pushed = Some(p);
+                    break;
+                }
+                if self.skip_ends_pass {
+                    skipped = true;
+                    break;
+                }
+            }
+            if skipped {
+                continue;
+            }
+            match pushed {
+                Some(p) => {
+                    self.path.push(p);
+                    self.next_pred.push(0);
+                    self.on_path[p as usize] = true;
+                }
+                None => {
+                    self.on_path[node as usize] = false;
+                    self.path.pop();
+                    self.next_pred.pop();
+                }
+            }
+        }
+    }
+}

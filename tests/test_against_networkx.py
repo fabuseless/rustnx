@@ -725,7 +725,7 @@ def test_backend_function_list_matches_implementations():
     assert sorted(_info.FUNCTIONS) == sorted(algorithms.__all__)
     for name in algorithms.__all__:
         assert hasattr(interface, name), name
-        assert hasattr(nx, name), name
+        assert interface._nx_function(name) is not None, name
 
 
 # --- Shortest paths that return the paths ---------------------------------------
@@ -1195,3 +1195,202 @@ def test_graph_subclass_overriding_structure_is_not_converted():
         label = "just adds an attribute"
 
     rustnx.from_networkx(Plain(G))  # still converted
+
+
+# --- Trees, spanning trees, all_shortest_paths, coloring, communities -------------
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_bfs_dfs_tree(seed, directed):
+    G = graph_for(seed, directed)
+    for source in list(G)[:3] + ["missing"]:
+        for depth in [None, 1, 2]:
+            exact_outcome(nx.bfs_tree, G, source, depth_limit=depth)
+            exact_outcome(nx.dfs_tree, G, source, depth_limit=depth)
+    exact_outcome(nx.dfs_tree, G)
+    if directed:
+        exact_outcome(nx.bfs_tree, G, list(G)[0], reverse=True)
+
+
+@pytest.mark.parametrize("weights", WEIGHTS)
+@pytest.mark.parametrize("seed", SEEDS)
+def test_spanning_trees(seed, weights):
+    G = graph_for(seed, False, "int" if weights == "missing" else weights)
+    if weights == "missing":
+        for i, (_, _, d) in enumerate(G.edges(data=True)):
+            if i % 2:
+                del d["weight"]
+    for _, _, d in G.edges(data=True):
+        d["label"] = "keep me"  # non-numeric attributes must come through
+    weight = None if weights == "none" else "weight"
+    for func in [nx.minimum_spanning_edges, nx.maximum_spanning_edges]:
+        exact_outcome(func, G, weight=weight)
+        exact_outcome(func, G, weight=weight, data=False)
+        exact_outcome(func, G, algorithm="prim", weight=weight)  # falls back
+        exact_outcome(func, G, algorithm="nope")
+    for func in [nx.minimum_spanning_tree, nx.maximum_spanning_tree]:
+        exact_outcome(func, G, weight=weight)
+    # The yielded data dicts are the graph's own, as in NetworkX.
+    edges = list(nx.minimum_spanning_edges(G, backend="rustnx"))
+    if edges:
+        u, v, d = edges[0]
+        assert d is G[u][v]
+    exact_outcome(nx.minimum_spanning_edges, G.to_directed())
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_all_shortest_paths(seed, directed, weights):
+    G = graph_for(seed, directed, weights)
+    weight = None if weights == "none" else "weight"
+    rng = random.Random(seed)
+    for s, t in path_queries(G, rng):
+        exact_outcome(nx.all_shortest_paths, G, s, t, weight=weight)
+    nodes = list(G)
+    if nodes:
+        exact_outcome(nx.all_shortest_paths, G, nodes[0], nodes[-1], weight="weight", method="nope")
+
+
+def test_all_shortest_paths_ties_and_zero_weights():
+    G = nx.grid_2d_graph(4, 4)  # many equal-length paths
+    exact_outcome(nx.all_shortest_paths, G, (0, 0), (3, 3))
+    H = nx.DiGraph()
+    H.add_weighted_edges_from([(0, 1, 0), (1, 0, 0), (1, 2, 1), (0, 2, 1), (2, 3, 0)])
+    exact_outcome(nx.all_shortest_paths, H, 0, 3, weight="weight")
+    exact_outcome(nx.all_shortest_paths, H, 3, 0, weight="weight")
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_greedy_color_and_label_propagation(seed, directed):
+    G = graph_for(seed, directed)
+    exact_outcome(nx.greedy_color, G)
+    exact_outcome(nx.greedy_color, G, strategy="smallest_last")  # falls back
+    if not directed:
+        def communities(G, **kw):
+            return [sorted(map(str, c)) for c in nx.community.label_propagation_communities(G, **kw)]
+
+        exact_outcome(communities, G)
+        exact_outcome(lambda G, **kw: list(nx.community.label_propagation_communities(G, **kw)), G)
+    if directed:
+        exact_outcome(nx.community.label_propagation_communities, G)
+
+
+def test_spanning_tree_algorithm_names():
+    G = nx.path_graph(5)
+    for name in ["kruskal", "prim", "boruvka", "borůvka", "nope"]:
+        exact_outcome(lambda G, **kw: list(nx.minimum_spanning_edges(G, algorithm=name, **kw)), G)
+
+
+# --- Multigraphs ------------------------------------------------------------------
+
+
+def random_multigraph(seed, directed, weights):
+    rng = random.Random(seed)
+    base = graph_for(seed, directed, "none")
+    M = nx.MultiDiGraph() if directed else nx.MultiGraph()
+    M.add_nodes_from(base)
+    for u, v in base.edges():
+        for _ in range(rng.choice([1, 1, 2, 3])):  # parallel edges
+            if weights == "none":
+                M.add_edge(u, v)
+            elif weights == "int":
+                M.add_edge(u, v, weight=rng.randint(1, 5))
+            else:
+                M.add_edge(u, v, weight=rng.choice([0.5, 1.25, 2.0, 3.5]))
+    return M
+
+
+MULTI_PAIR_FUNCS = [
+    nx.dijkstra_path, nx.dijkstra_path_length, nx.bidirectional_dijkstra,
+    nx.bidirectional_shortest_path, nx.has_path,
+    lambda G, s, t, **kw: nx.shortest_path(G, s, t, weight="weight", **kw),
+    lambda G, s, t, **kw: list(nx.all_shortest_paths(G, s, t, weight="weight", **kw)),
+    lambda G, s, t, **kw: list(nx.all_shortest_paths(G, s, t, **kw)),
+]
+MULTI_SOURCE_FUNCS = [
+    nx.single_source_shortest_path_length, nx.single_source_dijkstra_path_length,
+    nx.single_source_shortest_path, nx.single_target_shortest_path,
+    nx.single_source_dijkstra_path, nx.single_source_dijkstra,
+    nx.descendants, nx.ancestors,
+    lambda G, s, **kw: list(nx.bfs_edges(G, s, **kw)),
+    lambda G, s, **kw: list(nx.dfs_edges(G, s, **kw)),
+    lambda G, s, **kw: list(nx.dfs_preorder_nodes(G, s, **kw)),
+    nx.bfs_tree, nx.dfs_tree,
+]
+MULTI_GRAPH_FUNCS = [
+    lambda G, **kw: dict(nx.all_pairs_shortest_path_length(G, **kw)),
+    lambda G, **kw: dict(nx.all_pairs_dijkstra_path_length(G, **kw)),
+    lambda G, **kw: dict(nx.all_pairs_shortest_path(G, **kw)),
+    lambda G, **kw: dict(nx.all_pairs_dijkstra_path(G, **kw)),
+    lambda G, **kw: dict(nx.all_pairs_dijkstra(G, **kw)),
+    lambda G, **kw: nx.betweenness_centrality(G, **kw),
+    lambda G, **kw: nx.betweenness_centrality(G, weight="weight", **kw),
+    lambda G, **kw: nx.closeness_centrality(G, **kw),
+    lambda G, **kw: nx.closeness_centrality(G, distance="weight", **kw),
+    lambda G, **kw: nx.harmonic_centrality(G, distance="weight", **kw),
+    nx.is_bipartite,
+    # Not supported for multigraphs: must fall back cleanly.
+    lambda G, **kw: nx.pagerank(G, **kw),
+    lambda G, **kw: nx.pagerank(G, weight="weight", **kw),
+    lambda G, **kw: nx.greedy_color(G, **kw),
+]
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_multigraphs(seed, directed, weights, restore_config):
+    M = random_multigraph(seed, directed, weights)
+    rng = random.Random(seed)
+    for s, t in path_queries(M, rng):
+        for func in MULTI_PAIR_FUNCS:
+            exact_outcome(func, M, s, t)
+    for s in list(M)[:3]:
+        for func in MULTI_SOURCE_FUNCS:
+            exact_outcome(func, M, s)
+    for func in MULTI_GRAPH_FUNCS:
+        exact_outcome(func, M)
+    if directed:
+        for func in [nx.strongly_connected_components, nx.weakly_connected_components]:
+            exact_outcome(lambda G, **kw: list(func(G, **kw)), M)
+    else:
+        exact_outcome(lambda G, **kw: list(nx.connected_components(G, **kw)), M)
+
+
+@pytest.mark.parametrize("weights", ["none", "int"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_multigraph_distance_measures(seed, directed, weights):
+    M = random_multigraph(seed, directed, weights)
+    for u, v in zip(list(M), list(M)[1:] + list(M)[:1]):
+        M.add_edge(u, v, **({} if weights == "none" else {"weight": 2}))  # connected
+    weight = None if weights == "none" else "weight"
+    for func in DISTANCE_FUNCS:
+        exact_outcome(func, M, weight=weight)
+
+
+def test_multigraph_weight_types_and_none():
+    M = nx.MultiGraph()
+    M.add_edge(0, 1, weight=2)
+    M.add_edge(0, 1, weight=2.0)  # min keeps the first: the int 2
+    M.add_edge(1, 2, weight=1.5)
+    M.add_edge(2, 3, weight=None)  # a single None edge is hidden
+    for t in [1, 2, 3]:
+        exact_outcome(nx.dijkstra_path_length, M, 0, t)
+        exact_outcome(nx.single_source_dijkstra_path_length, M, 0)
+    M.add_edge(2, 3, weight=1)  # None mixed with numbers: NetworkX raises
+    exact_outcome(nx.single_source_dijkstra_path_length, M, 0)
+
+
+def test_cached_multigraph_conversion_not_reused(restore_config):
+    M = random_multigraph(3, False, "int")
+    M = nx.MultiGraph(M)
+    nx.config.backend_priority.algos = ["rustnx"]
+    nx.single_source_shortest_path_length(M, list(M)[0])  # caches a conversion
+    nx.config.backend_priority.algos = []
+    ref = nx.pagerank(M)
+    nx.config.backend_priority.algos = ["rustnx"]
+    assert nx.pagerank(M) == ref  # pagerank sums parallel weights: NetworkX runs it

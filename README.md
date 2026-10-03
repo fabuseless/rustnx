@@ -4,6 +4,9 @@
 [NetworkX](https://networkx.org). You keep writing normal NetworkX code, and
 supported algorithms run in Rust instead of Python, often 50–100× faster.
 
+Install with `pip install rustnx` (Python 3.10 or newer, including
+free-threaded 3.14t; prebuilt for Linux, macOS and Windows).
+
 ```python
 import networkx as nx
 
@@ -14,8 +17,44 @@ nx.betweenness_centrality(G)              # runs in Rust: 0.4s instead of 41s
 ```
 
 Nothing else changes. Anything rustnx doesn't support, such as other
-functions, multigraphs or callable weights, keeps running in NetworkX, so
+functions, multigraphs in functions that treat parallel edges specially, or callable weights, keeps running in NetworkX, so
 turning it on never breaks working code.
+
+## When rustnx helps, and when it doesn't
+
+A NetworkX graph is a dict of dicts in Python, so rustnx first copies it into
+a compact Rust layout. NetworkX caches the copy on the graph, and later calls
+reuse it until the graph changes.
+
+| 200,000 nodes / 1M edges | Converting to rustnx | Just walking the graph in pure Python |
+|---|---|---|
+| Undirected, no weights | 0.22 s | 0.13 s |
+| Undirected, with weights | 0.58 s | 0.60 s |
+| Directed, with weights | 0.29 s | 0.29 s |
+
+Conversion costs about as much as reading the graph once in Python, which is
+the floor for anything that starts from a NetworkX graph. So:
+
+- **Heavy algorithms win right away.** Betweenness, closeness, PageRank,
+  distance measures, clustering and the centralities take seconds to minutes
+  in NetworkX and a fraction of a second here, conversion included.
+- **Cheap algorithms win when repeated.** A single BFS or Dijkstra on a big
+  graph costs about the same as one conversion, so the first call is not
+  much faster; the following calls on the same graph are.
+- **Small graphs stay in NetworkX.** Below 500 nodes, linear-time functions
+  run in NetworkX automatically, since converting would cost more than it
+  saves. You can still force rustnx with `backend="rustnx"`.
+- **Big Python results limit the gain.** Functions that return a path for
+  every node (`single_source_shortest_path`, `all_pairs_shortest_path`,
+  `all_shortest_paths`) or a new graph (`k_core`, `bfs_tree`) spend most of
+  their time building Python objects, so they speed up 2–8× rather than 50×.
+- **Some inputs run in NetworkX:** unsupported functions or parameters,
+  callable weights, multigraphs in functions that treat parallel edges
+  specially, graphs whose weights mix ints and floats in functions that
+  return lengths, and graph subclasses that override how they are read. The
+  results are still correct; they're just not faster.
+
+To skip conversion entirely, build the graph in Rust (next section).
 
 ## Native graphs: skip NetworkX entirely
 
@@ -117,6 +156,19 @@ rx.dijkstra_shortest_path_lengths(g, 0, float)
 | `core_number`, `k_core` | Same values and errors as NetworkX. `k_core` builds its subgraph in NetworkX, so the speedup is only in the core numbers. |
 | `is_bipartite` | Directed and undirected. |
 | `bfs_edges`, `dfs_edges`, `dfs_preorder_nodes` | Same order as NetworkX, with `depth_limit` and `reverse`. `sort_neighbors` runs in NetworkX. |
+| `bfs_tree`, `dfs_tree` | Same trees as NetworkX. |
+| `minimum_spanning_edges`, `maximum_spanning_edges`, `minimum_spanning_tree`, `maximum_spanning_tree` | Kruskal's algorithm (the default), with the same edges in the same order, ties included; yields the graph's own edge data dicts. Prim and Borůvka run in NetworkX. |
+| `all_shortest_paths` | Unweighted and Dijkstra. Paths are generated lazily in Rust, in NetworkX's order (which differs before 3.7 when zero-weight cycles exist). |
+| `greedy_color`, `label_propagation_communities` | `greedy_color` with the default `largest_first` strategy; other strategies run in NetworkX. |
+
+### Multigraphs
+
+`MultiGraph` and `MultiDiGraph` run in Rust for the functions whose NetworkX
+code sees a multigraph only through its neighbors and, for weights, the
+minimum over parallel edges: components, traversals, the shortest path
+family, betweenness, closeness and harmonic centrality, the distance measures,
+and `is_bipartite`. Other functions (for example `pagerank`, which sums
+parallel weights, or degree-based ones) run in NetworkX.
 
 ## Benchmarks
 
@@ -158,6 +210,11 @@ rx.dijkstra_shortest_path_lengths(g, 0, float)
 | `dfs_edges` | 200,000 / 1M | 2.49 s | 0.15 s | 17× |
 | `bidirectional_dijkstra` (20 pairs) | 200,000 / 1M | 0.24 s | 0.023 s | 11× |
 | `k_core` | 200,000 / 1M | 10.2 s | 7.4 s | 1.4× (copying the subgraph in NetworkX dominates) |
+| `label_propagation_communities` | 100,000 / 500k (Barabási–Albert) | 3.01 s | 0.069 s | **43×** |
+| `greedy_color` | 100,000 / 500k (Barabási–Albert) | 0.28 s | 0.014 s | 21× |
+| `minimum_spanning_tree` | 200,000 / 1M | 7.73 s | 1.01 s | 7.7× |
+| `bfs_tree` | 200,000 / 1M | 3.67 s | 1.08 s | 3.4× (building the tree in NetworkX dominates) |
+| `all_shortest_paths` | 3,600 / 7k (grid, 2.7M paths) | 6.63 s | 2.80 s | 2.4× (building the path lists dominates) |
 
 The rustnx column is a repeat call. The first call on a graph also converts
 it to rustnx's format (about 0.15–0.25 s for a 1M-edge directed graph), and
@@ -280,7 +337,7 @@ Layout:
 ## Roadmap
 
 - More algorithms: see the todo table in [CLAUDE.md](CLAUDE.md).
-- Multigraph support.
+- Multigraph support for the remaining functions (`pagerank`, degree-based ones).
 
 ## License
 

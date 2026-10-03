@@ -24,6 +24,10 @@ jobs:
             networkx: "3.5.*"
           - python-version: "3.13"
             networkx: "latest"
+          # Free-threaded Python: also checks the GIL stays off
+          # (tests/test_free_threading.py).
+          - python-version: "3.14t"
+            networkx: "latest"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

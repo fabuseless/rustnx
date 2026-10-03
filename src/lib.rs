@@ -46,14 +46,16 @@ impl CoreGraph {
     }
 
     #[pyo3(name = "load_exact_pred")]
+    #[pyo3(signature = (nodes, index, pred, weight_attrs, multigraph=false))]
     fn py_load_exact_pred<'py>(
         &self,
         nodes: &Bound<'py, PyList>,
         index: &Bound<'py, PyDict>,
         pred: &Bound<'py, PyAny>,
         weight_attrs: Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)>,
+        multigraph: bool,
     ) -> PyResult<()> {
-        self.load_exact_pred(nodes, index, pred, weight_attrs)
+        self.load_exact_pred(nodes, index, pred, weight_attrs, multigraph)
     }
 
     #[pyo3(name = "has_exact_pred")]
@@ -614,6 +616,71 @@ impl CoreGraph {
         }))
     }
 
+    /// `greedy_color` (largest_first): processing order and each node's color.
+    fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
+        let degree = self.degrees();
+        py.detach(|| structure::greedy_color(&self.succ, self.n, &degree))
+    }
+
+    /// Final labels of `label_propagation_communities`, visiting `order`.
+    fn label_propagation(&self, py: Python<'_>, order: Vec<u32>) -> PyResult<Vec<u32>> {
+        let order = self.sources_or_all(Some(order))?;
+        Ok(py.detach(|| structure::label_propagation(&self.succ, self.n, &order)))
+    }
+
+    /// Kruskal's spanning forest: kept edges as `(us, vs)` in yield order.
+    #[pyo3(signature = (weight=None, maximum=false))]
+    fn kruskal(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+        maximum: bool,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| {
+            let mut edges = Vec::new();
+            for u in 0..self.n {
+                for e in self.succ.range(u) {
+                    let v = self.succ.targets[e];
+                    if self.directed || v as usize >= u {
+                        edges.push((u as u32, v, w.map_or(1.0, |w| w[e])));
+                    }
+                }
+            }
+            structure::kruskal(self.n, &edges, maximum)
+                .into_iter()
+                .map(|i| (edges[i as usize].0, edges[i as usize].1))
+                .unzip()
+        }))
+    }
+
+    /// `all_shortest_paths` from `source` to `target` as a lazy path
+    /// iterator, or `None` if `target` isn't reached. `weight=None` uses
+    /// `nx.predecessor` (BFS).
+    #[pyo3(signature = (source, target, weight=None, skip_ends_pass=false))]
+    fn all_shortest_paths(
+        &self,
+        py: Python<'_>,
+        source: usize,
+        target: usize,
+        weight: Option<&str>,
+        skip_ends_pass: bool,
+    ) -> PyResult<Option<AllPaths>> {
+        self.check_index(source)?;
+        self.check_index(target)?;
+        let pred = match weight {
+            None => py.detach(|| paths::bfs_predecessors(&self.succ, self.n, source)),
+            Some(_) => {
+                let w = self.weight_slice(weight, false)?;
+                py.detach(|| paths::dijkstra_predecessors(&self.succ, self.n, w, source))?
+            }
+        };
+        Ok(
+            paths::PathsFromPreds::new(pred, source as u32, target as u32, skip_ends_pass)
+                .map(AllPaths),
+        )
+    }
+
     /// `bidirectional_shortest_path` as node positions, or `None` if no path.
     fn bidirectional_bfs(
         &self,
@@ -802,15 +869,27 @@ impl CoreGraph {
     }
 }
 
+/// Lazy iterator over `all_shortest_paths` results (node positions).
+#[pyclass(module = "rustnx._core")]
+pub struct AllPaths(paths::PathsFromPreds);
+
+#[pymethods]
+impl AllPaths {
+    fn next_path(&mut self) -> Option<Vec<u32>> {
+        self.0.next_path()
+    }
+}
+
 /// CPython's float `sum()` (exposed for tests).
 #[pyfunction]
 fn _py_sum(values: Vec<f64>, compensated: bool) -> f64 {
     spectral::py_sum(values.into_iter(), compensated)
 }
 
-#[pymodule]
+#[pymodule(gil_used = false)]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CoreGraph>()?;
+    m.add_class::<AllPaths>()?;
     m.add_function(wrap_pyfunction!(graph::build_graph, m)?)?;
     m.add_function(wrap_pyfunction!(serialize::_core_graph_from_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(native::build_native, m)?)?;

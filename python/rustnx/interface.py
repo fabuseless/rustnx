@@ -18,8 +18,10 @@ _WEIGHT_PARAMS = ("weight", "distance")
 # Linear-time algorithms where, on small graphs, converting to rustnx and
 # dispatching costs more than NetworkX spends running the algorithm.
 _LINEAR_TIME = {
+    "all_shortest_paths",
     "ancestors",
     "bfs_edges",
+    "bfs_tree",
     "bidirectional_dijkstra",
     "bidirectional_shortest_path",
     "connected_components",
@@ -27,8 +29,10 @@ _LINEAR_TIME = {
     "descendants",
     "dfs_edges",
     "dfs_preorder_nodes",
+    "dfs_tree",
     "dijkstra_path",
     "dijkstra_path_length",
+    "greedy_color",
     "has_path",
     "is_bipartite",
     "is_connected",
@@ -36,6 +40,11 @@ _LINEAR_TIME = {
     "is_strongly_connected",
     "is_weakly_connected",
     "k_core",
+    "label_propagation_communities",
+    "maximum_spanning_edges",
+    "maximum_spanning_tree",
+    "minimum_spanning_edges",
+    "minimum_spanning_tree",
     "number_connected_components",
     "number_strongly_connected_components",
     "number_weakly_connected_components",
@@ -53,8 +62,66 @@ _LINEAR_TIME = {
 }
 SMALL_GRAPH_NODES = 500
 
+# Functions whose NetworkX code sees a multigraph only through `G[v]`
+# (neighbors once each) and, for weights, `_weight_function` (the minimum over
+# parallel edges). rustnx converts multigraphs that way for these alone.
+MULTIGRAPH_FUNCTIONS = {
+    "all_pairs_dijkstra",
+    "all_pairs_dijkstra_path",
+    "all_pairs_dijkstra_path_length",
+    "all_pairs_shortest_path",
+    "all_pairs_shortest_path_length",
+    "all_shortest_paths",
+    "ancestors",
+    "average_shortest_path_length",
+    "betweenness_centrality",
+    "bfs_edges",
+    "bfs_tree",
+    "bidirectional_dijkstra",
+    "bidirectional_shortest_path",
+    "center",
+    "closeness_centrality",
+    "connected_components",
+    "descendants",
+    "dfs_edges",
+    "dfs_preorder_nodes",
+    "dfs_tree",
+    "diameter",
+    "dijkstra_path",
+    "dijkstra_path_length",
+    "eccentricity",
+    "harmonic_centrality",
+    "has_path",
+    "is_bipartite",
+    "is_connected",
+    "is_strongly_connected",
+    "is_weakly_connected",
+    "number_connected_components",
+    "number_strongly_connected_components",
+    "number_weakly_connected_components",
+    "periphery",
+    "radius",
+    "shortest_path",
+    "shortest_path_length",
+    "single_source_dijkstra",
+    "single_source_dijkstra_path",
+    "single_source_dijkstra_path_length",
+    "single_source_shortest_path",
+    "single_source_shortest_path_length",
+    "single_target_shortest_path",
+    "strongly_connected_components",
+    "weakly_connected_components",
+    "wiener_index",
+}
+
 # Functions that return subgraphs of the original NetworkX graph.
-_BUILDS_FROM_SOURCE = {"k_core"}
+_BUILDS_FROM_SOURCE = {
+    "k_core",
+    "maximum_spanning_edges",
+    "maximum_spanning_tree",
+    "minimum_spanning_edges",
+    "minimum_spanning_tree",
+}
 
 
 def convert_from_nx(
@@ -69,16 +136,19 @@ def convert_from_nx(
 ):
     if isinstance(G, RustnxGraph):
         return G
+    multigraph_ok = name in MULTIGRAPH_FUNCTIONS
+    if G.is_multigraph() and not multigraph_ok:
+        raise NotImplementedError(f"rustnx does not support multigraphs in {name}")
     if preserve_edge_attrs is True:
         if name in _BUILDS_FROM_SOURCE:
             # These build their result from the original NetworkX graph, so
             # its attributes don't need to be copied into Rust.
-            return from_networkx(G, {})
+            return from_networkx(G, edge_attrs or {}, multigraph_ok=multigraph_ok)
         # Arbitrary edge data (e.g. for callable weights) isn't stored in Rust.
         raise NotImplementedError("rustnx only stores numeric edge attributes")
     if isinstance(preserve_edge_attrs, dict):
         edge_attrs = preserve_edge_attrs.get(graph_name) or edge_attrs
-    return from_networkx(G, edge_attrs or {})
+    return from_networkx(G, edge_attrs or {}, multigraph_ok=multigraph_ok)
 
 
 def convert_to_nx(obj, *, name=None):
@@ -101,9 +171,16 @@ def _is_default(value, param):
     )
 
 
+def _nx_function(name):
+    """The installed NetworkX's dispatchable function called ``name`` (some,
+    like ``label_propagation_communities``, live in subpackages)."""
+    registry = getattr(nx.utils.backends, "_registered_algorithms", {})
+    return registry[name] if name in registry else getattr(nx, name)
+
+
 @functools.cache
 def _nx_signature(name):
-    return inspect.signature(getattr(nx, name))
+    return inspect.signature(_nx_function(name))
 
 
 def _bind(name, args, kwargs):
@@ -146,6 +223,12 @@ def _make_entry(name):
             raise NotImplementedError(
                 f"rustnx does not support: {', '.join(unsupported)}"
             )
+        if name not in MULTIGRAPH_FUNCTIONS and any(
+            getattr(value, "_multigraph", False) for value in arguments.values()
+        ):
+            # NetworkX caches one conversion per graph, whichever function
+            # asked for it.
+            raise NotImplementedError(f"rustnx does not support multigraphs in {name}")
         return func(**arguments)
 
     return entry
@@ -168,8 +251,8 @@ def can_run(name, args, kwargs):
     if unsupported:
         return f"unsupported arguments: {', '.join(unsupported)}"
     G = arguments.get("G")
-    if G is not None and G.is_multigraph():
-        return "multigraphs are not supported yet"
+    if G is not None and G.is_multigraph() and name not in MULTIGRAPH_FUNCTIONS:
+        return "multigraphs are not supported by this function"
     for param in _WEIGHT_PARAMS:
         if callable(arguments.get(param)):
             return "callable weights are not supported"

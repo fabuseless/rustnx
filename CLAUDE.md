@@ -40,25 +40,25 @@ errors) on NetworkX 3.4, 3.5 and 3.7; anything rustnx can't match raises
 
 | # | Item | Status | Group | Owner | Notes |
 |---|------|--------|-------|-------|-------|
-| 1 | README section: what gets faster and what stays at NetworkX speed | To do | Getting users | Claude | Small graphs, one-off calls, unsupported functions, multigraphs |
+| 1 | README section: what gets faster and what stays at NetworkX speed | Done | Getting users | Claude | Written with item 18: "When rustnx helps, and when it doesn't" |
 | 2 | GitHub issue templates (bug report, function request) | To do | Getting users | Claude | |
 | 3 | Announcement post (NetworkX Discussions, Scientific Python forum, r/Python) | To do | Getting users | Owner | Claude can draft it |
 | 4 | `bidirectional_dijkstra` | Done | Algorithms | Claude | |
 | 5 | `harmonic_centrality` | Done | Algorithms | Claude | |
 | 6 | `eigenvector_centrality` | Done | Algorithms | Claude | |
 | 7 | `katz_centrality` | Done | Algorithms | Claude | Katz `nstart` and per-node `beta` fall back |
-| 8 | `hits` | Blocked | Algorithms | Claude | NetworkX 3.4/3.5 use SciPy's sparse SVD, which can't be matched exactly; 3.7's power iteration could be ported for 3.7 only |
+| 8 | `hits` | Blocked | Algorithms | Claude | NetworkX 3.4 to 3.6 use SciPy's sparse SVD; 3.7's power iteration runs through SciPy sparse kernels and NumPy pairwise sums, so an exact match would depend on SciPy internals |
 | 9 | `core_number`, `k_core` | Done | Algorithms | Claude | |
-| 10 | `minimum_spanning_tree`, `minimum_spanning_edges` | To do | Algorithms | Claude | |
-| 11 | Traversals: `bfs_edges`, `bfs_tree`, `dfs_preorder_nodes`, `dfs_tree` | Partly done | Algorithms | Claude | Done: `bfs_edges`, `dfs_edges`, `dfs_preorder_nodes`; `bfs_tree`, `dfs_tree` left |
-| 12 | `all_shortest_paths` | To do | Algorithms | Claude | |
+| 10 | `minimum_spanning_tree`, `minimum_spanning_edges` | Done | Algorithms | Claude | Kruskal, minimum and maximum; Prim starts from `set(G).pop()` (hash order) and Borůvka fall back |
+| 11 | Traversals: `bfs_edges`, `bfs_tree`, `dfs_preorder_nodes`, `dfs_tree` | Done | Algorithms | Claude | Also `dfs_edges` |
+| 12 | `all_shortest_paths` | Done | Algorithms | Claude | Bellman-Ford falls back |
 | 13 | `is_bipartite` | Done | Algorithms | Claude | |
-| 14 | `simple_cycles` | To do | Algorithms | Claude | |
-| 15 | `louvain_communities`, `label_propagation_communities` | To do | Algorithms | Claude | Exact match is hard (randomness) |
-| 16 | Weighted clustering | To do | Algorithms | Claude | Bit-for-bit match is hard |
-| 17 | Multigraph support (`MultiGraph`, `MultiDiGraph`) | To do | Engineering | Claude | |
-| 18 | Faster conversion from NetworkX, or docs steering to native `rustnx.Graph` | To do | Engineering | Claude | |
-| 19 | Free-threaded Python 3.14 wheels | To do | Engineering | Claude | Optional |
+| 14 | `simple_cycles` | Blocked | Algorithms | Claude | Picks each component's start with `next(iter(set))` while mutating subgraphs, so cycle order depends on Python's set layout; 3.5 also differs |
+| 15 | `louvain_communities`, `label_propagation_communities` | Partly done | Algorithms | Claude | Done: `label_propagation_communities` (plus `greedy_color`). Louvain blocked: internals differ in all three versions and depend on set order and float sums |
+| 16 | Weighted clustering | Blocked | Algorithms | Claude | Sums NumPy `cbrt` arrays (pairwise summation) over set intersections in hash order |
+| 17 | Multigraph support (`MultiGraph`, `MultiDiGraph`) | Partly done | Engineering | Claude | Done: components, traversals, shortest paths, betweenness/closeness/harmonic, distance measures, `is_bipartite` (`interface.MULTIGRAPH_FUNCTIONS`). Left: `pagerank` (sums parallel weights), degree-based functions, MST with keys |
+| 18 | Faster conversion from NetworkX, or docs steering to native `rustnx.Graph` | Done | Engineering | Claude | Profiled: conversion already costs about one pure-Python walk of the graph (the floor); documented in the README section "When rustnx helps, and when it doesn't" |
+| 19 | Free-threaded Python 3.14 wheels | Done | Engineering | Claude | `gil_used = false`; cp314t wheels in `wheels.yml`; `tests/test_free_threading.py` |
 | 20 | CI benchmark guard that fails on slowdowns | To do | Release quality | Claude | |
 | 21 | API docs listing every supported function and parameter | To do | Release quality | Claude | |
 | 22 | `CONTRIBUTING.md` | To do | Release quality | Claude | |

@@ -63,6 +63,40 @@ jobs:
           name: wheels-windows-x64
           path: dist
 
+  # Free-threaded CPython can't use the abi3 wheels above, so it gets
+  # version-specific ones.
+  free-threaded:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64
+          - os: ubuntu-latest
+            target: aarch64
+          - os: macos-latest
+            target: aarch64
+          - os: windows-latest
+            target: x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        if: runner.os != 'Linux'
+        id: py
+        with:
+          python-version: "3.14t"
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: auto
+          args: >-
+            --release --out dist
+            --interpreter ${{ runner.os == 'Linux' && 'python3.14t' || steps.py.outputs.python-path }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheels-ft-${{ matrix.os }}-${{ matrix.target }}
+          path: dist
+
   sdist:
     runs-on: ubuntu-latest
     steps:
@@ -78,7 +112,7 @@ jobs:
 
   # Install each wheel (not a local build) and run the test suite with it.
   test:
-    needs: [linux, macos, windows]
+    needs: [linux, macos, windows, free-threaded]
     strategy:
       fail-fast: false
       matrix:
@@ -91,6 +125,12 @@ jobs:
             python-version: "3.13"
           - os: windows-latest
             python-version: "3.13"
+          - os: ubuntu-latest
+            python-version: "3.14t"
+          - os: macos-latest
+            python-version: "3.14t"
+          - os: windows-latest
+            python-version: "3.14t"
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -107,7 +147,10 @@ jobs:
           merge-multiple: true
       - name: Install the built wheel
         run: |
-          python -m pip install networkx pytest numpy scipy rustworkx
+          python -m pip install networkx pytest numpy scipy
+          # rustworkx has no free-threaded Windows wheel; without it the
+          # rustworkx comparison tests skip themselves.
+          python -m pip install --only-binary=:all: rustworkx || echo "no rustworkx wheel here: skipping its comparison tests"
           python -m pip install --no-index --find-links dist rustnx
           python -c "import rustnx, networkx; print('rustnx', rustnx.__version__, 'on NetworkX', networkx.__version__)"
       - name: Run tests against the installed wheel
@@ -115,7 +158,7 @@ jobs:
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, macos, windows, sdist, test]
+    needs: [linux, macos, windows, free-threaded, sdist, test]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
