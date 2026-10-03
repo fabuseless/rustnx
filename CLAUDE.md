@@ -70,6 +70,6 @@ errors) on NetworkX 3.4, 3.5 and 3.7; anything rustnx can't match raises
 | 24 | Turn on "Automatically delete head branches" | Done | Release quality | Owner | |
 | 25 | Enable Dependabot for CI actions | To do | Release quality | Owner | Optional |
 | 26 | Release `0.1.0` (drop the alpha label) after feedback | To do | Release quality | Owner + Claude | |
-| 27 | Turn on private vulnerability reporting | To do | Release quality | Owner | Settings → Advanced Security (or Code security) → Private vulnerability reporting → Enable; `SECURITY.md` points to it |
+| 27 | Turn on private vulnerability reporting | Done | Release quality | Owner | `SECURITY.md` points to it |
 
-Suggested order: 27 and 25 (owner), a `0.1.0a3` pre-release of the unreleased work, then 3 (announcement), then 17 (remaining multigraph functions), then 26.
+Suggested order: 25 (owner), a `0.1.0a3` pre-release of the unreleased work, then 3 (announcement), then 17 (remaining multigraph functions), then 26.
