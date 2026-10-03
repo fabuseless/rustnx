@@ -15,7 +15,9 @@ use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 
 use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
-use algorithms::{centrality, cluster, directed, distance, paths, spectral, structure};
+use algorithms::{
+    centrality, cluster, directed, distance, paths, spectral, structure, structure_more,
+};
 use graph::CoreGraph;
 
 impl From<NegativeCycle> for PyErr {
@@ -720,6 +722,279 @@ impl CoreGraph {
         (0..self.n)
             .map(|v| (pred.neighbors(v).len(), self.succ.neighbors(v).len()))
             .unzip()
+    }
+
+    // --- Batch 6: trees and structural tests ---
+
+    /// Positions of nodes with no edges (`nx.isolates`).
+    fn isolates(&self) -> Vec<u32> {
+        let pred = self.directed.then(|| self.adj(true));
+        (0..self.n)
+            .filter(|&v| {
+                self.succ.neighbors(v).is_empty() && pred.is_none_or(|p| p.neighbors(v).is_empty())
+            })
+            .map(|v| v as u32)
+            .collect()
+    }
+
+    /// NetworkX's `G.degree(v)` for one node.
+    fn degree_of(&self, v: usize) -> PyResult<usize> {
+        self.check_index(v)?;
+        let out = self.succ.neighbors(v);
+        Ok(if self.directed {
+            out.len() + self.adj(true).neighbors(v).len()
+        } else {
+            out.len() + out.iter().filter(|&&w| w as usize == v).count()
+        })
+    }
+
+    /// `nx.is_regular` on a non-empty graph.
+    fn is_regular(&self) -> bool {
+        if self.directed {
+            let (ins, outs) = self.in_out_degrees();
+            ins.iter().all(|&d| d == ins[0]) && outs.iter().all(|&d| d == outs[0])
+        } else {
+            let d = self.degrees();
+            d.iter().all(|&x| x == d[0])
+        }
+    }
+
+    /// Whether every degree equals `k` (`nx.is_k_regular`).
+    fn all_degrees_equal(&self, k: i64) -> bool {
+        self.degrees().iter().all(|&d| d as i64 == k)
+    }
+
+    /// `nx.is_tournament`: one arc between each pair, no self-loops.
+    fn is_tournament(&self, py: Python<'_>) -> bool {
+        let n = self.n;
+        if structure::has_self_loops(&self.succ, n) {
+            return false;
+        }
+        let pairs = (n as u128) * (n.saturating_sub(1) as u128) / 2;
+        if self.succ.targets.len() as u128 != pairs {
+            return false;
+        }
+        let pred = self.adj(true);
+        py.detach(|| {
+            let mut mark = vec![u32::MAX; n];
+            (0..n).all(|u| {
+                for &v in self.succ.neighbors(u) {
+                    mark[v as usize] = u as u32;
+                }
+                pred.neighbors(u)
+                    .iter()
+                    .all(|&w| mark[w as usize] != u as u32)
+            })
+        })
+    }
+
+    /// `nx.chain_decomposition`: all chains' edges as `(us, vs)`, and
+    /// where each chain ends.
+    #[allow(clippy::type_complexity)]
+    #[pyo3(signature = (root=None))]
+    fn chain_decomposition(
+        &self,
+        py: Python<'_>,
+        root: Option<u32>,
+    ) -> PyResult<(Vec<u32>, Vec<u32>, Vec<u32>)> {
+        if let Some(r) = root {
+            self.check_index(r as usize)?;
+        }
+        Ok(py.detach(|| {
+            let (chains, _) = structure_more::chain_decomposition(&self.succ, self.n, root);
+            let (mut us, mut vs, mut ends) = (Vec::new(), Vec::new(), Vec::new());
+            for chain in chains {
+                for (u, v) in chain {
+                    us.push(u);
+                    vs.push(v);
+                }
+                ends.push(us.len() as u32);
+            }
+            (us, vs, ends)
+        }))
+    }
+
+    /// `nx.bridges` in yield order (with `root`: only its component, in
+    /// `G.edges` order); `first_only` stops at the first.
+    #[pyo3(signature = (root=None, first_only=false))]
+    fn bridges(
+        &self,
+        py: Python<'_>,
+        root: Option<u32>,
+        first_only: bool,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        if let Some(r) = root {
+            self.check_index(r as usize)?;
+        }
+        Ok(py.detach(|| {
+            structure_more::bridges(&self.succ, self.n, root, first_only)
+                .into_iter()
+                .unzip()
+        }))
+    }
+
+    /// Whether any (non-hidden) value of an edge attribute is negative.
+    fn has_negative_weight(&self, weight: &str) -> PyResult<bool> {
+        let w = self.weight_slice(Some(weight), false)?;
+        Ok(w.is_some_and(|w| w.iter().any(|&x| x < 0.0)))
+    }
+
+    /// `nx.local_bridges` edges (without spans) in yield order.
+    fn local_bridges(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
+        py.detach(|| {
+            structure_more::local_bridges(&self.succ, self.n)
+                .into_iter()
+                .unzip()
+        })
+    }
+
+    /// Span of the local bridge `u`-`v` (`None`: infinite). Weighted spans
+    /// need non-negative integer weights.
+    #[pyo3(signature = (u, v, weight=None))]
+    fn local_bridge_span(
+        &self,
+        py: Python<'_>,
+        u: u32,
+        v: u32,
+        weight: Option<&str>,
+    ) -> PyResult<Option<f64>> {
+        self.check_index(u as usize)?;
+        self.check_index(v as usize)?;
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| structure_more::hidden_edge_distance(&self.succ, self.n, u, v, w)))
+    }
+
+    /// Degree balance for the Euler tests: undirected `(odd, 0, 0)`;
+    /// directed `(in - out == 1, out - in == 1, other unbalanced)` counts.
+    fn euler_balance(&self) -> (usize, usize, usize) {
+        if self.directed {
+            let (ins, outs) = self.in_out_degrees();
+            let (mut plus_in, mut plus_out, mut bad) = (0, 0, 0);
+            for (i, o) in ins.into_iter().zip(outs) {
+                if i == o + 1 {
+                    plus_in += 1;
+                } else if o == i + 1 {
+                    plus_out += 1;
+                } else if i != o {
+                    bad += 1;
+                }
+            }
+            (plus_in, plus_out, bad)
+        } else {
+            (self.degrees().iter().filter(|&&d| d % 2 == 1).count(), 0, 0)
+        }
+    }
+
+    /// `_simplegraph_eulerian_circuit` from `source` on NetworkX's copy
+    /// (undirected) or reverse (directed) of the graph: yielded pairs.
+    fn euler_walk(&self, py: Python<'_>, source: u32) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        self.check_index(source as usize)?;
+        Ok(py.detach(|| {
+            let (adj, ids, m) = if self.directed {
+                let adj = structure_more::transpose(&self.succ, self.n);
+                let m = adj.targets.len();
+                (adj, (0..m as u32).collect(), m)
+            } else {
+                structure_more::undirected_copy(&self.succ, self.n)
+            };
+            structure_more::euler_walk(&adj, &ids, m, source)
+                .into_iter()
+                .unzip()
+        }))
+    }
+
+    /// `nx.cycle_basis`, starting from `root` if given.
+    #[pyo3(signature = (root=None))]
+    fn cycle_basis(&self, py: Python<'_>, root: Option<u32>) -> PyResult<Vec<Vec<u32>>> {
+        if let Some(r) = root {
+            self.check_index(r as usize)?;
+        }
+        Ok(py.detach(|| structure_more::cycle_basis(&self.succ, self.n, root)))
+    }
+
+    /// `nx.girth` (`None`: no cycle).
+    fn girth(&self, py: Python<'_>) -> Option<i64> {
+        py.detach(|| structure_more::girth(&self.succ, self.n))
+    }
+
+    /// `nx.find_cycle`: orientation 0 plain, 1 forward, 2 reverse, 3
+    /// ignore; `starts` defaults to all nodes. Returns `(u, v, reverse)`
+    /// edges, or `None`. Reverse and ignore need exact in-edge order.
+    #[pyo3(signature = (orientation, starts=None))]
+    fn find_cycle(
+        &self,
+        py: Python<'_>,
+        orientation: u8,
+        starts: Option<Vec<u32>>,
+    ) -> PyResult<Option<Vec<(u32, u32, bool)>>> {
+        use structure_more::Orientation;
+        let starts = self.sources_or_all(starts)?;
+        let orientation = match orientation {
+            0 => Orientation::Plain,
+            1 => Orientation::Forward,
+            2 => Orientation::Reverse,
+            _ => Orientation::Ignore,
+        };
+        let pred =
+            if self.directed && matches!(orientation, Orientation::Reverse | Orientation::Ignore) {
+                Some(self.reverse_exact_order(None)?.0)
+            } else {
+                None
+            };
+        Ok(py.detach(|| {
+            structure_more::find_cycle(
+                &self.succ,
+                pred,
+                self.n,
+                self.directed,
+                orientation,
+                &starts,
+            )
+        }))
+    }
+
+    /// `nx.immediate_dominators` from `start`: dict order and values.
+    fn immediate_dominators(&self, py: Python<'_>, start: u32) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        self.check_index(start as usize)?;
+        Ok(py.detach(|| {
+            let post = traversal::dfs_postorder(&self.succ, self.n, &[start], self.n as i64);
+            structure_more::immediate_dominators(self.adj(true), self.n, start, &post)
+        }))
+    }
+
+    /// `nx.dominance_frontiers` from `start`: dict order, then the set
+    /// additions `(v, u)` (meaning `df[v].add(u)`) in order. Needs exact
+    /// in-edge order.
+    #[allow(clippy::type_complexity)]
+    fn dominance_frontiers(
+        &self,
+        py: Python<'_>,
+        start: u32,
+        new_style: bool,
+    ) -> PyResult<(Vec<u32>, Vec<u32>, Vec<u32>)> {
+        self.check_index(start as usize)?;
+        let exact = self.reverse_exact_order(None)?.0;
+        Ok(py.detach(|| {
+            let post = traversal::dfs_postorder(&self.succ, self.n, &[start], self.n as i64);
+            let (mut nodes, idom) =
+                structure_more::immediate_dominators(self.adj(true), self.n, start, &post);
+            let adds =
+                structure_more::dominance_frontier_adds(exact, self.n, &nodes, &idom, new_style);
+            if new_style {
+                nodes.remove(0);
+                nodes.push(start);
+            }
+            let (vs, us) = adds.into_iter().unzip();
+            (nodes, vs, us)
+        }))
+    }
+
+    /// `nx.to_prufer_sequence` for a tree with the node labelled `k` at
+    /// position `pos[k]`: positions of the sequence.
+    fn prufer_sequence(&self, py: Python<'_>, pos: Vec<u32>) -> PyResult<Vec<u32>> {
+        let pos = self.sources_or_all(Some(pos))?;
+        let degree = self.degrees();
+        Ok(py.detach(|| structure_more::prufer(&self.succ, self.n, &pos, &degree)))
     }
 
     /// `greedy_color` (largest_first): processing order and each node's color.

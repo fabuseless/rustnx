@@ -39,11 +39,14 @@ __all__ = [
     "biconnected_components",
     "bidirectional_dijkstra",
     "bidirectional_shortest_path",
+    "bridges",
     "center",
+    "chain_decomposition",
     "closeness_centrality",
     "clustering",
     "connected_components",
     "core_number",
+    "cycle_basis",
     "degree_centrality",
     "descendants",
     "descendants_at_distance",
@@ -56,25 +59,44 @@ __all__ = [
     "diameter",
     "dijkstra_path",
     "dijkstra_path_length",
+    "dominance_frontiers",
     "eccentricity",
     "edge_betweenness_centrality",
     "eigenvector_centrality",
+    "eulerian_circuit",
+    "eulerian_path",
+    "find_cycle",
+    "girth",
     "greedy_color",
     "harmonic_centrality",
+    "has_bridges",
+    "has_eulerian_path",
     "has_path",
+    "immediate_dominators",
     "in_degree_centrality",
+    "is_arborescence",
     "is_attracting_component",
     "is_biconnected",
     "is_bipartite",
+    "is_branching",
     "is_connected",
     "is_directed_acyclic_graph",
+    "is_eulerian",
     "is_forest",
+    "is_isolate",
+    "is_k_regular",
+    "is_regular",
+    "is_semieulerian",
     "is_strongly_connected",
+    "is_tournament",
     "is_tree",
     "is_weakly_connected",
+    "isolates",
     "k_core",
     "katz_centrality",
+    "kruskal_mst_edges",
     "label_propagation_communities",
+    "local_bridges",
     "maximum_spanning_edges",
     "maximum_spanning_tree",
     "minimum_spanning_edges",
@@ -82,6 +104,7 @@ __all__ = [
     "node_connected_component",
     "number_attracting_components",
     "number_connected_components",
+    "number_of_isolates",
     "number_strongly_connected_components",
     "number_weakly_connected_components",
     "out_degree_centrality",
@@ -97,6 +120,7 @@ __all__ = [
     "single_source_shortest_path_length",
     "single_target_shortest_path",
     "strongly_connected_components",
+    "to_prufer_sequence",
     "topological_generations",
     "topological_sort",
     "transitivity",
@@ -1793,3 +1817,389 @@ def is_forest(G):
     # Every component has at least (size - 1) edges, so each has exactly
     # that many (NetworkX's test) if and only if the totals agree.
     return G._core.number_of_edges() == len(G) - _component_count(G)
+
+
+# --- Batch 6: trees and structural tests -------------------------------------------
+
+
+def _node_arg(G, node):
+    """Position of a node argument that NetworkX puts in its output as
+    given (a root or a start). Declines a missing node (NetworkX's errors
+    for those differ by function and version) and an equal object of a
+    different type, which NetworkX would return instead of G's node."""
+    try:
+        i = G._index.get(node)
+    except TypeError:
+        i = None
+    if i is None or type(G._nodes[i]) is not type(node):
+        raise NotImplementedError("rustnx needs a node of the graph here")
+    return i
+
+
+def _computed_on_first_next(G, compute, fallback):
+    """A generator that runs ``compute()`` when iteration starts, as NetworkX
+    does (it copies or decomposes the graph then, so later changes don't
+    matter). If G changed before that, NetworkX's ``fallback()`` runs."""
+    guard = _MutationGuard(G)
+
+    def generate():
+        try:
+            changed = guard.changed()
+        finally:
+            guard.release()
+        if changed:
+            yield from fallback(guard.graph)
+            return
+        yield from compute()
+
+    return generate()
+
+
+def isolates(G):
+    def produce():
+        nodes = G._nodes
+        for v in G._core.isolates():
+            yield nodes[v]
+
+    return _traversal(G, produce)
+
+
+def number_of_isolates(G):
+    return len(G._core.isolates())
+
+
+def is_isolate(G, n):
+    try:
+        i = G._index.get(n)
+    except TypeError:
+        i = None
+    if i is None:
+        # NetworkX's error (or answer, for an nbunch) differs by version.
+        raise NotImplementedError("rustnx needs a node of the graph here")
+    return G._core.degree_of(i) == 0
+
+
+def is_regular(G):
+    if len(G) == 0:
+        raise nx.NetworkXPointlessConcept("Graph has no nodes.")
+    return G._core.is_regular()
+
+
+def is_k_regular(G, k):
+    _undirected_only(G)
+    if type(k) not in (int, bool):
+        raise NotImplementedError("rustnx needs an integer k")
+    return G._core.all_degrees_equal(int(k))
+
+
+def is_tournament(G):
+    _directed_only(G)
+    return G._core.is_tournament()
+
+
+def bridges(G, root=None):
+    _undirected_only(G)
+    if root is not None:
+        # NetworkX then lists the edges of a subgraph copy, whose order
+        # follows the component set's hash order.
+        raise NotImplementedError("rustnx does not support root here")
+
+    def produce():
+        us, vs = G._core.bridges()
+        nodes = G._nodes
+        for u, v in zip(us, vs):
+            yield nodes[u], nodes[v]
+
+    return _traversal(G, produce)
+
+
+def has_bridges(G, root=None):
+    _undirected_only(G)
+    r = None
+    if root is not None:
+        if root not in G:
+            raise nx.NodeNotFound(f"Root node {root} is not in graph")
+        r = G._index[root]
+    us, _ = G._core.bridges(r, True)
+    return bool(us)
+
+
+def _span_weight(G, weight):
+    """The edge attribute for local bridge spans: rustnx's searches give
+    NetworkX's exact (integer) distances only for non-negative ints."""
+    if weight is None:
+        return None
+    weight, all_int, _ = _check_weight(G, weight)
+    if not all_int or G._core.weight_mixed(weight):
+        raise NotImplementedError("rustnx needs integer weights for spans")
+    if G._core.has_negative_weight(weight):
+        raise NotImplementedError("rustnx does not support negative weights here")
+    return weight
+
+
+def local_bridges(G, with_span=True, weight=None):
+    _undirected_only(G)
+    span = with_span is True
+    attr = _span_weight(G, weight) if span else None
+
+    def produce():
+        us, vs = G._core.local_bridges()
+        nodes = G._nodes
+        core = G._core
+        for u, v in zip(us, vs):
+            if not span:
+                yield nodes[u], nodes[v]
+                continue
+            d = core.local_bridge_span(u, v, attr)
+            yield nodes[u], nodes[v], float("inf") if d is None else int(d)
+
+    return _traversal(G, produce)
+
+
+def _chains(G, r):
+    us, vs, ends = G._core.chain_decomposition(r)
+    nodes = G._nodes
+    begin = 0
+    for end in ends:
+        yield [(nodes[us[i]], nodes[vs[i]]) for i in range(begin, end)]
+        begin = end
+
+
+def chain_decomposition(G, root=None):
+    _undirected_only(G)
+    r = None if root is None or root not in G else _node_arg(G, root)
+
+    def compute():
+        if root is not None and r is None:
+            raise nx.NodeNotFound(f"Root node {root} is not in graph")
+        yield from _chains(G, r)
+
+    return _computed_on_first_next(
+        G, compute, lambda H: nx.chain_decomposition(H, root=root, backend="networkx")
+    )
+
+
+def is_eulerian(G):
+    plus_in, plus_out, bad = G._core.euler_balance()
+    if G.is_directed():
+        return not (plus_in or plus_out or bad) and is_strongly_connected(G)
+    return not plus_in and is_connected(G)
+
+
+def has_eulerian_path(G, source=None):
+    if is_eulerian(G):
+        return True
+    s = None if source is None else _node_arg(G, source)
+    plus_in, plus_out, bad = G._core.euler_balance()
+    if G.is_directed():
+        if s is not None:
+            ins, outs = G._core.in_out_degrees()
+            if outs[s] - ins[s] != 1:
+                return False
+        if bad:
+            return False
+        return plus_in <= 1 and plus_out <= 1 and is_weakly_connected(G)
+    if s is not None and G._core.degree_of(s) % 2 != 1:
+        return False
+    return plus_in == 2 and is_connected(G)
+
+
+def is_semieulerian(G):
+    return has_eulerian_path(G) and not is_eulerian(G)
+
+
+def _euler_pairs(G, start):
+    us, vs = G._core.euler_walk(start)
+    nodes = G._nodes
+    return [(nodes[u], nodes[v]) for u, v in zip(us, vs)]
+
+
+def eulerian_circuit(G, source=None, keys=False):
+    s = None if source is None else _node_arg(G, source)
+
+    def compute():
+        if not is_eulerian(G):
+            raise nx.NetworkXError("G is not Eulerian.")
+        # The walk runs on G.copy() (or G.reverse()), as in NetworkX.
+        yield from _euler_pairs(G, 0 if s is None else s)
+
+    return _computed_on_first_next(
+        G, compute, lambda H: nx.eulerian_circuit(H, source=source, keys=keys, backend="networkx")
+    )
+
+
+def _path_start(G):
+    """``_find_path_start`` on the walked graph (G's reverse if directed),
+    for a graph that has an Eulerian path but no circuit."""
+    if G.is_directed():
+        ins, outs = G._core.in_out_degrees()
+        v1, v2 = [v for v, (i, o) in enumerate(zip(ins, outs)) if i != o]
+        # In the reverse, out-degree is G's in-degree.
+        return v1 if ins[v1] > outs[v1] else v2
+    return next(v for v, d in enumerate(G._core.degrees()) if d % 2)
+
+
+def eulerian_path(G, source=None, keys=False):
+    s = None if source is None else _node_arg(G, source)
+
+    def compute():
+        if not has_eulerian_path(G, source):
+            raise nx.NetworkXError("Graph has no Eulerian paths.")
+        eulerian = is_eulerian(G)
+        if G.is_directed():
+            if s is None or not eulerian:
+                start = 0 if eulerian else _path_start(G)
+            else:
+                start = s
+            yield from _euler_pairs(G, start)
+        else:
+            if s is None:
+                start = 0 if eulerian else _path_start(G)
+            else:
+                start = s
+            yield from reversed([(v, u) for u, v in _euler_pairs(G, start)])
+
+    return _computed_on_first_next(
+        G, compute, lambda H: nx.eulerian_path(H, source=source, keys=keys, backend="networkx")
+    )
+
+
+def cycle_basis(G, root=None):
+    _undirected_only(G)
+    if len(G) == 0:
+        return []
+    r = None if root is None else _node_arg(G, root)
+    nodes = G._nodes
+    return [[nodes[v] for v in cycle] for cycle in G._core.cycle_basis(r)]
+
+
+def girth(G):
+    _undirected_only(G)
+    g = G._core.girth()
+    return math.inf if g is None else g
+
+
+_ORIENTATIONS = {None: 0, "original": 1, "reverse": 2, "ignore": 3}
+
+
+def find_cycle(G, source=None, orientation=None):
+    directed = G.is_directed()
+    if not directed:
+        code = 0 if orientation is None else 1  # edge_dfs labels them "forward"
+    elif orientation is None or (type(orientation) is str and orientation in _ORIENTATIONS):
+        code = _ORIENTATIONS[orientation]
+    else:
+        raise NotImplementedError("invalid orientation")
+    starts = None if source is None else [_node_arg(G, source)]
+    if code >= 2:
+        G._ensure_exact_pred()
+    cycle = G._core.find_cycle(code, starts)
+    if cycle is None:
+        raise nx.NetworkXNoCycle("No cycle found.")
+    nodes = G._nodes
+    if code == 0:
+        return [(nodes[u], nodes[v]) for u, v, _ in cycle]
+    return [(nodes[u], nodes[v], "reverse" if rev else "forward") for u, v, rev in cycle]
+
+
+@functools.cache
+def _idom_includes_start():
+    """Whether ``immediate_dominators`` maps start to itself (before 3.7;
+    later releases leave start out)."""
+    return 0 in nx.immediate_dominators(nx.DiGraph([(0, 1)]), 0, backend="networkx")
+
+
+@functools.cache
+def _new_dominance_frontiers():
+    """Whether ``dominance_frontiers`` is NetworkX 3.7's version: start
+    goes last, with dominator ``None``, and its in-edges always count."""
+    D = nx.DiGraph([(0, 1), (1, 0)])
+    return list(nx.dominance_frontiers(D, 0, backend="networkx")) == [1, 0]
+
+
+def _start_position(G, start):
+    _directed_only(G)
+    if start not in G:
+        raise nx.NetworkXError("start is not in G")
+    return _node_arg(G, start)
+
+
+def immediate_dominators(G, start):
+    s = _start_position(G, start)
+    order, idom = G._core.immediate_dominators(s)
+    nodes = G._nodes
+    result = {nodes[u]: nodes[d] for u, d in zip(order, idom)}
+    if not _idom_includes_start():
+        del result[start]
+    return result
+
+
+def dominance_frontiers(G, start):
+    s = _start_position(G, start)
+    G._ensure_exact_pred()
+    order, vs, us = G._core.dominance_frontiers(s, _new_dominance_frontiers())
+    nodes = G._nodes
+    df = {nodes[u]: set() for u in order}
+    # The same additions in the same order give the same set order.
+    for v, u in zip(vs, us):
+        df[nodes[v]].add(nodes[u])
+    return df
+
+
+def is_arborescence(G):
+    _directed_only(G)
+    return is_tree(G) and max(G._core.in_out_degrees()[0]) <= 1
+
+
+def is_branching(G):
+    _directed_only(G)
+    return is_forest(G) and max(G._core.in_out_degrees()[0]) <= 1
+
+
+def to_prufer_sequence(T):
+    _undirected_only(T)
+    n = len(T)
+    if n < 2:
+        msg = "Prüfer sequence undefined for trees with fewer than two nodes"
+        raise nx.NetworkXPointlessConcept(msg)
+    if not is_tree(T):
+        raise nx.NotATree("provided graph is not a tree")
+    index = T._index
+    pos = [index.get(k) for k in range(n)]
+    if None in pos:
+        raise KeyError("tree must have node labels {0, ..., n - 1}")
+    nodes = T._nodes
+    return [nodes[v] for v in T._core.prufer_sequence(pos)]
+
+
+def kruskal_mst_edges(G, minimum, weight="weight", keys=True, data=True, ignore_nan=False, partition=None):
+    if partition is not None:
+        raise NotImplementedError("rustnx does not support partition")
+    base = _networkx_graph(G)
+    weight, _, has_hidden = _check_weight(G, weight)
+    core = G._core  # after `_check_weight`, which may convert `weight`
+    if has_hidden and not core.is_native():
+        # NetworkX converts `weight` with default None for this function,
+        # so edges lacking it look hidden; NetworkX itself defaults to 1.
+        from .graph import from_networkx
+
+        core = from_networkx(base, {weight: 1})._core
+        has_hidden = core.weight_info(weight)[1]
+    if has_hidden:
+        raise NotImplementedError("rustnx does not support None edge weights here")
+    us, vs = core.kruskal(weight, not minimum)
+    guard = _MutationGuard(G)
+    nodes = G._nodes
+    adj = base._adj
+
+    def generate():
+        try:
+            for u, v in zip(us, vs):
+                if guard.changed():
+                    raise RuntimeError("Graph changed during iteration")
+                a, b = nodes[u], nodes[v]
+                yield (a, b, adj[a][b]) if data else (a, b)
+        finally:
+            guard.release()
+
+    return generate()
