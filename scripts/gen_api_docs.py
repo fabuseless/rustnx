@@ -12,10 +12,9 @@ import inspect
 import pathlib
 import sys
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "python"))
+from rustnx import algorithms, interface, rx  # the installed (or develop-mode) package
 
-from rustnx import algorithms, interface, rx  # noqa: E402
+ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 OUTPUT = ROOT / "docs" / "API.md"
 
