@@ -26,6 +26,8 @@ versions may change behavior.
 - Free-threaded Python (3.14t) support: the extension declares it doesn't
   need the GIL, wheels are built for 3.14t on Linux, macOS and Windows, and a
   test runs algorithms from many threads at once and compares the results.
+- README section "When rustnx helps, and when it doesn't", covering
+  conversion cost, caching, small graphs and inputs that run in NetworkX.
 
 ### Fixed
 - Functions that return path lengths now hand graphs whose weights mix ints

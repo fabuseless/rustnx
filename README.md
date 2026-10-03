@@ -20,6 +20,42 @@ Nothing else changes. Anything rustnx doesn't support, such as other
 functions, multigraphs in functions that treat parallel edges specially, or callable weights, keeps running in NetworkX, so
 turning it on never breaks working code.
 
+## When rustnx helps, and when it doesn't
+
+A NetworkX graph is a dict of dicts in Python, so rustnx first copies it into
+a compact Rust layout. NetworkX caches the copy on the graph, and later calls
+reuse it until the graph changes.
+
+| 200,000 nodes / 1M edges | Converting to rustnx | Just walking the graph in pure Python |
+|---|---|---|
+| Undirected, no weights | 0.22 s | 0.13 s |
+| Undirected, with weights | 0.58 s | 0.60 s |
+| Directed, with weights | 0.29 s | 0.29 s |
+
+Conversion costs about as much as reading the graph once in Python, which is
+the floor for anything that starts from a NetworkX graph. So:
+
+- **Heavy algorithms win right away.** Betweenness, closeness, PageRank,
+  distance measures, clustering and the centralities take seconds to minutes
+  in NetworkX and a fraction of a second here, conversion included.
+- **Cheap algorithms win when repeated.** A single BFS or Dijkstra on a big
+  graph costs about the same as one conversion, so the first call is not
+  much faster; the following calls on the same graph are.
+- **Small graphs stay in NetworkX.** Below 500 nodes, linear-time functions
+  run in NetworkX automatically, since converting would cost more than it
+  saves. You can still force rustnx with `backend="rustnx"`.
+- **Big Python results limit the gain.** Functions that return a path for
+  every node (`single_source_shortest_path`, `all_pairs_shortest_path`,
+  `all_shortest_paths`) or a new graph (`k_core`, `bfs_tree`) spend most of
+  their time building Python objects, so they speed up 2–8× rather than 50×.
+- **Some inputs run in NetworkX:** unsupported functions or parameters,
+  callable weights, multigraphs in functions that treat parallel edges
+  specially, graphs whose weights mix ints and floats in functions that
+  return lengths, and graph subclasses that override how they are read. The
+  results are still correct; they're just not faster.
+
+To skip conversion entirely, build the graph in Rust (next section).
+
 ## Native graphs: skip NetworkX entirely
 
 For big graphs, build the graph in Rust directly. There's no conversion

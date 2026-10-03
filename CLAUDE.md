@@ -40,7 +40,7 @@ errors) on NetworkX 3.4, 3.5 and 3.7; anything rustnx can't match raises
 
 | # | Item | Status | Group | Owner | Notes |
 |---|------|--------|-------|-------|-------|
-| 1 | README section: what gets faster and what stays at NetworkX speed | To do | Getting users | Claude | Small graphs, one-off calls, unsupported functions, multigraphs |
+| 1 | README section: what gets faster and what stays at NetworkX speed | Done | Getting users | Claude | Written with item 18: "When rustnx helps, and when it doesn't" |
 | 2 | GitHub issue templates (bug report, function request) | To do | Getting users | Claude | |
 | 3 | Announcement post (NetworkX Discussions, Scientific Python forum, r/Python) | To do | Getting users | Owner | Claude can draft it |
 | 4 | `bidirectional_dijkstra` | Done | Algorithms | Claude | |
@@ -57,7 +57,7 @@ errors) on NetworkX 3.4, 3.5 and 3.7; anything rustnx can't match raises
 | 15 | `louvain_communities`, `label_propagation_communities` | Partly done | Algorithms | Claude | Done: `label_propagation_communities` (plus `greedy_color`). Louvain blocked: internals differ in all three versions and depend on set order and float sums |
 | 16 | Weighted clustering | Blocked | Algorithms | Claude | Sums NumPy `cbrt` arrays (pairwise summation) over set intersections in hash order |
 | 17 | Multigraph support (`MultiGraph`, `MultiDiGraph`) | Partly done | Engineering | Claude | Done: components, traversals, shortest paths, betweenness/closeness/harmonic, distance measures, `is_bipartite` (`interface.MULTIGRAPH_FUNCTIONS`). Left: `pagerank` (sums parallel weights), degree-based functions, MST with keys |
-| 18 | Faster conversion from NetworkX, or docs steering to native `rustnx.Graph` | To do | Engineering | Claude | |
+| 18 | Faster conversion from NetworkX, or docs steering to native `rustnx.Graph` | Done | Engineering | Claude | Profiled: conversion already costs about one pure-Python walk of the graph (the floor); documented in the README section "When rustnx helps, and when it doesn't" |
 | 19 | Free-threaded Python 3.14 wheels | Done | Engineering | Claude | `gil_used = false`; cp314t wheels in `wheels.yml`; `tests/test_free_threading.py` |
 | 20 | CI benchmark guard that fails on slowdowns | To do | Release quality | Claude | |
 | 21 | API docs listing every supported function and parameter | To do | Release quality | Claude | |
