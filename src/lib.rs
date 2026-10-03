@@ -15,7 +15,7 @@ use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 
 use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
-use algorithms::{centrality, cluster, directed, distance, paths, spectral, structure};
+use algorithms::{centrality, centrality_more, cluster, directed, distance, paths, spectral, structure};
 use graph::CoreGraph;
 
 impl From<NegativeCycle> for PyErr {
@@ -722,6 +722,200 @@ impl CoreGraph {
             .unzip()
     }
 
+    // --- Batch 4: centrality ---
+
+    /// Unscaled `betweenness_centrality_subset`, in node order.
+    #[pyo3(signature = (sources, targets, weight=None))]
+    fn betweenness_subset(
+        &self,
+        py: Python<'_>,
+        sources: Vec<u32>,
+        targets: Vec<u32>,
+        weight: Option<&str>,
+    ) -> PyResult<Vec<f64>> {
+        let w = self.weight_slice(weight, false)?;
+        let sources = self.sources_or_all(Some(sources))?;
+        let is_target = self.membership(&targets)?;
+        Ok(py.detach(|| {
+            centrality_more::betweenness_subset(&self.succ, self.n, w, &sources, &is_target)
+        }))
+    }
+
+    /// Unscaled `edge_betweenness_centrality_subset`, per edge in
+    /// `edges_in_order`.
+    #[pyo3(signature = (sources, targets, weight=None))]
+    fn edge_betweenness_subset(
+        &self,
+        py: Python<'_>,
+        sources: Vec<u32>,
+        targets: Vec<u32>,
+        weight: Option<&str>,
+    ) -> PyResult<Vec<f64>> {
+        let w = self.weight_slice(weight, false)?;
+        let sources = self.sources_or_all(Some(sources))?;
+        let is_target = self.membership(&targets)?;
+        Ok(py.detach(|| {
+            let (edge_id, m) = self.edge_ids();
+            centrality_more::edge_betweenness_subset(
+                &self.succ, self.n, w, &sources, &is_target, &edge_id, m,
+            )
+        }))
+    }
+
+    /// Unnormalized load centrality, in node order. `rank[v]` is `v`'s
+    /// position when the nodes are sorted.
+    #[pyo3(signature = (rank, weight=None, cutoff=None))]
+    fn load(
+        &self,
+        py: Python<'_>,
+        rank: Vec<u32>,
+        weight: Option<&str>,
+        cutoff: Option<f64>,
+    ) -> PyResult<Vec<f64>> {
+        if rank.len() != self.n {
+            return Err(PyValueError::new_err("rank length must equal the node count"));
+        }
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| centrality_more::load(&self.succ, self.n, w, cutoff, &rank))?)
+    }
+
+    /// `edge_load_centrality`: key node pairs and their values.
+    #[pyo3(signature = (cutoff=None))]
+    #[allow(clippy::type_complexity)]
+    fn edge_load(&self, py: Python<'_>, cutoff: Option<f64>) -> (Vec<u32>, Vec<u32>, Vec<f64>) {
+        let (us, vs, _) = self.edges_in_order();
+        py.detach(|| {
+            let (keys, values) = centrality_more::edge_load(&self.succ, self.n, (&us, &vs), cutoff);
+            let (a, b) = keys.into_iter().unzip();
+            (a, b, values)
+        })
+    }
+
+    /// Unscaled `percolation_centrality`, in node order.
+    #[pyo3(signature = (states, total, weight=None))]
+    fn percolation(
+        &self,
+        py: Python<'_>,
+        states: Vec<f64>,
+        total: f64,
+        weight: Option<&str>,
+    ) -> PyResult<Vec<f64>> {
+        if states.len() != self.n {
+            return Err(PyValueError::new_err("states length must equal the node count"));
+        }
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| centrality_more::percolation(&self.succ, self.n, w, &states, total)))
+    }
+
+    /// `voterank`: elected nodes in order.
+    fn voterank(&self, py: Python<'_>, number: usize, avg_degree: f64) -> Vec<u32> {
+        let (us, vs, _) = self.edges_in_order();
+        py.detach(|| {
+            centrality_more::voterank(&self.succ, self.n, self.directed, (&us, &vs), number, avg_degree)
+        })
+    }
+
+    /// `(total, embeddedness)` of `_dispersion` for each `(u, v)` pair; all
+    /// arcs in CSR order when `pairs` is `None`.
+    #[pyo3(signature = (pairs=None))]
+    fn dispersion(
+        &self,
+        py: Python<'_>,
+        pairs: Option<(Vec<u32>, Vec<u32>)>,
+    ) -> PyResult<Vec<(u64, u64)>> {
+        let (us, vs) = match pairs {
+            Some((us, vs)) => {
+                for &v in us.iter().chain(&vs) {
+                    self.check_index(v as usize)?;
+                }
+                (us, vs)
+            }
+            None => {
+                let us = (0..self.n)
+                    .flat_map(|u| std::iter::repeat_n(u as u32, self.succ.neighbors(u).len()))
+                    .collect();
+                (us, self.succ.targets.clone())
+            }
+        };
+        Ok(py.detach(|| centrality_more::dispersion(&self.succ, self.n, &us, &vs)))
+    }
+
+    fn has_self_loops(&self) -> bool {
+        (0..self.n).any(|v| self.succ.neighbors(v).contains(&(v as u32)))
+    }
+
+    /// Whether some edge has a negative value of `attr`.
+    fn has_negative_weight(&self, attr: &str) -> PyResult<bool> {
+        Ok(self
+            .weight_slice(Some(attr), false)?
+            .is_some_and(|w| w.iter().any(|&x| x < 0.0)))
+    }
+
+    /// `group_degree_centrality`'s numerator (`reverse`: predecessors).
+    #[pyo3(signature = (group, reverse=false))]
+    fn group_degree(&self, group: Vec<u32>, reverse: bool) -> PyResult<usize> {
+        let group = self.sources_or_all(Some(group))?;
+        Ok(centrality_more::group_degree(self.adj(reverse), self.n, &group))
+    }
+
+    /// `group_closeness_centrality`'s sum of distances from `group` (on the
+    /// reversed graph if directed), added in `order`. Non-negative weights.
+    #[pyo3(signature = (group, order, weight=None))]
+    fn group_distance_sum(
+        &self,
+        py: Python<'_>,
+        group: Vec<u32>,
+        order: Vec<u32>,
+        weight: Option<&str>,
+    ) -> PyResult<f64> {
+        let group = self.sources_or_all(Some(group))?;
+        let order = self.sources_or_all(Some(order))?;
+        let w = self.weight_slice(weight, true)?;
+        let adj = self.adj(true);
+        Ok(py.detach(|| {
+            let dist = centrality_more::multi_source_distances(adj, self.n, w, &group);
+            let mut total = 0.0;
+            for &v in &order {
+                if let Some(d) = dist[v as usize] {
+                    total += d;
+                }
+            }
+            total
+        }))
+    }
+
+    /// Unweighted reaching: `(nodes reached, sum of 1 / distance)` per source.
+    fn reaching_unweighted(
+        &self,
+        py: Python<'_>,
+        sources: Vec<u32>,
+        compensated: bool,
+    ) -> PyResult<Vec<(usize, f64)>> {
+        let sources = self.sources_or_all(Some(sources))?;
+        Ok(py.detach(|| {
+            centrality_more::reaching_unweighted(&self.succ, self.n, &sources, compensated)
+        }))
+    }
+
+    /// Weighted reaching: the sum of average path weights per source.
+    fn reaching_weighted(
+        &self,
+        py: Python<'_>,
+        sources: Vec<u32>,
+        weight: &str,
+        total: f64,
+        pop_order: bool,
+        compensated: bool,
+    ) -> PyResult<Vec<f64>> {
+        let sources = self.sources_or_all(Some(sources))?;
+        let w = self.weight_slice(Some(weight), false)?.expect("weighted");
+        Ok(py.detach(|| {
+            centrality_more::reaching_weighted(
+                &self.succ, self.n, w, total, &sources, pop_order, compensated,
+            )
+        }))
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -966,6 +1160,16 @@ impl CoreGraph {
             self.check_index(v as usize)?;
         }
         Ok(sources)
+    }
+
+    /// A flag per node: whether it is in `nodes`.
+    fn membership(&self, nodes: &[u32]) -> PyResult<Vec<bool>> {
+        let mut flags = vec![false; self.n];
+        for &v in nodes {
+            self.check_index(v as usize)?;
+            flags[v as usize] = true;
+        }
+        Ok(flags)
     }
 
     fn check_index(&self, v: usize) -> PyResult<()> {

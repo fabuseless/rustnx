@@ -1,4 +1,5 @@
 pub mod centrality;
+pub mod centrality_more;
 pub mod cluster;
 pub mod directed;
 pub mod distance;
