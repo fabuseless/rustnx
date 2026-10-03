@@ -37,8 +37,10 @@ errors) on NetworkX 3.4, 3.5 and 3.7; anything rustnx can't match raises
   items are added or finished (finished items stay in the table).
 - Releases: bump the version in `pyproject.toml`, `Cargo.toml` (semver form,
   e.g. `0.1.0-alpha.2`) and `python/rustnx/__init__.py`, date the CHANGELOG
-  section, then the owner publishes a GitHub Release tagged `vX.Y.Z` and
-  approves the `pypi` deployment.
+  section, and merge that first. Only then does the owner publish a GitHub
+  Release tagged `vX.Y.Z` and approve the `pypi` deployment. The wheels
+  workflow fails at once if the tag doesn't match `pyproject.toml`, and a test
+  checks the three version numbers agree.
 
 ## To do
 

@@ -1394,3 +1394,23 @@ def test_cached_multigraph_conversion_not_reused(restore_config):
     ref = nx.pagerank(M)
     nx.config.backend_priority.algos = ["rustnx"]
     assert nx.pagerank(M) == ref  # pagerank sums parallel weights: NetworkX runs it
+
+
+def test_version_numbers_agree():
+    # pyproject.toml decides the PyPI version; the others must match it
+    # (Cargo needs the semver spelling, e.g. 0.1.0a3 -> 0.1.0-alpha.3).
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    pyproject = re.search(r'^version = "(.+)"', (root / "pyproject.toml").read_text(), re.M)
+    cargo = re.search(r'^version = "(.+)"', (root / "Cargo.toml").read_text(), re.M)
+    if not (pyproject and cargo):
+        pytest.skip("source tree not available")
+    py_version = pyproject.group(1)
+    m = re.fullmatch(r"(\d+\.\d+\.\d+)(?:(a|b|rc)(\d+))?", py_version)
+    assert m, py_version
+    labels = {"a": "alpha", "b": "beta", "rc": "rc"}
+    expected_cargo = m.group(1) + (f"-{labels[m.group(2)]}.{m.group(3)}" if m.group(2) else "")
+    assert cargo.group(1) == expected_cargo
+    assert rustnx.__version__ == py_version

@@ -1,6 +1,6 @@
 [package]
 name = "rustnx"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 edition = "2021"
 license = "BSD-3-Clause"
 authors = ["Fabuseless"]
