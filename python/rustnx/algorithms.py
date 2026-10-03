@@ -30,6 +30,7 @@ __all__ = [
     "average_clustering",
     "average_shortest_path_length",
     "betweenness_centrality",
+    "betweenness_centrality_subset",
     "bfs_edges",
     "bfs_layers",
     "bfs_predecessors",
@@ -56,10 +57,18 @@ __all__ = [
     "diameter",
     "dijkstra_path",
     "dijkstra_path_length",
+    "dispersion",
     "eccentricity",
     "edge_betweenness_centrality",
+    "edge_betweenness_centrality_subset",
+    "edge_load_centrality",
     "eigenvector_centrality",
+    "global_reaching_centrality",
     "greedy_color",
+    "group_closeness_centrality",
+    "group_degree_centrality",
+    "group_in_degree_centrality",
+    "group_out_degree_centrality",
     "harmonic_centrality",
     "has_path",
     "in_degree_centrality",
@@ -75,10 +84,12 @@ __all__ = [
     "k_core",
     "katz_centrality",
     "label_propagation_communities",
+    "local_reaching_centrality",
     "maximum_spanning_edges",
     "maximum_spanning_tree",
     "minimum_spanning_edges",
     "minimum_spanning_tree",
+    "newman_betweenness_centrality",
     "node_connected_component",
     "number_attracting_components",
     "number_connected_components",
@@ -86,6 +97,7 @@ __all__ = [
     "number_weakly_connected_components",
     "out_degree_centrality",
     "pagerank",
+    "percolation_centrality",
     "periphery",
     "radius",
     "shortest_path",
@@ -101,6 +113,7 @@ __all__ = [
     "topological_sort",
     "transitivity",
     "triangles",
+    "voterank",
     "weakly_connected_components",
     "wiener_index",
 ]
@@ -1793,3 +1806,365 @@ def is_forest(G):
     # Every component has at least (size - 1) edges, so each has exactly
     # that many (NetworkX's test) if and only if the totals agree.
     return G._core.number_of_edges() == len(G) - _component_count(G)
+
+
+# --- Batch 4: centrality -----------------------------------------------------------
+
+
+def _positions(G, nodes):
+    """Positions of ``nodes`` in order (repeats kept), declining missing or
+    unhashable nodes (NetworkX raises different errors at different times
+    for those)."""
+    index = G._index
+    try:
+        return [index[v] for v in nodes]
+    except (KeyError, TypeError):
+        raise NotImplementedError("rustnx needs every node to be in G") from None
+
+
+def _reusable(nodes):
+    if iter(nodes) is nodes:
+        raise NotImplementedError("rustnx needs a reusable container of nodes")
+    return nodes
+
+
+def _target_positions(G, targets):
+    """Positions of the nodes in ``set(targets)`` (others are ignored)."""
+    index = G._index
+    try:
+        return [index[v] for v in set(_reusable(targets)) if v in index]
+    except TypeError:
+        raise NotImplementedError("unhashable target") from None
+
+
+@functools.cache
+def _subset_rescale():
+    """How the installed NetworkX rescales subset betweenness: ``(node,
+    edge)``, each a function ``(b, n, normalized, directed)`` or ``None``.
+    3.4 and 3.5 use the subset module's own ``_rescale``/``_rescale_e``; 3.7
+    uses the shared betweenness ``_rescale`` (with ``endpoints=False`` for
+    nodes)."""
+    from networkx.algorithms.centrality import betweenness_subset as mod
+
+    def text(func):
+        try:
+            return " ".join(inspect.getsource(func.orig_func).split())
+        except (AttributeError, OSError, TypeError):
+            return ""
+
+    plain = "_rescale(b, len(G), normalized=normalized, directed=G.is_directed())"
+    no_ends = (
+        "_rescale( b, len(G), normalized=normalized, directed=G.is_directed(), endpoints=False )"
+    )
+    node_src = text(nx.betweenness_centrality_subset)
+    edge_src = text(nx.edge_betweenness_centrality_subset)
+    node = edge = None
+    if no_ends in node_src:
+        def node(b, n, normalized, directed):
+            return mod._rescale(b, n, normalized=normalized, directed=directed, endpoints=False)
+    elif "b = " + plain in node_src:
+        def node(b, n, normalized, directed):
+            return mod._rescale(b, n, normalized=normalized, directed=directed)
+    if "b = _rescale_e(" + plain[len("_rescale("):] in edge_src:
+        def edge(b, n, normalized, directed):
+            return mod._rescale_e(b, n, normalized=normalized, directed=directed)
+    elif "b = " + plain in edge_src:
+        def edge(b, n, normalized, directed):
+            return mod._rescale(b, n, normalized=normalized, directed=directed)
+    return node, edge
+
+
+def betweenness_centrality_subset(G, sources, targets, normalized=False, weight=None):
+    rescale = _subset_rescale()[0]
+    if rescale is None:
+        raise NotImplementedError("unrecognized NetworkX subset betweenness rescaling")
+    weight = _unhidden_weight(G, weight)
+    sources = _positions(G, sources)
+    targets = _target_positions(G, targets)
+    raw = G._core.betweenness_subset(sources, targets, weight)
+    return rescale(dict(zip(G._nodes, raw)), len(G), normalized, G.is_directed())
+
+
+def edge_betweenness_centrality_subset(G, sources, targets, normalized=False, weight=None):
+    rescale = _subset_rescale()[1]
+    if rescale is None:
+        raise NotImplementedError("unrecognized NetworkX subset betweenness rescaling")
+    if any(isinstance(v, tuple) for v in G._nodes):
+        # NetworkX keeps nodes and edges as keys of one dict.
+        raise NotImplementedError("rustnx does not support tuple nodes here")
+    weight = _unhidden_weight(G, weight)
+    sources = _positions(G, sources)
+    targets = _target_positions(G, targets)
+    raw = G._core.edge_betweenness_subset(sources, targets, weight)
+    us, vs, _ = G._core.edges_in_order()
+    nodes = G._nodes
+    b = dict(zip([(nodes[u], nodes[v]) for u, v in zip(us, vs)], raw))
+    return rescale(b, len(G), normalized, G.is_directed())
+
+
+def _node_rank(G):
+    """Each node's position in ``sorted(G)``, for NetworkX's sorts of
+    ``(distance, node)`` tuples. Only all-int or all-str nodes, where
+    Python's comparisons are a total order."""
+    nodes = G._nodes
+    kinds = set(map(type, nodes))
+    if not (kinds <= {int} or kinds <= {str}):
+        raise NotImplementedError("rustnx sorts only int or str nodes")
+    rank = [0] * len(nodes)
+    for r, i in enumerate(sorted(range(len(nodes)), key=nodes.__getitem__)):
+        rank[i] = r
+    return rank
+
+
+def _number(value):
+    if type(value) not in (int, float, bool):
+        raise NotImplementedError("rustnx needs a numeric cutoff")
+    return float(value)
+
+
+def newman_betweenness_centrality(G, v=None, cutoff=None, normalized=True, weight=None):
+    weight, _, _ = _check_weight(G, weight)
+    if weight is None:
+        # `nx.predecessor` stops when `cutoff and cutoff <= level`.
+        cutoff = _number(cutoff) if cutoff else None
+    elif cutoff is not None:
+        cutoff = _number(cutoff)
+    if v is not None:
+        try:
+            hash(v)
+        except TypeError:
+            raise NotImplementedError("unhashable node") from None
+    raw = G._core.load(_node_rank(G), weight, cutoff)
+    order = len(G)
+    if v is not None:
+        i = G._index.get(v)
+        betweenness = 0.0 if i is None else raw[i]
+        if normalized:
+            if order <= 2:
+                return betweenness
+            betweenness *= 1.0 / ((order - 1) * (order - 2))
+        return betweenness
+    betweenness = dict(zip(G._nodes, raw))
+    if normalized:
+        if order <= 2:
+            return betweenness
+        scale = 1.0 / ((order - 1) * (order - 2))
+        for k in betweenness:
+            betweenness[k] *= scale
+    return betweenness
+
+
+def edge_load_centrality(G, cutoff=False):
+    cutoff = _number(cutoff) if cutoff else None
+    us, vs, values = G._core.edge_load(cutoff)
+    nodes = G._nodes
+    return dict(zip([(nodes[u], nodes[v]) for u, v in zip(us, vs)], values))
+
+
+_MAX_EXACT_INT = 2**53
+
+
+def _state_value(x):
+    if type(x) not in (int, float, bool) or (type(x) is int and abs(x) > _MAX_EXACT_INT):
+        raise NotImplementedError("rustnx needs int or float percolation states")
+    return float(x)
+
+
+def percolation_centrality(G, attribute="percolation", states=None, weight=None):
+    weight = _unhidden_weight(G, weight)
+    n = len(G)
+    if n == 2:
+        raise NotImplementedError("NetworkX divides by zero here")
+    if states is None:
+        states = nx.get_node_attributes(_networkx_graph(G), attribute, default=1)
+    # The same loop as NetworkX, so the total is the same.
+    p_sigma_x_t = 0.0
+    for x in states.values():
+        p_sigma_x_t += x
+    if type(p_sigma_x_t) is not float:
+        raise NotImplementedError("rustnx needs int or float percolation states")
+    try:
+        values = [_state_value(states[v]) for v in G._nodes]
+    except (KeyError, TypeError):
+        raise NotImplementedError("a node has no percolation state") from None
+    if n > 1 and any(p_sigma_x_t - x == 0 for x in values):
+        raise NotImplementedError("NetworkX may divide by zero here")
+    raw = G._core.percolation(values, p_sigma_x_t, weight)
+    if n == 0:
+        return {}
+    scale = 1 / (n - 2)
+    return {v: x * scale for v, x in zip(G._nodes, raw)}
+
+
+def voterank(G, number_of_nodes=None):
+    n = len(G)
+    if n == 0:
+        return []
+    if number_of_nodes is not None and type(number_of_nodes) not in (int, bool):
+        raise NotImplementedError("rustnx needs an integer number_of_nodes")
+    if number_of_nodes is None or number_of_nodes > n:
+        number_of_nodes = n
+    m = G._core.number_of_edges()
+    # Average out-degree (directed) or degree (self-loops count twice).
+    avg_degree = (m if G.is_directed() else 2 * m) / n
+    nodes = G._nodes
+    return [nodes[i] for i in G._core.voterank(max(number_of_nodes, 0), avg_degree)]
+
+
+def dispersion(G, u=None, v=None, normalized=True, alpha=1.0, b=0.0, c=0.0):
+    if G.is_directed() or G._core.has_self_loops():
+        # Then NetworkX's count depends on the iteration order of a set.
+        raise NotImplementedError("rustnx supports undirected graphs without self-loops")
+
+    def value(counts):
+        total, embeddedness = counts
+        dispersion_val = total
+        if normalized:
+            dispersion_val = (total + b) ** alpha
+            if embeddedness + c != 0:
+                dispersion_val /= embeddedness + c
+        return dispersion_val
+
+    nodes = G._nodes
+    core = G._core
+    if u is None and v is None:
+        results = {x: {} for x in nodes}
+        counts = core.dispersion()
+        i = 0
+        for x in range(len(nodes)):
+            row = results[nodes[x]]
+            for y in core.neighbors(x):
+                row[nodes[y]] = value(counts[i])
+                i += 1
+        return results
+    if u is not None and v is not None:
+        a, z = _positions(G, [u, v])
+        return value(core.dispersion(([a], [z]))[0])
+    center = _positions(G, [u if v is None else v])[0]
+    nbrs = core.neighbors(center)
+    counts = core.dispersion(([center] * len(nbrs), nbrs))
+    return {nodes[y]: value(k) for y, k in zip(nbrs, counts)}
+
+
+def _group_degree(G, S, reverse):
+    S = _reusable(S)
+    count = G._core.group_degree(_positions(G, S), reverse)
+    return count / (len(G) - len(S))
+
+
+def group_degree_centrality(G, S):
+    return _group_degree(G, S, False)
+
+
+def group_in_degree_centrality(G, S):
+    _directed_only(G)
+    return _group_degree(G, S, True)
+
+
+def group_out_degree_centrality(G, S):
+    _directed_only(G)
+    return _group_degree(G, S, False)
+
+
+def group_closeness_centrality(G, S, weight=None):
+    weight, _, _ = _check_weight(G, weight)
+    if weight is not None and G._core.has_negative_weight(weight):
+        raise NotImplementedError("with negative weights the visiting order matters")
+    # Built exactly as NetworkX builds them, so they iterate in the same order.
+    V = set(G._nodes)
+    S = set(S)
+    V_S = V - S
+    if not S:
+        raise ValueError("sources must not be empty")
+    index = G._index
+    for s in S:
+        if s not in index:
+            raise nx.NodeNotFound(f"Node {s} not found in graph")
+    total = G._core.group_distance_sum([index[s] for s in S], [index[x] for x in V_S], weight)
+    if total == 0:
+        return 0  # NetworkX's ZeroDivisionError case
+    return len(V_S) / total
+
+
+@functools.cache
+def _global_reaching_warnings():
+    """Warnings NetworkX's ``global_reaching_centrality`` gives (3.4 warns
+    that ``shortest_path`` will return an iterator)."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        nx.global_reaching_centrality(nx.path_graph(3), backend="networkx")
+    return [(w.category, str(w.message)) for w in caught]
+
+
+def _reaching_weight(G, weight):
+    """Checks for weighted reaching centrality: the source graph and
+    ``G.size(weight)``. Raises NetworkX's error for negative weights."""
+    _, _, has_hidden = _check_weight(G, weight)
+    if has_hidden:
+        raise NotImplementedError("rustnx does not support None edge weights here")
+    source = _networkx_graph(G)
+    kinds = set()
+    for _, _, data in source.edges(data=True):
+        if weight not in data:
+            raise NotImplementedError("an edge has no weight")  # KeyError in NetworkX
+        x = data[weight]
+        kinds.add(type(x))
+        if x < 0:
+            raise nx.NetworkXError("edge weights must be positive")
+        if x == 0:
+            raise NotImplementedError("NetworkX divides by a zero weight")
+    if not (kinds <= {int} or kinds <= {float}):
+        # Path weight sums then switch between int and float.
+        raise NotImplementedError("rustnx needs all-int or all-float weights")
+    return source, source.size(weight=weight)
+
+
+_SINGLE_SELF_LOOP = "local_reaching_centrality of a single node with self-loop not well-defined"
+
+
+def _reaching_values(G, sources, weight, normalized, total_weight, source_graph):
+    n = len(G)
+    core = G._core
+    if weight is None:
+        parts = core.reaching_unweighted(sources, _COMPENSATED_SUM)
+        if G.is_directed():
+            return [(reached - 1) / (n - 1) for reached, _ in parts]
+        return [s / 1 / (n - 1) for _, s in parts]
+    sums = core.reaching_weighted(
+        sources, weight, total_weight, _dijkstra_paths_in_pop_order(), _COMPENSATED_SUM
+    )
+    norm = source_graph.size(weight=weight) / source_graph.size() if normalized else 1
+    return [s / norm / (n - 1) for s in sums]
+
+
+def local_reaching_centrality(G, v, paths=None, weight=None, normalized=True):
+    if paths is not None:
+        raise NotImplementedError("rustnx computes the paths itself")
+    s = _positions(G, [v])[0]
+    if weight is None:
+        source = None
+        total_weight = G._core.number_of_edges()
+    else:
+        source, total_weight = _reaching_weight(G, weight)
+    if total_weight > 0 and len(G) == 1:
+        raise nx.NetworkXError(_SINGLE_SELF_LOOP)
+    if total_weight <= 0:
+        raise nx.NetworkXError("Size of G must be positive")
+    return _reaching_values(G, [s], weight, normalized, total_weight, source)[0]
+
+
+def global_reaching_centrality(G, weight=None, normalized=True):
+    if weight is None:
+        source = None
+        total_weight = G._core.number_of_edges()
+    else:
+        source, total_weight = _reaching_weight(G, weight)
+    if total_weight <= 0:
+        raise nx.NetworkXError("Size of G must be positive")
+    for category, message in _global_reaching_warnings():
+        warnings.warn(message, category, stacklevel=2)
+    if len(G) == 1:
+        raise nx.NetworkXError(_SINGLE_SELF_LOOP)
+    lrc = _reaching_values(G, list(range(len(G))), weight, normalized, total_weight, source)
+    max_lrc = max(lrc)
+    return sum(max_lrc - c for c in lrc) / (len(G) - 1)
