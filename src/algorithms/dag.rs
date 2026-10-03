@@ -170,37 +170,58 @@ impl AllTopologicalSorts {
     }
 }
 
-/// `nx.transitive_reduction` on a DAG: for each arc of `succ`, whether it
-/// survives (its head is not reachable from another successor of its tail).
-pub fn transitive_reduction(succ: &Csr, n: usize) -> Vec<bool> {
-    let rows: Vec<Vec<bool>> = (0..n)
+/// Marks an arc `transitive_reduction` keeps.
+pub const KEPT: u32 = u32::MAX;
+
+/// `nx.transitive_reduction` on a DAG with topological positions `pos`.
+/// For each arc `u -> w` of `succ`: `KEPT`, or the position in `u`'s row of
+/// the successor `v` whose descendants removed `w`. NetworkX walks `G[u]`
+/// and, for each `v` still in its candidate set, removes `v`'s descendants;
+/// a set may be resized after each removal, so Python must repeat the same
+/// removals in the same groups.
+pub fn transitive_reduction(succ: &Csr, n: usize, pos: &[u32]) -> Vec<u32> {
+    let rows: Vec<Vec<u32>> = (0..n)
         .into_par_iter()
         .map_init(
-            || (vec![0u32; n], Vec::new()),
-            |(stamp, stack): &mut (Vec<u32>, Vec<u32>), u| {
+            || (vec![0u32; n], vec![u32::MAX; n], 0u32, Vec::new()),
+            |(stamp, slot, mark, stack): &mut (Vec<u32>, Vec<u32>, u32, Vec<u32>), u| {
                 let nbrs = succ.neighbors(u);
+                let mut group = vec![KEPT; nbrs.len()];
                 if nbrs.len() <= 1 {
-                    return vec![true; nbrs.len()];
+                    return group;
                 }
-                let mark = u as u32 + 1;
-                stack.clear();
-                for &w in nbrs {
-                    for &x in succ.neighbors(w as usize) {
-                        if stamp[x as usize] != mark {
-                            stamp[x as usize] = mark;
-                            stack.push(x);
+                for (k, &v) in nbrs.iter().enumerate() {
+                    slot[v as usize] = k as u32;
+                }
+                // Nothing past the last successor (in topological order)
+                // can be one of them.
+                let limit = nbrs.iter().map(|&v| pos[v as usize]).max().unwrap_or(0);
+                for (k, &v) in nbrs.iter().enumerate() {
+                    if group[k] != KEPT {
+                        continue; // already removed: NetworkX skips it
+                    }
+                    *mark += 1;
+                    let m = *mark;
+                    stack.clear();
+                    stack.push(v);
+                    while let Some(x) = stack.pop() {
+                        for &y in succ.neighbors(x as usize) {
+                            let yi = y as usize;
+                            if stamp[yi] != m && pos[yi] <= limit {
+                                stamp[yi] = m;
+                                stack.push(y);
+                                let j = slot[yi];
+                                if j != u32::MAX && group[j as usize] == KEPT {
+                                    group[j as usize] = k as u32;
+                                }
+                            }
                         }
                     }
                 }
-                while let Some(x) = stack.pop() {
-                    for &y in succ.neighbors(x as usize) {
-                        if stamp[y as usize] != mark {
-                            stamp[y as usize] = mark;
-                            stack.push(y);
-                        }
-                    }
+                for &v in nbrs {
+                    slot[v as usize] = u32::MAX;
                 }
-                nbrs.iter().map(|&v| stamp[v as usize] != mark).collect()
+                group
             },
         )
         .collect();

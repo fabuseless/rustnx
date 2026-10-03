@@ -782,11 +782,19 @@ impl CoreGraph {
     }
 
     /// `nx.transitive_reduction`: `None` if the graph has a cycle, else for
-    /// each arc whether it is kept.
-    fn transitive_reduction(&self, py: Python<'_>) -> Option<Vec<bool>> {
+    /// each arc `dag::KEPT` or which successor's descendants removed it.
+    fn transitive_reduction(&self, py: Python<'_>) -> Option<Vec<u32>> {
         py.detach(|| {
-            let (_, cycle) = directed::topological_generations(&self.succ, self.adj(true), self.n);
-            (!cycle).then(|| dag::transitive_reduction(&self.succ, self.n))
+            let (generations, cycle) =
+                directed::topological_generations(&self.succ, self.adj(true), self.n);
+            if cycle {
+                return None;
+            }
+            let mut pos = vec![0u32; self.n];
+            for (i, &v) in generations.iter().flatten().enumerate() {
+                pos[v as usize] = i as u32;
+            }
+            Some(dag::transitive_reduction(&self.succ, self.n, &pos))
         })
     }
 

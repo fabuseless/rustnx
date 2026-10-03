@@ -24,6 +24,7 @@ __all__ = [
     "all_pairs_shortest_path",
     "all_pairs_shortest_path_length",
     "all_shortest_paths",
+    "all_topological_sorts",
     "ancestors",
     "articulation_points",
     "attracting_components",
@@ -31,6 +32,7 @@ __all__ = [
     "average_shortest_path_length",
     "betweenness_centrality",
     "bfs_edges",
+    "bfs_labeled_edges",
     "bfs_layers",
     "bfs_predecessors",
     "bfs_successors",
@@ -42,12 +44,18 @@ __all__ = [
     "center",
     "closeness_centrality",
     "clustering",
+    "colliders",
+    "condensation",
     "connected_components",
     "core_number",
+    "dag_longest_path",
+    "dag_longest_path_length",
+    "dag_to_branching",
     "degree_centrality",
     "descendants",
     "descendants_at_distance",
     "dfs_edges",
+    "dfs_labeled_edges",
     "dfs_postorder_nodes",
     "dfs_predecessors",
     "dfs_preorder_nodes",
@@ -58,23 +66,31 @@ __all__ = [
     "dijkstra_path_length",
     "eccentricity",
     "edge_betweenness_centrality",
+    "edge_bfs",
+    "edge_dfs",
     "eigenvector_centrality",
+    "generic_bfs_edges",
     "greedy_color",
     "harmonic_centrality",
+    "has_cycle",
     "has_path",
     "in_degree_centrality",
+    "is_aperiodic",
     "is_attracting_component",
     "is_biconnected",
     "is_bipartite",
     "is_connected",
     "is_directed_acyclic_graph",
     "is_forest",
+    "is_semiconnected",
     "is_strongly_connected",
     "is_tree",
     "is_weakly_connected",
     "k_core",
     "katz_centrality",
+    "kosaraju_strongly_connected_components",
     "label_propagation_communities",
+    "lexicographical_topological_sort",
     "maximum_spanning_edges",
     "maximum_spanning_tree",
     "minimum_spanning_edges",
@@ -88,6 +104,7 @@ __all__ = [
     "pagerank",
     "periphery",
     "radius",
+    "root_to_leaf_paths",
     "shortest_path",
     "shortest_path_length",
     "single_source_dijkstra",
@@ -99,8 +116,12 @@ __all__ = [
     "strongly_connected_components",
     "topological_generations",
     "topological_sort",
+    "transitive_closure",
+    "transitive_closure_dag",
+    "transitive_reduction",
     "transitivity",
     "triangles",
+    "v_structures",
     "weakly_connected_components",
     "wiener_index",
 ]
@@ -1793,3 +1814,502 @@ def is_forest(G):
     # Every component has at least (size - 1) edges, so each has exactly
     # that many (NetworkX's test) if and only if the totals agree.
     return G._core.number_of_edges() == len(G) - _component_count(G)
+
+
+# --- Batch 3: DAGs, traversal and components ---------------------------------------
+
+
+def _topological_order_or_raise(G):
+    generations, has_cycle = G._core.topological_generations()
+    if has_cycle:
+        raise nx.NetworkXUnfeasible(
+            "Graph contains a cycle or graph changed during iteration"
+        )
+    return [v for generation in generations for v in generation]
+
+
+def has_cycle(G):
+    if not G.is_directed():
+        raise nx.NetworkXError("Topological sort not defined on undirected graphs.")
+    return G._core.topological_generations()[1]
+
+
+def _longest_path_weight(G, weight, default_weight):
+    """``(attr, constant)`` for ``G._core.dag_longest_path``.
+
+    NetworkX reads ``data.get(weight, default_weight)``; the conversion fills
+    in missing values with the default it was made with, so that must be
+    ``default_weight`` (an int stays an int, a float a float).
+    """
+    if type(default_weight) not in (int, float) or not math.isfinite(default_weight):
+        raise NotImplementedError("rustnx needs a numeric default_weight")
+    if weight is None:
+        return None, float(default_weight)
+    if callable(weight) or not isinstance(weight, str):
+        raise NotImplementedError("rustnx needs a string weight attribute")
+    if G._core.is_native():
+        stored = 1  # native graphs read missing values as 1
+    else:
+        stored = next((d for name, d in G._weight_attrs if name == weight), None)
+        if stored is None:
+            stored = 1
+            G._ensure_weight(weight)  # converts with the default 1
+    if type(stored) is not type(default_weight) or stored != default_weight:
+        raise NotImplementedError("converted with a different default_weight")
+    _unhidden_weight(G, weight)
+    return weight, 0.0
+
+
+def _dag_longest_path(G, weight, default_weight):
+    _directed_only(G)
+    if len(G) == 0:
+        return []
+    attr, constant = _longest_path_weight(G, weight, default_weight)
+    G._ensure_exact_pred()  # ties go to the first predecessor in G.pred
+    cycle, path = G._core.dag_longest_path(attr, constant)
+    if cycle:
+        raise nx.NetworkXUnfeasible(
+            "Graph contains a cycle or graph changed during iteration"
+        )
+    if path is None:
+        raise NotImplementedError("path lengths too large for exact sums")
+    return path
+
+
+def dag_longest_path(G, weight="weight", default_weight=1):
+    nodes = G._nodes
+    return [nodes[i] for i in _dag_longest_path(G, weight, default_weight)]
+
+
+def dag_longest_path_length(G, weight="weight", default_weight=1):
+    path = _dag_longest_path(G, weight, default_weight)
+    nodes = G._nodes
+    if not G._core.is_native():
+        # Sum the edge data exactly as NetworkX does (ints stay ints).
+        base = _networkx_graph(G)
+        path_length = 0
+        for u, v in zip(path, path[1:]):
+            path_length += base[nodes[u]][nodes[v]].get(weight, default_weight)
+        return path_length
+    if weight is None:
+        values = [default_weight] * (len(path) - 1)
+    elif G._core.weight_mixed(weight):
+        raise NotImplementedError("edge weights mix ints and floats")
+    else:
+        values = G._core.path_weights(path, weight)
+        if G._core.weight_info(weight)[0]:
+            values = map(int, values)
+    path_length = 0
+    for w in values:
+        path_length += w
+    return path_length
+
+
+def _sort_ranks(G):
+    """Each node's position in sorted order, if Python's ``<`` orders the
+    nodes totally (ints and floats without NaN, or strings); else ``None``."""
+    nodes = G._nodes
+    kinds = {type(v) for v in nodes}
+    if kinds <= {int, float}:
+        if float in kinds and any(v != v for v in nodes):
+            return None
+    elif kinds != {str}:
+        return None
+    # NetworkX's heap entries are (node, position in G, node).
+    order = sorted(range(len(nodes)), key=lambda i: (nodes[i], i))
+    rank = [0] * len(nodes)
+    for r, i in enumerate(order):
+        rank[i] = r
+    return rank
+
+
+def lexicographical_topological_sort(G):
+    rank = _sort_ranks(G) if G.is_directed() else None
+    if G.is_directed() and rank is None:
+        raise NotImplementedError("rustnx sorts ints, floats or strings only")
+
+    def produce():
+        if not G.is_directed():
+            raise nx.NetworkXError("Topological sort not defined on undirected graphs.")
+        order, cycle = G._core.lexicographical_topological_sort(rank)
+        nodes = G._nodes
+        for v in order:
+            yield nodes[v]
+        if cycle:
+            raise nx.NetworkXUnfeasible(
+                "Graph contains a cycle or graph changed during iteration"
+            )
+
+    return _traversal(G, produce)
+
+
+def all_topological_sorts(G):
+    _directed_only(G)
+    sorts = G._core.all_topological_sorts()
+
+    def produce():
+        nodes = G._nodes
+        while True:
+            ok, sort = sorts.next_sort()
+            if not ok:
+                raise nx.NetworkXUnfeasible("Graph contains a cycle.")
+            if sort is None:
+                return
+            yield [nodes[i] for i in sort]
+
+    return _traversal(G, produce)
+
+
+def transitive_reduction(G):
+    _directed_only(G)
+    groups = G._core.transitive_reduction()
+    if groups is None:
+        raise nx.NetworkXError("Directed Acyclic Graph required for transitive_reduction")
+    nodes = G._nodes
+    TR = nx.DiGraph()
+    TR.add_nodes_from(nodes)
+    us, vs, _ = G._core.edges_in_order()
+    kept = 0xFFFFFFFF
+    begin = 0
+    m = len(us)
+    while begin < m:
+        u = us[begin]
+        end = begin
+        while end < m and us[end] == u:
+            end += 1
+        node = nodes[u]
+        if end - begin == 1:
+            TR.add_edge(node, nodes[vs[begin]])
+        else:
+            # NetworkX adds the kept successors by iterating a set built from
+            # G[u] and shrunk by one removal per successor still in it; a
+            # removal may resize the set, so repeat the same removals.
+            row = [nodes[vs[e]] for e in range(begin, end)]
+            nbrs = set(row)
+            removed = defaultdict(list)
+            for k in range(end - begin):
+                g = groups[begin + k]
+                if g != kept:
+                    removed[g].append(row[k])
+            for g in sorted(removed):
+                nbrs.difference_update(removed[g])
+            TR.add_edges_from((node, v) for v in nbrs)
+        begin = end
+    return TR
+
+
+def transitive_closure(G, reflexive=False):
+    base = _networkx_graph(G)
+    TC = base.copy()
+    if reflexive not in {None, True, False}:
+        raise nx.NetworkXError("Incorrect value for the parameter `reflexive`")
+    if reflexive is not None and reflexive is not True and reflexive is not False:
+        return TC  # e.g. 1 == True: NetworkX's branches all test identity
+    nodes = G._nodes
+    edge_bfs = reflexive is False
+    for start in range(0, len(nodes), _ALL_PAIRS_BATCH):
+        batch = list(range(start, min(start + _ALL_PAIRS_BATCH, len(nodes))))
+        for i, heads in zip(batch, G._core.closure_heads(batch, edge_bfs)):
+            v = nodes[i]
+            if edge_bfs:
+                found = [nodes[j] for j in heads]
+            else:
+                # NetworkX iterates `nx.descendants(G, v)` (a set built in
+                # BFS order), or that set `| {v}`.
+                found = {nodes[j] for j in heads}
+                if reflexive is True:
+                    found = found | {v}
+            TC_v = TC[v]
+            TC.add_edges_from((v, u) for u in found if u not in TC_v)
+    return TC
+
+
+def transitive_closure_dag(G):
+    _directed_only(G)
+    topo = _topological_order_or_raise(G)
+    TC = _networkx_graph(G).copy()
+    state = G._core.closure_dag()
+    nodes = G._nodes
+    index = G._index
+    for i in reversed(topo):
+        layer = state.layer2(i)
+        if not layer:
+            continue
+        # NetworkX adds edges by iterating `descendants_at_distance(TC, v,
+        # 2)`, a set: its order decides TC's adjacency order from here on.
+        found = set([nodes[j] for j in layer])
+        v = nodes[i]
+        TC.add_edges_from((v, u) for u in found)
+        state.append(i, [index[u] for u in found])
+    return TC
+
+
+def root_to_leaf_paths(G):
+    if not G.is_directed():
+        raise NotImplementedError("NetworkX raises AttributeError here")
+    paths = G._core.root_to_leaf_paths()
+
+    def produce():
+        nodes = G._nodes
+        while (p := paths.next_path()) is not None:
+            yield [nodes[i] for i in p]
+
+    return _traversal(G, produce)
+
+
+def dag_to_branching(G):
+    _directed_only(G)
+    if G._core.topological_generations()[1]:
+        raise nx.HasACycle("dag_to_branching is only defined for acyclic graphs")
+    sources, parents = G._core.dag_to_branching()
+    nodes = G._nodes
+    B = nx.DiGraph()
+    # nx.prefix_tree numbers tree nodes from 1 (0 and -1 are removed).
+    B.add_nodes_from((i, {"source": nodes[s]}) for i, s in enumerate(sources, 1))
+    B.add_edges_from(
+        (p + 1, i) for i, p in enumerate(parents, 1) if p != 0xFFFFFFFF
+    )
+    return B
+
+
+# Triples per Rust call in colliders and v_structures.
+_TRIPLES_BATCH = 4096
+
+
+def _colliders(G, v_structures):
+    _directed_only(G)
+    G._ensure_exact_pred()  # combinations of G.predecessors(node), in order
+
+    def produce():
+        nodes = G._nodes
+        start = 0
+        while start < len(nodes):
+            flat, start = G._core.colliders(start, _TRIPLES_BATCH, v_structures)
+            for k in range(0, len(flat), 3):
+                yield (nodes[flat[k]], nodes[flat[k + 1]], nodes[flat[k + 2]])
+
+    return _traversal(G, produce)
+
+
+def colliders(G):
+    return _colliders(G, False)
+
+
+def v_structures(G):
+    return _colliders(G, True)
+
+
+@functools.cache
+def _aperiodic_errors():
+    """What the installed NetworkX's ``is_aperiodic`` does with an undirected
+    graph (an exception type and args), and whether it requires a strongly
+    connected graph (3.5+; 3.4 recurses on the unreached nodes)."""
+    try:
+        nx.is_aperiodic(nx.Graph([(0, 1)]), backend="networkx")
+        undirected = None
+    except Exception as exc:
+        undirected = (type(exc), exc.args)
+    try:
+        nx.is_aperiodic(nx.DiGraph([(0, 1)]), backend="networkx")
+        strong = False
+    except nx.NetworkXError:
+        strong = True
+    return undirected, strong
+
+
+def is_aperiodic(G):
+    undirected, strong = _aperiodic_errors()
+    if not G.is_directed():
+        if undirected is None:
+            raise NotImplementedError("unrecognized NetworkX is_aperiodic")
+        raise undirected[0](*undirected[1])
+    if len(G) == 0:
+        raise nx.NetworkXPointlessConcept("Graph has no nodes.")
+    if strong:
+        if len(G._core.strongly_connected_components()[0]) != len(G):
+            raise nx.NetworkXError("Graph is not strongly connected.")
+    # On a strongly connected graph every version's search finds the gcd of
+    # all cycle lengths (the period) from any spanning tree's levels.
+    reached, g = G._core.aperiodic_bfs()
+    if reached != len(G):
+        # NetworkX 3.4 recurses on a subgraph whose first node follows set
+        # iteration order.
+        raise NotImplementedError("NetworkX recurses on the unreached nodes")
+    return g == 1
+
+
+_DFS_LABELS = ("forward", "nontree", "reverse", "reverse-depth_limit")
+
+
+def dfs_labeled_edges(G, source=None, depth_limit=None):
+    depth = _depth_limit(G, depth_limit)
+    if source is None:
+        s, missing, starts = 0, None, None
+    else:
+        s, missing = _start(G, source)
+        starts = [s]
+
+    def produce():
+        if s is None:
+            yield source, source, "forward"
+            raise missing
+        us, vs, labels = G._core.dfs_labeled_edges(starts, depth)
+        nodes = G._nodes
+        names = _DFS_LABELS
+        for u, v, label in zip(us, vs, labels):
+            yield nodes[u], nodes[v], names[label]
+
+    return _traversal(G, produce)
+
+
+# Indexed by the Rust labels (see `dag::label`).
+_BFS_LABELS = ("forward", None, "reverse", None, "tree", "level")
+
+
+def bfs_labeled_edges(G, sources):
+    _MISSING = 0xFFFFFFFF
+
+    def produce():
+        starts = sources
+        if starts in G:
+            starts = [starts]
+        depth = dict.fromkeys(starts, 0)  # as NetworkX builds it
+        index = G._index
+        positions = [index.get(s, _MISSING) for s in depth]
+        us, vs, labels, missing = G._core.bfs_labeled_edges(positions)
+        nodes = G._nodes
+        names = _BFS_LABELS
+        for u, v, label in zip(us, vs, labels):
+            yield nodes[u], nodes[v], names[label]
+        if missing is not None:
+            raise KeyError(list(depth)[missing])
+
+    return _traversal(G, produce)
+
+
+def generic_bfs_edges(G, source, depth_limit=None):
+    return bfs_edges(G, source, depth_limit=depth_limit)
+
+
+def _edge_traversal(G, source, orientation, dfs):
+    if G.is_multigraph():
+        raise NotImplementedError("rustnx does not support multigraph edge keys")
+    if source is not None and source not in G:
+        if not isinstance(source, (list, tuple, set, frozenset, dict)):
+            raise NotImplementedError("rustnx needs a node or a container of nodes")
+        for n in source:
+            try:
+                hash(n)
+            except TypeError:
+                raise NotImplementedError("unhashable node in source") from None
+    directed = G.is_directed()
+    if directed and orientation in ("reverse", "ignore"):
+        G._ensure_exact_pred()  # G.in_edges(node) follows G.pred
+
+    def produce():
+        index = G._index
+        if source is None:
+            starts = list(range(len(G)))
+        elif source in G:
+            starts = [index[source]]
+        else:
+            starts = [index[n] for n in source if n in index]
+        if not starts:
+            return
+        if orientation is None:
+            out, inward, labeled = True, False, False
+        elif not directed or orientation == "original":
+            out, inward, labeled = True, False, True
+        elif orientation == "reverse":
+            out, inward, labeled = False, True, True
+        elif orientation == "ignore":
+            out, inward, labeled = True, True, True
+        else:
+            raise nx.NetworkXError("invalid orientation argument.")
+        us, vs, labels = G._core.edge_traversal(starts, out, inward, dfs)
+        nodes = G._nodes
+        if labeled:
+            names = _DFS_LABELS
+            for u, v, label in zip(us, vs, labels):
+                yield nodes[u], nodes[v], names[label]
+        else:
+            for u, v in zip(us, vs):
+                yield nodes[u], nodes[v]
+
+    return _traversal(G, produce)
+
+
+def edge_bfs(G, source=None, orientation=None):
+    return _edge_traversal(G, source, orientation, dfs=False)
+
+
+def edge_dfs(G, source=None, orientation=None):
+    return _edge_traversal(G, source, orientation, dfs=True)
+
+
+@functools.cache
+def _kosaraju_stack_order():
+    """Whether the installed NetworkX's Kosaraju (3.7+) fills each component
+    from an explicit stack, rather than in DFS preorder."""
+    try:
+        source = inspect.getsource(nx.kosaraju_strongly_connected_components.orig_func)
+    except (AttributeError, OSError, TypeError):
+        return None
+    if "dfs_preorder_nodes" in source:
+        return False
+    if "stack.pop()" in source:
+        return True
+    return None
+
+
+def kosaraju_strongly_connected_components(G, source=None):
+    _directed_only(G)
+    stack_order = _kosaraju_stack_order()
+    if stack_order is None:
+        raise NotImplementedError("unrecognized NetworkX Kosaraju")
+    G._ensure_exact_pred()  # the DFS runs on G.reverse(copy=False)
+    if source is None:
+        s, missing = None, None
+    else:
+        s, missing = _start(G, source)
+
+    def produce():
+        if source is not None and s is None:
+            raise missing
+        nodes = G._nodes
+        for comp in G._core.kosaraju(s, stack_order):
+            yield {nodes[i] for i in comp}
+
+    return _traversal(G, produce)
+
+
+def condensation(G):
+    _directed_only(G)
+    mapping = {}
+    members = {}
+    C = nx.DiGraph()
+    C.graph["mapping"] = mapping
+    if len(G) == 0:
+        return C
+    comps, us, vs = G._core.condensation(_scc_early_exit())
+    nodes = G._nodes
+    for i, comp in enumerate(comps):
+        component = {nodes[v] for v in comp}
+        members[i] = component
+        # NetworkX fills the mapping by iterating the set.
+        mapping.update((n, i) for n in component)
+    C.add_nodes_from(range(len(comps)))
+    C.add_edges_from(zip(us, vs))
+    nx.set_node_attributes(C, members, "members")
+    return C
+
+
+def is_semiconnected(G):
+    _directed_only(G)
+    if len(G) == 0:
+        raise nx.NetworkXPointlessConcept(
+            "Connectivity is undefined for the null graph."
+        )
+    if len(G._core.weakly_connected_components()) != 1:
+        return False
+    return G._core.is_semiconnected()
