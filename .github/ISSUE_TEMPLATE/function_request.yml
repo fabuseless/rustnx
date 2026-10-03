@@ -1,0 +1,29 @@
+name: Function request
+description: Ask for a NetworkX function to run in Rust.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        rustnx speeds up NetworkX functions without changing their results. Tell us which
+        function you'd like next and how you use it; that decides what gets done first.
+        Check the README's "Supported algorithms" table and docs/API.md first.
+  - type: input
+    id: function
+    attributes:
+      label: NetworkX function
+      placeholder: nx.algorithms.cuts.normalized_cut_size
+    validations:
+      required: true
+  - type: textarea
+    id: usage
+    attributes:
+      label: How do you use it?
+      description: Typical graph size (nodes and edges), directed or not, weighted or not, and how long it takes now.
+    validations:
+      required: true
+  - type: textarea
+    id: parameters
+    attributes:
+      label: Parameters you need
+      description: Any non-default parameters you rely on.

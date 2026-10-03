@@ -1,0 +1,52 @@
+name: Bug report
+description: rustnx gives a different result from NetworkX, crashes, or is slower than expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. rustnx should always return exactly what NetworkX returns.
+        For security problems, please use private reporting instead (see SECURITY.md).
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of problem is it?
+      options:
+        - Different result from NetworkX
+        - Error or crash
+        - Slower than expected
+        - Installation problem
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Code that reproduces it
+      description: A small, self-contained script. A tiny graph that shows the difference is ideal.
+      render: python
+      placeholder: |
+        import networkx as nx
+        import rustnx
+
+        G = nx.Graph([(0, 1), (1, 2)])
+        print(nx.pagerank(G, backend="rustnx"))
+        print(nx.pagerank(G, backend="networkx"))
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What happened, and what did you expect?
+      description: For a different result, paste both outputs. For an error, paste the full traceback.
+    validations:
+      required: true
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions
+      description: Output of the command below.
+      render: text
+      placeholder: python -c "import sys, platform, networkx, rustnx; print(sys.version); print(platform.platform()); print('networkx', networkx.__version__); print('rustnx', rustnx.__version__)"
+    validations:
+      required: true
