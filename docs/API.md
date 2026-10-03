@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 85 NetworkX functions. Call them as usual (for
+rustnx implements 101 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -118,6 +118,9 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.clustering` | `nodes`, `weight` | no | rustnx | Unweighted; `weight` falls back. Bit-for-bit identical. |
 | `nx.average_clustering` | `nodes`, `weight`, `count_zeros` | no | rustnx | Unweighted; `weight` falls back. Bit-for-bit identical. |
 | `nx.transitivity` | none | no | rustnx | Bit-for-bit identical. |
+| `nx.square_clustering` | `nodes` | yes | rustnx | Bit-for-bit identical. Follows the installed NetworkX's formula (3.4 differs from 3.5+ on self-loops and directed graphs). |
+| `nx.generalized_degree` | `nodes` | no | rustnx | Builds each neighbor set in Python, as NetworkX does, so the `Counter` keys come in the same order. |
+| `nx.all_triangles` | `nbunch` | yes | rustnx | NetworkX 3.7+. Generator. Rebuilds Python's intersection sets where several triangles share an edge, for NetworkX's yield order. Graph views fall back. |
 
 ### Cores, coloring and communities
 
@@ -125,9 +128,27 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 |---|---|---|---|---|
 | `nx.core_number` | none | no | NetworkX |  |
 | `nx.k_core` | `k`, `core_number` | no | NetworkX | Builds the subgraph in NetworkX, so only the core numbers get faster. |
+| `nx.k_shell` | `k`, `core_number` | no | NetworkX | Builds the subgraph in NetworkX, so only the core numbers get faster. |
+| `nx.k_crust` | `k`, `core_number` | no | NetworkX | Builds the subgraph in NetworkX, so only the core numbers get faster. |
+| `nx.k_corona` | `k`, `core_number` | no | NetworkX | Builds the subgraph in NetworkX. A non-integer `k` falls back. |
+| `nx.k_truss` | `k` | no | rustnx | Peels edges in Rust; the result is NetworkX's `G.copy()` with the dropped edges and nodes removed. |
+| `nx.onion_layers` | none | no | NetworkX |  |
 | `nx.is_bipartite` | none | yes | NetworkX |  |
-| `nx.greedy_color` | `strategy`, `interchange` | no | NetworkX | Only the default `largest_first` strategy without `interchange`; others fall back. |
+| `nx.greedy_color` | `strategy`, `interchange` | no | NetworkX | Strategies `largest_first`, `saturation_largest_first` (`DSATUR`), `random_sequential` (draws from the global `random` state, as NetworkX does) and `connected_sequential` (`_bfs`, `_dfs`). `smallest_last`, `independent_set`, callables and `interchange` fall back. |
+| `nx.algorithms.coloring.equitable_coloring.is_coloring` | `coloring` | no | NetworkX | A coloring that isn't a `dict` of int, str or float colors falls back. |
+| `nx.algorithms.coloring.equitable_coloring.is_equitable` | `coloring`, `num_colors` | no | NetworkX | A coloring that isn't a `dict` of int, str or float colors falls back. |
 | `nx.community.label_propagation_communities` | none | no | NetworkX |  |
+
+### Distance-regular graphs and other distance measures
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.centroid` | `weight` | no | rustnx | NetworkX 3.7+ (`barycenter` before). Weighted sums are added in NetworkX's order; unweighted trees take NetworkX's tree path. `attr` and `sp` fall back. |
+| `nx.barycenter` | `weight` | no | rustnx | NetworkX 3.4 and 3.5 (`centroid` from 3.7). Weighted sums are added in NetworkX's order. `attr` and `sp` fall back. |
+| `nx.harmonic_diameter` | `weight` | yes | rustnx | Inverse distances are added in NetworkX's order. `sp` falls back; `weight` needs NetworkX 3.5+. |
+| `nx.is_distance_regular` | none | no | NetworkX | Follows the installed NetworkX's checks. |
+| `nx.intersection_array` | none | no | NetworkX | Follows the installed NetworkX's checks (3.7+ rejects long cycles early) and error messages. |
+| `nx.is_strongly_regular` | none | no | NetworkX | Follows the installed NetworkX's checks. |
 
 ### Traversal
 

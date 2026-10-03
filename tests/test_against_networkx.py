@@ -723,9 +723,14 @@ def test_backend_function_list_matches_implementations():
     from rustnx import _info, algorithms, interface
 
     assert sorted(_info.FUNCTIONS) == sorted(algorithms.__all__)
+    # Functions only some supported NetworkX releases have.
+    version_specific = {"all_triangles", "centroid", "barycenter"}
     for name in algorithms.__all__:
         assert hasattr(interface, name), name
-        assert interface._nx_function(name) is not None, name
+        try:
+            assert interface._nx_function(name) is not None, name
+        except AttributeError:
+            assert name in version_specific, name
 
 
 # --- Shortest paths that return the paths ---------------------------------------

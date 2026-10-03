@@ -662,18 +662,20 @@ pub fn harmonic_sum(
 }
 
 /// Per source, `(nodes reached, sum(dists.values()))` with Python's float
-/// `sum()` (compensated from Python 3.12), for `centroid`.
+/// `sum()` (compensated from Python 3.12), for `centroid`, and whether a
+/// negative cycle stopped the sources after those listed.
 pub fn distance_sums(
     adj: &Csr,
     n: usize,
     weights: Option<&[f64]>,
     compensated: bool,
-) -> Result<Vec<(usize, f64)>, NegativeCycle> {
+) -> (Vec<(usize, f64)>, bool) {
     let mut out = Vec::with_capacity(n);
-    distances_in_order(adj, n, weights, |_, dists| {
+    let failed = distances_in_order(adj, n, weights, |_, dists| {
         out.push((dists.len(), py_sum(dists.iter().copied(), compensated)));
-    })?;
-    Ok(out)
+    })
+    .is_err();
+    (out, failed)
 }
 
 /// Colors of `greedy_color`'s loop: each node in `order` takes the smallest

@@ -846,17 +846,18 @@ impl CoreGraph {
         Ok(py.detach(|| cores_more::harmonic_sum(&self.succ, self.n, w))?)
     }
 
-    /// Per source `(reached, Python sum of its distances)`, for `centroid`.
-    /// Raises ValueError on a negative cycle.
+    /// Per source `(reached, Python sum of its distances)`, for `centroid`,
+    /// and whether a negative cycle stopped the later sources.
     #[pyo3(signature = (weight, compensated))]
+    #[allow(clippy::type_complexity)]
     fn distance_sums(
         &self,
         py: Python<'_>,
         weight: Option<&str>,
         compensated: bool,
-    ) -> PyResult<Vec<(usize, f64)>> {
+    ) -> PyResult<(Vec<(usize, f64)>, bool)> {
         let w = self.weight_slice(weight, false)?;
-        Ok(py.detach(|| cores_more::distance_sums(&self.succ, self.n, w, compensated))?)
+        Ok(py.detach(|| cores_more::distance_sums(&self.succ, self.n, w, compensated)))
     }
 
     /// `greedy_color`'s colors for nodes processed in `order`.
