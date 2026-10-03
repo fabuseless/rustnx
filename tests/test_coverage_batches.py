@@ -249,8 +249,6 @@ def test_batch6_structure(seed, directed):
         nodes = list(G)
         exact_outcome(listed(nx.isolates), G)
         exact_outcome(nx.number_of_isolates, G)
-        for n in nodes[:3] + ["missing", [1]]:
-            exact_outcome(nx.is_isolate, G, n)
         exact_outcome(nx.is_regular, G)
         for k in [0, 1, 2, 3, 2.0, True]:
             exact_outcome(nx.is_k_regular, G, k)
@@ -360,8 +358,6 @@ def test_batch6_multigraphs(seed, directed, restore_config):
     start = list(M)[0]
     exact_outcome(listed(nx.isolates), M)
     exact_outcome(nx.number_of_isolates, M)
-    exact_outcome(nx.is_isolate, M, start)
-    exact_outcome(nx.is_isolate, M, "lonely")
     if directed:
         exact_outcome(nx.immediate_dominators, M, start)
         exact_outcome(with_set_order(nx.dominance_frontiers), M, start)

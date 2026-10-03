@@ -70,7 +70,6 @@ FUNCTIONS = {
     "is_directed_acyclic_graph": {},
     "is_eulerian": {},
     "is_forest": {},
-    "is_isolate": {},
     "is_k_regular": {},
     "is_regular": {},
     "is_semieulerian": {},

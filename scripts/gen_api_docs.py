@@ -68,7 +68,7 @@ SECTIONS = [
     ]),
     ("Structural tests", [
         "bridges", "has_bridges", "local_bridges", "chain_decomposition",
-        "isolates", "is_isolate", "number_of_isolates", "is_regular", "is_k_regular",
+        "isolates", "number_of_isolates", "is_regular", "is_k_regular",
         "is_tournament", "immediate_dominators", "dominance_frontiers",
     ]),
     ("Cycles and Euler tours", [
@@ -134,7 +134,6 @@ NOTES = {
     "bridges": "`root` falls back (NetworkX then lists a subgraph copy's edges, in set order).",
     "local_bridges": "Spans with float, mixed or negative weights fall back.",
     "chain_decomposition": "Computed when iteration starts, as NetworkX does.",
-    "is_isolate": "A node not in the graph falls back (NetworkX's answer differs by version).",
     "is_k_regular": "A non-integer `k` falls back.",
     "immediate_dominators": "Follows the installed NetworkX on whether `start` is included (3.7 leaves it out).",
     "dominance_frontiers": "Follows the installed NetworkX's version (3.7 adds `start` last). Sets iterate in NetworkX's order.",

@@ -903,13 +903,31 @@ impl CoreGraph {
         }))
     }
 
-    /// `nx.cycle_basis`, starting from `root` if given.
-    #[pyo3(signature = (root=None))]
-    fn cycle_basis(&self, py: Python<'_>, root: Option<u32>) -> PyResult<Vec<Vec<u32>>> {
+    /// `nx.cycle_basis`, starting from `root` if given, as lists of the
+    /// objects in `nodes` (built here: the cycles can be long).
+    #[pyo3(signature = (nodes, root=None))]
+    fn cycle_basis<'py>(
+        &self,
+        py: Python<'py>,
+        nodes: &Bound<'py, PyList>,
+        root: Option<u32>,
+    ) -> PyResult<Bound<'py, PyList>> {
         if let Some(r) = root {
             self.check_index(r as usize)?;
         }
-        Ok(py.detach(|| structure_more::cycle_basis(&self.succ, self.n, root)))
+        if nodes.len() != self.n {
+            return Err(PyValueError::new_err("nodes must list every node"));
+        }
+        let cycles = py.detach(|| structure_more::cycle_basis(&self.succ, self.n, root));
+        let objects: Vec<Bound<'py, PyAny>> = nodes.iter().collect();
+        let out = PyList::empty(py);
+        for cycle in cycles {
+            out.append(PyList::new(
+                py,
+                cycle.iter().map(|&v| &objects[v as usize]),
+            )?)?;
+        }
+        Ok(out)
     }
 
     /// `nx.girth` (`None`: no cycle).

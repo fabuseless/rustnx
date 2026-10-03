@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 109 NetworkX functions. Call them as usual (for
+rustnx implements 108 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -175,7 +175,6 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.local_bridges` | `with_span`, `weight` | no | NetworkX | Spans with float, mixed or negative weights fall back. |
 | `nx.chain_decomposition` | `root` | no | NetworkX | Computed when iteration starts, as NetworkX does. |
 | `nx.isolates` | none | yes | NetworkX |  |
-| `nx.is_isolate` | `n` | yes | NetworkX | A node not in the graph falls back (NetworkX's answer differs by version). |
 | `nx.number_of_isolates` | none | yes | NetworkX |  |
 | `nx.is_regular` | none | no | NetworkX |  |
 | `nx.is_k_regular` | `k` | no | NetworkX | A non-integer `k` falls back. |

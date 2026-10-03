@@ -83,7 +83,6 @@ __all__ = [
     "is_directed_acyclic_graph",
     "is_eulerian",
     "is_forest",
-    "is_isolate",
     "is_k_regular",
     "is_regular",
     "is_semieulerian",
@@ -1868,17 +1867,6 @@ def number_of_isolates(G):
     return len(G._core.isolates())
 
 
-def is_isolate(G, n):
-    try:
-        i = G._index.get(n)
-    except TypeError:
-        i = None
-    if i is None:
-        # NetworkX's error (or answer, for an nbunch) differs by version.
-        raise NotImplementedError("rustnx needs a node of the graph here")
-    return G._core.degree_of(i) == 0
-
-
 def is_regular(G):
     if len(G) == 0:
         raise nx.NetworkXPointlessConcept("Graph has no nodes.")
@@ -2070,7 +2058,7 @@ def cycle_basis(G, root=None):
         return []
     r = None if root is None else _node_arg(G, root)
     nodes = G._nodes
-    return [[nodes[v] for v in cycle] for cycle in G._core.cycle_basis(r)]
+    return G._core.cycle_basis(nodes if type(nodes) is list else list(nodes), r)
 
 
 def girth(G):
@@ -2181,9 +2169,13 @@ def kruskal_mst_edges(G, minimum, weight="weight", keys=True, data=True, ignore_
     if has_hidden and not core.is_native():
         # NetworkX converts `weight` with default None for this function,
         # so edges lacking it look hidden; NetworkX itself defaults to 1.
-        from .graph import from_networkx
+        # Kept on G, which NetworkX caches while the graph is unchanged.
+        cores = G.__dict__.setdefault("_kruskal_cores", {})
+        if weight not in cores:
+            from .graph import from_networkx
 
-        core = from_networkx(base, {weight: 1})._core
+            cores[weight] = from_networkx(base, {weight: 1})._core
+        core = cores[weight]
         has_hidden = core.weight_info(weight)[1]
     if has_hidden:
         raise NotImplementedError("rustnx does not support None edge weights here")
