@@ -147,7 +147,10 @@ jobs:
           merge-multiple: true
       - name: Install the built wheel
         run: |
-          python -m pip install networkx pytest numpy scipy rustworkx
+          python -m pip install networkx pytest numpy scipy
+          # rustworkx has no free-threaded Windows wheel; without it the
+          # rustworkx comparison tests skip themselves.
+          python -m pip install --only-binary=:all: rustworkx || echo "no rustworkx wheel here: skipping its comparison tests"
           python -m pip install --no-index --find-links dist rustnx
           python -c "import rustnx, networkx; print('rustnx', rustnx.__version__, 'on NetworkX', networkx.__version__)"
       - name: Run tests against the installed wheel
