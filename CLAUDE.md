@@ -58,7 +58,7 @@ errors) on NetworkX 3.4, 3.5 and 3.7; anything rustnx can't match raises
 | 16 | Weighted clustering | Blocked | Algorithms | Claude | Sums NumPy `cbrt` arrays (pairwise summation) over set intersections in hash order |
 | 17 | Multigraph support (`MultiGraph`, `MultiDiGraph`) | Partly done | Engineering | Claude | Done: components, traversals, shortest paths, betweenness/closeness/harmonic, distance measures, `is_bipartite` (`interface.MULTIGRAPH_FUNCTIONS`). Left: `pagerank` (sums parallel weights), degree-based functions, MST with keys |
 | 18 | Faster conversion from NetworkX, or docs steering to native `rustnx.Graph` | To do | Engineering | Claude | |
-| 19 | Free-threaded Python 3.14 wheels | To do | Engineering | Claude | Optional |
+| 19 | Free-threaded Python 3.14 wheels | Done | Engineering | Claude | `gil_used = false`; cp314t wheels in `wheels.yml`; `tests/test_free_threading.py` |
 | 20 | CI benchmark guard that fails on slowdowns | To do | Release quality | Claude | |
 | 21 | API docs listing every supported function and parameter | To do | Release quality | Claude | |
 | 22 | `CONTRIBUTING.md` | To do | Release quality | Claude | |

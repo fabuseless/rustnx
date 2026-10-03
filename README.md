@@ -4,6 +4,9 @@
 [NetworkX](https://networkx.org). You keep writing normal NetworkX code, and
 supported algorithms run in Rust instead of Python, often 50–100× faster.
 
+Install with `pip install rustnx` (Python 3.10 or newer, including
+free-threaded 3.14t; prebuilt for Linux, macOS and Windows).
+
 ```python
 import networkx as nx
 

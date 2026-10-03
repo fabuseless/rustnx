@@ -23,6 +23,9 @@ versions may change behavior.
   traversals, the shortest path family, betweenness, closeness and harmonic
   centrality, the distance measures and `is_bipartite`. Parallel edges count
   once, with the minimum weight, as in NetworkX's code for these functions.
+- Free-threaded Python (3.14t) support: the extension declares it doesn't
+  need the GIL, wheels are built for 3.14t on Linux, macOS and Windows, and a
+  test runs algorithms from many threads at once and compares the results.
 
 ### Fixed
 - Functions that return path lengths now hand graphs whose weights mix ints

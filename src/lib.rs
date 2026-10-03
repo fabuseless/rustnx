@@ -886,7 +886,7 @@ fn _py_sum(values: Vec<f64>, compensated: bool) -> f64 {
     spectral::py_sum(values.into_iter(), compensated)
 }
 
-#[pymodule]
+#[pymodule(gil_used = false)]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CoreGraph>()?;
     m.add_class::<AllPaths>()?;
