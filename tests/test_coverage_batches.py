@@ -418,3 +418,29 @@ def test_batch4_multigraphs(seed, directed, restore_config):
     exact_outcome(nx.edge_load_centrality, M)
     exact_outcome(nx.voterank, M)
     exact_outcome(nx.group_degree_centrality, M, nodes[:2])
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch4_group_betweenness(seed, directed, weights):
+    G = graph_for(seed, directed, weights)
+    weight = None if weights == "none" else "weight"
+    rng = random.Random(seed)
+    nodes = list(G)
+    groups = [rng.sample(nodes, min(len(nodes), k)) for k in [1, 2, 3, 6]]
+    for normalized in [True, False]:
+        for endpoints in [False, True]:
+            for S in groups:
+                exact_outcome(nx.group_betweenness_centrality, G, S, normalized=normalized,
+                              weight=weight, endpoints=endpoints)
+            exact_outcome(nx.group_betweenness_centrality, G, groups, normalized=normalized,
+                          weight=weight, endpoints=endpoints)
+    exact_outcome(nx.group_betweenness_centrality, G, nodes[:2] + ["missing", "other"])
+    exact_outcome(nx.group_betweenness_centrality, G, [nodes[:2], ["missing"]])
+    # Strongly connected / connected graphs take another endpoint count.
+    H = nx.cycle_graph(7, create_using=G.__class__)
+    H.add_edges_from([(0, 3), (2, 5)])
+    for S in [[0], [0, 3], [1, 4, 5], [[1, 2], [3, 6]]]:
+        exact_outcome(nx.group_betweenness_centrality, H, S)
+        exact_outcome(nx.group_betweenness_centrality, H, S, normalized=False)

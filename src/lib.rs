@@ -916,6 +916,21 @@ impl CoreGraph {
         }))
     }
 
+    /// `_group_preprocessing` for the nodes `set_v`.
+    #[pyo3(signature = (set_v, weight=None))]
+    fn group_preprocessing(
+        &self,
+        py: Python<'_>,
+        set_v: Vec<u32>,
+        weight: Option<&str>,
+    ) -> PyResult<GroupPre> {
+        let set_v = self.sources_or_all(Some(set_v))?;
+        let w = self.weight_slice(weight, false)?;
+        let data = py.detach(|| centrality_more::group_preprocessing(&self.succ, self.n, w, &set_v));
+        let rev_reach = py.detach(|| centrality_more::reverse_reach_counts(self.adj(true), self.n, &set_v));
+        Ok(GroupPre { data, k: set_v.len(), rev_reach })
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -1181,6 +1196,49 @@ impl CoreGraph {
     }
 }
 
+/// `_group_preprocessing` results for `group_betweenness_centrality`
+/// (`K x K` matrices over the group nodes, by position).
+#[pyclass(frozen, module = "rustnx._core")]
+pub struct GroupPre {
+    data: centrality_more::GroupData,
+    k: usize,
+    rev_reach: Vec<u32>,
+}
+
+#[pymethods]
+impl GroupPre {
+    /// `(reached, positions in D[x] order, len(D[x]), nodes reaching x)`.
+    #[allow(clippy::type_complexity)]
+    fn reach(&self) -> (Vec<bool>, Vec<u32>, Vec<u32>, Vec<u32>) {
+        (
+            self.data.reached.clone(),
+            self.data.pos.clone(),
+            self.data.reach_len.clone(),
+            self.rev_reach.clone(),
+        )
+    }
+
+    /// `PB_m[v][v]` for each `v` of one group, or `None` where NetworkX
+    /// raises `KeyError`.
+    #[pyo3(signature = (group, y_orders=None))]
+    fn main(
+        &self,
+        py: Python<'_>,
+        group: Vec<u32>,
+        y_orders: Option<Vec<Vec<u32>>>,
+    ) -> PyResult<Option<Vec<f64>>> {
+        let k = self.k as u32;
+        if group.iter().chain(y_orders.iter().flatten().flatten()).any(|&v| v >= k)
+            || y_orders.as_ref().is_some_and(|y| y.len() != group.len())
+        {
+            return Err(PyIndexError::new_err("group position out of range"));
+        }
+        Ok(py.detach(|| {
+            centrality_more::group_main(&self.data, self.k, &group, y_orders.as_deref()).ok()
+        }))
+    }
+}
+
 /// Lazy iterator over `all_shortest_paths` results (node positions).
 #[pyclass(module = "rustnx._core")]
 pub struct AllPaths(paths::PathsFromPreds);
@@ -1202,6 +1260,7 @@ fn _py_sum(values: Vec<f64>, compensated: bool) -> f64 {
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CoreGraph>()?;
     m.add_class::<AllPaths>()?;
+    m.add_class::<GroupPre>()?;
     m.add_function(wrap_pyfunction!(graph::build_graph, m)?)?;
     m.add_function(wrap_pyfunction!(serialize::_core_graph_from_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(native::build_native, m)?)?;

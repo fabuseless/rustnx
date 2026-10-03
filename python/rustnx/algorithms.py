@@ -65,6 +65,7 @@ __all__ = [
     "eigenvector_centrality",
     "global_reaching_centrality",
     "greedy_color",
+    "group_betweenness_centrality",
     "group_closeness_centrality",
     "group_degree_centrality",
     "group_in_degree_centrality",
@@ -1837,6 +1838,14 @@ def _target_positions(G, targets):
         raise NotImplementedError("unhashable target") from None
 
 
+def _source_text(func):
+    """The installed NetworkX's source of ``func``, whitespace collapsed."""
+    try:
+        return " ".join(inspect.getsource(func.orig_func).split())
+    except (AttributeError, OSError, TypeError):
+        return ""
+
+
 @functools.cache
 def _subset_rescale():
     """How the installed NetworkX rescales subset betweenness: ``(node,
@@ -1846,18 +1855,12 @@ def _subset_rescale():
     nodes)."""
     from networkx.algorithms.centrality import betweenness_subset as mod
 
-    def text(func):
-        try:
-            return " ".join(inspect.getsource(func.orig_func).split())
-        except (AttributeError, OSError, TypeError):
-            return ""
-
     plain = "_rescale(b, len(G), normalized=normalized, directed=G.is_directed())"
     no_ends = (
         "_rescale( b, len(G), normalized=normalized, directed=G.is_directed(), endpoints=False )"
     )
-    node_src = text(nx.betweenness_centrality_subset)
-    edge_src = text(nx.edge_betweenness_centrality_subset)
+    node_src = _source_text(nx.betweenness_centrality_subset)
+    edge_src = _source_text(nx.edge_betweenness_centrality_subset)
     node = edge = None
     if no_ends in node_src:
         def node(b, n, normalized, directed):
@@ -2168,3 +2171,125 @@ def global_reaching_centrality(G, weight=None, normalized=True):
     lrc = _reaching_values(G, list(range(len(G))), weight, normalized, total_weight, source)
     max_lrc = max(lrc)
     return sum(max_lrc - c for c in lrc) / (len(G) - 1)
+
+
+@functools.cache
+def _group_betweenness_version():
+    """Which ``group_betweenness_centrality`` the installed NetworkX has:
+    ``"inplace"`` (3.7+: updates the matrices in place and counts endpoints
+    differently), ``"copy"`` (earlier) or ``None`` if unrecognized."""
+    src = _source_text(nx.group_betweenness_centrality)
+    if "for y in group & Dx.keys():" in src and "extra = N_in * (N - 1 + N_out)" in src:
+        return "inplace"
+    if "sigma_m_v = deepcopy(sigma_m)" in src and "scale = c * (2 * v - c - 1)" in src:
+        return "copy"
+    return None
+
+
+def group_betweenness_centrality(G, C, normalized=True, weight=None, endpoints=False):
+    version = _group_betweenness_version()
+    if version is None:
+        raise NotImplementedError("unrecognized NetworkX group betweenness")
+    n = len(G)
+    if n == 0:
+        raise NotImplementedError("NetworkX's connectivity checks raise here")
+    C = _reusable(C)
+    list_of_groups = True
+    if any(el in G for el in C):
+        C = [C]
+        list_of_groups = False
+    for group in C:
+        _reusable(group)  # iterated twice by NetworkX
+    set_v = {node for group in C for node in group}
+    index = G._index
+    # As `set_v - G.nodes` builds it, so the message lists nodes in the same order.
+    missing = set(x for x in set_v if x not in index)
+    if missing:
+        raise nx.NodeNotFound(f"The node(s) {missing} are in C but not in G.")
+    weight = _unhidden_weight(G, weight)
+    is_directed = G.is_directed()
+    connected = _is_strongly_or_plainly_connected(G)
+    sv = list(set_v)
+    spos = {x: i for i, x in enumerate(sv)}
+    k = len(sv)
+    pre = G._core.group_preprocessing([index[x] for x in sv], weight)
+    reached, pos, reach_len, rev_reach = pre.reach()
+
+    def y_order(group, a):
+        # NetworkX iterates `group & D[x].keys()`, a set whose order depends
+        # on which side Python iterates (by length) and in what order. A dict
+        # with the same length (when that matters) and the group members in
+        # `D[x]`'s order gives the same set.
+        members = [y for y in group if reached[a * k + spos[y]]]
+        members.sort(key=lambda y: pos[a * k + spos[y]])
+        size = min(reach_len[a], len(group) + 1)
+        keys = members + [object() for _ in range(size - len(members))]
+        return [spos[y] for y in group & dict.fromkeys(keys).keys()]
+
+    def reach_count(group):
+        # sum((1 if v in group else 2) for u in group for v in D[u] if v != u)
+        total = 0
+        for u in group:
+            a = spos[u]
+            inside = sum(1 for y in group if y != u and reached[a * k + spos[y]])
+            total += inside + 2 * (reach_len[a] - 1 - inside)
+        return total
+
+    def pair_count(group):
+        # Reachable pairs (u, v), u != v, with u or v in the group.
+        total = 0
+        for u in group:
+            a = spos[u]
+            total += reach_len[a] - 1 + rev_reach[a] - 1
+            total -= sum(1 for y in group if y != u and reached[a * k + spos[y]])
+        return total
+
+    GBC = []
+    for group in C:
+        group = set(group)
+        order = [spos[x] for x in group]
+        y_orders = None
+        if version == "inplace":
+            y_orders = [y_order(group, a) for a in order]
+        values = pre.main(order, y_orders)
+        if values is None:
+            raise NotImplementedError("NetworkX raises KeyError here")
+        GBC_group = 0
+        for value in values:
+            GBC_group += value
+        if version == "copy":
+            v, c = n, len(group)
+            if not endpoints:
+                scale = 0
+                if connected:
+                    scale = c * (2 * v - c - 1)
+                if scale == 0:
+                    scale = reach_count(group)
+                GBC_group -= scale
+            if normalized:
+                scale = 1 / ((v - c) * (v - c - 1))
+                GBC_group *= scale
+            elif not is_directed:
+                GBC_group /= 2
+        else:
+            N = n
+            if endpoints:
+                Nscale = N
+            else:
+                N_in = len(group)
+                N_out = Nscale = N - N_in
+                if connected:
+                    extra = N_in * (N - 1 + N_out)
+                elif is_directed:
+                    extra = pair_count(group)
+                else:
+                    extra = reach_count(group)
+                GBC_group -= extra
+            if normalized:
+                GBC_group /= Nscale * (Nscale - 1)
+            elif not is_directed:
+                GBC_group /= 2
+        GBC.append(GBC_group)
+    if list_of_groups:
+        return GBC
+    return GBC[0]

@@ -98,6 +98,9 @@ pub struct Spt {
     pred_arcs: Vec<Vec<u32>>,
     touched: Vec<u32>,
     heap: MinHeap<(u32, u32)>,
+    /// Position of each reached node in `order` (`UNSET` otherwise); only
+    /// filled by `run_with_positions`.
+    pos: Vec<u32>,
 }
 
 impl Spt {
@@ -114,12 +117,14 @@ impl Spt {
             pred_arcs: vec![Vec::new(); n],
             touched: Vec::new(),
             heap: MinHeap::new(),
+            pos: vec![UNSET; n],
         }
     }
 
     fn reset(&mut self) {
         for &v in &self.touched {
             let v = v as usize;
+            self.pos[v] = UNSET;
             self.level[v] = UNSET;
             self.done[v] = false;
             self.has_seen[v] = false;
@@ -140,6 +145,22 @@ impl Spt {
         }
         for &v in &self.order {
             self.delta[v as usize] = 0.0;
+        }
+    }
+
+    fn run_with_positions(&mut self, adj: &Csr, weights: Option<&[f64]>, s: usize) {
+        self.run(adj, weights, s);
+        for (i, &v) in self.order.iter().enumerate() {
+            self.pos[v as usize] = i as u32;
+        }
+    }
+
+    /// NetworkX's `D[v]` for a reached node.
+    fn dist(&self, v: usize, weighted: bool) -> f64 {
+        if weighted {
+            self.seen[v]
+        } else {
+            self.level[v] as f64
         }
     }
 
@@ -922,5 +943,230 @@ pub fn reaching_weighted(
                 sum.value()
             },
         )
+        .collect()
+}
+
+
+/// `_group_preprocessing` restricted to the group nodes `set_v` (all
+/// `K x K` row-major matrices, indexed by position in `set_v`).
+pub struct GroupData {
+    /// `sigma[x][y]`, halved for weighted graphs as NetworkX does.
+    pub sigma: Vec<f64>,
+    /// `D[x][y]` where `reached`.
+    pub dist: Vec<f64>,
+    pub reached: Vec<bool>,
+    /// Position of `y` in `D[x]`'s key order.
+    pub pos: Vec<u32>,
+    /// `len(D[x])`.
+    pub reach_len: Vec<u32>,
+    /// `PB[x][y]`.
+    pub pb: Vec<f64>,
+}
+
+pub fn group_preprocessing(
+    adj: &Csr,
+    n: usize,
+    weights: Option<&[f64]>,
+    set_v: &[u32],
+) -> GroupData {
+    let k = set_v.len();
+    let weighted = weights.is_some();
+    let half = |x: f64| if weighted { x / 2.0 } else { x };
+    let rows: Vec<(Vec<f64>, Vec<f64>, Vec<bool>, Vec<u32>, u32)> = set_v
+        .par_iter()
+        .map_init(
+            || Spt::new(n),
+            |st, &s| {
+                st.run_with_positions(adj, weights, s as usize);
+                let mut sigma = vec![0.0; k];
+                let mut dist = vec![0.0; k];
+                let mut reached = vec![false; k];
+                let mut pos = vec![UNSET; k];
+                for (j, &t) in set_v.iter().enumerate() {
+                    let t = t as usize;
+                    if st.pos[t] != UNSET {
+                        sigma[j] = half(st.sigma[t]);
+                        dist[j] = st.dist(t, weighted);
+                        reached[j] = true;
+                        pos[j] = st.pos[t];
+                    }
+                }
+                (sigma, dist, reached, pos, st.order.len() as u32)
+            },
+        )
+        .collect();
+    let mut data = GroupData {
+        sigma: Vec::with_capacity(k * k),
+        dist: Vec::with_capacity(k * k),
+        reached: Vec::with_capacity(k * k),
+        pos: Vec::with_capacity(k * k),
+        reach_len: Vec::with_capacity(k),
+        pb: vec![0.0; k * k],
+    };
+    for (sigma, dist, reached, pos, len) in rows {
+        data.sigma.extend(sigma);
+        data.dist.extend(dist);
+        data.reached.extend(reached);
+        data.pos.extend(pos);
+        data.reach_len.push(len);
+    }
+    // `PB[g1][g2]` sums over every node in `G` order.
+    let sources: Vec<u32> = (0..n as u32).collect();
+    let (sigma1, dist1, reached1) = (&data.sigma, &data.dist, &data.reached);
+    let pb = &mut data.pb;
+    let _ = in_source_order(
+        &sources,
+        16 * n + 24 * k * k,
+        || Spt::new(n),
+        |st, s| {
+            st.run_with_positions(adj, weights, s);
+            // `_accumulate_endpoints`, then `delta[s][i] += 1` for `i != s`.
+            for i in (0..st.order.len()).rev() {
+                let w = st.order[i] as usize;
+                let coeff = (1.0 + st.delta[w]) / st.sigma[w];
+                for &v in &st.preds[w] {
+                    let v = v as usize;
+                    st.delta[v] += st.sigma[v] * coeff;
+                }
+            }
+            let mut log = Vec::new();
+            for (a, &g1) in set_v.iter().enumerate() {
+                let g1 = g1 as usize;
+                if st.pos[g1] == UNSET {
+                    continue;
+                }
+                let d_g1 = st.dist(g1, weighted);
+                let sigma_g1 = half(st.sigma[g1]);
+                for (b, &g2) in set_v.iter().enumerate() {
+                    let g2 = g2 as usize;
+                    if !reached1[a * k + b] || st.pos[g2] == UNSET {
+                        continue;
+                    }
+                    if st.dist(g2, weighted) == d_g1 + dist1[a * k + b] {
+                        let delta = st.delta[g2] + if g2 != s { 1.0 } else { 0.0 };
+                        let x = delta * sigma_g1 * sigma1[a * k + b] / half(st.sigma[g2]);
+                        log.push(((a * k + b) as u32, x));
+                    }
+                }
+            }
+            Ok(log)
+        },
+        |log| {
+            for (i, x) in log {
+                pb[i as usize] += x;
+            }
+        },
+    );
+    data
+}
+
+/// A `D[a][b]` lookup NetworkX would make that raises `KeyError`.
+pub struct MissingDistance;
+
+/// The main loop of `group_betweenness_centrality` for one group (positions
+/// in `set_v`, in the group set's order): `PB_m[v][v]` for each `v`, which
+/// NetworkX adds up. `y_orders` (NetworkX 3.7+, which updates the matrices
+/// in place) gives, for each `x`, the order of `group & D[x].keys()`;
+/// without it this is the earlier version, which iterates `group` twice and
+/// builds new matrices from the old ones.
+pub fn group_main(
+    data: &GroupData,
+    k: usize,
+    group: &[u32],
+    y_orders: Option<&[Vec<u32>]>,
+) -> Result<Vec<f64>, MissingDistance> {
+    let at = |a: u32, b: u32| a as usize * k + b as usize;
+    let d = &data.dist;
+    let reached = &data.reached;
+    let sigma = &data.sigma;
+    let mut sm = sigma.clone();
+    let mut pm = data.pb.clone();
+    let mut out = Vec::with_capacity(group.len());
+    match y_orders {
+        None => {
+            let mut sv = sm.clone();
+            let mut pv = pm.clone();
+            for &v in group {
+                out.push(pm[at(v, v)]);
+                for &x in group {
+                    for &y in group {
+                        let (mut dxvy, mut dxyv, mut dvxy) = (0.0, 0.0, 0.0);
+                        if !(sm[at(x, y)] == 0.0 || sm[at(x, v)] == 0.0 || sm[at(v, y)] == 0.0) {
+                            if !reached[at(y, v)] {
+                                return Err(MissingDistance);
+                            }
+                            if d[at(x, v)] == d[at(x, y)] + d[at(y, v)] {
+                                dxyv = sm[at(x, y)] * sm[at(y, v)] / sm[at(x, v)];
+                            }
+                            if d[at(x, y)] == d[at(x, v)] + d[at(v, y)] {
+                                dxvy = sm[at(x, v)] * sm[at(v, y)] / sm[at(x, y)];
+                            }
+                            if !reached[at(v, x)] {
+                                return Err(MissingDistance);
+                            }
+                            if d[at(v, y)] == d[at(v, x)] + d[at(x, y)] {
+                                dvxy = sm[at(v, x)] * sigma[at(x, y)] / sigma[at(v, y)];
+                            }
+                        }
+                        sv[at(x, y)] = sm[at(x, y)] * (1.0 - dxvy);
+                        pv[at(x, y)] = pm[at(x, y)] - pm[at(x, y)] * dxvy;
+                        if y != v {
+                            pv[at(x, y)] -= pm[at(x, v)] * dxyv;
+                        }
+                        if x != v {
+                            pv[at(x, y)] -= pm[at(v, y)] * dvxy;
+                        }
+                    }
+                }
+                std::mem::swap(&mut sm, &mut sv);
+                std::mem::swap(&mut pm, &mut pv);
+            }
+        }
+        Some(y_orders) => {
+            for &v in group {
+                out.push(pm[at(v, v)]);
+                for (&x, ys) in group.iter().zip(y_orders) {
+                    let mut sig_xv = sm[at(x, v)];
+                    let sig_vx = sm[at(v, x)];
+                    let x_in_dv = reached[at(v, x)];
+                    let v_in_dx = reached[at(x, v)];
+                    for &y in ys {
+                        let sig_xy = sm[at(x, y)];
+                        let sig_vy = sm[at(v, y)];
+                        let v_in_dy = reached[at(y, v)];
+                        let y_in_dv = reached[at(v, y)];
+                        // Order x-y-v
+                        if v_in_dy && d[at(x, v)] == d[at(x, y)] + d[at(y, v)] && sig_xv != 0.0 && y != v {
+                            pm[at(x, y)] -= pm[at(x, v)] * sig_xy * sm[at(y, v)] / sig_xv;
+                        }
+                        // Order v-x-y
+                        if x_in_dv && d[at(v, y)] == d[at(v, x)] + d[at(x, y)] && sig_vy != 0.0 && x != v {
+                            pm[at(x, y)] -= pm[at(v, y)] * sig_vx * sig_xy / sig_vy;
+                        }
+                        // Order x-v-y
+                        if v_in_dx && y_in_dv && d[at(x, y)] == d[at(x, v)] + d[at(v, y)] && sig_xy != 0.0 {
+                            let sig_xvy = sig_xv * sig_vy;
+                            pm[at(x, y)] *= 1.0 - sig_xvy / sig_xy;
+                            sm[at(x, y)] -= sig_xvy;
+                            if y == v {
+                                sig_xv -= sig_xvy;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Number of nodes reaching each of `targets` (themselves included).
+pub fn reverse_reach_counts(pred: &Csr, n: usize, targets: &[u32]) -> Vec<u32> {
+    targets
+        .par_iter()
+        .map(|&t| {
+            let (order, _) = super::traversal::bfs_lengths(pred, n, t as usize, f64::INFINITY);
+            order.len() as u32
+        })
         .collect()
 }
