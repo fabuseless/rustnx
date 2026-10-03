@@ -61,10 +61,11 @@ errors) on NetworkX 3.4, 3.5 and 3.7; anything rustnx can't match raises
 | 19 | Free-threaded Python 3.14 wheels | Done | Engineering | Claude | `gil_used = false`; cp314t wheels in `wheels.yml`; `tests/test_free_threading.py` |
 | 20 | CI benchmark guard that fails on slowdowns | To do | Release quality | Claude | |
 | 21 | API docs listing every supported function and parameter | To do | Release quality | Claude | |
-| 22 | `CONTRIBUTING.md` | To do | Release quality | Claude | |
-| 23 | `SECURITY.md` | To do | Release quality | Claude | |
+| 22 | `CONTRIBUTING.md` | Done | Release quality | Claude | |
+| 23 | `SECURITY.md` | Done | Release quality | Claude | Reports go through GitHub private vulnerability reporting (item 27) |
 | 24 | Turn on "Automatically delete head branches" | To do | Release quality | Owner | Settings → General |
 | 25 | Enable Dependabot for CI actions | To do | Release quality | Owner | Optional |
 | 26 | Release `0.1.0` (drop the alpha label) after feedback | To do | Release quality | Owner + Claude | |
+| 27 | Turn on private vulnerability reporting | To do | Release quality | Owner | Settings → Advanced Security (or Code security) → Private vulnerability reporting → Enable; `SECURITY.md` points to it |
 
 Suggested order: 1–2, 3, 20, 10, 11, then the rest.

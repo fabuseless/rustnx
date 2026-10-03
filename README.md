@@ -334,6 +334,9 @@ Layout:
 - `tests/`: comparisons against NetworkX.
 - `benchmarks/`: speed comparisons.
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the rules and how to add an
+algorithm, and [SECURITY.md](SECURITY.md) for reporting security problems.
+
 ## Roadmap
 
 - More algorithms: see the todo table in [CLAUDE.md](CLAUDE.md).

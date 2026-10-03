@@ -28,6 +28,7 @@ versions may change behavior.
   test runs algorithms from many threads at once and compares the results.
 - README section "When rustnx helps, and when it doesn't", covering
   conversion cost, caching, small graphs and inputs that run in NetworkX.
+- `CONTRIBUTING.md` and `SECURITY.md`.
 
 ### Fixed
 - Functions that return path lengths now hand graphs whose weights mix ints
