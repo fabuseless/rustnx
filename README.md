@@ -160,7 +160,7 @@ NetworkX, is in [docs/API.md](docs/API.md).
 | `is_bipartite` | Directed and undirected. |
 | `bfs_edges`, `dfs_edges`, `dfs_preorder_nodes` | Same order as NetworkX, with `depth_limit` and `reverse`. `sort_neighbors` runs in NetworkX. |
 | `bfs_tree`, `dfs_tree` | Same trees as NetworkX. |
-| `minimum_spanning_edges`, `maximum_spanning_edges`, `minimum_spanning_tree`, `maximum_spanning_tree` | Kruskal's algorithm (the default), with the same edges in the same order, ties included; yields the graph's own edge data dicts. Prim and Borůvka run in NetworkX. |
+| `minimum_spanning_edges`, `maximum_spanning_edges`, `minimum_spanning_tree`, `maximum_spanning_tree` | Kruskal's algorithm (the default), with the same edges in the same order, ties included; yields the graph's own edge data dicts. Prim and Borůvka also run in Rust, with the same start nodes and tie-breaking as NetworkX. |
 | `all_shortest_paths` | Unweighted and Dijkstra. Paths are generated lazily in Rust, in NetworkX's order (which differs before 3.7 when zero-weight cycles exist). |
 | `greedy_color`, `label_propagation_communities` | `greedy_color` with the `largest_first`, DSATUR, connected-sequential and random-sequential strategies; `smallest_last`, `independent_set`, callable strategies and `interchange` run in NetworkX. |
 | `degree_centrality`, `in_degree_centrality`, `out_degree_centrality` | Same values as NetworkX. |
@@ -186,6 +186,23 @@ NetworkX, is in [docs/API.md](docs/API.md).
 | `is_arborescence`, `is_branching`, `to_prufer_sequence`, `kruskal_mst_edges` | Same results as NetworkX. |
 | `bridges`, `has_bridges`, `local_bridges`, `chain_decomposition`, `isolates`, `number_of_isolates`, `is_regular`, `is_k_regular`, `is_tournament`, `immediate_dominators`, `dominance_frontiers` | Same order as each NetworkX version (dominators changed in 3.7). `bridges` with a `root` runs in NetworkX. |
 | `is_eulerian`, `has_eulerian_path`, `is_semieulerian`, `eulerian_circuit`, `eulerian_path`, `cycle_basis`, `find_cycle`, `girth` | Same circuits, cycles and order as NetworkX. |
+| `floyd_warshall`, `floyd_warshall_predecessor_and_distance`, `floyd_warshall_tree`, `floyd_warshall_numpy` | Parallel. The same dicts (row order, int/float types) or NumPy array as each NetworkX version (3.7 changed missing weights and added negative-cycle checks). Mixed int/float weights run in NetworkX. |
+| `johnson`, `goldberg_radzik` | Same paths, predecessors and distances, ties included; `goldberg_radzik` follows each version's scan order. |
+| `all_simple_paths`, `all_simple_edge_paths`, `shortest_simple_paths`, `is_simple_path` | Paths generated lazily in Rust, in NetworkX's order (Yen's algorithm with NetworkX's tie-breaking for `shortest_simple_paths`). |
+| `antichains`, `nx.dag.antichain_width`, `minimum_cycle_basis` | Same results and order as NetworkX; antichains are generated lazily. |
+| `maximum_branching`, `minimum_branching`, `minimal_branching`, `maximum_spanning_arborescence`, `minimum_spanning_arborescence`, `greedy_branching`, `branching_weight` | Edmonds' algorithm as NetworkX runs it: the same edges in the same order. The minimum and arborescence variants change G's weights exactly as NetworkX does. |
+| `prim_mst_edges`, `boruvka_mst_edges`, `partition_spanning_tree`, `from_prufer_sequence`, `from_nested_tuple`, `to_nested_tuple`, `nx.tree.centroid` | Same edges, graphs and tuples as NetworkX. `to_nested_tuple` runs in Rust with `canonical_form=True`. |
+| `lowest_common_ancestor`, `all_pairs_lowest_common_ancestor`, `tree_all_pairs_lowest_common_ancestor` | Same answers and order as NetworkX. |
+| `is_planar`, `check_planarity`, `check_planarity_recursive`, `get_counterexample`, `get_counterexample_recursive` | The same `PlanarEmbedding` (half-edge order and data) and counterexample as NetworkX. |
+| `is_chordal`, `chordal_graph_treewidth`, `complete_to_chordal_graph`, `is_at_free`, `is_perfect_graph` | Same results as NetworkX. Graphs with self-loops run in NetworkX. |
+| `nx.tournament.is_reachable`, `nx.tournament.is_strongly_connected`, `nx.tournament.score_sequence` | Same results as NetworkX. |
+| `triadic_census`, `is_d_separator`, `is_minimal_d_separator`, `find_minimal_d_separator`, `node_boundary`, `edge_boundary` | Same results, and the same set order, as NetworkX. |
+| `is_graphical`, `is_digraphical`, `is_multigraphical`, `is_pseudographical`, `is_valid_degree_sequence_erdos_gallai`, `is_valid_degree_sequence_havel_hakimi` | Degree-sequence tests. They take no graph, so they run in rustnx when it is first in `backend_priority` or with `backend="rustnx"`. |
+| `max_weight_matching`, `min_weight_matching`, `maximal_matching`, `is_matching`, `is_maximal_matching`, `is_perfect_matching`, `min_edge_cover` | A Rust port of NetworkX's blossom algorithm: the same matching, set order and edge orientation. |
+| `is_dominating_set`, `connected_dominating_set`, `is_connected_dominating_set`, `enumerate_all_cliques`, `node_clique_number`, `max_weight_clique` | Same results and order as NetworkX. |
+| `is_isomorphic`, `vf2pp_is_isomorphic`, `vf2pp_subgraph_is_isomorphic`, `vf2pp_is_monomorphic`, `could_be_isomorphic`, `fast_could_be_isomorphic`, `faster_could_be_isomorphic` | Yes/no isomorphism tests with an exact matcher in Rust. Node and edge match functions run in NetworkX. |
+| `tree_isomorphism`, `rooted_tree_isomorphism`, `root_trees`, `weisfeiler_lehman_graph_hash`, `weisfeiler_lehman_subgraph_hashes` | Same mappings and hashes as each NetworkX version. |
+| `nx.bipartite`: `color`, `sets`, `is_bipartite_node_set`, `hopcroft_karp_matching`, `to_vertex_cover`, `closeness_centrality`, `node_redundancy`, `butterflies` | Same results and order as NetworkX. |
 
 The rest of NetworkX's functions run in NetworkX. [docs/COVERAGE.md](docs/COVERAGE.md)
 lists every function NetworkX lets a backend implement and which ones rustnx

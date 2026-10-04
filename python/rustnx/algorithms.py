@@ -7,6 +7,7 @@ makes NetworkX fall back to its own implementation.
 
 import functools
 from collections import Counter, defaultdict
+from collections.abc import Set
 import inspect
 from itertools import chain
 import math
@@ -17,6 +18,9 @@ import warnings
 
 import networkx as nx
 from networkx.algorithms.centrality import betweenness as _nx_betweenness
+from networkx.algorithms import matching as _nx_matching
+
+from . import _core
 
 __all__ = [
     "all_pairs_all_shortest_paths",
@@ -25,12 +29,17 @@ __all__ = [
     "all_pairs_dijkstra",
     "all_pairs_dijkstra_path",
     "all_pairs_dijkstra_path_length",
+    "all_pairs_lowest_common_ancestor",
     "all_pairs_shortest_path",
     "all_pairs_shortest_path_length",
     "all_shortest_paths",
+    "all_simple_edge_paths",
+    "all_simple_paths",
     "all_topological_sorts",
     "all_triangles",
     "ancestors",
+    "antichain_width",
+    "antichains",
     "articulation_points",
     "astar_path",
     "astar_path_length",
@@ -53,15 +62,26 @@ __all__ = [
     "biconnected_components",
     "bidirectional_dijkstra",
     "bidirectional_shortest_path",
+    "bipartite_closeness_centrality",
+    "boruvka_mst_edges",
+    "branching_weight",
     "bridges",
+    "butterflies",
     "center",
     "centroid",
     "chain_decomposition",
+    "check_planarity",
+    "check_planarity_recursive",
+    "chordal_graph_treewidth",
     "closeness_centrality",
     "clustering",
+    "color",
+    "complete_to_chordal_graph",
     "condensation",
     "connected_components",
+    "connected_dominating_set",
     "core_number",
+    "could_be_isomorphic",
     "cycle_basis",
     "dag_longest_path",
     "dag_longest_path_length",
@@ -86,17 +106,32 @@ __all__ = [
     "edge_betweenness_centrality",
     "edge_betweenness_centrality_subset",
     "edge_bfs",
+    "edge_boundary",
     "edge_dfs",
     "edge_load_centrality",
     "eigenvector_centrality",
+    "enumerate_all_cliques",
     "eulerian_circuit",
     "eulerian_path",
+    "fast_could_be_isomorphic",
+    "faster_could_be_isomorphic",
     "find_cycle",
+    "find_minimal_d_separator",
     "find_negative_cycle",
+    "floyd_warshall",
+    "floyd_warshall_numpy",
+    "floyd_warshall_predecessor_and_distance",
+    "floyd_warshall_tree",
+    "from_nested_tuple",
+    "from_prufer_sequence",
     "generalized_degree",
     "generic_bfs_edges",
+    "get_counterexample",
+    "get_counterexample_recursive",
     "girth",
     "global_reaching_centrality",
+    "goldberg_radzik",
+    "greedy_branching",
     "greedy_color",
     "group_betweenness_centrality",
     "group_closeness_centrality",
@@ -109,32 +144,55 @@ __all__ = [
     "has_cycle",
     "has_eulerian_path",
     "has_path",
+    "hopcroft_karp_matching",
     "immediate_dominators",
     "in_degree_centrality",
     "intersection_array",
     "is_aperiodic",
     "is_arborescence",
+    "is_at_free",
     "is_attracting_component",
     "is_biconnected",
     "is_bipartite",
+    "is_bipartite_node_set",
     "is_branching",
+    "is_chordal",
     "is_coloring",
     "is_connected",
+    "is_connected_dominating_set",
+    "is_d_separator",
+    "is_digraphical",
     "is_directed_acyclic_graph",
     "is_distance_regular",
+    "is_dominating_set",
     "is_equitable",
     "is_eulerian",
     "is_forest",
+    "is_graphical",
+    "is_isomorphic",
     "is_k_regular",
+    "is_matching",
+    "is_maximal_matching",
+    "is_minimal_d_separator",
+    "is_multigraphical",
+    "is_perfect_graph",
+    "is_perfect_matching",
+    "is_planar",
+    "is_pseudographical",
+    "is_reachable",
     "is_regular",
     "is_semiconnected",
     "is_semieulerian",
+    "is_simple_path",
     "is_strongly_connected",
     "is_strongly_regular",
     "is_tournament",
     "is_tree",
+    "is_valid_degree_sequence_erdos_gallai",
+    "is_valid_degree_sequence_havel_hakimi",
     "is_weakly_connected",
     "isolates",
+    "johnson",
     "k_core",
     "k_corona",
     "k_crust",
@@ -147,8 +205,20 @@ __all__ = [
     "lexicographical_topological_sort",
     "local_bridges",
     "local_reaching_centrality",
+    "lowest_common_ancestor",
+    "max_weight_clique",
+    "max_weight_matching",
+    "maximal_matching",
+    "maximum_branching",
+    "maximum_spanning_arborescence",
     "maximum_spanning_edges",
     "maximum_spanning_tree",
+    "min_edge_cover",
+    "min_weight_matching",
+    "minimal_branching",
+    "minimum_branching",
+    "minimum_cycle_basis",
+    "minimum_spanning_arborescence",
     "minimum_spanning_edges",
     "minimum_spanning_tree",
     "multi_source_dijkstra",
@@ -156,7 +226,10 @@ __all__ = [
     "multi_source_dijkstra_path_length",
     "negative_edge_cycle",
     "newman_betweenness_centrality",
+    "node_boundary",
+    "node_clique_number",
     "node_connected_component",
+    "node_redundancy",
     "number_attracting_components",
     "number_connected_components",
     "number_of_isolates",
@@ -165,14 +238,21 @@ __all__ = [
     "onion_layers",
     "out_degree_centrality",
     "pagerank",
+    "partition_spanning_tree",
     "percolation_centrality",
     "periphery",
     "predecessor",
+    "prim_mst_edges",
     "prominent_group",
     "radius",
     "root_to_leaf_paths",
+    "root_trees",
+    "rooted_tree_isomorphism",
+    "score_sequence",
+    "sets",
     "shortest_path",
     "shortest_path_length",
+    "shortest_simple_paths",
     "single_source_all_shortest_paths",
     "single_source_bellman_ford",
     "single_source_bellman_ford_path",
@@ -186,17 +266,29 @@ __all__ = [
     "single_target_shortest_path_length",
     "square_clustering",
     "strongly_connected_components",
+    "to_nested_tuple",
     "to_prufer_sequence",
+    "to_vertex_cover",
     "topological_generations",
     "topological_sort",
+    "tournament_is_strongly_connected",
     "transitive_closure",
     "transitive_closure_dag",
     "transitive_reduction",
     "transitivity",
+    "tree_all_pairs_lowest_common_ancestor",
+    "tree_centroid",
+    "tree_isomorphism",
+    "triadic_census",
     "triangles",
     "v_structures",
+    "vf2pp_is_isomorphic",
+    "vf2pp_is_monomorphic",
+    "vf2pp_subgraph_is_isomorphic",
     "voterank",
     "weakly_connected_components",
+    "weisfeiler_lehman_graph_hash",
+    "weisfeiler_lehman_subgraph_hashes",
     "wiener_index",
 ]
 
@@ -968,6 +1060,8 @@ def _reachable(G, source, reverse):
         s = G._index[source]
     except KeyError:
         raise nx.NetworkXError(f"The node {source} is not in the {kind}.") from None
+    if reverse and G.is_directed():
+        G._ensure_exact_pred()
     nodes = G._nodes
     return {nodes[i] for i in G._core.reachable(s, reverse)}
 
@@ -3768,7 +3862,24 @@ def _centroid_tree_shortcut():
     return False
 
 
+@functools.cache
+def _centroid_is_tree_centroid():
+    """Whether the installed NetworkX (3.6) registers its *tree* centroid
+    under the name ``centroid`` (3.7 renames it ``tree_centroid`` and gives
+    ``centroid`` to the distance measure that was ``barycenter``)."""
+    registry = getattr(nx.utils.backends, "_registered_algorithms", {})
+    func = registry.get("centroid")
+    module = getattr(getattr(func, "orig_func", func), "__module__", "")
+    return module.startswith("networkx.algorithms.tree")
+
+
 def centroid(G, weight=None):
+    if _centroid_is_tree_centroid():
+        return tree_centroid(G)
+    return _distance_centroid(G, weight)
+
+
+def _distance_centroid(G, weight):
     nodes = G._nodes
     if weight is None and not G.is_directed() and _centroid_tree_shortcut():
         if is_tree(G):  # raises NetworkX's error for the null graph
@@ -3799,8 +3910,8 @@ def centroid(G, weight=None):
 
 
 def barycenter(G, weight=None):
-    # NetworkX 3.4 and 3.5 name `centroid` this way.
-    return centroid(G, weight)
+    # NetworkX 3.4 to 3.6 name `centroid` this way.
+    return _distance_centroid(G, weight)
 
 
 def harmonic_diameter(G, weight=None):
@@ -4321,3 +4432,2179 @@ def kruskal_mst_edges(G, minimum, weight="weight", keys=True, data=True, ignore_
             guard.release()
 
     return generate()
+
+
+# --- Batch 7: shortest paths, DAG and cycle leftovers ------------------------------
+
+
+def _weight_flags(G, weight, all_int):
+    """Decline weights rustnx's f64 arithmetic can't reproduce: infinite
+    ones, and ints whose path sums could leave f64's exact range."""
+    finite, exact, _ = G._core.weight_flags(weight)
+    if not finite:
+        raise NotImplementedError("rustnx does not support infinite weights here")
+    if not exact and (all_int or G._core.weight_mixed(weight)):
+        raise NotImplementedError("integer weights too large for exact sums")
+
+
+# Floyd-Warshall
+
+
+@functools.cache
+def _floyd_warshall_inline():
+    """Whether the installed NetworkX's Floyd-Warshall is 3.4/3.5's version
+    (``min(e_weight, ...)`` over ``G.edges(data=True)`` with missing weights
+    1.0, no negative cycle check) rather than 3.6+'s ``_init_pred_dist``
+    (rows of ``G._adj``, missing weights 1, hidden edges skipped)."""
+    return "_init_pred_dist" not in _source_text(nx.floyd_warshall_predecessor_and_distance)
+
+
+def _inf():
+    return float("inf")
+
+
+# NetworkX's `dist` rows: `defaultdict(lambda: float("inf"))`.
+_DIST_ROW = functools.partial(defaultdict, _inf)
+
+
+def _core_with_default(G, weight, default):
+    """A core converted with ``default`` for edges lacking ``weight``,
+    kept on G (which NetworkX caches while the graph is unchanged)."""
+    cores = G.__dict__.setdefault("_rustnx_default_cores", {})
+    key = (weight, type(default), default)
+    if key not in cores:
+        from .graph import from_networkx
+
+        cores[key] = from_networkx(_networkx_graph(G), {weight: default})._core
+    return cores[key]
+
+
+def _floyd_warshall(G, weight, tree=False, want_pred=True):
+    old = not tree and _floyd_warshall_inline()
+    if callable(weight):
+        raise NotImplementedError("rustnx does not support callable weights")
+    core = G._core
+    if weight is None:
+        # `d.get(None, 1.0)` before 3.6, `_weight_function`'s 1 after.
+        int_weights = not old
+    else:
+        if old:
+            if G._core.is_native():
+                raise NotImplementedError("rustnx can't tell missing weights apart here")
+            if not isinstance(weight, str):
+                raise NotImplementedError("rustnx only supports string edge attribute names")
+            core = _core_with_default(G, weight, 1.0)
+        else:
+            _check_weight(G, weight)
+            core = G._core
+        int_weights, has_hidden = core.weight_info(weight)
+        if core.weight_mixed(weight):
+            raise NotImplementedError("edge weights mix ints and floats")
+        if has_hidden and old:
+            # NetworkX 3.4/3.5 compare None with a number and raise TypeError.
+            raise NotImplementedError("rustnx does not support None edge weights here")
+    nodes = G._nodes
+    found = core.floyd_warshall(
+        nodes if type(nodes) is list else list(nodes),
+        _DIST_ROW,
+        weight,
+        int_weights,
+        old,
+        tree,
+        want_pred,
+    )
+    if found is None:
+        raise nx.NetworkXUnbounded("Negative cycle detected.")
+    return found
+
+
+def floyd_warshall_predecessor_and_distance(G, weight="weight"):
+    return _floyd_warshall(G, weight)
+
+
+def floyd_warshall(G, weight="weight"):
+    return _floyd_warshall(G, weight, want_pred=False)[1]
+
+
+def floyd_warshall_tree(G, weight="weight"):
+    return _floyd_warshall(G, weight, tree=True)
+
+
+@functools.cache
+def _floyd_warshall_numpy_checks():
+    """Whether ``floyd_warshall_numpy`` checks the diagonal for negative
+    cycles (NetworkX 3.6+)."""
+    return "np.diag(A) < 0" in _source_text(nx.floyd_warshall_numpy)
+
+
+def floyd_warshall_numpy(G, nodelist=None, weight="weight"):
+    import numpy as np
+
+    n = len(G)
+    if nodelist is not None:
+        if not len(nodelist) == len(G) == len(set(nodelist)):
+            raise nx.NetworkXError(
+                "nodelist must contain every node in G with no repeats."
+                "If you wanted a subgraph of G use G.subgraph(nodelist)"
+            )
+        order = [0] * n
+        for k, v in enumerate(nodelist):
+            i = G._index.get(v)
+            if i is None:
+                # NetworkX's error message lists a set of nodes.
+                raise NotImplementedError("nodelist holds nodes not in G")
+            order[i] = k
+    else:
+        order = list(range(n))
+    weight, _, has_hidden = _check_weight(G, weight)
+    if has_hidden:
+        raise NotImplementedError("rustnx does not support None edge weights here")
+    if G._core.weight_flags(weight)[2]:
+        raise NotImplementedError("NumPy may order -0.0 and 0.0 either way")
+    if n == 0:
+        return np.full((0, 0), np.inf)
+    found = G._core.floyd_warshall_dense(order, weight, _floyd_warshall_numpy_checks())
+    if found is None:
+        raise nx.NetworkXUnbounded("Negative cycle detected.")
+    return np.frombuffer(found, dtype=np.float64).reshape(n, n)
+
+
+# Johnson and Goldberg-Radzik
+
+
+def johnson(G, weight="weight"):
+    weight, all_int, has_hidden = _check_weight(G, weight)
+    if has_hidden:
+        # NetworkX's reweighting adds the None and raises TypeError.
+        raise NotImplementedError("rustnx does not support None edge weights here")
+    _weight_flags(G, weight, all_int)
+    h = G._core.johnson_potentials(weight)
+    if h is None:
+        raise nx.NetworkXUnbounded(_BELLMAN_FORD_UNBOUNDED)
+    pop_order = _dijkstra_paths_in_pop_order()
+    nodes = G._nodes
+    result = {}
+    for start in range(0, len(nodes), _ALL_PAIRS_BATCH):
+        batch = list(range(start, min(start + _ALL_PAIRS_BATCH, len(nodes))))
+        for s, tree in zip(batch, G._core.johnson_trees(batch, h, weight)):
+            if tree is None:
+                raise ValueError(*_NEGATIVE_CYCLE)
+            order, parents, seen = tree
+            result[nodes[s]] = _tree_paths(G, order, parents, order if pop_order else seen)
+    return result
+
+
+@functools.cache
+def _goldberg_radzik_skips_counted():
+    """Whether ``goldberg_radzik``'s ``topo_sort`` skips relabeled nodes
+    already counted (3.4/3.5) rather than iterating a copy of the set made
+    before any were (3.6+)."""
+    return "relabeled - neg_count.keys()" not in _source_text(nx.goldberg_radzik)
+
+
+def goldberg_radzik(G, source, weight="weight"):
+    if source not in G:
+        raise nx.NodeNotFound(f"Node {source} is not found in the graph")
+    s = G._index[source]
+    _same_node_type(G, source, s)
+    weight, all_int, has_hidden = _check_weight(G, weight, distances=True)
+    if has_hidden:
+        raise NotImplementedError("rustnx does not support None edge weights here")
+    if G._core.negative_selfloop(weight):
+        raise nx.NetworkXUnbounded(_BELLMAN_FORD_UNBOUNDED)
+    if len(G) == 1:
+        return {source: None}, {source: 0}
+    _weight_flags(G, weight, all_int)
+    state = G._core.goldberg_radzik(s, all_int, weight)
+    skip_counted = _goldberg_radzik_skips_counted()
+    nodes = G._nodes
+    index = G._index
+    no_counts = {}.keys()
+    # `relabeled` is a set: each round visits it in Python's set order, so
+    # it is built here exactly as NetworkX builds it.
+    relabeled = {source}
+    while relabeled:
+        visit = relabeled if skip_counted else relabeled - no_counts
+        if not state.topo_sort([index[u] for u in visit], skip_counted):
+            raise nx.NetworkXUnbounded(_BELLMAN_FORD_UNBOUNDED)
+        relabeled = set(map(nodes.__getitem__, state.relax()))
+    keys, preds, dists, ints = state.result()
+    pred = {nodes[v]: None if p == _NO_PARENT else nodes[p] for v, p in zip(keys, preds)}
+    d = {nodes[v]: int(x) if i else x for v, x, i in zip(keys, dists, ints)}
+    return pred, d
+
+
+# DAGs
+
+
+def _flat_batches(G, it, limit=1024):
+    """Lists of nodes from a Rust iterator's ``(flat, ends)`` batches."""
+    nodes = G._nodes
+    while True:
+        flat, ends = it.next_batch(limit)
+        if not ends:
+            return
+        begin = 0
+        for end in ends:
+            yield [nodes[i] for i in flat[begin:end]]
+            begin = end
+
+
+def antichains(G, topo_order=None):
+    _directed_only(G)
+    given = None
+    if topo_order is not None:
+        if iter(topo_order) is topo_order:
+            raise NotImplementedError("rustnx needs a reusable container of nodes")
+        # NetworkX trusts the order it is given; rustnx takes only true
+        # topological orders, for which the closure is plain reachability.
+        given = G._core.antichains([_node_arg(G, v) for v in topo_order])
+        if given is None:
+            raise NotImplementedError("topo_order is not a topological order of G")
+
+    def compute():
+        # NetworkX sorts and copies the graph when iteration starts.
+        it = given
+        if it is None:
+            it = G._core.antichains(_topological_order_or_raise(G))
+        yield from _flat_batches(G, it)
+
+    return _computed_on_first_next(
+        G, compute, lambda H: nx.antichains(H, topo_order=topo_order, backend="networkx")
+    )
+
+
+def antichain_width(G):
+    _directed_only(G)
+    width = G._core.antichain_width()
+    if width is None:
+        raise nx.NetworkXUnfeasible(
+            "Graph contains a cycle or graph changed during iteration"
+        )
+    return width
+
+
+# Simple paths
+
+
+def _live_paths(G, start, fallback):
+    """A generator over ``start()`` that, like NetworkX's, reads the graph
+    as it goes: a change before iteration runs NetworkX on the changed
+    graph, a change during it stops with a RuntimeError."""
+    guard = _MutationGuard(G)
+
+    def generate():
+        try:
+            if guard.changed():
+                guard.release()
+                yield from fallback(guard.graph)
+                return
+            cache, key = guard._cache, guard._key
+            for item in start():
+                if key is not None and key not in cache:
+                    raise RuntimeError("Graph changed during iteration")
+                yield item
+        finally:
+            guard.release()
+
+    return generate()
+
+
+def _path_limit(cutoff, n):
+    """``len(current_path) - 1 < cutoff`` as ``nodes on path < limit``,
+    or ``None`` when NetworkX yields nothing (``cutoff >= 0`` fails)."""
+    if type(cutoff) not in (int, float, bool):
+        raise NotImplementedError("rustnx needs an int or float cutoff")
+    if not cutoff >= 0:
+        return None
+    if cutoff >= n + 1:
+        return n + 1
+    return math.ceil(cutoff)
+
+
+def _simple_paths(G, source, target, cutoff, edges):
+    try:
+        s = G._index.get(source)
+    except TypeError:
+        s = None
+    if s is not None:
+        _same_node_type(G, source, s)
+    error = None
+    targets, extra = [], False
+    if target in G:
+        targets = [G._index[target]]
+    else:
+        try:
+            target_set = set(target)
+        except TypeError as err:
+            error = nx.NodeNotFound(f"target node {target} not in graph")
+            error.__cause__ = err
+        else:
+            for x in target_set:
+                i = G._index.get(x)
+                if i is not None:
+                    targets.append(i)
+                elif x is not None:  # None is always a key of current_path
+                    extra = True
+    limit = _path_limit(len(G) - 1 if cutoff is None else cutoff, len(G))
+    nodes = G._nodes
+
+    def start():
+        if s is None:
+            raise nx.NodeNotFound(f"source node {source} not in graph")
+        if error is not None:
+            raise error
+        if limit is None or not (targets or extra):
+            return
+        it = G._core.simple_paths(s, targets, extra, limit)
+        for path in _flat_batches(G, it):
+            if edges:
+                yield list(zip(path, path[1:]))
+            else:
+                yield path
+
+    func = nx.all_simple_edge_paths if edges else nx.all_simple_paths
+    return _live_paths(
+        G, start, lambda H: func(H, source, target, cutoff=cutoff, backend="networkx")
+    )
+
+
+def all_simple_paths(G, source, target, cutoff=None):
+    return _simple_paths(G, source, target, cutoff, edges=False)
+
+
+def all_simple_edge_paths(G, source, target, cutoff=None):
+    return _simple_paths(G, source, target, cutoff, edges=True)
+
+
+def shortest_simple_paths(G, source, target, weight=None):
+    s = _position(G, source)
+    t = _position(G, target)
+    if weight is not None:
+        weight, all_int, _ = _check_weight(G, weight, distances=True)
+        _weight_flags(G, weight, all_int)
+    if G.is_directed():
+        G._ensure_exact_pred()  # the reverse searches follow G.pred
+
+    def start():
+        if s is None:
+            raise nx.NodeNotFound(f"source node {source} not in graph")
+        if t is None:
+            raise nx.NodeNotFound(f"target node {target} not in graph")
+        it = G._core.shortest_simple_paths(s, t, _COMPENSATED_SUM, weight)
+        nodes = G._nodes
+        while True:
+            code, path = it.next_path()
+            if code == 1:
+                raise nx.NetworkXNoPath(f"No path between {source} and {target}.")
+            if code == 2:
+                raise ValueError("Contradictory paths found: negative weights?")
+            if path is None:
+                return
+            yield [nodes[i] for i in path]
+
+    return _live_paths(
+        G, start, lambda H: nx.shortest_simple_paths(H, source, target, weight=weight, backend="networkx")
+    )
+
+
+def is_simple_path(G, nodes):
+    if len(nodes) == 0:
+        return False
+    if len(nodes) == 1:
+        return nodes[0] in G
+    index = G._index
+    try:
+        path = [index[v] for v in nodes]
+    except (KeyError, TypeError):
+        return False
+    if len(set(path)) != len(path):
+        return False
+    return G._core.is_path(path)
+
+
+# Minimum cycle basis
+
+
+def _spanning_forest_edges(index, edges):
+    """``minimum_spanning_edges(G, weight=None)``: with equal weights,
+    Kruskal keeps each edge (in ``G.edges`` order) joining two trees."""
+    parent = {}
+
+    def find(x):
+        root = x
+        while parent.get(root, root) != root:
+            root = parent[root]
+        while parent.get(x, x) != root:
+            parent[x], x = root, parent[x]
+        return root
+
+    tree = []
+    for u, v in edges:
+        a, b = find(index[u]), find(index[v])
+        if a != b:
+            parent[a] = b
+            tree.append((u, v))
+    return tree
+
+
+def minimum_cycle_basis(G, weight=None):
+    _undirected_only(G)
+    if weight is not None:
+        weight, all_int, has_hidden = _check_weight(G, weight)
+        if has_hidden:
+            raise NotImplementedError("rustnx does not support None edge weights here")
+        _weight_flags(G, weight, all_int)
+    nodes = G._nodes
+    if any(isinstance(v, tuple) for v in nodes):
+        # NetworkX's lifted graph names copies `(v, 1)`, which a tuple node
+        # could equal.
+        raise NotImplementedError("rustnx does not support tuple nodes here")
+    base = _networkx_graph(G)
+    index = G._index
+    cb = []
+    for c in connected_components(G):
+        # The subgraph view (and the chord set) iterate in an order that can
+        # depend on Python's set layout, so they are built as NetworkX does.
+        sub = base.subgraph(c)
+        edges = list(sub.edges)
+        tree_edges = _spanning_forest_edges(index, edges)
+        chords = sub.edges - tree_edges - {(v, u) for u, v in tree_edges}
+        if not chords:
+            continue
+        code, found = G._core.min_cycle_basis(
+            [index[v] for v in sub],
+            [(index[u], index[v]) for u, v in edges],
+            [(index[u], index[v]) for u, v in chords],
+            weight,
+        )
+        if code == 1:
+            raise ValueError(*_NEGATIVE_CYCLE)  # from `_dijkstra`
+        if code == 2:
+            raise ValueError("Contradictory paths found: negative weights?")
+        cb.extend([nodes[i] for i in cycle] for cycle in found)
+    return cb
+
+
+# --- Batch 8: trees, branchings and lowest common ancestors -------------------------
+
+from ._core import CoreGraph as _CoreGraph  # noqa: E402  (graph-less Rust helpers)
+
+# NetworkX recurses once per level of a nested tuple or tree; deeper inputs
+# fall back, so NetworkX raises its own RecursionError where it would.
+_NESTED_DEPTH = 100
+
+# `maximum_branching`'s internal names, which a graph must not already use.
+_EDMONDS_CANDIDATE = "edmonds' secret candidate attribute"
+_EDMONDS_NEW_NODE = "edmonds new node base name "
+
+
+def _guarded(G, produce, fallback=None):
+    """A generator over ``produce()`` that starts when iteration does. If G
+    changed before that, NetworkX's ``fallback(graph)`` runs instead (when
+    given); a change after the first item raises, as in ``_traversal``."""
+    guard = _MutationGuard(G)
+
+    def generate():
+        try:
+            if fallback is not None and guard.changed():
+                yield from fallback(guard.graph)
+                return
+            for item in produce():
+                if guard.changed():
+                    raise RuntimeError("Graph changed during iteration")
+                yield item
+        finally:
+            guard.release()
+
+    return generate()
+
+
+def _weight_core(G, attr, default):
+    """A core whose ``attr`` weights were converted with ``default`` for
+    missing values (NetworkX's ``data.get(attr, default)``)."""
+    if not isinstance(attr, str):
+        raise NotImplementedError("rustnx needs a string weight attribute")
+    if type(default) not in (int, float) or not math.isfinite(default):
+        raise NotImplementedError("rustnx needs a finite int or float default")
+    key = (attr, type(default), default, math.copysign(1, default))
+    if G._core.is_native():
+        if key != (attr, int, 1, 1.0):
+            raise NotImplementedError("native graphs read missing values as 1")
+        return G._core
+    base = _networkx_graph(G)
+    for name, stored in G._weight_attrs:
+        if name == attr and type(stored) in (int, float) and (
+            (attr, type(stored), stored, math.copysign(1, stored)) == key
+        ):
+            return G._core
+    # Kept on G, which NetworkX caches while the graph is unchanged.
+    cores = G.__dict__.setdefault("_default_cores", {})
+    if key not in cores:
+        from .graph import from_networkx
+
+        cores[key] = from_networkx(base, {attr: default})._core
+    return cores[key]
+
+
+def branching_weight(G, attr="weight", default=1):
+    core = _weight_core(G, attr, default)
+    all_int, has_hidden = core.weight_info(attr)
+    if has_hidden or core.weight_mixed(attr):
+        # `sum()` of ints and floats mixed in edge order: rustnx keeps one
+        # type per sum.
+        raise NotImplementedError("edge weights mix types")
+    return core.edge_weight_sum(attr, _COMPENSATED_SUM)
+
+
+def _numbers(values):
+    if not all(type(w) in (int, float) for w in values):
+        raise NotImplementedError("rustnx needs int or float weights")
+
+
+def _edge_positions(G, edges):
+    index = G._index
+    return [index[u] for u, _, _ in edges], [index[v] for _, v, _ in edges]
+
+
+def greedy_branching(G, attr="weight", default=1, kind="max", seed=None):
+    try:
+        known = kind in {"max", "min"}
+    except TypeError:
+        raise NotImplementedError("unhashable kind") from None
+    if not known:
+        raise nx.NetworkXException("Unknown value for `kind`.")
+    nodes = G._nodes
+    types = {type(x) for x in nodes}
+    if not (types <= {int} or types == {str}):
+        # NetworkX sorts by (weight, u, v); other labels may not compare.
+        raise NotImplementedError("rustnx needs int or str node labels")
+    base = _networkx_graph(G)
+    rank = [0] * len(nodes)
+    for r, x in enumerate(sorted(range(len(nodes)), key=nodes.__getitem__)):
+        rank[x] = r
+    if isinstance(attr, str):
+        # The weights as converted (ints are exact in floats, and compare
+        # with floats as Python does); the result keeps the edges' values.
+        core = _weight_core(G, attr, default)
+        if core.weight_info(attr)[1]:
+            raise NotImplementedError("rustnx needs int or float weights")
+        us, vs = core.greedy_branching_edges(attr, rank, kind != "min")
+        adj = base._adj
+        B = nx.DiGraph()
+        B.add_nodes_from(base)
+        for u, v in zip(us, vs):
+            a, b = nodes[u], nodes[v]
+            B.add_edge(a, b, **{attr: adj[a][b].get(attr, default)})
+        return B
+    if attr is None:
+        if type(default) not in (int, float) or math.isnan(default):
+            raise NotImplementedError("rustnx needs an int or float default")
+        # Generate a random string the graph probably won't have.
+        from networkx.algorithms.tree.branchings import random_string
+
+        attr = random_string(seed=seed)
+    edges = list(base.edges(data=True))
+    weights = [data.get(attr, default) for _, _, data in edges]
+    us, vs = _edge_positions(G, edges)
+    kept = _CoreGraph.greedy_branching(us, vs, weights, rank, kind != "min")
+    if kept is None:
+        raise NotImplementedError("rustnx needs int or float weights (no NaN)")
+    B = nx.DiGraph()
+    B.add_nodes_from(base)
+    for k in kept:
+        u, v, _ = edges[k]
+        B.add_edge(u, v, **{attr: weights[k]})
+    return B
+
+
+def _partition_state(value):
+    if value is None:
+        return 0
+    if type(value) is not nx.EdgePartition:
+        raise NotImplementedError("rustnx needs EdgePartition values")
+    return value.value  # OPEN 0, INCLUDED 1, EXCLUDED 2
+
+
+def _check_edmonds(base, edges, attr, preserve_attrs, partition):
+    if edges and not isinstance(attr, str):
+        # NetworkX passes the data as keywords, which raises TypeError.
+        raise NotImplementedError("rustnx needs a string weight attribute")
+    if partition is not None and (not isinstance(partition, str) or partition == attr):
+        raise NotImplementedError("rustnx needs a separate string partition attribute")
+    if _EDMONDS_CANDIDATE in (attr, partition):
+        raise NotImplementedError("attribute name used internally by NetworkX")
+    if any(isinstance(x, str) and x.startswith(_EDMONDS_NEW_NODE) for x in base):
+        raise NotImplementedError("node name used internally by NetworkX")
+    if preserve_attrs:
+        for _, _, data in edges:
+            if _EDMONDS_CANDIDATE in data or not all(isinstance(k, str) for k in data):
+                raise NotImplementedError("edge attribute names NetworkX can't copy")
+
+
+def _branching(G, base, edges, weights, attr, preserve_attrs, partition):
+    """NetworkX's `maximum_branching` reading ``weights`` (one per edge of
+    ``edges``, in ``G.edges`` order) for ``attr``."""
+    _check_edmonds(base, edges, attr, preserve_attrs, partition)
+    _numbers(weights)
+    if partition is None:
+        part = bytes(len(edges))
+        values = None
+    else:
+        values = [data.get(partition) for _, _, data in edges]
+        part = bytes(_partition_state(p) for p in values)
+    us, vs = _edge_positions(G, edges)
+    result = _CoreGraph.edmonds(len(G), us, vs, weights, part)
+    if result is None:
+        raise NotImplementedError("rustnx can't follow NetworkX on these weights")
+    return result, values
+
+
+def _branching_graph(base, edges, weights, attr, preserve_attrs, partition, result, values):
+    initial, log = result
+    # NetworkX lists the final edges from a set of edge keys; replaying the
+    # same set operations gives the same iteration order.
+    keys = set(dict.fromkeys(initial))
+    for circuit, removed in log:
+        keys.update(circuit)
+        keys.remove(removed)
+    H = base.__class__()
+    H.add_nodes_from(base)
+    for k in keys:
+        u, v, data = edges[k]
+        dd = {attr: weights[k]}
+        if preserve_attrs:
+            if values is not None and values[k] is not None:
+                dd[partition] = values[k]
+            for key, value in data.items():
+                if key != attr and key not in dd:
+                    dd[key] = value
+        H.add_edge(u, v, **dd)
+    return H
+
+
+def maximum_branching(G, attr="weight", default=1, preserve_attrs=False, partition=None):
+    base = _networkx_graph(G)
+    edges = list(base.edges(data=True))
+    weights = [data.get(attr, default) for _, _, data in edges]
+    result, values = _branching(G, base, edges, weights, attr, preserve_attrs, partition)
+    return _branching_graph(base, edges, weights, attr, preserve_attrs, partition, result, values)
+
+
+def _transformed_branching(G, attr, default, preserve_attrs, partition, forward, backward):
+    """The wrappers that rewrite G's weights with ``forward``, run
+    `maximum_branching`, restore them with ``backward`` and apply
+    ``backward`` to the result's weights. The rewrites change G's data as
+    NetworkX's do (an edge without ``attr`` gains it, and float rounding may
+    stick); they happen only once rustnx knows it can finish."""
+    base = _networkx_graph(G)
+    edges = list(base.edges(data=True))
+    weights = [data.get(attr, default) for _, _, data in edges]
+    _numbers(weights)
+    forward = forward(weights)
+    shifted = [forward(w) for w in weights]
+    result, values = _branching(G, base, edges, shifted, attr, preserve_attrs, partition)
+    for _, _, d in edges:
+        d[attr] = forward(d.get(attr, default))
+    nx._clear_cache(base)
+    for _, _, d in edges:
+        d[attr] = backward(d.get(attr, default))
+    nx._clear_cache(base)
+    B = _branching_graph(base, edges, shifted, attr, preserve_attrs, partition, result, values)
+    for _, _, d in B.edges(data=True):
+        d[attr] = backward(d.get(attr, default))
+    nx._clear_cache(B)
+    return B
+
+
+def minimum_branching(G, attr="weight", default=1, preserve_attrs=False, partition=None):
+    return _transformed_branching(
+        G, attr, default, preserve_attrs, partition, lambda ws: operator.neg, operator.neg
+    )
+
+
+def _extremes(weights):
+    """``(max_weight, min_weight)`` as NetworkX's loops find them."""
+    max_weight, min_weight = -math.inf, math.inf
+    for w in weights:
+        if w > max_weight:
+            max_weight = w
+        if w < min_weight:
+            min_weight = w
+    return max_weight, min_weight
+
+
+def _minimal_transform(G, attr, default, preserve_attrs, partition):
+    span = {}
+
+    def forward(weights):
+        hi, lo = span["hl"] = _extremes(weights)
+        return lambda w: hi + 1 + (hi - lo) - w
+
+    def backward(w):
+        hi, lo = span["hl"]
+        return hi + 1 + (hi - lo) - w
+
+    return _transformed_branching(G, attr, default, preserve_attrs, partition, forward, backward)
+
+
+def minimal_branching(G, *, attr="weight", default=1, preserve_attrs=False, partition=None):
+    return _minimal_transform(G, attr, default, preserve_attrs, partition)
+
+
+def _check_arborescence(B, kind):
+    if not B.is_directed():
+        raise nx.NetworkXNotImplemented("not implemented for undirected type")
+    if len(B) == 0:
+        raise nx.NetworkXPointlessConcept("G has no nodes.")  # from is_tree
+    # B is a branching, so it is an arborescence when it is connected.
+    if B.number_of_edges() != len(B) - 1:
+        raise nx.NetworkXException(f"No {kind} spanning arborescence in G.")
+    return B
+
+
+def maximum_spanning_arborescence(G, attr="weight", default=1, preserve_attrs=False, partition=None):
+    span = {}
+
+    def forward(weights):
+        hi, lo = _extremes(weights)
+        span["hl"] = hi, lo
+        return lambda w: w - lo + 1 - (lo - hi)
+
+    def backward(w):
+        hi, lo = span["hl"]
+        return w + lo - 1 + (lo - hi)
+
+    B = _transformed_branching(G, attr, default, preserve_attrs, partition, forward, backward)
+    return _check_arborescence(B, "maximum")
+
+
+def minimum_spanning_arborescence(G, attr="weight", default=1, preserve_attrs=False, partition=None):
+    B = _minimal_transform(G, attr, default, preserve_attrs, partition)
+    return _check_arborescence(B, "minimum")
+
+
+def _prim_starts(G):
+    """The nodes `prim_mst_edges` pops from ``set(G)`` to start each tree.
+    NetworkX discards each tree's nodes from the set as it goes; doing the
+    same pops and discards on a real set gives the same order."""
+    nodes = G._nodes
+    comps = G._core.connected_components()
+    comp_of = [0] * len(nodes)
+    for c, comp in enumerate(comps):
+        for i in comp:
+            comp_of[i] = c
+    index = G._index
+    remaining = set(nodes)
+    discard = remaining.discard  # not difference_update, which may resize
+    starts = []
+    while remaining:
+        i = index[remaining.pop()]
+        starts.append(i)
+        for j in comps[comp_of[i]]:
+            discard(nodes[j])
+    return starts
+
+
+def prim_mst_edges(G, minimum, weight="weight", keys=True, data=True, ignore_nan=False):
+    if G.is_directed():
+        raise NotImplementedError("rustnx implements prim_mst_edges for undirected graphs")
+    base = _networkx_graph(G)
+    weight = _unhidden_weight(G, weight)  # NaN weights fall back when converted
+    nodes = G._nodes
+
+    def produce():
+        adj = base._adj
+        us, vs = G._core.prim_edges(_prim_starts(G), weight, bool(minimum))
+        for u, v in zip(us, vs):
+            a, b = nodes[u], nodes[v]
+            yield (a, b, adj[a][b]) if data else (a, b)
+
+    from networkx.algorithms.tree import mst
+
+    def fallback(H):
+        return mst.prim_mst_edges(H, minimum, weight, keys, data, ignore_nan, backend="networkx")
+
+    return _guarded(G, produce, fallback)
+
+
+def boruvka_mst_edges(G, minimum=True, weight="weight", keys=True, data=True, ignore_nan=False):
+    base = _networkx_graph(G)
+    weight = _unhidden_weight(G, weight)  # NaN weights fall back when converted
+    nodes = G._nodes
+    index = G._index
+
+    def produce():
+        state = G._core.boruvka(weight, bool(minimum))
+        adj = base._adj
+        while True:
+            found = state.round()
+            if found is None:
+                # A component's best edge is tied, so the order NetworkX
+                # scans it in matters: that of `{n for n in component}`,
+                # where `forest.to_sets()` builds the component by adding
+                # its nodes in node order.
+                orders = []
+                for comp in state.components():
+                    members = set()
+                    for i in comp:
+                        members.add(nodes[i])
+                    orders.append([index[x] for x in {x for x in members}])
+                found = state.round(orders)
+            us, vs, any_best = found
+            if not any_best:
+                return
+            for u, v in zip(us, vs):
+                a, b = nodes[u], nodes[v]
+                yield (a, b, adj[a][b]) if data else (a, b)
+
+    from networkx.algorithms.tree import mst
+
+    def fallback(H):
+        return mst.boruvka_mst_edges(H, minimum, weight, keys, data, ignore_nan, backend="networkx")
+
+    return _guarded(G, produce, fallback)
+
+
+def partition_spanning_tree(G, minimum=True, weight="weight", partition="partition", ignore_nan=False):
+    base = _networkx_graph(G)
+    weight = _unhidden_weight(G, weight)
+    try:
+        state = bytes(_partition_state(d.get(partition)) for _, _, d in base.edges(data=True))
+    except TypeError:
+        raise NotImplementedError("unhashable partition attribute") from None
+    us, vs = G._core.kruskal_partition(state, weight, not minimum)
+    nodes = G._nodes
+    adj = base._adj
+    T = base.__class__()
+    T.graph.update(base.graph)
+    T.add_nodes_from(base.nodes.items())
+    T.add_edges_from((nodes[u], nodes[v], adj[nodes[u]][nodes[v]]) for u, v in zip(us, vs))
+    return T
+
+
+def from_prufer_sequence(sequence):
+    n = len(sequence) + 2
+    values = list(sequence)
+    if len(values) != n - 2 or any(type(v) is not int for v in values):
+        raise NotImplementedError("rustnx needs a sequence of ints")
+    us, vs, error = _CoreGraph.prufer_edges([v if 0 <= v < n else -1 for v in values])
+    if error == -2:
+        raise NotImplementedError("NetworkX's leaf search fails here")
+    if error >= 0:
+        raise nx.NetworkXError(
+            f"Invalid Prufer sequence: Values must be between 0 and {n - 1}, got {values[error]}"
+        )
+    T = nx.Graph()  # nx.empty_graph(n), without dispatching
+    T.add_nodes_from(range(n))
+    T.add_edges_from(zip(us, vs))
+    orphans = set(T) - set(us)
+    u, v = orphans
+    T.add_edge(u, v)
+    return T
+
+
+def from_nested_tuple(sequence, sensible_relabeling=False):
+    tree = _CoreGraph.nested_tuple_tree(sequence, bool(sensible_relabeling), _NESTED_DEPTH)
+    if tree is None:
+        raise NotImplementedError("rustnx needs a nested sequence of sized iterables")
+    order, us, vs = tree
+    T = nx.Graph()
+    T.add_nodes_from(order)
+    T.add_edges_from(zip(us, vs))
+    return T
+
+
+def to_nested_tuple(T, root, canonical_form=False):
+    _undirected_only(T)
+    if not canonical_form:
+        # Children are listed in the order of a set of nodes.
+        raise NotImplementedError("rustnx implements canonical_form=True only")
+    if not is_tree(T):
+        raise nx.NotATree("provided graph is not a tree")
+    result = T._core.canonical_nested_tuple(_node_arg(T, root), _NESTED_DEPTH)
+    if result is None:
+        raise NotImplementedError("tree too deep")
+    return result
+
+
+def tree_centroid(G):
+    _undirected_only(G)
+    if not is_tree(G):
+        raise nx.NotATree("provided graph is not a tree")
+    nodes = G._nodes
+    return [nodes[i] for i in G._core.tree_centroid()]
+
+
+_LCA_BATCH = 4096
+
+
+def _lca_by_sets(G, base, v, w, cache):
+    """NetworkX's own walk for a pair with several lowest common ancestors:
+    it starts from the first element of a set intersection. The ancestor
+    sets are built as NetworkX builds them (``ancestors`` gives the same
+    set order), and cached per node as NetworkX does."""
+    for x in (v, w):
+        if x not in cache:
+            cache[x] = ancestors(G, x)
+            cache[x].add(x)
+    common = cache[v] & cache[w]
+    ancestor = next(iter(common))
+    while True:
+        successor = None
+        for lower in base._succ[ancestor]:
+            if lower in common:
+                successor = lower
+                break
+        if successor is None:
+            return ancestor
+        ancestor = successor
+
+
+def all_pairs_lowest_common_ancestor(G, pairs=None):
+    _directed_only(G)
+    if not is_directed_acyclic_graph(G):
+        raise nx.NetworkXError("LCA only defined on directed acyclic graphs.")
+    if len(G) == 0:
+        raise nx.NetworkXPointlessConcept("LCA meaningless on null graphs.")
+    base = _networkx_graph(G)
+    nodes = G._nodes
+    if pairs is None:
+        positions = None
+    else:
+        pairs = dict.fromkeys(pairs)
+        nodeset = set(nodes)
+        for pair in pairs:
+            if set(pair) - nodeset:
+                raise nx.NodeNotFound(f"Node(s) {set(pair) - nodeset} from pair {pair} not in G.")
+        try:
+            positions = [(_node_arg(G, v), _node_arg(G, w)) for v, w in pairs]
+        except (NotImplementedError, TypeError, ValueError):
+            # `pairs` may have been an iterator: hand NetworkX what it read.
+            return nx.all_pairs_lowest_common_ancestor(base, pairs, backend="networkx")
+    lca = G._core.dag_lca()
+
+    def batches():
+        n = len(nodes)
+        if positions is None:
+            for i in range(n):
+                yield [i] * (n - i), list(range(i, n))
+        else:
+            for s in range(0, len(positions), _LCA_BATCH):
+                chunk = positions[s:s + _LCA_BATCH]
+                yield [p for p, _ in chunk], [q for _, q in chunk]
+
+    def produce():
+        cache = {}
+        for us, vs in batches():
+            for u, v, r in zip(us, vs, lca.query(us, vs)):
+                if r == -1:
+                    continue
+                a, b = nodes[u], nodes[v]
+                yield (a, b), (nodes[r] if r >= 0 else _lca_by_sets(G, base, a, b, cache))
+
+    return _guarded(G, produce)
+
+
+def lowest_common_ancestor(G, node1, node2, default=None):
+    _directed_only(G)
+    ans = list(all_pairs_lowest_common_ancestor(G, pairs=[(node1, node2)]))
+    if ans:
+        assert len(ans) == 1
+        return ans[0][1]
+    return default
+
+
+def tree_all_pairs_lowest_common_ancestor(G, root=None, pairs=None):
+    _directed_only(G)
+    if pairs is not None:
+        # NetworkX keeps pairs in sets, so results follow set order.
+        raise NotImplementedError("rustnx does not support pairs")
+    r = None if root is None else _node_arg(G, root)
+    G._ensure_exact_pred()  # a node's parent is the first in G.pred
+
+    def produce():
+        if len(G) == 0:
+            raise nx.NetworkXPointlessConcept("LCA meaningless on null graphs.")
+        start = r
+        if start is None:
+            for v, deg in enumerate(G._core.in_out_degrees()[0]):
+                if deg == 0:
+                    if start is not None:
+                        raise nx.NetworkXError("No root specified and tree has multiple sources.")
+                    start = v
+                elif deg > 1:
+                    raise nx.NetworkXError("Tree LCA only defined on trees; use DAG routine.")
+            if start is None:
+                raise nx.NetworkXError("Graph contains a cycle.")
+        results = G._core.tree_lca(start)
+        nodes = G._nodes
+        while True:
+            vs, xs, ancestors = results.next_batch(65536)
+            if not vs:
+                return
+            for v, x, a in zip(vs, xs, ancestors):
+                yield (nodes[v], nodes[x]), nodes[a]
+
+    return _guarded(
+        G,
+        produce,
+        lambda H: nx.tree_all_pairs_lowest_common_ancestor(H, root=root, backend="networkx"),
+    )
+
+
+# --- Batch 9: planarity, chordal graphs and graph classes --------------------------
+
+
+def _replay_embedding(G, ordered, calls):
+    """The ``PlanarEmbedding`` NetworkX's ``lr_planarity`` builds, made with
+    the same ``add_half_edge`` calls in the same order (rustnx ran the
+    left-right test that decides them)."""
+    nodes = G._nodes
+    embedding = nx.PlanarEmbedding()
+    embedding.add_nodes_from(nodes)
+    add = embedding.add_half_edge
+    for v, row in zip(nodes, ordered):
+        previous = None
+        for w in row:
+            w = nodes[w]
+            add(v, w, ccw=previous)
+            previous = w
+    first = embedding.add_half_edge_first
+    for kind, a, b, r in calls:
+        if kind == 0:
+            first(nodes[a], nodes[b])
+        elif kind == 1:
+            add(nodes[a], nodes[b], ccw=nodes[r])
+        else:
+            add(nodes[a], nodes[b], cw=nodes[r])
+    return embedding
+
+
+def _embedding_from_layout(G, layout):
+    """The same ``PlanarEmbedding``, with its dicts filled in directly from
+    the state rustnx computed for those calls (much faster)."""
+    offsets, targets, cws, ccws, ccw_first, pred_offsets, preds = layout
+    nodes = G._nodes
+    embedding = nx.PlanarEmbedding()
+    embedding.add_nodes_from(nodes)
+    succ = embedding._succ
+    pred = embedding._pred
+    dicts = [
+        {"ccw": nodes[b], "cw": nodes[a]} if first else {"cw": nodes[a], "ccw": nodes[b]}
+        for a, b, first in zip(cws, ccws, ccw_first)
+    ]
+    heads = [nodes[w] for w in targets]
+    tails = []
+    for i, v in enumerate(nodes):
+        begin, end = offsets[i], offsets[i + 1]
+        if begin != end:
+            succ[v].update(zip(heads[begin:end], dicts[begin:end]))
+            tails.extend([v] * (end - begin))
+    for i, w in enumerate(nodes):
+        begin, end = pred_offsets[i], pred_offsets[i + 1]
+        if begin != end:
+            pred[w].update((tails[p], dicts[p]) for p in preds[begin:end])
+    return embedding
+
+
+@functools.cache
+def _embedding_layout_matches():
+    """Whether filling the embedding's dicts directly gives what NetworkX's
+    ``add_half_edge`` calls give (checked once on a small graph with
+    reordered neighbors, in case a NetworkX release changes them)."""
+    from .graph import from_networkx
+
+    H = nx.Graph()
+    H.add_nodes_from([5, 2, 7, 0, 3, 6, 1, 4, 8])
+    H.add_edges_from([(1, 2), (0, 1), (2, 3), (3, 4), (4, 0), (5, 0), (5, 1), (5, 2), (5, 3),
+                      (5, 4), (6, 0), (6, 1), (7, 3), (8, 7), (2, 4)])
+    G = from_networkx(H, {})
+    calls = G._core.planarity(1)[1]
+    layout = G._core.planarity(2)[1]
+
+    def state(E):
+        return ([(u, v, list(d.items())) for u, v, d in E.edges(data=True)],
+                [(v, list(E._pred[v])) for v in E])
+
+    return state(_replay_embedding(G, *calls)) == state(_embedding_from_layout(G, layout))
+
+
+def _check_recursion(depth):
+    """The recursive planarity functions recurse once per level of the DFS
+    tree (and of ``ref`` chains); decline graphs where NetworkX might hit
+    the recursion limit, so it raises (or not) itself."""
+    frames = 0
+    frame = sys._getframe()
+    while frame is not None:
+        frames += 1
+        frame = frame.f_back
+    if frames + depth + 100 >= sys.getrecursionlimit():
+        raise NotImplementedError("NetworkX may reach the recursion limit here")
+
+
+def _counterexample(G, recursive):
+    edges, depth = G._core.planarity_counterexample()
+    if recursive:
+        _check_recursion(depth)
+    if edges is None:
+        raise nx.NetworkXException("G is planar - no counter example.")
+    nodes = G._nodes
+    subgraph = nx.Graph()
+    subgraph.add_edges_from((nodes[u], nodes[v]) for u, v in zip(*edges))
+    return subgraph
+
+
+def _check_planarity(G, counterexample, recursive):
+    direct = _embedding_layout_matches()
+    planar, embedding, depth = G._core.planarity(2 if direct else 1)
+    if recursive:
+        _check_recursion(depth)
+    if planar:
+        if direct:
+            return True, _embedding_from_layout(G, embedding)
+        return True, _replay_embedding(G, *embedding)
+    if counterexample:
+        return False, _counterexample(G, recursive)
+    return False, None
+
+
+def is_planar(G):
+    return G._core.planarity(0)[0]
+
+
+def check_planarity(G, counterexample=False):
+    return _check_planarity(G, counterexample, False)
+
+
+def check_planarity_recursive(G, counterexample=False):
+    return _check_planarity(G, counterexample, True)
+
+
+def get_counterexample(G):
+    return _counterexample(G, False)
+
+
+def get_counterexample_recursive(G):
+    return _counterexample(G, True)
+
+
+def _chordal(G):
+    """``(is_chordal, treewidth)`` for an undirected graph of 4 or more
+    nodes. With self-loops, NetworkX raises or not depending on the order
+    its maximum cardinality search visits nodes in (set order)."""
+    if G._core.has_self_loops():
+        raise NotImplementedError("rustnx does not support self-loops here")
+    return G._core.chordal()
+
+
+def is_chordal(G):
+    _undirected_only(G)
+    if len(G) <= 3:
+        return True
+    return _chordal(G)[0]
+
+
+def chordal_graph_treewidth(G):
+    _undirected_only(G)  # raised by is_chordal
+    if len(G) == 0:
+        # NetworkX 3.4 and 3.5 return -2; later releases raise ValueError.
+        raise NotImplementedError("rustnx does not support the null graph here")
+    if G._core.has_self_loops():
+        raise NotImplementedError("rustnx does not support self-loops here")
+    chordal, treewidth = G._core.chordal()
+    if not chordal:
+        raise nx.NetworkXError("Input graph is not chordal.")
+    return treewidth
+
+
+def complete_to_chordal_graph(G):
+    _undirected_only(G)
+    H = _networkx_graph(G).copy()
+    nodes = G._nodes
+    alpha = {node: 0 for node in nodes}
+    if len(G) <= 3 or _chordal(G)[0]:
+        return H, alpha
+    values, zs, ys = G._core.complete_to_chordal()
+    alpha = dict(zip(nodes, values))
+    # NetworkX collects the chords in a set and adds them in its order.
+    chords = set()
+    for z, y in zip(zs, ys):
+        chords.add((nodes[z], nodes[y]))
+    H.add_edges_from(chords)
+    return H, alpha
+
+
+def is_at_free(G):
+    _undirected_only(G)
+    return G._core.is_at_free()
+
+
+def _membership_position(G, node):
+    """Position of a node NetworkX only tests membership with (``None`` if
+    not in G); unhashable nodes make NetworkX raise or not depending on
+    what it reaches first."""
+    try:
+        return G._index.get(node)
+    except TypeError:
+        raise NotImplementedError("unhashable node") from None
+
+
+def is_reachable(G, s, t):
+    _directed_only(G)
+    return G._core.tournament_reachable(_membership_position(G, s), _membership_position(G, t))
+
+
+def tournament_is_strongly_connected(G):
+    _directed_only(G)
+    return G._core.tournament_strongly_connected()
+
+
+def score_sequence(G):
+    _directed_only(G)
+    return G._core.sorted_out_degrees()
+
+
+def is_perfect_graph(G):
+    # NetworkX checks the graph type inside the dispatched function.
+    _undirected_only(G)
+    return G._core.is_perfect()
+
+
+# --- Batch 10: triads, d-separation, degree sequences and matching ---------------
+
+
+def triadic_census(G, nodelist=None):
+    _directed_only(G)
+    nodeset = None
+    if nodelist is not None:
+        if nodelist in G or iter(nodelist) is nodelist:
+            # NetworkX takes one node, or calls len() on an iterator.
+            raise NotImplementedError("rustnx needs a list of nodes")
+        nodeset = _node_subset(G, nodelist)
+        if len(nodelist) != len(nodeset):
+            raise ValueError("nodelist includes duplicate nodes or nodes not in G")
+    counts = G._core.triadic_census(nodeset)
+    return dict(zip(_TRIAD_NAMES, counts))
+
+
+_TRIAD_NAMES = (
+    "003", "012", "102", "021D", "021U", "021C", "111D", "111U",
+    "030T", "030C", "201", "120D", "120U", "120C", "210", "300",
+)
+
+
+class _NodeSet(Set):
+    """Stands in for ``G.nodes`` in set arithmetic (``s - G.nodes``), with
+    ``NodeView``'s semantics: the result is ``set(...)`` in ``s``'s order."""
+
+    def __init__(self, G):
+        self._G = G
+
+    def __contains__(self, node):
+        return node in self._G
+
+    def __iter__(self):
+        return iter(self._G._nodes)
+
+    def __len__(self):
+        return len(self._G)
+
+    @classmethod
+    def _from_iterable(cls, it):
+        return set(it)
+
+
+def _node_or_set(G, value):
+    """NetworkX's ``{value} if value in G else value`` for the d-separation
+    arguments; rustnx handles plain sets (anything else, NetworkX's own set
+    arithmetic decides what happens)."""
+    value = {value} if value in G else value
+    if type(value) not in (set, frozenset):
+        raise NotImplementedError("rustnx needs nodes or sets of nodes")
+    return value
+
+
+def _dag_or_raise(G):
+    if not is_directed_acyclic_graph(G):
+        raise nx.NetworkXError("graph should be directed acyclic")
+
+
+def is_d_separator(G, x, y, z):
+    _directed_only(G)
+    x, y, z = (_node_or_set(G, s) for s in (x, y, z))
+    intersection = x & y or x & z or y & z
+    if intersection:
+        raise nx.NetworkXError(f"The sets are not disjoint, with intersection {intersection}")
+    set_v = x | y | z
+    missing = set_v - _NodeSet(G)
+    if missing:
+        raise nx.NodeNotFound(f"The node(s) {missing} are not found in G")
+    _dag_or_raise(G)
+    index = G._index
+    return G._core.is_d_separator(*([index[v] for v in s] for s in (x, y, z)))
+
+
+def _included_restricted(G, included, restricted):
+    if included is None:
+        included = set()
+    elif included in G:
+        included = {included}
+    if restricted is not None:
+        restricted = _node_or_set(G, restricted)
+    if type(included) not in (set, frozenset):
+        raise NotImplementedError("rustnx needs nodes or sets of nodes")
+    return included, restricted
+
+
+def _check_found(G, given, restricted):
+    """NetworkX's ``set_y - G.nodes`` check, with ``set_y`` the union of
+    ``given`` and ``restricted`` (``set(G)`` by default)."""
+    nodes = _NodeSet(G)
+    if restricted is None:
+        if not functools.reduce(operator.or_, given) - nodes:
+            return
+        restricted = set(G._nodes)
+    missing = functools.reduce(operator.or_, (*given, restricted)) - nodes
+    if missing:
+        raise nx.NodeNotFound(f"The node(s) {missing} are not found in G")
+
+
+def is_minimal_d_separator(G, x, y, z, *, included=None, restricted=None):
+    _directed_only(G)
+    _dag_or_raise(G)
+    x, y, z = (_node_or_set(G, s) for s in (x, y, z))
+    included, restricted = _included_restricted(G, included, restricted)
+    _check_found(G, (x, y, included), restricted)
+    if not included <= z:
+        raise nx.NetworkXError(
+            f"Included nodes {included} must be in proposed separating set z {x}"
+        )
+    if restricted is None:
+        if any(v not in G for v in z):
+            restricted = set(G._nodes)
+    if restricted is not None and not z <= restricted:
+        raise nx.NetworkXError(
+            f"Separating set {z} must be contained in restricted set {restricted}"
+        )
+    intersection = x.intersection(y) or x.intersection(z) or y.intersection(z)
+    if intersection:
+        raise nx.NetworkXError(f"The sets are not disjoint, with intersection {intersection}")
+    index = G._index
+    return G._core.is_minimal_d_separator(
+        *([index[v] for v in s] for s in (x, y, z, included))
+    )
+
+
+def find_minimal_d_separator(G, x, y, *, included=None, restricted=None):
+    _directed_only(G)
+    _dag_or_raise(G)
+    x, y = (_node_or_set(G, s) for s in (x, y))
+    included, restricted = _included_restricted(G, included, restricted)
+    _check_found(G, (x, y, included), restricted)
+    if restricted is None:
+        restricted = set(G._nodes)
+    index, nodes = G._index, G._nodes
+    for s in (x, y, included, restricted):
+        for v in s:
+            if type(nodes[index[v]]) is not type(v):
+                # The result mixes the given objects and G's nodes.
+                raise NotImplementedError("rustnx needs G's own node objects")
+    if not included <= restricted:
+        raise nx.NetworkXError(
+            f"Included nodes {included} must be in restricted nodes {restricted}"
+        )
+    intersection = x & y or x & included or y & included
+    if intersection:
+        raise nx.NetworkXError(
+            f"The sets x, y, included are not disjoint. Overlap: {intersection}"
+        )
+    G._ensure_exact_pred()
+    core = G._core
+    nodeset = x | y | included
+    seeds = [index[v] for v in nodeset]
+    # The same sets built in the same order, so their iteration order (and
+    # the order of set operations on them) is NetworkX's.
+    ancestors = nodeset.union(*[{nodes[i] for i in a} for a in core.ancestor_lists(seeds)])
+    z_init = restricted & (ancestors - (x | y))
+
+    def reachable(start, z):
+        reached = core.d_reachable([index[v] for v in start], seeds, [index[v] for v in z])
+        return {nodes[i] for i in reached}
+
+    x_closure = reachable(x, z_init)
+    if x_closure & y:
+        return None
+    z_updated = z_init & (x_closure | included)
+    y_closure = reachable(y, z_updated)
+    return z_updated & (y_closure | included)
+
+
+def _int_list(sequence):
+    """``nx.utils.make_list_of_ints(sequence)``: a list of plain ints is
+    returned as is (NetworkX changes nothing in it); anything else goes
+    through NetworkX's helper, with its errors and in-place conversion."""
+    if type(sequence) is list and _core._plain_int_list(sequence):
+        return sequence
+    return nx.utils.make_list_of_ints(sequence)
+
+
+def _degree_test(kind, sequence, name):
+    seq = _int_list(sequence)
+    result = _core._degree_sequence_test(kind, seq)
+    if result is None:
+        # Ints beyond 64 bits: NetworkX's own code on the converted list.
+        return getattr(nx, name).orig_func(seq)
+    return result
+
+
+def is_valid_degree_sequence_havel_hakimi(deg_sequence):
+    return _degree_test("hh", deg_sequence, "is_valid_degree_sequence_havel_hakimi")
+
+
+def is_valid_degree_sequence_erdos_gallai(deg_sequence):
+    return _degree_test("eg", deg_sequence, "is_valid_degree_sequence_erdos_gallai")
+
+
+def is_graphical(sequence, method="eg"):
+    if method == "eg":
+        return is_valid_degree_sequence_erdos_gallai(list(sequence))
+    elif method == "hh":
+        return is_valid_degree_sequence_havel_hakimi(list(sequence))
+    msg = "`method` must be 'eg' or 'hh'"
+    raise nx.NetworkXException(msg)
+
+
+def is_multigraphical(sequence):
+    try:
+        seq = _int_list(sequence)
+    except nx.NetworkXError:
+        return False
+    result = _core._degree_sequence_test("multi", seq)
+    return nx.is_multigraphical.orig_func(seq) if result is None else result
+
+
+def is_pseudographical(sequence):
+    try:
+        seq = _int_list(sequence)
+    except nx.NetworkXError:
+        return False
+    result = _core._degree_sequence_test("pseudo", seq)
+    if result is None or not seq:
+        # Big ints, or `min()` of an empty sequence (which raises).
+        return sum(seq) % 2 == 0 and min(seq) >= 0
+    return result
+
+
+def is_digraphical(in_sequence, out_sequence):
+    try:
+        ins = _int_list(in_sequence)
+        outs = _int_list(out_sequence)
+    except nx.NetworkXError:
+        return False
+    result = _core._digraphical(ins, outs)
+    return nx.is_digraphical.orig_func(ins, outs) if result is None else result
+
+
+def node_boundary(G, nbunch1, nbunch2=None):
+    nset1 = {n for n in nbunch1 if n in G}
+    index, nodes = G._index, G._nodes
+    nbrs = G._core.neighbor_union([index[v] for v in nset1])
+    bdy = set([nodes[i] for i in nbrs]) - nset1
+    if nbunch2 is not None:
+        bdy &= set(nbunch2)
+    return bdy
+
+
+def edge_boundary(G, nbunch1, nbunch2=None, data=False, keys=False, default=None):
+    if data is not False:
+        raise NotImplementedError("rustnx does not support edge data here")
+    nset1 = {n for n in nbunch1 if n in G}
+    order = list(nset1)
+    index = G._index
+    positions = [index[v] for v in order]
+    second = None
+    if nbunch2 is not None:
+        second = [index[v] for v in set(nbunch2) if v in G]
+    sources, targets = G._core.edge_boundary(positions, second)
+
+    def produce():
+        nodes = G._nodes
+        for i, v in zip(sources, targets):
+            # The source is `nset1`'s object, as `nbunch_iter` yields it.
+            yield order[i], nodes[v]
+
+    return _traversal(G, produce)
+
+
+def _matching_pairs(G, matching):
+    """``is_matching``'s loop up to the first exception it would raise: the
+    node positions of each edge before it, and the exception (or ``None``).
+    NetworkX raises it only if no earlier edge makes it return False."""
+    if isinstance(matching, dict):
+        matching = _nx_matching.matching_dict_to_set(matching)
+    index = G._index
+    us, vs = [], []
+    edges = iter(matching)
+    while True:
+        try:
+            edge = next(edges)
+        except StopIteration:
+            return us, vs, None
+        except Exception as exc:
+            return us, vs, exc
+        try:
+            if len(edge) != 2:
+                return us, vs, nx.NetworkXError(f"matching has non-2-tuple edge {edge}")
+            u, v = edge
+        except Exception as exc:
+            return us, vs, exc
+        try:
+            i, j = index[u], index[v]
+        except (KeyError, TypeError):
+            return us, vs, nx.NetworkXError(f"matching contains edge {edge} with node not in G")
+        us.append(i)
+        vs.append(j)
+
+
+def _checked_matching(G, matching):
+    """``(us, vs)`` if ``matching`` passes ``is_matching``'s loop, else
+    ``None``; raises where it would."""
+    us, vs, error = _matching_pairs(G, matching)
+    failure = G._core.first_matching_failure(us, vs)
+    if failure is not None:
+        return None
+    if error is not None:
+        raise error
+    return us, vs
+
+
+def is_matching(G, matching):
+    return _checked_matching(G, matching) is not None
+
+
+def is_maximal_matching(G, matching):
+    pairs = _checked_matching(G, matching)
+    if pairs is None:
+        return False
+    return not G._core.has_unmatched_edge(pairs[0] + pairs[1])
+
+
+def is_perfect_matching(G, matching):
+    pairs = _checked_matching(G, matching)
+    if pairs is None:
+        return False
+    return len(set(pairs[0] + pairs[1])) == len(G)
+
+
+def maximal_matching(G):
+    _undirected_only(G)
+    us, vs = G._core.maximal_matching()
+    nodes = G._nodes
+    return {(nodes[u], nodes[v]) for u, v in zip(us, vs)}
+
+
+def _matching_set(G, weight, maxcardinality=False, inverted=False):
+    weight, _, has_hidden = _check_weight(G, weight)
+    if has_hidden:
+        raise NotImplementedError("rustnx does not support None edge weights here")
+    pairs = G._core.max_weight_matching(weight, maxcardinality, inverted)
+    if pairs is None:
+        raise NotImplementedError("integer edge weights are too large")
+    nodes = G._nodes
+    # `matching_dict_to_set` adds them in this order.
+    return {(nodes[u], nodes[v]) for u, v in zip(*pairs)}
+
+
+def max_weight_matching(G, maxcardinality=False, weight="weight"):
+    _undirected_only(G)
+    if type(maxcardinality) not in (bool, int):
+        raise NotImplementedError("rustnx needs a bool maxcardinality")
+    if len(G) == 0:
+        return set()
+    return _matching_set(G, weight, bool(maxcardinality))
+
+
+def min_weight_matching(G, weight="weight"):
+    _undirected_only(G)
+    if G._core.number_of_edges() == 0:
+        return set()
+    return _matching_set(G, weight, True, inverted=True)
+
+
+def min_edge_cover(G, matching_algorithm=None):
+    _undirected_only(G)
+    if len(G) == 0:
+        return set()
+    if number_of_isolates(G) > 0:
+        raise nx.NetworkXException(
+            "Graph has a node with no edge incident on it, so no edge cover exists."
+        )
+    if matching_algorithm is not None:
+        raise NotImplementedError("rustnx does not support matching_algorithm")
+    min_cover = _matching_set(G, "weight", True)
+    uncovered_nodes = set(G._nodes) - {v for u, v in min_cover} - {u for u, v in min_cover}
+    index, nodes, core = G._index, G._nodes, G._core
+    for v in uncovered_nodes:
+        u = nodes[core.neighbors(index[v])[0]]
+        min_cover.add((u, v))
+    return min_cover
+
+
+def _present_positions(G, nbunch):
+    """Positions of the items of ``nbunch`` that are nodes of G (as
+    ``{n for n in nbunch if n in G}`` picks them)."""
+    index = G._index
+    picked = []
+    for n in nbunch:
+        try:
+            i = index.get(n)
+        except TypeError:
+            continue
+        if i is not None:
+            picked.append(i)
+    return picked
+
+
+def is_dominating_set(G, nbunch):
+    return G._core.is_dominating(_present_positions(G, nbunch))
+
+
+def is_connected_dominating_set(G, nbunch):
+    _undirected_only(G)
+    if not is_dominating_set(G, nbunch):
+        return False
+    # `nx.subgraph(G, nbunch)` reads `nbunch` again, via `nbunch_iter`.
+    if nbunch in G:
+        picked = [G._index[nbunch]]
+    else:
+        index = G._index
+        picked = []
+        for n in nbunch:
+            try:
+                i = index.get(n)
+            except TypeError:
+                raise nx.NetworkXError(f"Node {n} in sequence nbunch is not a valid node.") from None
+            if i is not None:
+                picked.append(i)
+    if not picked:
+        raise nx.NetworkXPointlessConcept("Connectivity is undefined for the null graph.")
+    return G._core.induced_connected(picked)
+
+
+def connected_dominating_set(G):
+    _undirected_only(G)
+    if len(G) == 0:
+        return set()
+    if not is_connected(G):
+        raise nx.NetworkXError("G must be a connected graph")
+    nodes = G._nodes
+    if len(G) == 1:
+        return set(nodes)
+    return {nodes[i] for i in G._core.connected_dominating_set()}
+
+
+_CLIQUE_BATCH = 1024
+
+
+def enumerate_all_cliques(G):
+    _undirected_only(G)
+
+    def compute():
+        queue = G._core.all_cliques()
+        nodes = G._nodes
+        nodes = nodes if type(nodes) is list else list(nodes)
+        while True:
+            batch = queue.next_batch(nodes, _CLIQUE_BATCH)
+            yield from batch
+            if len(batch) < _CLIQUE_BATCH:
+                return
+
+    return _computed_on_first_next(
+        G, compute, lambda H: nx.enumerate_all_cliques(H, backend="networkx")
+    )
+
+
+def node_clique_number(G, nodes=None, cliques=None, separate_nodes=False):
+    if cliques is not None or nodes is None:
+        # Without `nodes`, the dict follows `find_cliques`' order, which
+        # depends on set iteration order.
+        raise NotImplementedError("rustnx needs nodes and no cliques here")
+    if G.is_directed():
+        raise NotImplementedError("NetworkX raises from find_cliques here")
+    index = G._index
+    if nodes in G:
+        return G._core.node_clique_numbers([index[nodes]])[0]
+    if iter(nodes) is nodes:
+        raise NotImplementedError("rustnx needs a reusable container of nodes")
+    try:
+        positions = [index[n] for n in nodes]
+    except (KeyError, TypeError):
+        raise NotImplementedError("NetworkX raises for missing nodes") from None
+    values = G._core.node_clique_numbers(positions)
+    return {n: values[i] for i, n in enumerate(nodes)}
+
+
+def max_weight_clique(G, weight="weight"):
+    _undirected_only(G)
+    weights = None
+    if weight is not None:
+        source = G._source
+        if source is None or not G._source_unchanged():
+            raise NotImplementedError("rustnx needs the NetworkX graph's node data")
+        node_data = source._node
+        weights = []
+        for v in G._nodes:
+            data = node_data[v]
+            if weight not in data:
+                errmsg = f"Node {v!r} does not have the requested weight field."
+                raise KeyError(errmsg)
+            if not isinstance(data[weight], int):
+                errmsg = f"The {weight!r} field of node {v!r} is not an integer."
+                raise ValueError(errmsg)
+            weights.append(data[weight])
+        if any(type(w) not in (int, bool) or not -(2**62) < w < 2**62 for w in weights):
+            raise NotImplementedError("rustnx needs plain integer node weights")
+    clique, total = G._core.max_weight_clique(weights)
+    nodes = G._nodes
+    return [nodes[i] for i in clique], total
+
+
+# --- Batch 11: isomorphism and graph hashing ----------------------------------------
+
+
+def _registered(name):
+    """The installed NetworkX's dispatchable ``name`` (some live in
+    subpackages, or share a name with their module)."""
+    return nx.utils.backends._registered_algorithms[name]
+
+
+@functools.cache
+def _staged_could_be_isomorphic(name):
+    """Whether the installed ``name`` checks properties one at a time,
+    stopping at the first mismatch (3.5+ ``could_be_isomorphic``, 3.7+
+    ``fast_`` and ``faster_could_be_isomorphic``). Older ones compute every
+    property of G1, then of G2, and compare once; for directed graphs that
+    decides whether ``triangles`` raises or a degree mismatch returns
+    ``False`` first."""
+    text = _source_text(_registered(name))
+    return "properties_to_check" in text or "could_be_isomorphic(G1, G2, properties=" in text
+
+
+def _property_tables_match(G1, G2, properties, staged):
+    if len(G1) != len(G2):
+        return False
+    d, t, c = ("d" in properties), ("t" in properties), ("c" in properties)
+    match = G1._core.iso_tables_match
+    if not staged:
+        # One table of every property, G1's computed (and checked) first.
+        if t or c:
+            _undirected_only(G1)
+            _undirected_only(G2)
+        return match(G2._core, d, t, c)
+    if d and not match(G2._core, True, False, False):
+        return False
+    if t:
+        _undirected_only(G1)
+        _undirected_only(G2)
+        if not match(G2._core, d, True, False):
+            return False
+    if c:
+        _undirected_only(G1)  # find_cliques
+        _undirected_only(G2)
+        if not match(G2._core, d, t, True):
+            return False
+    return True
+
+
+def could_be_isomorphic(G1, G2, properties="dtc"):
+    try:
+        properties = set(properties)
+    except TypeError:
+        raise NotImplementedError("unsupported properties") from None
+    return _property_tables_match(G1, G2, properties, _staged_could_be_isomorphic("could_be_isomorphic"))
+
+
+def fast_could_be_isomorphic(G1, G2):
+    return _property_tables_match(G1, G2, "dt", _staged_could_be_isomorphic("fast_could_be_isomorphic"))
+
+
+def faster_could_be_isomorphic(G1, G2):
+    # Degrees only: both styles agree.
+    return _property_tables_match(G1, G2, "d", True)
+
+
+def is_isomorphic(G1, G2):
+    if G1.is_directed() != G2.is_directed():
+        raise nx.NetworkXError("Graphs G1 and G2 are not of the same type.")
+    # A yes/no answer: any exact matcher agrees with NetworkX's VF2.
+    return G1._core.has_morphism(G2._core, None, None, 0)
+
+
+def _node_labels(G, node_label, default_label):
+    """``dict(G.nodes(data=node_label, default=default_label))`` values."""
+    if G._core.is_native():
+        return [default_label] * len(G)  # native graphs have no node data
+    if not G._source_unchanged():
+        raise NotImplementedError("the graph changed since it was converted")
+    try:
+        return [dd[node_label] if node_label in dd else default_label for dd in G._source._node.values()]
+    except TypeError:
+        raise NotImplementedError("unhashable node_label") from None
+
+
+def _label_classes(FG, SG, node_label, default_label):
+    """Both graphs' labels as integer classes: one dict for both, so labels
+    that NetworkX's dicts and sets treat as equal share a class."""
+    classes = {}
+    try:
+        big = [classes.setdefault(x, len(classes)) for x in _node_labels(FG, node_label, default_label)]
+        small = [classes.setdefault(x, len(classes)) for x in _node_labels(SG, node_label, default_label)]
+    except TypeError:
+        raise NotImplementedError("unhashable node labels") from None
+    if len(classes) <= 1:
+        return None, None
+    return big, small
+
+
+@functools.cache
+def _vf2pp_checks_directedness():
+    """Whether ``vf2pp_is_isomorphic`` rejects a directed and an undirected
+    graph (3.7+); older releases run on, with results rustnx doesn't copy."""
+    from networkx.algorithms.isomorphism import vf2pp
+
+    try:
+        return "must have the same directedness" in inspect.getsource(vf2pp)
+    except (OSError, TypeError):
+        return False
+
+
+def _vf2pp_test(FG, SG, node_label, default_label, problem, mixed_raises):
+    # NetworkX's generator returns before anything else on an empty graph,
+    # so even two empty graphs are "not isomorphic".
+    if len(SG) == 0 or len(FG) == 0:
+        return False
+    if SG.is_directed() != FG.is_directed():
+        if mixed_raises:
+            raise nx.NetworkXError("SG and FG must have the same directedness")
+        raise NotImplementedError("graphs differ in directedness")
+    big, small = _label_classes(FG, SG, node_label, default_label)
+    # A yes/no answer: VF2++'s candidate order (set order) doesn't matter.
+    return FG._core.has_morphism(SG._core, big, small, problem)
+
+
+def vf2pp_is_isomorphic(FG, SG, node_label=None, default_label=None):
+    return _vf2pp_test(FG, SG, node_label, default_label, 0, _vf2pp_checks_directedness())
+
+
+def vf2pp_subgraph_is_isomorphic(FG, SG, node_label=None, default_label=None):
+    return _vf2pp_test(FG, SG, node_label, default_label, 1, True)
+
+
+def vf2pp_is_monomorphic(FG, SG, node_label=None, default_label=None):
+    return _vf2pp_test(FG, SG, node_label, default_label, 2, True)
+
+
+@functools.cache
+def _tree_isomorphism_style():
+    """``(asserts, descending)`` for the installed ``rooted_tree_isomorphism``:
+    3.4 checks trees with ``assert`` and orders children ascending, walking
+    them recursively; 3.5+ raises ``NetworkXError`` and sorts children with
+    ``reverse=True``, walking them with a stack."""
+    text = _source_text(_registered("rooted_tree_isomorphism"))
+    return "assert nx.is_tree(t1)" in text, "reverse=True" in text
+
+
+def _check_trees(t1, t2):
+    asserts = _tree_isomorphism_style()[0]
+    for T, name in ((t1, "t1"), (t2, "t2")):
+        if not is_tree(T):
+            if asserts:
+                raise AssertionError
+            raise nx.NetworkXError(f"{name} is not a tree")
+
+
+def _rooted_tree_pairs(t1, r1, t2, r2):
+    descending = _tree_isomorphism_style()[1]
+    if not descending:
+        # 3.4 walks the result recursively: deep trees hit Python's
+        # recursion limit there, which rustnx leaves to NetworkX.
+        height = max(t1._core.tree_height(r1), t2._core.tree_height(r2))
+        if height + 2 >= sys.getrecursionlimit() // 3:
+            raise NotImplementedError("deep trees run in NetworkX")
+    pairs = t1._core.rooted_tree_isomorphism(r1, t2._core, r2, descending)
+    n1, n2 = t1._nodes, t2._nodes
+    return [(n1[a], n2[b]) for a, b in pairs]
+
+
+def rooted_tree_isomorphism(t1, root1, t2, root2):
+    if t1.is_directed() or t2.is_directed():
+        raise NotImplementedError("rustnx supports undirected trees here")
+    _check_trees(t1, t2)
+    r1, r2 = _node_arg(t1, root1), _node_arg(t2, root2)
+    return _rooted_tree_pairs(t1, r1, t2, r2)
+
+
+def tree_isomorphism(t1, t2):
+    # NetworkX rejects a directed t1 before dispatching; t2 isn't checked.
+    if t1.is_directed() or t2.is_directed():
+        raise NotImplementedError("rustnx supports undirected trees here")
+    _check_trees(t1, t2)
+    if not _property_tables_match(t1, t2, "d", True):
+        return []
+    center1, center2 = t1._core.tree_centers(), t2._core.tree_centers()
+    if len(center1) != len(center2):
+        return []
+    attempt = _rooted_tree_pairs(t1, center1[0], t2, center2[0])
+    if attempt or len(center1) == 1:
+        return attempt
+    return _rooted_tree_pairs(t1, center1[0], t2, center2[1])
+
+
+def root_trees(t1, root1, t2, root2):
+    r1, r2 = _node_arg(t1, root1), _node_arg(t2, root2)
+    newroot1 = 1
+    newroot2 = len(t1) + 1
+    edges = [(0, newroot1), (0, newroot2)]
+    namemap = {}
+    for T, root, r, new_root in ((t1, root1, r1, newroot1), (t2, root2, r2, newroot2)):
+        parents, children = T._core.bfs_edges(r, len(T), False)
+        nodes = T._nodes
+        # NetworkX names nodes new_root, new_root + 1, ... in BFS order.
+        new = {r: new_root}
+        namemap[new_root] = root
+        for i, (p, c) in enumerate(zip(parents, children)):
+            new[c] = new_root + 1 + i
+            edges.append((new[p], new_root + 1 + i))
+        namemap.update({new_root + 1 + i: nodes[c] for i, c in enumerate(children)})
+    # namemap lists t1's nodes, then t2's, as NetworkX builds it.
+    dT = nx.DiGraph()
+    dT.add_edges_from(edges)
+    return (dT, namemap, newroot1, newroot2)
+
+
+@functools.cache
+def _wl_new_style():
+    """Whether the installed Weisfeiler-Lehman hashes are 3.5+'s: directed
+    graphs aggregate successors and predecessors separately (``s_``/``p_``),
+    without attributes the degree labels count as the first iteration, and
+    ``iterations`` must be positive."""
+    return "_neighborhood_aggregate_directed" in _source_text(_registered("weisfeiler_lehman_graph_hash"))
+
+
+def _wl_prepare(G, name, edge_attr, node_attr, iterations, digest_size, extra):
+    """Validate a WL call; return ``(labels, edge_text, split, steps)``."""
+    for attr in (edge_attr, node_attr):
+        if attr is not None and not (type(attr) is str and attr):
+            raise NotImplementedError("rustnx supports str attribute names here")
+    if type(iterations) is not int or type(digest_size) is not int or not 1 <= digest_size <= 64:
+        raise NotImplementedError("unsupported iterations or digest_size")
+    # NetworkX's own function on an empty graph gives the same warnings and
+    # the same error for a non-positive `iterations`, in the same order.
+    empty = nx.DiGraph() if G.is_directed() else nx.Graph()
+    _registered(name).orig_func(
+        empty, edge_attr=edge_attr, node_attr=node_attr, iterations=iterations,
+        digest_size=digest_size, **extra
+    )
+    new = _wl_new_style()
+    split = new and G.is_directed()
+    if node_attr or edge_attr:
+        source = None if G._core.is_native() else G._source
+        if source is None or not G._source_unchanged():
+            raise NotImplementedError("rustnx needs the NetworkX graph's attributes")
+    if node_attr:
+        labels = [str(dd[node_attr]) for dd in source._node.values()]
+    elif edge_attr:
+        labels = [""] * len(G)
+    elif split:
+        ins, outs = G._core.in_out_degrees()
+        labels = [f"{i}_{o}" for i, o in zip(ins, outs)]
+    else:
+        labels = [str(d) for d in G._core.degrees()]
+    steps = iterations - 1 if new and not edge_attr and not node_attr else iterations
+    steps = max(steps, 0)
+    edge_text = None
+    if edge_attr is not None and steps:
+        # `str(G[u][v][edge_attr])` per adjacency entry, in CSR order.
+        adj = source._adj
+        edge_text = [str(d[edge_attr]) for u in source for d in adj[u].values()]
+        if not all(s.isascii() for s in edge_text):
+            raise NotImplementedError("non-ASCII labels raise in NetworkX")
+    if node_attr and not all(s.isascii() for s in labels):
+        raise NotImplementedError("non-ASCII labels raise in NetworkX")
+    return labels, edge_text, split, steps
+
+
+def weisfeiler_lehman_graph_hash(G, edge_attr=None, node_attr=None, iterations=3, digest_size=16):
+    labels, edge_text, split, steps = _wl_prepare(
+        G, "weisfeiler_lehman_graph_hash", edge_attr, node_attr, iterations, digest_size, {}
+    )
+    return G._core.wl_hashes(labels, edge_text, split, steps, digest_size)[0]
+
+
+def weisfeiler_lehman_subgraph_hashes(
+    G, edge_attr=None, node_attr=None, iterations=3, digest_size=16, include_initial_labels=False
+):
+    extra = {"include_initial_labels": include_initial_labels}
+    labels, edge_text, split, steps = _wl_prepare(
+        G, "weisfeiler_lehman_subgraph_hashes", edge_attr, node_attr, iterations, digest_size, extra
+    )
+    # Initial labels hashed first: when asked, and (3.5+) without attributes,
+    # where the degree labels stand for the first iteration (both can apply).
+    initial = int(bool(include_initial_labels))
+    if _wl_new_style() and not edge_attr and not node_attr:
+        initial += 1
+    if not initial and not steps:
+        return {}
+    per_node = G._core.wl_hashes(labels, edge_text, split, steps, digest_size, initial, True)[1]
+    return dict(zip(G._nodes, per_node))
+
+
+# Bipartite graphs (todo item 37), added in the same batch.
+
+
+def color(G):
+    if G.is_directed():
+        G._ensure_exact_pred()  # predecessors come first, in NetworkX's order
+    found = G._core.bipartite_color()
+    if found is None:
+        raise nx.NetworkXError("Graph is not bipartite.")
+    order, colors = found
+    nodes = G._nodes
+    return dict(zip([nodes[v] for v in order], colors))
+
+
+def sets(G, top_nodes=None):
+    if top_nodes is not None:
+        X = set(top_nodes)
+        Y = set(G) - X
+        return (X, Y)
+    connected = is_weakly_connected(G) if G.is_directed() else is_connected(G)
+    if not connected:
+        raise nx.AmbiguousSolution("Disconnected graph: Ambiguous solution for bipartite sets.")
+    c = color(G)
+    # Built in NetworkX's insertion order, so the sets iterate the same way.
+    X = {n for n, is_top in c.items() if is_top}
+    Y = {n for n, is_top in c.items() if not is_top}
+    return (X, Y)
+
+
+def is_bipartite_node_set(G, nodes):
+    S = set(nodes)
+    if len(S) < len(nodes):
+        raise nx.AmbiguousSolution(
+            "The input node set contains duplicates.\n"
+            "This may lead to incorrect results when using it in bipartite algorithms.\n"
+            "Consider using set(nodes) as the input"
+        )
+    _undirected_only(G)  # connected_components
+    result = G._core.is_bipartite_node_set([v in S for v in G._nodes])
+    if result is None:
+        raise nx.NetworkXError("Graph is not bipartite.")
+    return result
+
+
+def _bipartite_sides(G, top_nodes):
+    """NetworkX's ``bipartite_sets`` for the matching functions, as node
+    positions in set order (``NotImplementedError`` for nodes not in G)."""
+    if G.is_directed():
+        raise NotImplementedError("rustnx supports undirected graphs here")
+    left, right = sets(G, top_nodes)
+    index = G._index
+    if any(v not in index for v in left):
+        raise NotImplementedError("top_nodes has nodes not in the graph")
+    return left, right, [index[v] for v in left], [index[v] for v in right]
+
+
+def hopcroft_karp_matching(G, top_nodes=None):
+    left, right, left_pos, right_pos = _bipartite_sides(G, top_nodes)
+    found = G._core.hopcroft_karp(left_pos)
+    if found is None:
+        raise NotImplementedError("a top node has a neighbor among the top nodes")
+    mate, depth = found
+    if depth >= sys.getrecursionlimit() // 4:
+        # NetworkX's depth_first_search recurses this deep; leave the
+        # outcome (perhaps a RecursionError) to it.
+        raise NotImplementedError("deep augmenting paths run in NetworkX")
+    nodes = G._nodes
+    matching = {v: nodes[mate[i]] for v, i in zip(left, left_pos) if mate[i] is not None}
+    matching.update((v, nodes[mate[i]]) for v, i in zip(right, right_pos) if mate[i] is not None)
+    return matching
+
+
+def to_vertex_cover(G, matching, top_nodes=None):
+    L, R, _, _ = _bipartite_sides(G, top_nodes)
+    unmatched_vertices = set(G) - set(matching)
+    U = unmatched_vertices & L
+    index = G._index
+    try:
+        pairs = [(index[u], index[v]) for u, v in matching.items() if u in index and v in index]
+    except (AttributeError, TypeError):
+        raise NotImplementedError("matching must be a dict of hashable nodes") from None
+    reach = G._core.alternating_reach([v in U for v in G._nodes], pairs)
+    # NetworkX's set comprehension over G: the same insertions, the same set.
+    Z = {v for v, ok in zip(G._nodes, reach) if ok}
+    return (L - Z) | (R & Z)
+
+
+def bipartite_closeness_centrality(G, nodes, normalized=True):
+    top = set(nodes)
+    bottom = set(G) - top
+    n = len(top)
+    m = len(bottom)
+    index = G._index
+    for node in top:
+        if node not in index:
+            raise nx.NodeNotFound(f"Source {node} is not in G")
+    order = list(top) + list(bottom)
+    stats = G._core.bfs_stats([index[v] for v in order])
+    size = len(G)
+    closeness = {}
+    for i, node in enumerate(order):
+        reached, totsp, _ = stats[i]
+        if totsp > 0.0 and size > 1:
+            closeness[node] = ((m + 2 * (n - 1)) if i < n else (n + 2 * (m - 1))) / totsp
+            if normalized:
+                s = (reached - 1) / (size - 1)
+                closeness[node] *= s
+        else:
+            closeness[node] = 0.0
+    return closeness
+
+
+def node_redundancy(G, nodes=None):
+    if nodes is None:
+        nodes = G._nodes
+    else:
+        try:
+            if iter(nodes) is nodes:
+                raise NotImplementedError("rustnx needs a reusable container of nodes")
+        except TypeError:
+            raise NotImplementedError("nodes is not a container of nodes") from None
+    index = G._index
+    try:
+        positions = [index[v] for v in nodes]
+    except (KeyError, TypeError):
+        raise NotImplementedError("nodes must be nodes of the graph") from None
+    counts = G._core.redundancy_overlaps(positions)
+    if any(d < 2 for d, _ in counts):
+        raise nx.NetworkXError(
+            "Cannot compute redundancy coefficient for a node"
+            " that has fewer than two neighbors."
+        )
+    return {v: (2 * overlap) / (d * (d - 1)) for v, (d, overlap) in zip(nodes, counts)}
+
+
+def butterflies(G, nodes=None):
+    if G._core.number_of_edges() == 0:
+        counts = [0] * len(G)
+    else:
+        counts = G._core.butterflies()
+    if nodes is None:
+        return dict(zip(G._nodes, counts))
+    try:
+        picked = _nbunch_list(G, nodes)
+    except TypeError:
+        raise NotImplementedError("nodes is not a node or a container of nodes") from None
+    index = G._index
+    return {v: counts[index[v]] for v in picked}

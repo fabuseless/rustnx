@@ -57,7 +57,7 @@ errors) on NetworkX 3.4, 3.5 and 3.7; anything rustnx can't match raises
 | 7 | `katz_centrality` | Done | Algorithms | Claude | Katz `nstart` and per-node `beta` fall back |
 | 8 | `hits` | Blocked | Algorithms | Claude | NetworkX 3.4 to 3.6 use SciPy's sparse SVD; 3.7's power iteration runs through SciPy sparse kernels and NumPy pairwise sums, so an exact match would depend on SciPy internals |
 | 9 | `core_number`, `k_core` | Done | Algorithms | Claude | |
-| 10 | `minimum_spanning_tree`, `minimum_spanning_edges` | Done | Algorithms | Claude | Kruskal, minimum and maximum; Prim starts from `set(G).pop()` (hash order) and Borůvka fall back |
+| 10 | `minimum_spanning_tree`, `minimum_spanning_edges` | Done | Algorithms | Claude | Kruskal, minimum and maximum. Prim and Borůvka run in Rust too since batch 8 (rustnx replays NetworkX's set operations for Prim's start nodes and Borůvka's ties) |
 | 11 | Traversals: `bfs_edges`, `bfs_tree`, `dfs_preorder_nodes`, `dfs_tree` | Done | Algorithms | Claude | Also `dfs_edges` |
 | 12 | `all_shortest_paths` | Done | Algorithms | Claude | Bellman-Ford falls back |
 | 13 | `is_bipartite` | Done | Algorithms | Claude | |
@@ -75,24 +75,24 @@ errors) on NetworkX 3.4, 3.5 and 3.7; anything rustnx can't match raises
 | 25 | Enable Dependabot for CI actions | Done | Release quality | Claude | `.github/dependabot.yml`: weekly grouped PRs for GitHub Actions and Rust crates |
 | 26 | Release `0.1.0` (drop the alpha label) after feedback | To do | Release quality | Owner + Claude | |
 | 27 | Turn on private vulnerability reporting | Done | Release quality | Owner | `SECURITY.md` points to it |
-| 28 | Shortest paths: the rest (Floyd-Warshall family, Johnson, Goldberg-Radzik, `reconstruct_path`) | Partly done | NetworkX coverage | Claude | 7 left; each area's function list is in `docs/COVERAGE.md`. Done: batch 2 (multi-source Dijkstra, predecessors, Bellman-Ford family, negative cycles, A* without a heuristic) |
+| 28 | Shortest paths | Done | NetworkX coverage | Claude | Batches 2 and 7. `reconstruct_path` stays in NetworkX: it takes no graph, so there's nothing to convert or speed up |
 | 29 | Centrality: the rest (current flow, subgraph and Estrada, trophic, Laplacian, second order, communicability, NumPy variants) | Partly done | NetworkX coverage | Claude | 19 left. Done: degree (batch 1); subset, load, percolation, group, reaching, VoteRank, dispersion (batch 4). Most of the rest use LAPACK/SciPy, so can't match bit for bit; `incremental_closeness_centrality` mutates its input |
 | 30 | Components | Done | NetworkX coverage | Claude | Batches 1 and 3 |
-| 31 | Directed acyclic graphs: the rest (`antichains`, `antichain_width`, `colliders`) | Partly done | NetworkX coverage | Claude | 3 left. Done in batch 3. `antichains` needs a full reachability matrix; `colliders` was slower than NetworkX, so it falls back |
-| 32 | Traversal: the rest (`bfs_beam_edges`) | Partly done | NetworkX coverage | Claude | 1 left: it calls a Python callable per neighbor, so little to gain. Done in batches 1 and 3 |
+| 31 | Directed acyclic graphs | Done | NetworkX coverage | Claude | Batches 3 and 7. `colliders` stays in NetworkX: its C-level loop beats building the tuples from Rust (measured twice) |
+| 32 | Traversal | Done | NetworkX coverage | Claude | Batches 1 and 3. `bfs_beam_edges` stays in NetworkX: it calls a Python callable per neighbor, so nothing to speed up |
 | 33 | Distance measures: the rest (resistance distance, effective graph resistance, Kemeny constant) | Partly done | NetworkX coverage | Claude | 3 left, all NumPy/LAPACK, so can't match bit for bit. Done in batch 5: centroid/barycenter, harmonic diameter, distance-regular tests |
 | 34 | Clustering and cores | Done | NetworkX coverage | Claude | Batch 5; weighted clustering is item 16 |
-| 35 | Trees, branchings and arborescences: the rest (branchings and arborescences, Prim and Boruvka edges, nested tuples, junction tree, spanning tree counts) | Partly done | NetworkX coverage | Claude | 18 left. Done: `is_tree`, `is_forest` (batch 1); arborescence and branching tests, `to_prufer_sequence`, `kruskal_mst_edges` (batch 6). Prim and nested tuples depend on set order |
+| 35 | Trees, branchings and arborescences: the rest (`join_trees`, `junction_tree`, `number_of_spanning_trees`, `random_spanning_tree`) | Partly done | NetworkX coverage | Claude | 4 left. Done in batches 1, 6 and 8 (branchings and arborescences, Prim and Boruvka, Prufer and nested tuples, tree centroid). The rest: NumPy determinant, set order, or plain graph copying |
 | 36 | Link analysis: `google_matrix` | Blocked | NetworkX coverage | Claude | Returns a NumPy matrix built with NumPy arithmetic; `hits` is item 8 |
-| 37 | Bipartite graphs (projections, matching, centrality, clustering, generators) | To do | NetworkX coverage | Claude | 39 left |
+| 37 | Bipartite graphs: the rest (projections, clustering, generators, matrices, `minimum_weight_full_matching`, ...) | Partly done | NetworkX coverage | Claude | 31 left. Done in batch 11: `color`, `sets`, `is_bipartite_node_set`, Hopcroft-Karp, vertex cover, closeness, redundancy, butterflies. Projections and clustering depend on set order; generators and matrices gain little |
 | 38 | Connectivity, flows and cuts (max flow, min cut, node and edge connectivity, Gomory-Hu, cut sizes) | To do | NetworkX coverage | Claude | 61 left |
 | 39 | Approximation algorithms (TSP, Steiner tree, treewidth, max clique, dominating set, ...) | To do | NetworkX coverage | Claude | 31 left |
 | 40 | Communities: the rest (modularity, greedy modularity, Girvan-Newman, k-clique, asynchronous label propagation, ...) | To do | NetworkX coverage | Claude | 22 left; Louvain is item 15 |
-| 41 | Coloring: the rest (`equitable_color`, `pad_graph`) | Partly done | NetworkX coverage | Claude | 2 left. Done in batch 5: `is_coloring`, `is_equitable`, and the DSATUR, connected-sequential and random-sequential `greedy_color` strategies. `equitable_color` depends on set order |
-| 42 | Isomorphism and graph hashing (VF2, tree isomorphism, Weisfeiler-Lehman hashes) | To do | NetworkX coverage | Claude | 18 left |
-| 43 | Matching, cliques, covers and independent sets | To do | NetworkX coverage | Claude | 20 left |
-| 44 | Cycles, Euler tours and simple paths: the rest (simple paths, chordless cycles, minimum cycle basis, `eulerize`) | Partly done | NetworkX coverage | Claude | 8 left; `simple_cycles` is item 14. Done in batch 6: Euler tests, circuits and paths, `cycle_basis`, `find_cycle`, `girth`, `chain_decomposition` |
-| 45 | Structural tests and graph classes: the rest (planarity, chordal, lowest common ancestors, d-separation, triads, graphical sequences, boundaries, ...) | Partly done | NetworkX coverage | Claude | 42 left. Done in batch 6: bridges, local bridges, isolates, regular and tournament tests, dominators. `is_isolate` is faster in NetworkX; boundaries depend on set order |
+| 41 | Coloring: the rest (`equitable_color`, `pad_graph`) | Blocked | NetworkX coverage | Claude | `equitable_color` depends on set order; `pad_graph` mutates its input. Done in batch 5: `is_coloring`, `is_equitable` and more `greedy_color` strategies |
+| 42 | Isomorphism and graph hashing: the rest (the six mapping-returning `vf2pp_*` functions) | Blocked | NetworkX coverage | Claude | Their mappings follow set order (`_matching_order`, candidate sets). Done in batch 11: VF2 and VF2++ yes/no tests, `could_be_isomorphic` family, tree isomorphism, Weisfeiler-Lehman hashes |
+| 43 | Matching, cliques, covers and independent sets: the rest (`find_cliques`, `dominating_set`, `maximal_independent_set`, clique graphs, `is_edge_cover`) | Partly done | NetworkX coverage | Claude | 7 left, depending on set order or randomness (or no gain for `is_edge_cover`). Done in batch 10: matchings (blossom port), edge cover, dominating set tests, `enumerate_all_cliques`, `node_clique_number`, `max_weight_clique` |
+| 44 | Cycles, Euler tours and simple paths: the rest (`chordless_cycles`, `recursive_simple_cycles`, `eulerize`) | Blocked | NetworkX coverage | Claude | Set order, input mutation, or blossom internals; `simple_cycles` is item 14. Done in batches 6 and 7 (Euler tests, circuits and paths, cycle basis, simple paths, minimum cycle basis) |
+| 45 | Structural tests and graph classes: the rest (`k_factor`, `moral_graph`, chordal cliques, asteroidal triples, Hamiltonian path, triads by type, ...) | Partly done | NetworkX coverage | Claude | 14 left. Done in batches 6, 8, 9 and 10 (bridges, isolates, dominators, planarity with embeddings, chordal tests, LCAs, d-separation, triadic census, degree sequences, boundaries). `k_factor` could now reuse batch 10's blossom port |
 | 46 | Graph measures (assortativity, link prediction, similarity, efficiency, small world, rich club, ...) | To do | NetworkX coverage | Claude | 60 left |
 | 47 | Graph operations and transforms (operators, minors, swaps, sparsifiers, summarization) | To do | NetworkX coverage | Claude | 34 left |
 | 48 | Linear algebra (Laplacian, adjacency and incidence matrices, spectra) | To do | NetworkX coverage | Claude | 22 left; returns SciPy/NumPy objects, so little to gain |
@@ -102,8 +102,8 @@ errors) on NetworkX 3.4, 3.5 and 3.7; anything rustnx can't match raises
 Items 28 to 50 cover every NetworkX function rustnx doesn't implement yet,
 grouped by area; `docs/COVERAGE.md` (generated by `scripts/gen_coverage.py`)
 lists each function and its status. They are worked through in batches of
-20 functions, easiest and most useful first. Batches 1 to 6 are done (113
-functions; rustnx now covers 178 of NetworkX 3.7's 797).
+20 functions, easiest and most useful first. Batches 1 to 11 are done (201
+functions; rustnx now covers 266 of NetworkX 3.7's 797).
 
-Suggested order: 3 (announcement), then more item 28 to 47 batches (37, 38, 40, 42, 43 and 46 are untouched), then 17
+Suggested order: 3 (announcement), then more item 28 to 47 batches (38, 39, 40, 46 and 47 are untouched), then 17
 (remaining multigraph functions), then 26.

@@ -34,10 +34,16 @@ _LINEAR_TIME = {
     "biconnected_components",
     "bidirectional_dijkstra",
     "bidirectional_shortest_path",
+    "branching_weight",
     "bridges",
     "chain_decomposition",
+    "check_planarity",
+    "check_planarity_recursive",
+    "chordal_graph_treewidth",
+    "color",
     "condensation",
     "connected_components",
+    "connected_dominating_set",
     "core_number",
     "cycle_basis",
     "dag_longest_path",
@@ -57,9 +63,11 @@ _LINEAR_TIME = {
     "dijkstra_predecessor_and_distance",
     "dominance_frontiers",
     "edge_bfs",
+    "edge_boundary",
     "edge_dfs",
     "eulerian_circuit",
     "eulerian_path",
+    "faster_could_be_isomorphic",
     "find_cycle",
     "generic_bfs_edges",
     "greedy_color",
@@ -79,18 +87,28 @@ _LINEAR_TIME = {
     "is_attracting_component",
     "is_biconnected",
     "is_bipartite",
+    "is_bipartite_node_set",
     "is_branching",
+    "is_chordal",
     "is_coloring",
     "is_connected",
+    "is_connected_dominating_set",
+    "is_d_separator",
     "is_directed_acyclic_graph",
     "is_distance_regular",
+    "is_dominating_set",
     "is_equitable",
     "is_eulerian",
     "is_forest",
     "is_k_regular",
+    "is_matching",
+    "is_maximal_matching",
+    "is_perfect_matching",
+    "is_planar",
     "is_regular",
     "is_semiconnected",
     "is_semieulerian",
+    "is_simple_path",
     "is_strongly_connected",
     "is_strongly_regular",
     "is_tournament",
@@ -107,6 +125,7 @@ _LINEAR_TIME = {
     "lexicographical_topological_sort",
     "local_bridges",
     "local_reaching_centrality",
+    "maximal_matching",
     "maximum_spanning_edges",
     "maximum_spanning_tree",
     "minimum_spanning_edges",
@@ -114,6 +133,7 @@ _LINEAR_TIME = {
     "multi_source_dijkstra",
     "multi_source_dijkstra_path",
     "multi_source_dijkstra_path_length",
+    "node_boundary",
     "node_connected_component",
     "number_attracting_components",
     "number_connected_components",
@@ -123,6 +143,9 @@ _LINEAR_TIME = {
     "onion_layers",
     "out_degree_centrality",
     "predecessor",
+    "root_trees",
+    "score_sequence",
+    "sets",
     "shortest_path",
     "single_source_dijkstra",
     "single_source_dijkstra_path",
@@ -135,6 +158,8 @@ _LINEAR_TIME = {
     "to_prufer_sequence",
     "topological_generations",
     "topological_sort",
+    "tree_centroid",
+    "triadic_census",
     "v_structures",
     "weakly_connected_components",
 }
@@ -175,8 +200,10 @@ MULTIGRAPH_FUNCTIONS = {
     "biconnected_components",
     "bidirectional_dijkstra",
     "bidirectional_shortest_path",
+    "bipartite_closeness_centrality",
     "center",
     "closeness_centrality",
+    "color",
     "condensation",
     "connected_components",
     "descendants",
@@ -199,22 +226,31 @@ MULTIGRAPH_FUNCTIONS = {
     "harmonic_centrality",
     "harmonic_diameter",
     "has_path",
+    "hopcroft_karp_matching",
     "immediate_dominators",
     "is_attracting_component",
     "is_biconnected",
     "is_bipartite",
+    "is_bipartite_node_set",
     "is_connected",
+    "is_dominating_set",
+    "is_matching",
+    "is_perfect_matching",
     "is_semiconnected",
+    "is_simple_path",
     "is_strongly_connected",
     "is_weakly_connected",
     "isolates",
+    "johnson",
     "kosaraju_strongly_connected_components",
     "multi_source_dijkstra",
     "multi_source_dijkstra_path",
     "multi_source_dijkstra_path_length",
     "negative_edge_cycle",
     "newman_betweenness_centrality",
+    "node_boundary",
     "node_connected_component",
+    "node_redundancy",
     "number_attracting_components",
     "number_connected_components",
     "number_of_isolates",
@@ -223,6 +259,7 @@ MULTIGRAPH_FUNCTIONS = {
     "periphery",
     "predecessor",
     "radius",
+    "sets",
     "shortest_path",
     "shortest_path_length",
     "single_source_all_shortest_paths",
@@ -245,16 +282,24 @@ MULTIGRAPH_FUNCTIONS = {
 
 # Functions that return subgraphs of the original NetworkX graph.
 _BUILDS_FROM_SOURCE = {
+    "boruvka_mst_edges",
     "k_core",
     "k_corona",
     "k_crust",
     "k_shell",
     "k_truss",
     "kruskal_mst_edges",
+    "maximum_branching",
+    "maximum_spanning_arborescence",
     "maximum_spanning_edges",
     "maximum_spanning_tree",
+    "minimal_branching",
+    "minimum_branching",
+    "minimum_spanning_arborescence",
     "minimum_spanning_edges",
     "minimum_spanning_tree",
+    "partition_spanning_tree",
+    "prim_mst_edges",
     "transitive_closure",
     "transitive_closure_dag",
 }
@@ -319,6 +364,12 @@ def _nx_signature(name):
     return inspect.signature(_nx_function(name))
 
 
+# Parameters NetworkX renamed between releases: {function: {old: ours}}.
+_RENAMED_PARAMS = {
+    "vf2pp_is_isomorphic": {"G1": "FG", "G2": "SG"},  # renamed in 3.7
+}
+
+
 def _bind(name, args, kwargs):
     """Bind a call to the installed NetworkX function's signature.
 
@@ -331,6 +382,7 @@ def _bind(name, args, kwargs):
     nx_sig = _nx_signature(name)
     bound = nx_sig.bind(*args, **kwargs)
     ours = _OUR_PARAMS[name]
+    renamed = _RENAMED_PARAMS.get(name, {})
     arguments = {}
     unsupported = []
     for key, value in bound.arguments.items():
@@ -339,8 +391,8 @@ def _bind(name, args, kwargs):
             continue
         if param.kind is param.VAR_KEYWORD:
             unsupported.extend(value)  # backend-specific keywords
-        elif key in ours:
-            arguments[key] = value
+        elif renamed.get(key, key) in ours:
+            arguments[renamed.get(key, key)] = value
         elif not _is_default(value, param):
             unsupported.append(key)
     return arguments, unsupported

@@ -7,6 +7,7 @@ merged attributes for duplicate edges, and so the same algorithm results.
 
 import math
 import pickle
+from itertools import islice
 import random
 import warnings
 
@@ -182,6 +183,9 @@ def algorithm_calls(H, directed):
         "kruskal_mst_edges": lambda G, b: list(
             nx.algorithms.tree.mst.kruskal_mst_edges(G, True, data=False, backend=b)
         ),
+        "maximum_branching": lambda G, b: list(nx.maximum_branching(G, backend=b).edges(data=True)),
+        "greedy_branching": lambda G, b: list(nx.tree.greedy_branching(G, backend=b).edges(data=True)),
+        "branching_weight": lambda G, b: nx.tree.branching_weight(G, backend=b),
     }
     if src is not None:
         calls["bfs"] = lambda G, b: nx.single_source_shortest_path_length(G, src, backend=b)
@@ -232,11 +236,44 @@ def algorithm_calls(H, directed):
         calls["group_bc"] = lambda G, b: nx.group_betweenness_centrality(G, few, backend=b)
         calls["local_reaching"] = lambda G, b: nx.local_reaching_centrality(G, src, backend=b)
         calls["local_reaching_w"] = lambda G, b: nx.local_reaching_centrality(G, src, weight="weight", backend=b)
+        calls["goldberg_radzik"] = lambda G, b: nx.goldberg_radzik(G, src, backend=b)
+        calls["simple_paths"] = lambda G, b: list(islice(nx.all_simple_paths(G, src, dst, cutoff=4, backend=b), 100))
+        calls["shortest_simple"] = lambda G, b: list(
+            islice(nx.shortest_simple_paths(G, src, dst, weight="weight", backend=b), 20)
+        )
+        calls["is_simple_path"] = lambda G, b: nx.is_simple_path(G, nodes[:3], backend=b)
     calls["load"] = lambda G, b: list(nx.load_centrality(G, backend=b).items())
     calls["load_w"] = lambda G, b: list(nx.load_centrality(G, weight="weight", backend=b).items())
     calls["edge_load"] = lambda G, b: list(nx.edge_load_centrality(G, backend=b).items())
     calls["percolation"] = lambda G, b: list(nx.percolation_centrality(G, backend=b).items())
     calls["voterank"] = lambda G, b: nx.voterank(G, backend=b)
+    calls["floyd_warshall"] = lambda G, b: [
+        (k, list(v.items())) for k, v in nx.floyd_warshall(G, backend=b).items()
+    ]
+    calls["floyd_warshall_numpy"] = lambda G, b: nx.floyd_warshall_numpy(G, backend=b).tolist()
+    calls["johnson"] = lambda G, b: nx.johnson(G, backend=b)
+    calls["is_isomorphic"] = lambda G, b: nx.is_isomorphic(G, G, backend=b)
+    calls["vf2pp_is_isomorphic"] = lambda G, b: nx.vf2pp_is_isomorphic(G, G, node_label="x", backend=b)
+    calls["faster_could_be"] = lambda G, b: nx.faster_could_be_isomorphic(G, G, backend=b)
+    calls["could_be"] = lambda G, b: nx.could_be_isomorphic(G, G, backend=b)
+
+    def quiet(func):  # Weisfeiler-Lehman hashes warn about changes in 3.5
+        def run(*args, **kwargs):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                return func(*args, **kwargs)
+        return run
+
+    calls["wl_hash"] = lambda G, b: quiet(nx.weisfeiler_lehman_graph_hash)(G, backend=b)
+    calls["wl_subgraph_hashes"] = lambda G, b: list(
+        quiet(nx.weisfeiler_lehman_subgraph_hashes)(G, iterations=2, backend=b).items()
+    )
+    if not directed:
+        calls["tree_isomorphism"] = lambda G, b: nx.isomorphism.tree_isomorphism(G, G, backend=b)
+        if src is not None:
+            calls["rooted_tree_isomorphism"] = lambda G, b: nx.isomorphism.rooted_tree_isomorphism(
+                G, src, G, src, backend=b
+            )
     if directed:
         calls["scc"] = lambda G, b: list(nx.strongly_connected_components(G, backend=b))
         calls["wcc"] = lambda G, b: list(nx.weakly_connected_components(G, backend=b))
@@ -258,6 +295,11 @@ def algorithm_calls(H, directed):
         calls["edge_bfs_ignore"] = lambda G, b: list(nx.edge_bfs(G, orientation="ignore", backend=b))
         calls["edge_dfs_reverse"] = lambda G, b: list(nx.edge_dfs(G, orientation="reverse", backend=b))
         calls["is_arborescence"] = lambda G, b: nx.is_arborescence(G, backend=b)
+        calls["antichains"] = lambda G, b: list(islice(nx.antichains(G, backend=b), 200))
+        calls["all_pairs_lca"] = lambda G, b: list(nx.all_pairs_lowest_common_ancestor(G, backend=b))
+        calls["tree_lca"] = lambda G, b: list(nx.tree_all_pairs_lowest_common_ancestor(G, backend=b))
+        calls["triadic_census"] = lambda G, b: list(nx.triadic_census(G, backend=b).items())
+        calls["d_separator"] = lambda G, b: nx.is_d_separator(G, set(nodes[:2]), set(nodes[-2:]), set(), backend=b)
         if src is not None:
             calls["idom"] = lambda G, b: list(nx.immediate_dominators(G, src, backend=b).items())
             calls["frontiers"] = lambda G, b: [
@@ -277,8 +319,41 @@ def algorithm_calls(H, directed):
         calls["cycle_basis"] = lambda G, b: nx.cycle_basis(G, backend=b)
         calls["girth"] = lambda G, b: nx.girth(G, backend=b)
         calls["local_bridges"] = lambda G, b: list(nx.local_bridges(G, backend=b))
+        calls["minimum_cycle_basis"] = lambda G, b: nx.minimum_cycle_basis(G, weight="weight", backend=b)
+        calls["prim"] = lambda G, b: list(
+            nx.algorithms.tree.mst.prim_mst_edges(G, True, data=False, backend=b)
+        )
+        calls["boruvka"] = lambda G, b: list(
+            nx.algorithms.tree.mst.boruvka_mst_edges(G, data=False, backend=b)
+        )
+        calls["partition_spanning_tree"] = lambda G, b: list(nx.partition_spanning_tree(G, backend=b).edges)
+        calls["max_weight_matching"] = lambda G, b: list(nx.max_weight_matching(G, backend=b))
+        calls["min_weight_matching"] = lambda G, b: list(nx.min_weight_matching(G, backend=b))
+        calls["maximal_matching"] = lambda G, b: list(nx.maximal_matching(G, backend=b))
+        calls["node_boundary"] = lambda G, b: list(nx.node_boundary(G, nodes[::2], backend=b))
+        calls["edge_boundary"] = lambda G, b: list(nx.edge_boundary(G, nodes[::2], backend=b))
+        calls["all_cliques"] = lambda G, b: list(nx.enumerate_all_cliques(G, backend=b))
+        calls["clique_number"] = lambda G, b: list(nx.node_clique_number(G, nodes, backend=b).items())
+        calls["max_weight_clique"] = lambda G, b: nx.max_weight_clique(G, weight=None, backend=b)
+        calls["dominating"] = lambda G, b: nx.is_dominating_set(G, nodes[::3], backend=b)
         if src is not None:
             calls["node_cc"] = lambda G, b: nx.node_connected_component(G, src, backend=b)
+        calls["is_chordal"] = lambda G, b: nx.is_chordal(G, backend=b)
+        calls["treewidth"] = lambda G, b: nx.chordal_graph_treewidth(G, backend=b)
+        calls["to_chordal"] = lambda G, b: (
+            lambda H, alpha: (list(H.edges), list(alpha.items()))
+        )(*nx.complete_to_chordal_graph(G, backend=b))
+        calls["at_free"] = lambda G, b: nx.is_at_free(G, backend=b)
+    calls["is_planar"] = lambda G, b: nx.is_planar(G, backend=b)
+    calls["planarity"] = lambda G, b: (
+        lambda ok, E: (ok, None if E is None else list(E.edges(data=True)))
+    )(*nx.check_planarity(G, True, backend=b))
+    if directed:
+        calls["score_sequence"] = lambda G, b: nx.tournament.score_sequence(G, backend=b)
+        if len(nodes) <= 10:  # quintic time in NetworkX 3.4 and 3.5
+            calls["tournament_sc"] = lambda G, b: nx.tournament.is_strongly_connected(G, backend=b)
+        if src is not None:
+            calls["is_reachable"] = lambda G, b: nx.tournament.is_reachable(G, src, nodes[-1], backend=b)
     return calls
 
 

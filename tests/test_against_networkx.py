@@ -732,7 +732,20 @@ def test_backend_function_list_matches_implementations():
 
     assert sorted(_info.FUNCTIONS) == sorted(algorithms.__all__)
     # Functions only some supported NetworkX releases have.
-    version_specific = {"all_triangles", "centroid", "barycenter"}
+    version_specific = {
+        "all_triangles",
+        "antichain_width",
+        "barycenter",
+        "butterflies",
+        "centroid",
+        "connected_dominating_set",
+        "floyd_warshall_tree",
+        "is_connected_dominating_set",
+        "is_perfect_graph",
+        "tree_centroid",
+        "vf2pp_is_monomorphic",
+        "vf2pp_subgraph_is_isomorphic",
+    }
     for name in algorithms.__all__:
         assert hasattr(interface, name), name
         try:

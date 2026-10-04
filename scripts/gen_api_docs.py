@@ -57,6 +57,13 @@ SECTIONS = [
         "negative_edge_cycle", "find_negative_cycle",
     ]),
     ("Shortest paths: A*", ["astar_path", "astar_path_length"]),
+    ("Shortest paths: Floyd-Warshall, Johnson and Goldberg-Radzik", [
+        "floyd_warshall", "floyd_warshall_predecessor_and_distance", "floyd_warshall_tree",
+        "floyd_warshall_numpy", "johnson", "goldberg_radzik",
+    ]),
+    ("Simple paths", [
+        "all_simple_paths", "all_simple_edge_paths", "shortest_simple_paths", "is_simple_path",
+    ]),
     ("Reachability", ["has_path", "descendants", "ancestors"]),
     ("Distance measures", [
         "eccentricity", "diameter", "radius", "center", "periphery",
@@ -77,7 +84,8 @@ SECTIONS = [
         "has_cycle", "lexicographical_topological_sort", "all_topological_sorts",
         "dag_longest_path", "dag_longest_path_length", "transitive_closure",
         "transitive_closure_dag", "transitive_reduction", "is_aperiodic",
-        "v_structures", "root_to_leaf_paths", "dag_to_branching",
+        "v_structures", "root_to_leaf_paths", "dag_to_branching", "antichains",
+        "antichain_width",
     ]),
     ("Clustering", [
         "triangles", "clustering", "average_clustering", "transitivity",
@@ -110,7 +118,50 @@ SECTIONS = [
     ]),
     ("Cycles and Euler tours", [
         "is_eulerian", "has_eulerian_path", "is_semieulerian", "eulerian_circuit",
-        "eulerian_path", "cycle_basis", "find_cycle", "girth",
+        "eulerian_path", "cycle_basis", "find_cycle", "girth", "minimum_cycle_basis",
+    ]),
+    ("Branchings, arborescences and more trees", [
+        "maximum_branching", "minimum_branching", "minimal_branching",
+        "maximum_spanning_arborescence", "minimum_spanning_arborescence",
+        "greedy_branching", "branching_weight", "prim_mst_edges", "boruvka_mst_edges",
+        "partition_spanning_tree",
+        "from_prufer_sequence", "from_nested_tuple", "to_nested_tuple", "tree_centroid",
+    ]),
+    ("Lowest common ancestors", [
+        "lowest_common_ancestor", "all_pairs_lowest_common_ancestor",
+        "tree_all_pairs_lowest_common_ancestor",
+    ]),
+    ("Planarity and graph classes", [
+        "is_planar", "check_planarity", "check_planarity_recursive", "get_counterexample",
+        "get_counterexample_recursive", "is_chordal", "chordal_graph_treewidth",
+        "complete_to_chordal_graph", "is_at_free", "is_perfect_graph",
+    ]),
+    ("Tournaments", ["is_reachable", "tournament_is_strongly_connected", "score_sequence"]),
+    ("Triads and d-separation", [
+        "triadic_census", "is_d_separator", "is_minimal_d_separator", "find_minimal_d_separator",
+    ]),
+    ("Degree sequences", [
+        "is_graphical", "is_digraphical", "is_multigraphical", "is_pseudographical",
+        "is_valid_degree_sequence_erdos_gallai", "is_valid_degree_sequence_havel_hakimi",
+    ]),
+    ("Boundaries and dominating sets", [
+        "node_boundary", "edge_boundary", "is_dominating_set", "connected_dominating_set",
+        "is_connected_dominating_set",
+    ]),
+    ("Matching and covers", [
+        "maximal_matching", "max_weight_matching", "min_weight_matching", "is_matching",
+        "is_maximal_matching", "is_perfect_matching", "min_edge_cover",
+    ]),
+    ("Cliques", ["enumerate_all_cliques", "node_clique_number", "max_weight_clique"]),
+    ("Isomorphism and graph hashing", [
+        "could_be_isomorphic", "fast_could_be_isomorphic", "faster_could_be_isomorphic",
+        "is_isomorphic", "vf2pp_is_isomorphic", "vf2pp_subgraph_is_isomorphic",
+        "vf2pp_is_monomorphic", "tree_isomorphism", "rooted_tree_isomorphism", "root_trees",
+        "weisfeiler_lehman_graph_hash", "weisfeiler_lehman_subgraph_hashes",
+    ]),
+    ("Bipartite graphs", [
+        "color", "sets", "is_bipartite_node_set", "hopcroft_karp_matching", "to_vertex_cover",
+        "bipartite_closeness_centrality", "node_redundancy", "butterflies",
     ]),
 ]
 
@@ -245,27 +296,140 @@ NOTES = {
     "has_eulerian_path": "A `source` not in the graph falls back.",
     "cycle_basis": "A `root` not in the graph falls back.",
     "find_cycle": "A `source` that isn't one node of the graph, and invalid orientations on directed graphs, fall back.",
+    "floyd_warshall": "Parallel. Follows the installed NetworkX's version (3.4/3.5 count missing weights as 1.0 and don't check for negative cycles). Dict and row key orders match. Mixed int and float weights fall back, as do `None` weights before 3.6.",
+    "floyd_warshall_predecessor_and_distance": "As `floyd_warshall`; the predecessor dicts match too.",
+    "floyd_warshall_tree": "NetworkX 3.7+. Mixed int and float weights fall back.",
+    "floyd_warshall_numpy": "Parallel; the same float operations as NetworkX's NumPy loop. `None` and `-0.0` weights, and a `nodelist` holding nodes not in the graph, fall back.",
+    "johnson": "Parallel. The paths dicts follow the installed NetworkX's order. `None` and infinite weights fall back.",
+    "goldberg_radzik": "Follows the installed NetworkX's version (3.7 changed the scan order). Rebuilds NetworkX's `relabeled` sets in Python, since they are visited in set order. " + LENGTHS + " `None` and infinite weights fall back.",
+    "antichains": "Generator; the closure is computed when iteration starts, as NetworkX does. A `topo_order` that isn't a topological order of the graph falls back.",
+    "antichain_width": "NetworkX 3.7+. Counts a maximum matching of the closure in Rust.",
+    "all_simple_paths": "Paths are generated lazily in Rust, in NetworkX's order. Raises RuntimeError if the graph changes during iteration.",
+    "all_simple_edge_paths": "Paths are generated lazily in Rust, in NetworkX's order. Raises RuntimeError if the graph changes during iteration.",
+    "shortest_simple_paths": "Yen's algorithm with NetworkX's bidirectional searches and tie-breaking, one path per step. Mixed int and float, and infinite, weights fall back.",
+    "minimum_cycle_basis": "Parallel lifted-graph searches. Builds the subgraph views and chord sets in Python, as NetworkX does (their order can depend on set layout). `None` and infinite weights, and tuple node labels, fall back.",
+    "maximum_branching": "Edmonds' algorithm as NetworkX runs it, in Rust; the result's edges come in NetworkX's (set iteration) order. Weights must be Python ints or floats, and `partition` values `EdgePartition` members or `None`.",
+    "minimum_branching": "Edmonds' algorithm as NetworkX runs it, in Rust; the result's edges come in NetworkX's (set iteration) order. Weights must be Python ints or floats, and `partition` values `EdgePartition` members or `None`. Changes G's weights exactly as NetworkX does (edges without `attr` gain it).",
+    "minimal_branching": "Edmonds' algorithm as NetworkX runs it, in Rust; the result's edges come in NetworkX's (set iteration) order. Weights must be Python ints or floats, and `partition` values `EdgePartition` members or `None`. Changes G's weights exactly as NetworkX does (edges without `attr` gain it).",
+    "maximum_spanning_arborescence": "Edmonds' algorithm as NetworkX runs it, in Rust; the result's edges come in NetworkX's (set iteration) order. Weights must be Python ints or floats, and `partition` values `EdgePartition` members or `None`. Changes G's weights exactly as NetworkX does (edges without `attr` gain it).",
+    "minimum_spanning_arborescence": "Edmonds' algorithm as NetworkX runs it, in Rust; the result's edges come in NetworkX's (set iteration) order. Weights must be Python ints or floats, and `partition` values `EdgePartition` members or `None`. Changes G's weights exactly as NetworkX does (edges without `attr` gain it).",
+    "greedy_branching": "Only int or str node labels (NetworkX sorts edges by weight, then nodes); others fall back. `attr=None` uses the random state as NetworkX does.",
+    "branching_weight": "Weights mixing ints and floats fall back.",
+    "prim_mst_edges": "Undirected graphs; directed ones fall back. Trees start from the nodes NetworkX pops from `set(G)` (rustnx replays the same set operations). Yields the graph's own edge data dicts.",
+    "boruvka_mst_edges": "Rounds run in Rust. Where a component's best edge is tied, rustnx replays NetworkX's set of the component's nodes to scan it in the same order. Yields the graph's own edge data dicts.",
+    "partition_spanning_tree": "Kruskal with the partition in Rust. `partition` values must be `EdgePartition` members or `None`.",
+    "from_prufer_sequence": "Takes no graph: runs in rustnx with `backend='rustnx'` or `nx.config.backend_priority.generators`. Sequences of non-ints fall back.",
+    "from_nested_tuple": "Takes no graph (see `from_prufer_sequence`). Nesting deeper than 100 levels falls back.",
+    "to_nested_tuple": "`canonical_form=True` only (otherwise children follow set order). Trees deeper than 100 levels fall back.",
+    "tree_centroid": "NetworkX 3.7+, as `nx.tree.centroid`.",
+    "lowest_common_ancestor": "As `all_pairs_lowest_common_ancestor`.",
+    "all_pairs_lowest_common_ancestor": "Pairs with a unique lowest common ancestor are answered in Rust; for pairs with several, rustnx repeats NetworkX's set-based walk.",
+    "tree_all_pairs_lowest_common_ancestor": "`pairs` falls back (NetworkX keeps them in sets), and so does a `root` not in the graph.",
+    "check_planarity": "Builds the same `PlanarEmbedding` (same half-edge calls) or counterexample.",
+    "check_planarity_recursive": "Graphs deep enough that NetworkX might reach the recursion limit fall back.",
+    "get_counterexample_recursive": "Graphs deep enough that NetworkX might reach the recursion limit fall back.",
+    "is_chordal": "Self-loops fall back (NetworkX's outcome then depends on set order).",
+    "chordal_graph_treewidth": "Self-loops and the null graph (whose result differs by version) fall back.",
+    "complete_to_chordal_graph": "Self-loops fall back. Chords are added in NetworkX's (set iteration) order.",
+    "is_reachable": "Unhashable nodes fall back.",
+    "is_perfect_graph": "NetworkX 3.7 and later.",
+}
+
+# Functions NetworkX exposes only in a submodule, or under another name.
+QUALIFIED = {
+    "check_planarity_recursive": "nx.algorithms.planarity.check_planarity_recursive",
+    "get_counterexample": "nx.algorithms.planarity.get_counterexample",
+    "get_counterexample_recursive": "nx.algorithms.planarity.get_counterexample_recursive",
+    "is_reachable": "nx.tournament.is_reachable",
+    "tournament_is_strongly_connected": "nx.tournament.is_strongly_connected",
+    "score_sequence": "nx.tournament.score_sequence",
+    "triadic_census": "A `nodelist` that is one node or an iterator falls back.",
+    "is_d_separator": "Arguments other than nodes and sets of nodes (lists, for example) fall back.",
+    "is_minimal_d_separator": "Arguments other than nodes and sets of nodes (lists, for example) fall back.",
+    "find_minimal_d_separator": "Arguments other than nodes and sets of nodes fall back, as do nodes equal to but of a different type than G's. The set iterates in NetworkX's order.",
+    "is_graphical": "Takes a sequence, not a graph: runs in rustnx with `backend=\"rustnx\"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.",
+    "is_digraphical": "Takes a sequence, not a graph: runs in rustnx with `backend=\"rustnx\"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.",
+    "is_multigraphical": "Takes a sequence, not a graph: runs in rustnx with `backend=\"rustnx\"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.",
+    "is_pseudographical": "Takes a sequence, not a graph: runs in rustnx with `backend=\"rustnx\"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.",
+    "is_valid_degree_sequence_erdos_gallai": "Takes a sequence, not a graph: runs in rustnx with `backend=\"rustnx\"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.",
+    "is_valid_degree_sequence_havel_hakimi": "Takes a sequence, not a graph: runs in rustnx with `backend=\"rustnx\"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.",
+    "node_boundary": "The set iterates in NetworkX's order.",
+    "edge_boundary": "`data` falls back.",
+    "connected_dominating_set": "NetworkX 3.5 and newer. The set iterates in NetworkX's order.",
+    "is_connected_dominating_set": "NetworkX 3.5 and newer.",
+    "maximal_matching": "The set iterates in NetworkX's order.",
+    "max_weight_matching": "Integer weights beyond 2**49 in magnitude fall back. The set (and each pair's orientation) is NetworkX's.",
+    "min_weight_matching": "Integer weights beyond 2**49 in magnitude fall back. The set (and each pair's orientation) is NetworkX's.",
+    "min_edge_cover": "`matching_algorithm` falls back. The set iterates in NetworkX's order.",
+    "enumerate_all_cliques": "Computed in batches when iteration starts, as NetworkX does.",
+    "node_clique_number": "`nodes=None` (the dict follows `find_cliques`' set order) and `cliques` fall back, as do directed graphs and nodes not in G.",
+    "max_weight_clique": "Node weights are read from the NetworkX graph; native graphs support `weight=None` only.",
+    "could_be_isomorphic": "Takes two graphs. Follows the installed NetworkX's checks (3.5+ stops at the first property that differs, which decides whether directed graphs raise). Multigraphs fall back.",
+    "fast_could_be_isomorphic": "Takes two graphs. As `could_be_isomorphic` (3.7+ stops at the first property that differs).",
+    "faster_could_be_isomorphic": "Takes two graphs.",
+    "is_isomorphic": "Takes two graphs. A yes/no answer, so an exact matcher in Rust (with color refinement) gives NetworkX's result without running VF2. `node_match`, `edge_match` and multigraphs fall back.",
+    "vf2pp_is_isomorphic": "Takes two graphs. Node labels are read from the NetworkX graphs. Empty graphs give `False`, as in NetworkX. A directed and an undirected graph fall back before NetworkX 3.7.",
+    "vf2pp_subgraph_is_isomorphic": "NetworkX 3.7+. Takes two graphs (the second is the smaller). Node labels are read from the NetworkX graphs.",
+    "vf2pp_is_monomorphic": "NetworkX 3.7+. Takes two graphs (the second is the smaller). Node labels are read from the NetworkX graphs.",
+    "tree_isomorphism": "Takes two trees. Follows the installed NetworkX's child order and errors (3.4 asserts; its recursive walk means very deep trees fall back there). A directed `t2` falls back.",
+    "rooted_tree_isomorphism": "As `tree_isomorphism`. Directed trees and roots not in the trees fall back.",
+    "root_trees": "Builds the combined tree in NetworkX from Rust searches. Roots not in the graphs fall back.",
+    "weisfeiler_lehman_graph_hash": "BLAKE2b in Rust, parallel; same hashes as NetworkX's `hashlib`, for the installed version (3.5 changed them), with the same warnings. Node and edge attribute labels are read from the NetworkX graph; non-ASCII labels, non-str attribute names and an unusual `digest_size` fall back.",
+    "weisfeiler_lehman_subgraph_hashes": "As `weisfeiler_lehman_graph_hash`.",
+    "color": "Directed graphs visit predecessors in NetworkX's order.",
+    "sets": "Sets are filled in NetworkX's order, so they iterate the same way.",
+    "is_bipartite_node_set": "Directed graphs raise as in NetworkX.",
+    "hopcroft_karp_matching": "Also `nx.bipartite.maximum_matching`. Follows NetworkX's search order (its `left` set's iteration order), so it finds the same matching. Directed graphs, `top_nodes` not in the graph or with neighbors among themselves, and augmenting paths deep enough to approach Python's recursion limit fall back.",
+    "to_vertex_cover": "Parallel. Builds the cover with NetworkX's set operations. Directed graphs, multigraphs and `top_nodes` not in the graph fall back.",
+    "bipartite_closeness_centrality": "As `nx.bipartite.closeness_centrality`. Bit-for-bit identical; parallel searches.",
+    "node_redundancy": "A one-shot iterator of nodes, and nodes not in the graph, fall back.",
+    "butterflies": "NetworkX 3.7+.",
+}
+
+# Functions NetworkX only exposes under `nx.isomorphism` or `nx.bipartite`
+# (or their modules).
+ISOMORPHISM_ONLY = {
+    "tree_isomorphism": "nx.isomorphism",
+    "rooted_tree_isomorphism": "nx.isomorphism",
+    "root_trees": "networkx.algorithms.isomorphism.tree_isomorphism",
+    "color": "nx.bipartite",
+    "sets": "nx.bipartite",
+    "is_bipartite_node_set": "nx.bipartite",
+    "hopcroft_karp_matching": "nx.bipartite",
+    "to_vertex_cover": "nx.bipartite",
+    "node_redundancy": "nx.bipartite",
+    "butterflies": "nx.bipartite",
 }
 
 # Functions NetworkX only exposes under `nx.dag`.
-DAG_ONLY = {"v_structures", "root_to_leaf_paths", "has_cycle"}
+DAG_ONLY = {"v_structures", "root_to_leaf_paths", "has_cycle", "antichain_width"}
+
+
+# Functions NetworkX exposes only in a submodule, not as `nx.<name>`.
+SUBMODULE = {
+    "label_propagation_communities": "nx.community",
+    "is_coloring": "nx.algorithms.coloring.equitable_coloring",
+    "is_equitable": "nx.algorithms.coloring.equitable_coloring",
+    "branching_weight": "nx.tree",
+    "greedy_branching": "nx.tree",
+    "minimal_branching": "nx.tree",
+    "kruskal_mst_edges": "nx.tree.mst",
+    "prim_mst_edges": "nx.tree.mst",
+    "boruvka_mst_edges": "nx.tree.mst",
+    "is_tournament": "nx.tournament",
+}
 
 
 def location(name):
     if name in DAG_ONLY:
         return "nx.dag"
-    if name in ("is_coloring", "is_equitable"):
-        return "nx.algorithms.coloring.equitable_coloring"
-    return "nx.community" if name == "label_propagation_communities" else "nx"
-    return {
-        "label_propagation_communities": "nx.community",
-        "kruskal_mst_edges": "nx.tree.mst",
-        "is_tournament": "nx.tournament",
-    }.get(name, "nx")
+    return ISOMORPHISM_ONLY.get(name) or SUBMODULE.get(name, "nx")
 
 
 def parameters(name):
-    params = list(inspect.signature(getattr(algorithms, name)).parameters)[1:]  # drop G
+    params = list(inspect.signature(getattr(algorithms, name)).parameters)
+    if params and params[0] in ("G", "T"):
+        params = params[1:]  # drop the graph
     params = [p for p in params if not p.startswith("_")]  # internal keywords
     return ", ".join(f"`{p}`" for p in params) or "none"
 
@@ -304,7 +468,8 @@ def render():
         for name in names:
             multi = "yes" if name in interface.MULTIGRAPH_FUNCTIONS else "no"
             small = "NetworkX" if name in interface._LINEAR_TIME else "rustnx"
-            out.append(f"| `{location(name)}.{name}` | {parameters(name)} | {multi} | {small} | {NOTES.get(name, '')} |")
+            qualified = QUALIFIED.get(name, f"{location(name)}.{name}")
+            out.append(f"| `{qualified}` | {parameters(name)} | {multi} | {small} | {NOTES.get(name, '')} |")
         out.append("")
 
     classes = [n for n in rx.__all__ if n in ("PyGraph", "PyDiGraph")]

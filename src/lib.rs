@@ -11,14 +11,15 @@ mod serialize;
 
 use pyo3::exceptions::{PyIndexError, PyNotImplementedError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
+use pyo3::types::{PyByteArray, PyBytes, PyDict, PyFloat, PyInt, PyList, PyTuple};
 
 use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
-    centrality, centrality_more, cluster, cores_more, dag, directed, distance, paths, spectral,
-    structure, structure_more,
+    bipartite, centrality, centrality_more, cluster, cores_more, dag, directed, distance,
+    graph_classes, isomorphism, leftovers, matching, paths, spectral, structure, structure_more,
+    trees_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -28,6 +29,10 @@ impl From<NegativeCycle> for PyErr {
         // Same arguments as NetworkX's `_dijkstra_multisource`.
         PyValueError::new_err(("Contradictory paths found:", "negative weights?"))
     }
+}
+
+fn planarity_bail() -> PyErr {
+    PyNotImplementedError::new_err("NetworkX's planarity test fails on this graph")
 }
 
 fn all_nodes(n: usize) -> Vec<u32> {
@@ -442,7 +447,8 @@ impl CoreGraph {
     #[pyo3(signature = (source, reverse=false))]
     fn reachable(&self, py: Python<'_>, source: usize, reverse: bool) -> PyResult<Vec<u32>> {
         self.check_index(source)?;
-        let adj = self.adj(reverse);
+        // `nx.ancestors` walks `G._pred` in its exact order (the caller loads it).
+        let adj = self.path_adj(None, reverse && self.directed)?.0;
         let (mut order, _) = py.detach(|| paths::bfs_tree(adj, self.n, source, f64::INFINITY));
         order.remove(0);
         Ok(order)
@@ -1941,6 +1947,1249 @@ impl CoreGraph {
         Ok(py.detach(|| structure_more::prufer(&self.succ, self.n, &pos, &degree)))
     }
 
+    // --- Batch 7: shortest paths, DAG and cycle leftovers ---
+
+    /// `(finite, int sums exact, has -0.0)` for edge attribute `weight`.
+    #[pyo3(signature = (weight=None))]
+    fn weight_flags(&self, weight: Option<&str>) -> PyResult<(bool, bool, bool)> {
+        let w = self.weight_slice(weight, false)?;
+        Ok((
+            leftovers::weights_finite(w),
+            leftovers::int_sums_exact(w),
+            leftovers::has_negative_zero(w),
+        ))
+    }
+
+    /// `floyd_warshall_predecessor_and_distance` (`tree`: 3.7's
+    /// `floyd_warshall_tree`) as NetworkX's dicts `(pred, dist)`; `dist`'s
+    /// rows come from `make_row()`. `old`: NetworkX 3.4/3.5's version.
+    /// `None` where NetworkX raises `NetworkXUnbounded`.
+    #[pyo3(signature = (nodes, make_row, weight, int_weights, old, tree, want_pred))]
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    fn floyd_warshall<'py>(
+        &self,
+        py: Python<'py>,
+        nodes: &Bound<'py, PyList>,
+        make_row: &Bound<'py, PyAny>,
+        weight: Option<&str>,
+        int_weights: bool,
+        old: bool,
+        tree: bool,
+        want_pred: bool,
+    ) -> PyResult<Option<(Bound<'py, PyDict>, Bound<'py, PyDict>)>> {
+        if nodes.len() != self.n {
+            return Err(PyValueError::new_err("nodes must list every node"));
+        }
+        let w = self.weight_slice(weight, false)?;
+        let found = py.detach(|| {
+            if tree {
+                leftovers::floyd_warshall_tree(&self.succ, self.n, w, int_weights)
+            } else {
+                leftovers::floyd_warshall(&self.succ, self.n, w, int_weights, self.directed, old)
+            }
+        });
+        let fw = match found {
+            Ok(fw) => fw,
+            Err(leftovers::FwError::Negative) => return Ok(None),
+            Err(leftovers::FwError::Unsupported) => {
+                return Err(PyNotImplementedError::new_err(
+                    "rustnx can't reproduce this Floyd-Warshall case",
+                ))
+            }
+        };
+        let node = |i: u32| nodes.get_item(i as usize);
+        let pred = PyDict::new(py);
+        if want_pred {
+            for &u in &fw.pred_rows {
+                let row = PyDict::new(py);
+                for &v in &fw.pred_order[u as usize] {
+                    row.set_item(node(v)?, node(fw.pred[u as usize * self.n + v as usize])?)?;
+                }
+                pred.set_item(node(u)?, row)?;
+            }
+        }
+        let dist = PyDict::new(py);
+        for u in 0..self.n {
+            let row = make_row.call0()?;
+            let row_dict = row.cast::<PyDict>()?;
+            for &v in &fw.dist_order[u] {
+                let (x, int) = fw.value(u, v as usize);
+                if int {
+                    row_dict.set_item(node(v)?, x as i64)?;
+                } else {
+                    row_dict.set_item(node(v)?, x)?;
+                }
+            }
+            dist.set_item(node(u as u32)?, row)?;
+        }
+        Ok(Some((pred, dist)))
+    }
+
+    /// `floyd_warshall_numpy`'s result as row-major f64 bytes, with node `i`
+    /// at row `order[i]`; `None` where NetworkX raises `NetworkXUnbounded`.
+    #[pyo3(signature = (order, weight, check_negative))]
+    fn floyd_warshall_dense<'py>(
+        &self,
+        py: Python<'py>,
+        order: Vec<u32>,
+        weight: Option<&str>,
+        check_negative: bool,
+    ) -> PyResult<Option<Bound<'py, PyByteArray>>> {
+        let n = self.n;
+        let mut seen = vec![false; n];
+        if order.len() != n
+            || order
+                .iter()
+                .any(|&i| i as usize >= n || std::mem::replace(&mut seen[i as usize], true))
+        {
+            return Err(PyValueError::new_err("order must be a permutation"));
+        }
+        let w = self.weight_slice(weight, false)?;
+        let found = py.detach(|| {
+            let mut a = vec![f64::INFINITY; n * n];
+            for u in 0..n {
+                for e in self.succ.range(u) {
+                    let v = self.succ.targets[e] as usize;
+                    a[order[u] as usize * n + order[v] as usize] = w.map_or(1.0, |w| w[e]);
+                }
+            }
+            leftovers::floyd_warshall_dense(&mut a, n, check_negative).map(|_| a)
+        });
+        Ok(found.ok().map(|a| {
+            let bytes: Vec<u8> = a.iter().flat_map(|x| x.to_ne_bytes()).collect();
+            PyByteArray::new(py, &bytes)
+        }))
+    }
+
+    /// `johnson`'s Bellman-Ford potentials, or `None` on a negative cycle.
+    #[pyo3(signature = (weight=None))]
+    fn johnson_potentials(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+    ) -> PyResult<Option<Vec<f64>>> {
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| leftovers::bellman_ford_all(&self.succ, self.n, w)))
+    }
+
+    /// `johnson`'s Dijkstra from each of `sources` on the reweighted graph,
+    /// in parallel: `(pop order, parents in pop order, first-push order)`,
+    /// or `None` where Dijkstra finds contradictory paths.
+    #[pyo3(signature = (sources, h, weight=None))]
+    #[allow(clippy::type_complexity)]
+    fn johnson_trees(
+        &self,
+        py: Python<'_>,
+        sources: Vec<u32>,
+        h: Vec<f64>,
+        weight: Option<&str>,
+    ) -> PyResult<Vec<Option<(Vec<u32>, Vec<u32>, Vec<u32>)>>> {
+        let sources = self.sources_or_all(Some(sources))?;
+        if h.len() != self.n {
+            return Err(PyValueError::new_err("one potential per node"));
+        }
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| {
+            let rw = leftovers::reweight(&self.succ, self.n, w, &h);
+            sources
+                .par_iter()
+                .map(|&s| {
+                    paths::dijkstra_tree(&self.succ, self.n, Some(&rw), s as usize, None, None)
+                        .ok()
+                        .map(|t| {
+                            let parents = t.order.iter().map(|&v| t.parent[v as usize]).collect();
+                            (t.order, parents, t.seen_order)
+                        })
+                })
+                .collect()
+        }))
+    }
+
+    /// `goldberg_radzik`'s state from `source`; Python runs the rounds.
+    #[pyo3(signature = (source, int_weights, weight=None))]
+    fn goldberg_radzik(
+        &self,
+        source: usize,
+        int_weights: bool,
+        weight: Option<&str>,
+    ) -> PyResult<GoldbergRadzikState> {
+        self.check_index(source)?;
+        let w = self.weight_slice(weight, false)?;
+        Ok(GoldbergRadzikState(leftovers::GoldbergRadzik::new(
+            &self.succ,
+            self.n,
+            w,
+            int_weights,
+            source,
+        )))
+    }
+
+    /// `nx.antichains` for topological order `topo` (positions), one batch
+    /// at a time; `None` if `topo` isn't a topological order of G.
+    fn antichains(&self, py: Python<'_>, topo: Vec<u32>) -> PyResult<Option<AntichainIter>> {
+        let topo = self.sources_or_all(Some(topo))?;
+        Ok(py.detach(|| {
+            if !leftovers::is_topological_order(&self.succ, self.n, &topo) {
+                return None;
+            }
+            let reach = leftovers::Reach::new(&self.succ, self.n, &topo);
+            Some(AntichainIter(leftovers::Antichains::new(reach, &topo)))
+        }))
+    }
+
+    /// `antichain_width` (NetworkX 3.7): `None` if G has a cycle.
+    fn antichain_width(&self, py: Python<'_>) -> Option<usize> {
+        py.detach(|| {
+            let (generations, cycle) =
+                directed::topological_generations(&self.succ, self.adj(true), self.n);
+            if cycle {
+                return None;
+            }
+            let topo: Vec<u32> = generations.into_iter().flatten().collect();
+            let reach = leftovers::Reach::new(&self.succ, self.n, &topo);
+            Some(self.n - leftovers::reach_matching_size(&reach, self.n))
+        })
+    }
+
+    /// `_all_simple_edge_paths` from `source` to `targets` (positions;
+    /// `extra`: the target set also holds objects that aren't nodes), with
+    /// at most `limit` nodes on a path that is still extended.
+    fn simple_paths(
+        &self,
+        source: usize,
+        targets: Vec<u32>,
+        extra: bool,
+        limit: usize,
+    ) -> PyResult<SimplePathIter> {
+        self.check_index(source)?;
+        let targets = self.sources_or_all(Some(targets))?;
+        Ok(SimplePathIter(leftovers::SimplePaths::new(
+            &self.succ,
+            self.n,
+            source as u32,
+            &targets,
+            extra,
+            limit,
+        )))
+    }
+
+    /// `shortest_simple_paths` from `source` to `target`, lazily.
+    #[pyo3(signature = (source, target, compensated, weight=None))]
+    fn shortest_simple_paths(
+        &self,
+        source: usize,
+        target: usize,
+        compensated: bool,
+        weight: Option<&str>,
+    ) -> PyResult<YenIter> {
+        self.check_index(source)?;
+        self.check_index(target)?;
+        let (pred, w_pred) = self.reverse_exact_order(weight)?;
+        let w_succ = self.weight_slice(weight, false)?;
+        let weights = match (w_succ, w_pred) {
+            (Some(a), Some(b)) => Some((a, b)),
+            _ => None,
+        };
+        Ok(YenIter(leftovers::SimpleShortestPaths::new(
+            &self.succ,
+            pred,
+            self.n,
+            self.directed,
+            weights,
+            compensated,
+            source as u32,
+            target as u32,
+        )))
+    }
+
+    /// Whether each consecutive pair of `path` is an edge.
+    fn is_path(&self, path: Vec<u32>) -> PyResult<bool> {
+        let path = self.sources_or_all(Some(path))?;
+        Ok(path
+            .windows(2)
+            .all(|p| self.succ.neighbors(p[0] as usize).contains(&p[1])))
+    }
+
+    /// `_min_cycle_basis` of one component (see
+    /// `leftovers::min_cycle_basis`): `(0, cycles)`, or `(1, None)` /
+    /// `(2, None)` where `_dijkstra` / `bidirectional_dijkstra` find
+    /// contradictory paths.
+    #[pyo3(signature = (nodes, edges, chords, weight=None))]
+    fn min_cycle_basis(
+        &self,
+        py: Python<'_>,
+        nodes: Vec<u32>,
+        edges: Vec<(u32, u32)>,
+        chords: Vec<(u32, u32)>,
+        weight: Option<&str>,
+    ) -> PyResult<(u8, Option<Vec<Vec<u32>>>)> {
+        let nodes = self.sources_or_all(Some(nodes))?;
+        let w = self.weight_slice(weight, false)?;
+        let mut weighted = Vec::with_capacity(edges.len());
+        for &(u, v) in edges.iter().chain(&chords) {
+            self.check_index(u as usize)?;
+            self.check_index(v as usize)?;
+        }
+        for &(u, v) in &edges {
+            let e = self
+                .succ
+                .range(u as usize)
+                .find(|&e| self.succ.targets[e] == v)
+                .ok_or_else(|| PyValueError::new_err("not an edge"))?;
+            weighted.push((u, v, w.map_or(1.0, |w| w[e])));
+        }
+        match py.detach(|| leftovers::min_cycle_basis(self.n, &nodes, &weighted, &chords)) {
+            Ok(cb) => Ok((0, Some(cb))),
+            Err(leftovers::McbError::Contradictory) => Ok((1, None)),
+            Err(leftovers::McbError::ContradictoryBidirectional) => Ok((2, None)),
+            Err(leftovers::McbError::Unsupported) => Err(PyNotImplementedError::new_err(
+                "rustnx can't reproduce this minimum cycle basis case",
+            )),
+        }
+    }
+
+    // --- Batch 8: trees, branchings and lowest common ancestors ---
+
+    /// NetworkX's `maximum_branching` on edges `us[k] -> vs[k]` (key `k`)
+    /// with Python int or float `weights` and partition states (0 open,
+    /// 1 included, 2 excluded): the final branching's keys and, for each
+    /// contraction from the last, its circuit and the key removed. `None`
+    /// where rustnx can't follow NetworkX (other weight types, ints leaving
+    /// `i64`, inputs on which NetworkX raises).
+    #[staticmethod]
+    #[allow(clippy::type_complexity)]
+    fn edmonds<'py>(
+        py: Python<'py>,
+        n: usize,
+        us: Vec<u32>,
+        vs: Vec<u32>,
+        weights: Vec<Bound<'py, PyAny>>,
+        part: Vec<u8>,
+    ) -> PyResult<Option<(Vec<u32>, Vec<(Vec<u32>, u32)>)>> {
+        let m = us.len();
+        if vs.len() != m || weights.len() != m || part.len() != m {
+            return Err(PyValueError::new_err("edge arrays differ in length"));
+        }
+        if us.iter().chain(&vs).any(|&x| x as usize >= n) {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        let Some(w) = weights.iter().map(py_num).collect::<Option<Vec<_>>>() else {
+            return Ok(None);
+        };
+        Ok(py
+            .detach(|| trees_more::edmonds(n, &us, &vs, &w, &part))
+            .map(|b| (b.initial, b.log)))
+    }
+
+    /// `greedy_branching`'s edges (indices, in the order they are added),
+    /// sorting by `(weight, rank[u], rank[v])`. `None` for weights that
+    /// aren't Python ints or floats, or NaN.
+    #[staticmethod]
+    fn greedy_branching<'py>(
+        py: Python<'py>,
+        us: Vec<u32>,
+        vs: Vec<u32>,
+        weights: Vec<Bound<'py, PyAny>>,
+        rank: Vec<u32>,
+        maximum: bool,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let n = rank.len();
+        if vs.len() != us.len() || weights.len() != us.len() {
+            return Err(PyValueError::new_err("edge arrays differ in length"));
+        }
+        if us.iter().chain(&vs).any(|&x| x as usize >= n) {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        let w: Option<Vec<_>> = weights
+            .iter()
+            .map(|x| py_num(x).filter(|w| !matches!(w, trees_more::Num::Float(f) if f.is_nan())))
+            .collect();
+        let Some(w) = w else { return Ok(None) };
+        Ok(Some(py.detach(|| {
+            trees_more::greedy_branching(n, &us, &vs, &w, &rank, maximum)
+        })))
+    }
+
+    /// `greedy_branching` on the converted `weight` (exact for ints and
+    /// floats alike): kept edges as `(us, vs)`, in the order added.
+    fn greedy_branching_edges(
+        &self,
+        py: Python<'_>,
+        weight: &str,
+        rank: Vec<u32>,
+        maximum: bool,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        if rank.len() != self.n {
+            return Err(PyValueError::new_err("one rank per node is needed"));
+        }
+        let w = self.weight_slice(Some(weight), false)?.unwrap_or(&[]);
+        Ok(py.detach(|| {
+            let (mut us, mut vs, mut ws) = (Vec::new(), Vec::new(), Vec::new());
+            for u in 0..self.n {
+                for e in self.succ.range(u) {
+                    let v = self.succ.targets[e];
+                    if self.directed || v as usize >= u {
+                        us.push(u as u32);
+                        vs.push(v);
+                        ws.push(trees_more::Num::Float(w[e]));
+                    }
+                }
+            }
+            trees_more::greedy_branching(self.n, &us, &vs, &ws, &rank, maximum)
+                .into_iter()
+                .map(|i| (us[i as usize], vs[i as usize]))
+                .unzip()
+        }))
+    }
+
+    /// `prim_mst_edges` (undirected), growing a tree from each of `starts`.
+    #[pyo3(signature = (starts, weight=None, minimum=true))]
+    fn prim_edges(
+        &self,
+        py: Python<'_>,
+        starts: Vec<u32>,
+        weight: Option<&str>,
+        minimum: bool,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        let starts = self.sources_or_all(Some(starts))?;
+        let w = self.weight_slice(weight, false)?;
+        let sign = if minimum { 1.0 } else { -1.0 };
+        Ok(py.detach(|| {
+            trees_more::prim(&self.succ, w, &starts, sign)
+                .into_iter()
+                .unzip()
+        }))
+    }
+
+    /// Kruskal with a partition: `state` per edge in `G.edges` order (0
+    /// open, 1 included, 2 excluded); kept edges as `(us, vs)`.
+    #[pyo3(signature = (state, weight=None, maximum=false))]
+    fn kruskal_partition(
+        &self,
+        py: Python<'_>,
+        state: Vec<u8>,
+        weight: Option<&str>,
+        maximum: bool,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        let w = self.weight_slice(weight, false)?;
+        let mut edges = Vec::new();
+        for u in 0..self.n {
+            for e in self.succ.range(u) {
+                let v = self.succ.targets[e];
+                if self.directed || v as usize >= u {
+                    edges.push((u as u32, v, w.map_or(1.0, |w| w[e])));
+                }
+            }
+        }
+        if state.len() != edges.len() {
+            return Err(PyValueError::new_err("one state per edge is needed"));
+        }
+        Ok(py.detach(|| {
+            trees_more::kruskal_partition(self.n, &edges, &state, maximum)
+                .into_iter()
+                .map(|i| (edges[i as usize].0, edges[i as usize].1))
+                .unzip()
+        }))
+    }
+
+    /// `sum()` of the attribute over `G.edges` (`branching_weight`): an
+    /// int if every value is an int, else CPython's float `sum()`.
+    fn edge_weight_sum<'py>(
+        &self,
+        py: Python<'py>,
+        weight: &str,
+        compensated: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let w = self.weight_slice(Some(weight), false)?.unwrap_or(&[]);
+        let values = (0..self.n).flat_map(|u| {
+            self.succ
+                .range(u)
+                .filter(move |&e| self.directed || self.succ.targets[e] as usize >= u)
+                .map(|e| w[e])
+        });
+        if self.weights_info(Some(weight)).0 {
+            let total: i128 = values.map(|x| x as i128).sum();
+            Ok(total.into_pyobject(py)?.into_any())
+        } else {
+            let total = spectral::py_sum(values, compensated);
+            Ok(total.into_pyobject(py)?.into_any())
+        }
+    }
+
+    /// `from_prufer_sequence`'s edges (before the orphans' edge), with `-1`
+    /// marking out-of-range entries: `(us, vs, error)`, where `error` is
+    /// the index of the first bad entry, or `-2` if NetworkX's search for a
+    /// leaf would fail.
+    #[staticmethod]
+    fn prufer_edges(seq: Vec<i64>) -> PyResult<(Vec<u32>, Vec<u32>, i64)> {
+        let n = seq.len() + 2;
+        if seq.iter().any(|&v| v < -1 || v >= n as i64) {
+            return Err(PyValueError::new_err("entries must be in -1..n"));
+        }
+        Ok(match trees_more::prufer_edges(&seq) {
+            Ok(edges) => {
+                let (us, vs) = edges.into_iter().unzip();
+                (us, vs, -1)
+            }
+            Err(usize::MAX) => (Vec::new(), Vec::new(), -2),
+            Err(i) => (Vec::new(), Vec::new(), i as i64),
+        })
+    }
+
+    /// `from_nested_tuple(sequence, sensible_relabeling)`: node order and
+    /// edges in insertion order. `None` if a level has no `len()` or can't
+    /// be iterated, or nesting is deeper than `max_depth`.
+    #[staticmethod]
+    #[allow(clippy::type_complexity)]
+    fn nested_tuple_tree(
+        py: Python<'_>,
+        sequence: &Bound<'_, PyAny>,
+        sensible: bool,
+        max_depth: usize,
+    ) -> PyResult<Option<(Vec<u32>, Vec<u32>, Vec<u32>)>> {
+        let mut children = Vec::new();
+        if parse_nested(sequence, 0, max_depth, &mut children).is_none() {
+            return Ok(None);
+        }
+        let shape = trees_more::Shape { children };
+        let (order, edges) = py.detach(|| trees_more::nested_tuple_tree(&shape, sensible));
+        let (us, vs) = edges.into_iter().unzip();
+        Ok(Some((order, us, vs)))
+    }
+
+    /// `to_nested_tuple(T, root, canonical_form=True)` for a tree, or `None`
+    /// if the tree is more than `max_height` levels deep.
+    fn canonical_nested_tuple<'py>(
+        &self,
+        py: Python<'py>,
+        root: usize,
+        max_height: usize,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        self.check_index(root)?;
+        let (post, children) =
+            py.detach(|| trees_more::canonical_children(&self.succ, root as u32));
+        let mut depth = vec![0usize; self.n];
+        for &x in post.iter().rev() {
+            for &c in &children[x as usize] {
+                depth[c as usize] = depth[x as usize] + 1;
+            }
+        }
+        if depth.iter().any(|&d| d > max_height) {
+            return Ok(None);
+        }
+        let mut tuples: Vec<Option<Bound<'py, PyTuple>>> = vec![None; self.n];
+        for &x in &post {
+            let items: Vec<Bound<'py, PyTuple>> = children[x as usize]
+                .iter()
+                .map(|&c| tuples[c as usize].take().expect("child tuple"))
+                .collect();
+            tuples[x as usize] = Some(PyTuple::new(py, items)?);
+        }
+        Ok(tuples[root].take().map(|t| t.into_any()))
+    }
+
+    /// Lowest common ancestor queries for `all_pairs_lowest_common_ancestor`.
+    fn dag_lca(&self) -> DagLca {
+        let copy = |c: &graph::Csr| graph::Csr {
+            offsets: c.offsets.clone(),
+            targets: c.targets.clone(),
+        };
+        DagLca(trees_more::DagLca::new(
+            copy(&self.succ),
+            copy(self.adj(true)),
+        ))
+    }
+
+    /// `tree_all_pairs_lowest_common_ancestor(G, root)` without `pairs`;
+    /// each node's parent is its first predecessor in NetworkX's order.
+    fn tree_lca(&self, root: usize) -> PyResult<TreeLca> {
+        self.check_index(root)?;
+        let (pred, _) = self.reverse_exact_order(None)?;
+        let parent = (0..self.n)
+            .map(|v| pred.neighbors(v).first().copied().unwrap_or(u32::MAX))
+            .collect();
+        Ok(TreeLca(trees_more::TreeLca::new(
+            &self.succ,
+            root as u32,
+            parent,
+        )))
+    }
+
+    /// `boruvka_mst_edges`, run a round at a time from Python.
+    #[pyo3(signature = (weight=None, minimum=true))]
+    fn boruvka(&self, weight: Option<&str>, minimum: bool) -> PyResult<Boruvka> {
+        let w = self.weight_slice(weight, false)?.map(|w| w.to_vec());
+        let adj = graph::Csr {
+            offsets: self.succ.offsets.clone(),
+            targets: self.succ.targets.clone(),
+        };
+        let sign = if minimum { 1.0 } else { -1.0 };
+        Ok(Boruvka(trees_more::Boruvka::new(adj, w, sign)))
+    }
+
+    // --- Batch 9: planarity, chordal graphs and graph classes ---
+
+    /// NetworkX's left-right planarity test: `(planar, embedding, depth)`.
+    /// `embed` 0 leaves the embedding out; 1 gives each node's first
+    /// half-edges in order, then the `(kind, a, b, ref)` calls of the
+    /// depth-first phase (kind 0: `add_half_edge_first(a, b)`, 1:
+    /// `ccw=ref`, 2: `cw=ref`); 2 gives the dicts those calls build (see
+    /// `graph_classes::Layout`). `depth` bounds the recursive variant's
+    /// recursion.
+    fn planarity<'py>(&self, py: Python<'py>, embed: u8) -> PyResult<Bound<'py, PyTuple>> {
+        // The embedding is always built: NetworkX builds it for a planar
+        // graph even when only the answer is wanted (`is_planar`).
+        let result = py.detach(|| {
+            let adj = graph_classes::planarity_graph(&self.succ, self.n, self.directed);
+            let result = graph_classes::lr_planarity(&adj, true)?;
+            let layout = match (&result.embedding, embed) {
+                (Some(emb), 2) => Some(graph_classes::embedding_layout(self.n, emb)?),
+                _ => None,
+            };
+            Ok::<_, graph_classes::Bail>((result, layout))
+        });
+        let (result, layout) = result.map_err(|_| planarity_bail())?;
+        let embedding: Py<PyAny> = match (result.embedding, layout) {
+            (_, Some(l)) => (
+                l.offsets,
+                l.target,
+                l.cw,
+                l.ccw,
+                l.ccw_first,
+                l.pred_offsets,
+                l.pred,
+            )
+                .into_pyobject(py)?
+                .into_any()
+                .unbind(),
+            (Some(emb), None) if embed == 1 => {
+                let calls: Vec<(u8, u32, u32, u32)> = emb
+                    .calls
+                    .into_iter()
+                    .map(|call| match call {
+                        graph_classes::HalfEdge::First(a, b) => (0, a, b, 0),
+                        graph_classes::HalfEdge::Ccw(a, b, r) => (1, a, b, r),
+                        graph_classes::HalfEdge::Cw(a, b, r) => (2, a, b, r),
+                    })
+                    .collect();
+                (emb.ordered, calls).into_pyobject(py)?.into_any().unbind()
+            }
+            _ => py.None(),
+        };
+        (result.planar, embedding, result.depth).into_pyobject(py)
+    }
+
+    /// NetworkX's `get_counterexample`: the edges it adds to the
+    /// counterexample, in order (`None` if planar), and the recursion
+    /// depth the recursive variant would need.
+    #[allow(clippy::type_complexity)]
+    fn planarity_counterexample(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<(Option<(Vec<u32>, Vec<u32>)>, usize)> {
+        let result = py.detach(|| {
+            let adj = graph_classes::planarity_graph(&self.succ, self.n, self.directed);
+            graph_classes::counterexample(&adj)
+        });
+        let (edges, depth) = result.map_err(|_| planarity_bail())?;
+        Ok((edges.map(|e| e.into_iter().unzip()), depth))
+    }
+
+    /// `(is_chordal, treewidth)` of an undirected graph without self-loops.
+    fn chordal(&self, py: Python<'_>) -> (bool, u32) {
+        py.detach(|| graph_classes::chordal(&self.succ, self.n))
+    }
+
+    /// `complete_to_chordal_graph` on a non-chordal graph without
+    /// self-loops: each node's alpha, and the chords `(z, y)` in order.
+    fn complete_to_chordal(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+        let (alpha, chords) = py.detach(|| graph_classes::complete_to_chordal(&self.succ, self.n));
+        let (zs, ys) = chords.into_iter().unzip();
+        (alpha, zs, ys)
+    }
+
+    /// `nx.is_at_free` on an undirected graph.
+    fn is_at_free(&self, py: Python<'_>) -> PyResult<bool> {
+        py.detach(|| graph_classes::is_at_free(&self.succ, self.n))
+            .ok_or_else(|| PyNotImplementedError::new_err("graph too large for is_at_free"))
+    }
+
+    /// `nx.tournament.is_reachable` for positions (`None`: not in G).
+    #[pyo3(signature = (s=None, t=None))]
+    fn tournament_reachable(
+        &self,
+        py: Python<'_>,
+        s: Option<u32>,
+        t: Option<u32>,
+    ) -> PyResult<bool> {
+        let s = s.unwrap_or(u32::MAX);
+        let t = t.unwrap_or(u32::MAX);
+        for v in [s, t] {
+            if v != u32::MAX {
+                self.check_index(v as usize)?;
+            }
+        }
+        Ok(py.detach(|| graph_classes::tournament_reachable(&self.succ, self.n, s, t)))
+    }
+
+    /// `nx.is_perfect_graph` on an undirected graph.
+    fn is_perfect(&self, py: Python<'_>) -> PyResult<bool> {
+        py.detach(|| graph_classes::is_perfect(&self.succ, self.n))
+            .ok_or_else(|| PyNotImplementedError::new_err("graph too large for is_perfect_graph"))
+    }
+
+    /// Out-degrees in increasing order (`nx.tournament.score_sequence`).
+    fn sorted_out_degrees(&self) -> Vec<usize> {
+        let mut degrees: Vec<usize> = (0..self.n).map(|v| self.succ.neighbors(v).len()).collect();
+        degrees.sort_unstable();
+        degrees
+    }
+
+    /// `nx.tournament.is_strongly_connected`.
+    fn tournament_strongly_connected(&self, py: Python<'_>) -> bool {
+        py.detach(|| graph_classes::tournament_strongly_connected(&self.succ, self.n))
+    }
+
+    // --- Batch 10: triads, d-separation, degree sequences and matching ---
+
+    /// `nx.triadic_census` counts in `TRIAD_NAMES` order, over `nodeset`
+    /// (all nodes if `None`).
+    #[pyo3(signature = (nodeset=None))]
+    fn triadic_census(&self, py: Python<'_>, nodeset: Option<Vec<u32>>) -> PyResult<Vec<i128>> {
+        let nodeset = self.sources_or_all(nodeset)?;
+        let pred = self.adj(true);
+        Ok(py.detach(|| matching::triadic_census(&self.succ, pred, self.n, &nodeset).to_vec()))
+    }
+
+    /// `nx.is_d_separator` on a DAG, after NetworkX's input checks.
+    fn is_d_separator(
+        &self,
+        py: Python<'_>,
+        x: Vec<u32>,
+        y: Vec<u32>,
+        z: Vec<u32>,
+    ) -> PyResult<bool> {
+        self.membership(&x)?;
+        self.membership(&y)?;
+        self.membership(&z)?;
+        let pred = self.adj(true);
+        Ok(py.detach(|| matching::is_d_separator(&self.succ, pred, self.n, &x, &y, &z)))
+    }
+
+    /// `nx.ancestors` of each of `nodes`, each in its set's insertion order
+    /// (needs exact in-edge order).
+    fn ancestor_lists(&self, py: Python<'_>, nodes: Vec<u32>) -> PyResult<Vec<Vec<u32>>> {
+        self.membership(&nodes)?;
+        let pred = self.reverse_exact_order(None)?.0;
+        Ok(py.detach(|| {
+            let mut seen = Vec::new();
+            nodes
+                .iter()
+                .enumerate()
+                .map(|(i, &v)| matching::ancestors_in_order(pred, self.n, v, &mut seen, i as u32))
+                .collect()
+        }))
+    }
+
+    /// `_reachable(G, x, a, z)` of `networkx.algorithms.d_separation`, with
+    /// `a` the nodes in `nodeset` and their ancestors: the nodes of
+    /// `processed` in order (needs exact in-edge order).
+    fn d_reachable(
+        &self,
+        py: Python<'_>,
+        x: Vec<u32>,
+        nodeset: Vec<u32>,
+        z: Vec<u32>,
+    ) -> PyResult<Vec<u32>> {
+        self.membership(&x)?;
+        let in_z = self.membership(&z)?;
+        self.membership(&nodeset)?;
+        let pred = self.reverse_exact_order(None)?.0;
+        let transposed = self.adj(true);
+        Ok(py.detach(|| {
+            let anc = matching::closure_mask(transposed, self.n, &nodeset);
+            matching::d_reachable(&self.succ, pred, self.n, &x, &anc, &in_z)
+        }))
+    }
+
+    /// `nx.is_minimal_d_separator` on a DAG, after its input checks.
+    fn is_minimal_d_separator(
+        &self,
+        py: Python<'_>,
+        x: Vec<u32>,
+        y: Vec<u32>,
+        z: Vec<u32>,
+        included: Vec<u32>,
+    ) -> PyResult<bool> {
+        for nodes in [&x, &y, &z, &included] {
+            self.membership(nodes)?;
+        }
+        let pred = self.adj(true);
+        Ok(py.detach(|| {
+            matching::is_minimal_d_separator(&self.succ, pred, self.n, &x, &y, &z, &included)
+        }))
+    }
+
+    /// Successors of `nodes`, each once, first occurrence first.
+    fn neighbor_union(&self, py: Python<'_>, nodes: Vec<u32>) -> PyResult<Vec<u32>> {
+        self.membership(&nodes)?;
+        Ok(py.detach(|| matching::neighbor_union(&self.succ, self.n, &nodes)))
+    }
+
+    /// `nx.edge_boundary` without data: `(index into order, neighbor)`.
+    #[pyo3(signature = (order, nset2=None))]
+    fn edge_boundary(
+        &self,
+        py: Python<'_>,
+        order: Vec<u32>,
+        nset2: Option<Vec<u32>>,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        self.membership(&order)?;
+        if let Some(s) = &nset2 {
+            self.membership(s)?;
+        }
+        Ok(py.detach(|| {
+            matching::edge_boundary(&self.succ, self.n, self.directed, &order, nset2.as_deref())
+                .into_iter()
+                .unzip()
+        }))
+    }
+
+    /// Index of the first pair where `nx.is_matching` returns False.
+    fn first_matching_failure(&self, us: Vec<u32>, vs: Vec<u32>) -> PyResult<Option<usize>> {
+        self.membership(&us)?;
+        self.membership(&vs)?;
+        Ok(matching::first_matching_failure(
+            &self.succ, self.n, &us, &vs,
+        ))
+    }
+
+    /// Whether an edge (not a self-loop) has neither end in `matched`.
+    fn has_unmatched_edge(&self, py: Python<'_>, matched: Vec<u32>) -> PyResult<bool> {
+        self.membership(&matched)?;
+        Ok(py.detach(|| matching::has_unmatched_edge(&self.succ, self.n, &matched)))
+    }
+
+    /// `nx.maximal_matching`: chosen edges in order.
+    fn maximal_matching(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
+        py.detach(|| {
+            matching::maximal_matching(&self.succ, self.n)
+                .into_iter()
+                .unzip()
+        })
+    }
+
+    /// `nx.max_weight_matching` (or, with `inverted`, `min_weight_matching`)
+    /// as matching pairs in set-insertion order. `None` if integer weights
+    /// are too large for f64 arithmetic to match Python's exact ints.
+    #[pyo3(signature = (weight=None, maxcardinality=false, inverted=false))]
+    fn max_weight_matching(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+        maxcardinality: bool,
+        inverted: bool,
+    ) -> PyResult<Option<(Vec<u32>, Vec<u32>)>> {
+        let w = self.weight_slice(weight, false)?;
+        let any_int = weight
+            .and_then(|a| self.weights.get(a))
+            .is_none_or(|x| x.any_int);
+        if any_int && w.is_some_and(|w| w.iter().any(|x| x.abs() > (1u64 << 49) as f64)) {
+            return Ok(None);
+        }
+        Ok(Some(py.detach(|| {
+            if inverted {
+                let (g, nodes) = matching::inverted_graph(&self.succ, self.n, w);
+                matching::max_weight_matching(&g, true)
+                    .into_iter()
+                    .map(|(u, v)| (nodes[u as usize], nodes[v as usize]))
+                    .unzip()
+            } else {
+                let g = matching::WeightedAdj::from_csr(&self.succ, w);
+                matching::max_weight_matching(&g, maxcardinality)
+                    .into_iter()
+                    .unzip()
+            }
+        })))
+    }
+
+    /// Whether `nodes` and their successors cover every node.
+    fn is_dominating(&self, py: Python<'_>, nodes: Vec<u32>) -> PyResult<bool> {
+        self.membership(&nodes)?;
+        Ok(py.detach(|| matching::is_dominating(&self.succ, self.n, &nodes)))
+    }
+
+    /// Whether the subgraph induced by `nodes` (non-empty) is connected.
+    fn induced_connected(&self, py: Python<'_>, nodes: Vec<u32>) -> PyResult<bool> {
+        self.membership(&nodes)?;
+        if nodes.is_empty() {
+            return Err(PyValueError::new_err("nodes must not be empty"));
+        }
+        Ok(py.detach(|| matching::induced_connected(&self.succ, self.n, &nodes)))
+    }
+
+    /// `nx.connected_dominating_set` (connected, two or more nodes): nodes
+    /// in the order they join.
+    fn connected_dominating_set(&self, py: Python<'_>) -> PyResult<Vec<u32>> {
+        let degree = self.degrees();
+        py.detach(|| matching::connected_dominating_set(&self.succ, self.n, &degree))
+            .ok_or_else(|| PyIndexError::new_err("index out of range"))
+    }
+
+    /// `nx.enumerate_all_cliques` as a resumable queue.
+    fn all_cliques(&self, py: Python<'_>) -> CliqueQueue {
+        CliqueQueue(py.detach(|| matching::AllCliques::new(&self.succ, self.n)))
+    }
+
+    /// `nx.node_clique_number` for each of `nodes`.
+    fn node_clique_numbers(&self, py: Python<'_>, nodes: Vec<u32>) -> PyResult<Vec<u32>> {
+        self.membership(&nodes)?;
+        Ok(py.detach(|| matching::node_clique_numbers(&self.succ, self.n, &nodes)))
+    }
+
+    /// `nx.max_weight_clique` with integer node weights (`None`: all 1):
+    /// the clique and its weight.
+    #[pyo3(signature = (weights=None))]
+    fn max_weight_clique(
+        &self,
+        py: Python<'_>,
+        weights: Option<Vec<i64>>,
+    ) -> PyResult<(Vec<u32>, i64)> {
+        let weights = weights.unwrap_or_else(|| vec![1; self.n]);
+        if weights.len() != self.n {
+            return Err(PyValueError::new_err("one weight per node"));
+        }
+        let total: i128 = weights.iter().filter(|&&w| w > 0).map(|&w| w as i128).sum();
+        if total > (1i128 << 62) {
+            return Err(PyNotImplementedError::new_err("node weights are too large"));
+        }
+        let degree = self.degrees();
+        Ok(py.detach(|| matching::MaxWeightClique::run(&self.succ, self.n, &weights, &degree)))
+    }
+
+    // --- Batch 11: isomorphism and graph hashing ---
+
+    /// Weisfeiler-Lehman steps from the initial `labels`: the graph hash,
+    /// or with `per_node` each node's hashed labels (after
+    /// `initial_hashes` copies of its hashed initial label). `edge_text`
+    /// holds `str(G[u][v][edge_attr])` per `succ` entry; `split` is
+    /// NetworkX 3.5+'s directed aggregation (successors then predecessors,
+    /// prefixed `s_`/`p_` without edge text).
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (labels, edge_text, split, steps, digest_size, initial_hashes=0, per_node=false))]
+    fn wl_hashes(
+        &self,
+        py: Python<'_>,
+        labels: Vec<String>,
+        edge_text: Option<Vec<String>>,
+        split: bool,
+        steps: usize,
+        digest_size: usize,
+        initial_hashes: usize,
+        per_node: bool,
+    ) -> PyResult<(String, Vec<Vec<String>>)> {
+        if labels.len() != self.n || !(1..=64).contains(&digest_size) {
+            return Err(PyValueError::new_err("bad labels or digest size"));
+        }
+        if edge_text
+            .as_ref()
+            .is_some_and(|t| t.len() != self.succ.targets.len())
+        {
+            return Err(PyValueError::new_err("edge text doesn't match the edges"));
+        }
+        Ok(py.detach(|| {
+            use isomorphism::{WlGroup, WlPrefix};
+            let n = self.n;
+            let text = edge_text.as_deref();
+            let prefix = |same: &'static str| match text {
+                Some(t) => WlPrefix::PerEdge(t),
+                None => WlPrefix::Same(same),
+            };
+            let mut groups = Vec::new();
+            if split {
+                groups.push(WlGroup {
+                    rows: isomorphism::rows_with_ids(&self.succ, n),
+                    prefix: prefix("s_"),
+                });
+                groups.push(WlGroup {
+                    rows: isomorphism::pred_rows_with_ids(&self.succ, n),
+                    prefix: prefix("p_"),
+                });
+            } else {
+                groups.push(WlGroup {
+                    rows: isomorphism::rows_with_ids(&self.succ, n),
+                    prefix: prefix(""),
+                });
+            }
+            let mut history: Vec<Vec<String>> = Vec::new();
+            if initial_hashes > 0 {
+                let first: Vec<String> = labels
+                    .par_iter()
+                    .map(|l| isomorphism::blake2b_hex(l.as_bytes(), digest_size))
+                    .collect();
+                for _ in 1..initial_hashes {
+                    history.push(first.clone());
+                }
+                history.push(first);
+            }
+            let start = history.len();
+            for i in 0..steps {
+                let previous = if i == 0 {
+                    &labels
+                } else {
+                    &history[history.len() - 1]
+                };
+                let next = isomorphism::wl_step(previous, &groups, digest_size);
+                history.push(next);
+            }
+            if !per_node {
+                let text = isomorphism::wl_counts_text(&history[start..]);
+                let graph_hash = isomorphism::blake2b_hex(text.as_bytes(), digest_size);
+                return (graph_hash, Vec::new());
+            }
+            // Per node, its labels across steps.
+            let per_node: Vec<Vec<String>> = (0..n)
+                .into_par_iter()
+                .map(|v| history.iter().map(|step| step[v].clone()).collect())
+                .collect();
+            (String::new(), per_node)
+        }))
+    }
+
+    /// Whether the sorted per-node property rows of the two graphs agree,
+    /// as `could_be_isomorphic` builds them: degree, triangles (undirected
+    /// graphs only) and the number of maximal cliques, for the columns
+    /// asked for.
+    fn iso_tables_match(
+        &self,
+        py: Python<'_>,
+        other: &Bound<'_, CoreGraph>,
+        degree: bool,
+        triangles: bool,
+        cliques: bool,
+    ) -> bool {
+        let other = other.get();
+        let deg_a = degree.then(|| self.degrees());
+        let deg_b = degree.then(|| other.degrees());
+        py.detach(|| {
+            let table = |g: &CoreGraph, deg: Option<Vec<usize>>| {
+                let n = g.n;
+                let tri =
+                    triangles.then(|| cluster::triangle_counts(&g.succ, None, n, &all_nodes(n)));
+                let clq = cliques.then(|| isomorphism::maximal_clique_counts(&g.succ, n));
+                let mut rows: Vec<[u64; 3]> = (0..n)
+                    .map(|v| {
+                        [
+                            deg.as_ref().map_or(0, |d| d[v] as u64),
+                            tri.as_ref().map_or(0, |t| t[v].0 / 2),
+                            clq.as_ref().map_or(0, |c| c[v]),
+                        ]
+                    })
+                    .collect();
+                rows.par_sort_unstable();
+                rows
+            };
+            table(self, deg_a) == table(other, deg_b)
+        })
+    }
+
+    /// Whether `small` maps into this graph: `problem` 0 isomorphism,
+    /// 1 induced subgraph isomorphism, 2 monomorphism. Labels are integer
+    /// classes (equal labels, equal classes); `None` means all equal.
+    fn has_morphism(
+        &self,
+        py: Python<'_>,
+        small: &Bound<'_, CoreGraph>,
+        labels: Option<Vec<u32>>,
+        small_labels: Option<Vec<u32>>,
+        problem: u8,
+    ) -> PyResult<bool> {
+        let small = small.get();
+        if small.directed != self.directed {
+            return Err(PyValueError::new_err("graphs differ in directedness"));
+        }
+        let labels = labels.unwrap_or_else(|| vec![0; self.n]);
+        let small_labels = small_labels.unwrap_or_else(|| vec![0; small.n]);
+        if labels.len() != self.n || small_labels.len() != small.n {
+            return Err(PyValueError::new_err("wrong number of labels"));
+        }
+        let problem = match problem {
+            0 => isomorphism::Problem::Iso,
+            1 => isomorphism::Problem::Induced,
+            _ => isomorphism::Problem::Mono,
+        };
+        let directed = self.directed;
+        Ok(py.detach(|| {
+            let big = isomorphism::Side {
+                succ: &self.succ,
+                pred: directed.then(|| self.adj(true)),
+                n: self.n,
+                labels: &labels,
+            };
+            let sm = isomorphism::Side {
+                succ: &small.succ,
+                pred: directed.then(|| small.adj(true)),
+                n: small.n,
+                labels: &small_labels,
+            };
+            isomorphism::has_morphism(&sm, &big, directed, problem)
+        }))
+    }
+
+    /// Centers of a tree (undirected, connected, n - 1 edges), in order.
+    fn tree_centers(&self, py: Python<'_>) -> PyResult<Vec<u32>> {
+        if self.n == 0 {
+            return Err(PyValueError::new_err("empty graph"));
+        }
+        Ok(py.detach(|| isomorphism::tree_centers(&self.succ, self.n)))
+    }
+
+    /// Height of the tree below `root`.
+    fn tree_height(&self, py: Python<'_>, root: usize) -> PyResult<u32> {
+        self.check_index(root)?;
+        Ok(py.detach(|| isomorphism::tree_height(&self.succ, self.n, root)))
+    }
+
+    /// `rooted_tree_isomorphism` of this tree from `root` and `other` from
+    /// `other_root`: position pairs in NetworkX's output order.
+    fn rooted_tree_isomorphism(
+        &self,
+        py: Python<'_>,
+        root: usize,
+        other: &Bound<'_, CoreGraph>,
+        other_root: usize,
+        descending: bool,
+    ) -> PyResult<Vec<(u32, u32)>> {
+        let other = other.get();
+        self.check_index(root)?;
+        other.check_index(other_root)?;
+        Ok(py.detach(|| {
+            isomorphism::rooted_tree_isomorphism(
+                &self.succ,
+                self.n,
+                root,
+                &other.succ,
+                other.n,
+                other_root,
+                descending,
+            )
+        }))
+    }
+
+    // Bipartite graphs (todo item 37), in the same batch.
+
+    /// `nx.bipartite.color`: nodes in dict order and their colors, or
+    /// `None` if the graph isn't bipartite. Directed graphs need exact
+    /// in-edge order loaded.
+    #[allow(clippy::type_complexity)]
+    fn bipartite_color(&self, py: Python<'_>) -> PyResult<Option<(Vec<u32>, Vec<u8>)>> {
+        let pred = if self.directed {
+            Some(self.reverse_exact_order(None)?.0)
+        } else {
+            None
+        };
+        let degree = self.degrees();
+        Ok(py.detach(|| bipartite::color(&self.succ, pred, self.n, &degree).ok()))
+    }
+
+    /// `is_bipartite_node_set` for an undirected graph, given which nodes
+    /// are in the set: `None` if a component isn't bipartite.
+    fn is_bipartite_node_set(&self, py: Python<'_>, in_set: Vec<bool>) -> PyResult<Option<bool>> {
+        if in_set.len() != self.n {
+            return Err(PyValueError::new_err("wrong number of flags"));
+        }
+        Ok(py.detach(|| {
+            let components = traversal::connected_components(&self.succ, self.n);
+            bipartite::is_node_set(&self.succ, self.n, &components, &in_set).ok()
+        }))
+    }
+
+    /// `hopcroft_karp_matching` with `left` in NetworkX's set order: each
+    /// node's match (`None` if unmatched) and the recursion depth NetworkX
+    /// would reach, or `None` if a left node has a neighbor on its side.
+    #[allow(clippy::type_complexity)]
+    fn hopcroft_karp(
+        &self,
+        py: Python<'_>,
+        left: Vec<u32>,
+    ) -> PyResult<Option<(Vec<Option<u32>>, usize)>> {
+        let left = self.sources_or_all(Some(left))?;
+        let mut is_left = vec![false; self.n];
+        for &v in &left {
+            is_left[v as usize] = true;
+        }
+        if left.iter().any(|&v| {
+            self.succ
+                .neighbors(v as usize)
+                .iter()
+                .any(|&w| is_left[w as usize])
+        }) {
+            return Ok(None);
+        }
+        Ok(py.detach(|| {
+            let (mate, depth) = bipartite::hopcroft_karp(&self.succ, self.n, &left);
+            let mate = mate
+                .into_iter()
+                .map(|m| (m != u32::MAX).then_some(m))
+                .collect();
+            Some((mate, depth))
+        }))
+    }
+
+    /// For `to_vertex_cover`: which nodes are targets or reach one by an
+    /// alternating path. `pairs` are the matching's items as positions.
+    fn alternating_reach(
+        &self,
+        py: Python<'_>,
+        targets: Vec<bool>,
+        pairs: Vec<(u32, u32)>,
+    ) -> PyResult<Vec<bool>> {
+        if targets.len() != self.n {
+            return Err(PyValueError::new_err("wrong number of flags"));
+        }
+        for &(u, v) in &pairs {
+            self.check_index(u as usize)?;
+            self.check_index(v as usize)?;
+        }
+        Ok(py.detach(|| {
+            let n = self.n;
+            let mut pair_set: std::collections::HashSet<(u32, u32)> =
+                std::collections::HashSet::new();
+            for &(u, v) in &pairs {
+                pair_set.insert((u.min(v), u.max(v)));
+            }
+            let m = self.succ.targets.len();
+            let mut matched = vec![false; m];
+            let mut unmatched = vec![false; m];
+            for u in 0..n {
+                for e in self.succ.range(u) {
+                    let v = self.succ.targets[e];
+                    let key = ((u as u32).min(v), (u as u32).max(v));
+                    let in_matching = pair_set.contains(&key);
+                    // A matching item (a, a) becomes the 1-tuple `(a,)` in
+                    // NetworkX's matched edges, so self-loops never count
+                    // as matched; the loop edge still leaves the unmatched
+                    // edges.
+                    matched[e] = in_matching && v as usize != u;
+                    unmatched[e] = !in_matching;
+                }
+            }
+            bipartite::alternating_reach(&self.succ, n, &targets, &matched, &unmatched)
+        }))
+    }
+
+    /// `(neighbors, overlap count)` of `_node_redundancy` for `nodes`.
+    fn redundancy_overlaps(&self, py: Python<'_>, nodes: Vec<u32>) -> PyResult<Vec<(u64, u64)>> {
+        let nodes = self.sources_or_all(Some(nodes))?;
+        Ok(py.detach(|| bipartite::redundancy_overlaps(&self.succ, self.n, &nodes)))
+    }
+
+    /// Per-node butterfly counts, as NetworkX 3.7's `butterflies`.
+    fn butterflies(&self, py: Python<'_>) -> Vec<u64> {
+        let degree = self.degrees();
+        py.detach(|| bipartite::butterflies(&self.succ, self.n, &degree))
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -2443,6 +3692,280 @@ impl RootLeafPaths {
     }
 }
 
+/// `nx.enumerate_all_cliques`'s queue (batch 10).
+#[pyclass(module = "rustnx._core")]
+pub struct CliqueQueue(matching::AllCliques);
+
+#[pymethods]
+impl CliqueQueue {
+    /// Up to `limit` more cliques, as lists of the objects in `nodes`.
+    fn next_batch<'py>(
+        &mut self,
+        py: Python<'py>,
+        nodes: &Bound<'py, PyList>,
+        limit: usize,
+    ) -> PyResult<Bound<'py, PyList>> {
+        let batch = py.detach(|| self.0.next_batch(limit));
+        let objects: Vec<Bound<'py, PyAny>> = nodes.iter().collect();
+        if batch.iter().flatten().any(|&v| v as usize >= objects.len()) {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        let out = PyList::empty(py);
+        for clique in batch {
+            out.append(PyList::new(
+                py,
+                clique.iter().map(|&v| &objects[v as usize]),
+            )?)?;
+        }
+        Ok(out)
+    }
+}
+
+/// A degree-sequence test (batch 10) on a list of Python ints: `kind` is
+/// `"hh"`, `"eg"`, `"multi"` or `"pseudo"`. `None` unless every item is an
+/// int (or bool) that fits in 64 bits.
+#[pyfunction]
+fn _degree_sequence_test(kind: &str, seq: &Bound<'_, PyList>) -> PyResult<Option<bool>> {
+    let Some(values) = int_values(seq) else {
+        return Ok(None);
+    };
+    Ok(Some(match kind {
+        "hh" => matching::is_valid_degree_sequence_havel_hakimi(&values),
+        "eg" => matching::is_valid_degree_sequence_erdos_gallai(&values),
+        "multi" => matching::is_multigraphical(&values),
+        "pseudo" => {
+            let sum: i128 = values.iter().map(|&d| d as i128).sum();
+            sum % 2 == 0 && values.iter().min().is_none_or(|&d| d >= 0)
+        }
+        _ => return Err(PyValueError::new_err("unknown degree sequence test")),
+    }))
+}
+
+/// `nx.is_digraphical` on two lists of Python ints (`None` as above, or
+/// where NetworkX would allocate a huge list).
+#[pyfunction]
+fn _digraphical(ins: &Bound<'_, PyList>, outs: &Bound<'_, PyList>) -> Option<bool> {
+    matching::is_digraphical(&int_values(ins)?, &int_values(outs)?)
+}
+
+/// Whether every item of `seq` is a Python int (or bool): then
+/// `make_list_of_ints` leaves the list as it is.
+#[pyfunction]
+fn _plain_int_list(seq: &Bound<'_, PyList>) -> bool {
+    seq.iter()
+        .all(|item| item.cast::<pyo3::types::PyInt>().is_ok())
+}
+
+fn int_values(seq: &Bound<'_, PyList>) -> Option<Vec<i64>> {
+    seq.iter()
+        .map(|item| {
+            if item.cast::<pyo3::types::PyInt>().is_ok() {
+                item.extract::<i64>().ok()
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// A Python int (within `i64`) or float as a `Num`; `None` otherwise.
+fn py_num(value: &Bound<'_, PyAny>) -> Option<trees_more::Num> {
+    if let Ok(f) = value.cast::<PyFloat>() {
+        return Some(trees_more::Num::Float(f.value()));
+    }
+    if value.cast::<PyInt>().is_ok() {
+        return value.extract::<i64>().ok().map(trees_more::Num::Int);
+    }
+    None
+}
+
+/// Reads a nested tuple as `from_nested_tuple` walks it: `len()` first,
+/// then the children (only for a non-empty level). Node ids in preorder.
+fn parse_nested(
+    obj: &Bound<'_, PyAny>,
+    depth: usize,
+    max_depth: usize,
+    children: &mut Vec<Vec<u32>>,
+) -> Option<u32> {
+    if depth > max_depth {
+        return None;
+    }
+    let id = children.len() as u32;
+    children.push(Vec::new());
+    if obj.len().ok()? == 0 {
+        return Some(id);
+    }
+    for child in obj.try_iter().ok()? {
+        let child = parse_nested(&child.ok()?, depth + 1, max_depth, children)?;
+        children[id as usize].push(child);
+    }
+    Some(id)
+}
+
+/// Cached ancestor sets for `all_pairs_lowest_common_ancestor`.
+#[pyclass(module = "rustnx._core")]
+pub struct DagLca(trees_more::DagLca);
+
+#[pymethods]
+impl DagLca {
+    /// Each pair's lowest common ancestor, `-1` if there is none, or `-2`
+    /// if there are several lowest ones.
+    fn query(&mut self, py: Python<'_>, us: Vec<u32>, vs: Vec<u32>) -> PyResult<Vec<i64>> {
+        let n = self.0.node_count();
+        if us.len() != vs.len() || us.iter().chain(&vs).any(|&x| x as usize >= n) {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        let inner = &mut self.0;
+        Ok(py.detach(|| inner.query(&us, &vs)))
+    }
+}
+
+/// Lazy `tree_all_pairs_lowest_common_ancestor` results.
+#[pyclass(module = "rustnx._core")]
+pub struct TreeLca(trees_more::TreeLca);
+
+#[pymethods]
+impl TreeLca {
+    /// The next results as `(vs, nodes, ancestors)`; empty when done.
+    fn next_batch(&mut self, py: Python<'_>, limit: usize) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+        let inner = &mut self.0;
+        let items = py.detach(|| inner.next_batch(limit));
+        let mut out = (Vec::new(), Vec::new(), Vec::new());
+        for (v, node, a) in items {
+            out.0.push(v);
+            out.1.push(node);
+            out.2.push(a);
+        }
+        out
+    }
+}
+
+/// `boruvka_mst_edges`' state between rounds.
+#[pyclass(module = "rustnx._core")]
+pub struct Boruvka(trees_more::Boruvka);
+
+#[pymethods]
+impl Boruvka {
+    fn components(&mut self) -> Vec<Vec<u32>> {
+        self.0.components()
+    }
+
+    /// One round: `(us, vs, any_best)`, or `None` if `orders` is needed.
+    #[pyo3(signature = (orders=None))]
+    #[allow(clippy::type_complexity)]
+    fn round(
+        &mut self,
+        py: Python<'_>,
+        orders: Option<Vec<Vec<u32>>>,
+    ) -> Option<(Vec<u32>, Vec<u32>, bool)> {
+        let inner = &mut self.0;
+        py.detach(|| inner.round(orders.as_deref()))
+            .map(|(edges, any)| {
+                let (us, vs) = edges.into_iter().unzip();
+                (us, vs, any)
+            })
+    }
+}
+
+// --- Batch 7: lazy iterators and state ---
+
+/// `goldberg_radzik`'s state between the rounds Python drives.
+#[pyclass(module = "rustnx._core")]
+pub struct GoldbergRadzikState(leftovers::GoldbergRadzik);
+
+#[pymethods]
+impl GoldbergRadzikState {
+    /// One `topo_sort` over `order`; `False` where NetworkX finds a
+    /// negative cycle.
+    fn topo_sort(&mut self, order: Vec<u32>, skip_counted: bool) -> PyResult<bool> {
+        let n = self.0.d.len();
+        if order.iter().any(|&v| v as usize >= n) {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        match self.0.topo_sort(&order, skip_counted) {
+            Ok(()) => Ok(true),
+            Err(leftovers::GrError::Negative) => Ok(false),
+            Err(leftovers::GrError::Unsupported) => Err(gr_unsupported()),
+        }
+    }
+
+    /// One `relax`: the nodes added to `relabeled`, in order.
+    fn relax(&mut self) -> PyResult<Vec<u32>> {
+        self.0.relax().map_err(|_| gr_unsupported())
+    }
+
+    /// `(pred keys, pred values, distances, distance is int)` in key order
+    /// (`u32::MAX` for the source's `None`).
+    #[allow(clippy::type_complexity)]
+    fn result(&self) -> (Vec<u32>, Vec<u32>, Vec<f64>, Vec<bool>) {
+        let keys = self.0.pred_order.clone();
+        let preds = keys.iter().map(|&v| self.0.pred[v as usize]).collect();
+        let d = keys.iter().map(|&v| self.0.d[v as usize]).collect();
+        let ints = keys.iter().map(|&v| self.0.d_int[v as usize]).collect();
+        (keys, preds, d, ints)
+    }
+}
+
+fn gr_unsupported() -> PyErr {
+    PyNotImplementedError::new_err("integer distances too large for exact sums")
+}
+
+/// Flattens up to `limit` items of a lazy search: `(flat, ends)`.
+fn batch_of(limit: usize, mut next: impl FnMut() -> Option<Vec<u32>>) -> (Vec<u32>, Vec<u32>) {
+    let (mut flat, mut ends) = (Vec::new(), Vec::new());
+    while ends.len() < limit {
+        let Some(item) = next() else { break };
+        flat.extend_from_slice(&item);
+        ends.push(flat.len() as u32);
+        if flat.len() > (1 << 20) {
+            break;
+        }
+    }
+    (flat, ends)
+}
+
+/// Lazy iterator over `nx.antichains` results (node positions).
+#[pyclass(module = "rustnx._core")]
+pub struct AntichainIter(leftovers::Antichains);
+
+#[pymethods]
+impl AntichainIter {
+    /// Up to `limit` antichains, flattened: `(flat, ends)`.
+    fn next_batch(&mut self, py: Python<'_>, limit: usize) -> (Vec<u32>, Vec<u32>) {
+        py.detach(|| batch_of(limit, || self.0.next_antichain()))
+    }
+}
+
+/// Lazy iterator over `_all_simple_edge_paths` results (node positions).
+#[pyclass(module = "rustnx._core")]
+pub struct SimplePathIter(leftovers::SimplePaths);
+
+#[pymethods]
+impl SimplePathIter {
+    /// Up to `limit` paths, flattened: `(flat, ends)`.
+    fn next_batch(&mut self, py: Python<'_>, limit: usize) -> (Vec<u32>, Vec<u32>) {
+        py.detach(|| batch_of(limit, || self.0.next_path()))
+    }
+}
+
+/// Lazy iterator over `shortest_simple_paths` results (node positions).
+#[pyclass(module = "rustnx._core")]
+pub struct YenIter(leftovers::SimpleShortestPaths);
+
+#[pymethods]
+impl YenIter {
+    /// `(0, path)` (`None` once all are out), `(1, None)` where NetworkX
+    /// raises `NetworkXNoPath`, `(2, None)` for its contradictory paths
+    /// `ValueError`.
+    fn next_path(&mut self, py: Python<'_>) -> (u8, Option<Vec<u32>>) {
+        py.detach(|| match self.0.next_path() {
+            Ok(p) => (0, p),
+            Err(leftovers::YenError::NoPath) => (1, None),
+            Err(leftovers::YenError::Contradictory) => (2, None),
+        })
+    }
+}
+
 fn unzip3(items: Vec<(u32, u32, u8)>) -> (Vec<u32>, Vec<u32>, Vec<u8>) {
     let mut us = Vec::with_capacity(items.len());
     let mut vs = Vec::with_capacity(items.len());
@@ -2470,11 +3993,22 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ClosureDag>()?;
     m.add_class::<RootLeafPaths>()?;
     m.add_class::<GroupPre>()?;
+    m.add_class::<GoldbergRadzikState>()?;
+    m.add_class::<AntichainIter>()?;
+    m.add_class::<SimplePathIter>()?;
+    m.add_class::<YenIter>()?;
+    m.add_class::<DagLca>()?;
+    m.add_class::<TreeLca>()?;
+    m.add_class::<Boruvka>()?;
+    m.add_class::<CliqueQueue>()?;
     m.add_function(wrap_pyfunction!(graph::build_graph, m)?)?;
     m.add_function(wrap_pyfunction!(serialize::_core_graph_from_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(native::build_native, m)?)?;
     m.add_function(wrap_pyfunction!(native::build_native_arrays, m)?)?;
     m.add_function(wrap_pyfunction!(rx::build_rx, m)?)?;
     m.add_function(wrap_pyfunction!(_py_sum, m)?)?;
+    m.add_function(wrap_pyfunction!(_degree_sequence_test, m)?)?;
+    m.add_function(wrap_pyfunction!(_digraphical, m)?)?;
+    m.add_function(wrap_pyfunction!(_plain_int_list, m)?)?;
     Ok(())
 }
