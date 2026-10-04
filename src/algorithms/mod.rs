@@ -1,3 +1,4 @@
+pub mod bipartite;
 pub mod centrality;
 pub mod centrality_more;
 pub mod cluster;

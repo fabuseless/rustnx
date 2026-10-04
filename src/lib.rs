@@ -17,8 +17,8 @@ use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
-    centrality, centrality_more, cluster, cores_more, dag, directed, distance, isomorphism, paths,
-    spectral, structure, structure_more,
+    bipartite, centrality, centrality_more, cluster, cores_more, dag, directed, distance,
+    isomorphism, paths, spectral, structure, structure_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -2148,6 +2148,120 @@ impl CoreGraph {
                 descending,
             )
         }))
+    }
+
+    // Bipartite graphs (todo item 37), in the same batch.
+
+    /// `nx.bipartite.color`: nodes in dict order and their colors, or
+    /// `None` if the graph isn't bipartite. Directed graphs need exact
+    /// in-edge order loaded.
+    #[allow(clippy::type_complexity)]
+    fn bipartite_color(&self, py: Python<'_>) -> PyResult<Option<(Vec<u32>, Vec<u8>)>> {
+        let pred = if self.directed {
+            Some(self.reverse_exact_order(None)?.0)
+        } else {
+            None
+        };
+        let degree = self.degrees();
+        Ok(py.detach(|| bipartite::color(&self.succ, pred, self.n, &degree).ok()))
+    }
+
+    /// `is_bipartite_node_set` for an undirected graph, given which nodes
+    /// are in the set: `None` if a component isn't bipartite.
+    fn is_bipartite_node_set(&self, py: Python<'_>, in_set: Vec<bool>) -> PyResult<Option<bool>> {
+        if in_set.len() != self.n {
+            return Err(PyValueError::new_err("wrong number of flags"));
+        }
+        Ok(py.detach(|| {
+            let components = traversal::connected_components(&self.succ, self.n);
+            bipartite::is_node_set(&self.succ, self.n, &components, &in_set).ok()
+        }))
+    }
+
+    /// `hopcroft_karp_matching` with `left` in NetworkX's set order: each
+    /// node's match (`None` if unmatched) and the recursion depth NetworkX
+    /// would reach, or `None` if a left node has a neighbor on its side.
+    #[allow(clippy::type_complexity)]
+    fn hopcroft_karp(
+        &self,
+        py: Python<'_>,
+        left: Vec<u32>,
+    ) -> PyResult<Option<(Vec<Option<u32>>, usize)>> {
+        let left = self.sources_or_all(Some(left))?;
+        let mut is_left = vec![false; self.n];
+        for &v in &left {
+            is_left[v as usize] = true;
+        }
+        if left.iter().any(|&v| {
+            self.succ
+                .neighbors(v as usize)
+                .iter()
+                .any(|&w| is_left[w as usize])
+        }) {
+            return Ok(None);
+        }
+        Ok(py.detach(|| {
+            let (mate, depth) = bipartite::hopcroft_karp(&self.succ, self.n, &left);
+            let mate = mate
+                .into_iter()
+                .map(|m| (m != u32::MAX).then_some(m))
+                .collect();
+            Some((mate, depth))
+        }))
+    }
+
+    /// For `to_vertex_cover`: which nodes are targets or reach one by an
+    /// alternating path. `pairs` are the matching's items as positions.
+    fn alternating_reach(
+        &self,
+        py: Python<'_>,
+        targets: Vec<bool>,
+        pairs: Vec<(u32, u32)>,
+    ) -> PyResult<Vec<bool>> {
+        if targets.len() != self.n {
+            return Err(PyValueError::new_err("wrong number of flags"));
+        }
+        for &(u, v) in &pairs {
+            self.check_index(u as usize)?;
+            self.check_index(v as usize)?;
+        }
+        Ok(py.detach(|| {
+            let n = self.n;
+            let mut pair_set: std::collections::HashSet<(u32, u32)> =
+                std::collections::HashSet::new();
+            for &(u, v) in &pairs {
+                pair_set.insert((u.min(v), u.max(v)));
+            }
+            let m = self.succ.targets.len();
+            let mut matched = vec![false; m];
+            let mut unmatched = vec![false; m];
+            for u in 0..n {
+                for e in self.succ.range(u) {
+                    let v = self.succ.targets[e];
+                    let key = ((u as u32).min(v), (u as u32).max(v));
+                    let in_matching = pair_set.contains(&key);
+                    // A matching item (a, a) becomes the 1-tuple `(a,)` in
+                    // NetworkX's matched edges, so self-loops never count
+                    // as matched; the loop edge still leaves the unmatched
+                    // edges.
+                    matched[e] = in_matching && v as usize != u;
+                    unmatched[e] = !in_matching;
+                }
+            }
+            bipartite::alternating_reach(&self.succ, n, &targets, &matched, &unmatched)
+        }))
+    }
+
+    /// `(neighbors, overlap count)` of `_node_redundancy` for `nodes`.
+    fn redundancy_overlaps(&self, py: Python<'_>, nodes: Vec<u32>) -> PyResult<Vec<(u64, u64)>> {
+        let nodes = self.sources_or_all(Some(nodes))?;
+        Ok(py.detach(|| bipartite::redundancy_overlaps(&self.succ, self.n, &nodes)))
+    }
+
+    /// Per-node butterfly counts, as NetworkX 3.7's `butterflies`.
+    fn butterflies(&self, py: Python<'_>) -> Vec<u64> {
+        let degree = self.degrees();
+        py.detach(|| bipartite::butterflies(&self.succ, self.n, &degree))
     }
 
     /// `greedy_color` (largest_first): processing order and each node's color.

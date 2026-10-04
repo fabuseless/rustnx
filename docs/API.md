@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 191 NetworkX functions. Call them as usual (for
+rustnx implements 199 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -307,6 +307,19 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `networkx.algorithms.isomorphism.tree_isomorphism.root_trees` | `root1`, `t2`, `root2` | no | NetworkX | Builds the combined tree in NetworkX from Rust searches. Roots not in the graphs fall back. |
 | `nx.weisfeiler_lehman_graph_hash` | `edge_attr`, `node_attr`, `iterations`, `digest_size` | no | rustnx | BLAKE2b in Rust, parallel; same hashes as NetworkX's `hashlib`, for the installed version (3.5 changed them), with the same warnings. Node and edge attribute labels are read from the NetworkX graph; non-ASCII labels, non-str attribute names and an unusual `digest_size` fall back. |
 | `nx.weisfeiler_lehman_subgraph_hashes` | `edge_attr`, `node_attr`, `iterations`, `digest_size`, `include_initial_labels` | no | rustnx | As `weisfeiler_lehman_graph_hash`. |
+
+### Bipartite graphs
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.bipartite.color` | none | yes | NetworkX | Directed graphs visit predecessors in NetworkX's order. |
+| `nx.bipartite.sets` | `top_nodes` | yes | NetworkX | Sets are filled in NetworkX's order, so they iterate the same way. |
+| `nx.bipartite.is_bipartite_node_set` | `nodes` | yes | NetworkX | Directed graphs raise as in NetworkX. |
+| `nx.bipartite.hopcroft_karp_matching` | `top_nodes` | yes | rustnx | Also `nx.bipartite.maximum_matching`. Follows NetworkX's search order (its `left` set's iteration order), so it finds the same matching. Directed graphs, `top_nodes` not in the graph or with neighbors among themselves, and augmenting paths deep enough to approach Python's recursion limit fall back. |
+| `nx.bipartite.to_vertex_cover` | `matching`, `top_nodes` | no | rustnx | Parallel. Builds the cover with NetworkX's set operations. Directed graphs, multigraphs and `top_nodes` not in the graph fall back. |
+| `nx.bipartite_closeness_centrality` | `nodes`, `normalized` | yes | rustnx | As `nx.bipartite.closeness_centrality`. Bit-for-bit identical; parallel searches. |
+| `nx.bipartite.node_redundancy` | `nodes` | yes | rustnx | A one-shot iterator of nodes, and nodes not in the graph, fall back. |
+| `nx.bipartite.butterflies` | `nodes` | no | rustnx | NetworkX 3.7+. |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 

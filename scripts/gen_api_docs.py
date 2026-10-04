@@ -118,6 +118,10 @@ SECTIONS = [
         "vf2pp_is_monomorphic", "tree_isomorphism", "rooted_tree_isomorphism", "root_trees",
         "weisfeiler_lehman_graph_hash", "weisfeiler_lehman_subgraph_hashes",
     ]),
+    ("Bipartite graphs", [
+        "color", "sets", "is_bipartite_node_set", "hopcroft_karp_matching", "to_vertex_cover",
+        "bipartite_closeness_centrality", "node_redundancy", "butterflies",
+    ]),
 ]
 
 LENGTHS = "Falls back when weights mix ints and floats (NetworkX's length types then depend on the path)."
@@ -263,13 +267,29 @@ NOTES = {
     "root_trees": "Builds the combined tree in NetworkX from Rust searches. Roots not in the graphs fall back.",
     "weisfeiler_lehman_graph_hash": "BLAKE2b in Rust, parallel; same hashes as NetworkX's `hashlib`, for the installed version (3.5 changed them), with the same warnings. Node and edge attribute labels are read from the NetworkX graph; non-ASCII labels, non-str attribute names and an unusual `digest_size` fall back.",
     "weisfeiler_lehman_subgraph_hashes": "As `weisfeiler_lehman_graph_hash`.",
+    "color": "Directed graphs visit predecessors in NetworkX's order.",
+    "sets": "Sets are filled in NetworkX's order, so they iterate the same way.",
+    "is_bipartite_node_set": "Directed graphs raise as in NetworkX.",
+    "hopcroft_karp_matching": "Also `nx.bipartite.maximum_matching`. Follows NetworkX's search order (its `left` set's iteration order), so it finds the same matching. Directed graphs, `top_nodes` not in the graph or with neighbors among themselves, and augmenting paths deep enough to approach Python's recursion limit fall back.",
+    "to_vertex_cover": "Parallel. Builds the cover with NetworkX's set operations. Directed graphs, multigraphs and `top_nodes` not in the graph fall back.",
+    "bipartite_closeness_centrality": "As `nx.bipartite.closeness_centrality`. Bit-for-bit identical; parallel searches.",
+    "node_redundancy": "A one-shot iterator of nodes, and nodes not in the graph, fall back.",
+    "butterflies": "NetworkX 3.7+.",
 }
 
-# Functions NetworkX only exposes under `nx.isomorphism` (or its modules).
+# Functions NetworkX only exposes under `nx.isomorphism` or `nx.bipartite`
+# (or their modules).
 ISOMORPHISM_ONLY = {
     "tree_isomorphism": "nx.isomorphism",
     "rooted_tree_isomorphism": "nx.isomorphism",
     "root_trees": "networkx.algorithms.isomorphism.tree_isomorphism",
+    "color": "nx.bipartite",
+    "sets": "nx.bipartite",
+    "is_bipartite_node_set": "nx.bipartite",
+    "hopcroft_karp_matching": "nx.bipartite",
+    "to_vertex_cover": "nx.bipartite",
+    "node_redundancy": "nx.bipartite",
+    "butterflies": "nx.bipartite",
 }
 
 # Functions NetworkX only exposes under `nx.dag`.

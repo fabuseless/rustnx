@@ -1885,3 +1885,174 @@ def test_batch11_callables_fall_back():
     exact_outcome(nx.is_isomorphic, G, H, edge_match=em)
     with pytest.raises(NotImplementedError):
         nx.is_isomorphic(G, H, node_match=nm, backend="rustnx")
+
+
+# Bipartite graphs (todo item 37), added in batch 11.
+
+bipartite = nx.algorithms.bipartite
+
+
+def _bipartite_graph(seed, directed=False, connected=False):
+    rng = random.Random(seed)
+    n1, n2 = rng.randint(1, 15), rng.randint(1, 15)
+    B = bipartite.random_graph(n1, n2, rng.choice([0.1, 0.25, 0.5]), seed=seed)
+    if connected:
+        top = [v for v in B if v < n1]
+        bottom = [v for v in B if v >= n1]
+        for a, b in zip(top, bottom):
+            B.add_edge(a, b)
+        for v in top[len(bottom):]:
+            B.add_edge(v, bottom[0])
+        for v in bottom[len(top):]:
+            B.add_edge(top[0], v)
+    if rng.random() < 0.5:
+        B = nx.relabel_nodes(B, {v: f"b{v}" for v in B})
+    if directed:
+        D = nx.DiGraph()
+        D.add_nodes_from(B)
+        D.add_edges_from((u, v) if rng.random() < 0.5 else (v, u) for u, v in B.edges)
+        B = D
+    return _shuffled_copy(B, seed, labels=False)
+
+
+def _top_side(B):
+    return [v for v in B if B.nodes[v].get("bipartite") == 0]
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(60))
+def test_batch11_bipartite_basic(seed, directed):
+    rng = random.Random(seed)
+    B = _bipartite_graph(seed, directed)
+    C = _bipartite_graph(seed, directed, connected=True)
+    G = graph_for(seed, directed)
+    for H in [B, C, G, H_empty := B.__class__()]:
+        exact_outcome(bipartite.color, H)
+        exact_outcome(with_set_order(bipartite.sets), H)
+        top = _top_side(H)
+        exact_outcome(with_set_order(bipartite.sets), H, top)
+        exact_outcome(with_set_order(bipartite.sets), H, top + ["missing"])
+        for nodes in [top, [v for v in H if v not in top], top[:1], top + top[:1], list(H)[:3]]:
+            exact_outcome(bipartite.is_bipartite_node_set, H, nodes)
+    assert H_empty is not None
+    exact_outcome(bipartite.is_bipartite_node_set, B, [[1]])  # unhashable
+    exact_outcome(bipartite.is_bipartite_node_set, B, iter(list(B)))  # no len
+    # A self-loop, an isolated node.
+    H = C.copy()
+    H.add_node("isolated")
+    exact_outcome(bipartite.color, H)
+    H.add_edge(rng.choice(list(C)), "isolated")
+    exact_outcome(bipartite.color, H)
+    exact_outcome(with_set_order(bipartite.sets), H)
+    H.add_edge("isolated", "isolated")
+    exact_outcome(bipartite.color, H)
+    exact_outcome(bipartite.is_bipartite_node_set, H, _top_side(C))
+
+
+@pytest.mark.parametrize("seed", range(60))
+def test_batch11_bipartite_matching(seed):
+    rng = random.Random(seed)
+    B = _bipartite_graph(seed)
+    C = _bipartite_graph(seed, connected=True)
+    for H in [B, C]:
+        top = _top_side(H)
+        exact_outcome(bipartite.hopcroft_karp_matching, H)
+        exact_outcome(bipartite.hopcroft_karp_matching, H, top)
+        exact_outcome(bipartite.maximum_matching, H, top)
+        exact_outcome(bipartite.hopcroft_karp_matching, H, [v for v in H if v not in top])
+        exact_outcome(bipartite.hopcroft_karp_matching, H, list(H)[:4])  # maybe not a side
+        exact_outcome(bipartite.hopcroft_karp_matching, H, top + ["missing"])
+        matching = bipartite.hopcroft_karp_matching(H, top, backend="networkx")
+        partial = dict(list(matching.items())[: len(matching) // 2])
+        for M in [matching, partial, {}]:
+            exact_outcome(with_set_order(bipartite.to_vertex_cover), H, M, top)
+            exact_outcome(with_set_order(bipartite.to_vertex_cover), H, M)
+        # An invalid "matching": arbitrary pairs, self pairs, unknown nodes.
+        nodes = list(H)
+        odd = {rng.choice(nodes): rng.choice(nodes) for _ in range(3)}
+        odd["unknown"] = nodes[0]
+        exact_outcome(with_set_order(bipartite.to_vertex_cover), H, odd, top)
+    G = graph_for(seed, False)
+    exact_outcome(bipartite.hopcroft_karp_matching, G)
+    exact_outcome(bipartite.hopcroft_karp_matching, G, list(G)[::2])
+    exact_outcome(bipartite.hopcroft_karp_matching, _bipartite_graph(seed, True, True))
+    exact_outcome(with_set_order(bipartite.to_vertex_cover), G, {}, list(G)[::2])
+
+
+def test_batch11_bipartite_long_augmenting_paths():
+    # Matching a long path pairs nodes along it; with this top order the
+    # augmenting paths get long.
+    for n in [50, 1500]:
+        P = nx.path_graph(n)
+        top = list(range(0, n, 2))[::-1]
+        exact_outcome(bipartite.hopcroft_karp_matching, P, top)
+        exact_outcome(bipartite.hopcroft_karp_matching, P)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch11_bipartite_measures(seed, directed):
+    rng = random.Random(seed)
+    for H in [_bipartite_graph(seed, directed), _bipartite_graph(seed, directed, True), graph_for(seed, directed)]:
+        top = _top_side(H) or list(H)[:2]
+        for normalized in [True, False]:
+            exact_outcome(bipartite.closeness_centrality, H, top, normalized=normalized)
+        exact_outcome(bipartite.closeness_centrality, H, list(H)[:3])
+        exact_outcome(bipartite.closeness_centrality, H, list(H))
+        exact_outcome(bipartite.closeness_centrality, H, top + ["missing"])
+        exact_outcome(bipartite.closeness_centrality, H, [])
+        rich = [v for v in H if len(H[v]) >= 2]
+        for nodes in [None, rich, rich[:3] + rich[:1], set(rich[:4]), list(H)[:5], ["missing"]]:
+            exact_outcome(bipartite.node_redundancy, H, nodes)
+        R = H.subgraph(rich).copy()
+        exact_outcome(bipartite.node_redundancy, R)
+        if hasattr(bipartite, "butterflies") and not directed:
+            for nodes in [None, rich[:3], list(H)[0] if len(H) else None, ["missing"], 7]:
+                exact_outcome(bipartite.butterflies, H, nodes)
+    if hasattr(bipartite, "butterflies"):
+        for H in [nx.complete_bipartite_graph(4, 5), nx.complete_graph(6), nx.Graph([(0, 0), (0, 1), (1, 2), (2, 3), (3, 0)]), nx.empty_graph(3)]:
+            exact_outcome(bipartite.butterflies, H)
+            exact_outcome(bipartite.robins_alexander_clustering, H)
+    assert rng is not None
+
+
+def test_batch11_bipartite_runs_in_rust():
+    C = _bipartite_graph(5, connected=True)
+    top = _top_side(C)
+    D = _bipartite_graph(5, True, True)
+    calls = [
+        lambda: bipartite.color(C, backend="rustnx"),
+        lambda: bipartite.color(D, backend="rustnx"),
+        lambda: bipartite.sets(C, backend="rustnx"),
+        lambda: bipartite.is_bipartite_node_set(C, top, backend="rustnx"),
+        lambda: bipartite.hopcroft_karp_matching(C, backend="rustnx"),
+        lambda: bipartite.to_vertex_cover(C, {}, backend="rustnx"),
+        lambda: bipartite.closeness_centrality(C, top, backend="rustnx"),
+        lambda: bipartite.node_redundancy(nx.complete_bipartite_graph(3, 3), backend="rustnx"),
+    ]
+    if hasattr(bipartite, "butterflies"):
+        calls.append(lambda: bipartite.butterflies(C, backend="rustnx"))
+    for call in calls:
+        call()
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(10))
+def test_batch11_bipartite_multigraphs(seed, directed, restore_config):
+    base = _bipartite_graph(seed, directed, connected=True)
+    M = nx.MultiDiGraph() if directed else nx.MultiGraph()
+    M.add_nodes_from(base)
+    for u, v in base.edges:
+        for _ in range(random.Random(seed).choice([1, 2])):
+            M.add_edge(u, v)
+    top = _top_side(base)
+    exact_outcome(bipartite.color, M)
+    exact_outcome(with_set_order(bipartite.sets), M)
+    exact_outcome(bipartite.is_bipartite_node_set, M, top)
+    exact_outcome(bipartite.closeness_centrality, M, top)
+    exact_outcome(bipartite.node_redundancy, M, [v for v in M if len(M[v]) >= 2])
+    if not directed:
+        exact_outcome(bipartite.hopcroft_karp_matching, M, top)
+        exact_outcome(with_set_order(bipartite.to_vertex_cover), M, {}, top)
+        if hasattr(bipartite, "butterflies"):
+            exact_outcome(bipartite.butterflies, M)

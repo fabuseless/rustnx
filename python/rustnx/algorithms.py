@@ -53,12 +53,15 @@ __all__ = [
     "biconnected_components",
     "bidirectional_dijkstra",
     "bidirectional_shortest_path",
+    "bipartite_closeness_centrality",
     "bridges",
+    "butterflies",
     "center",
     "centroid",
     "chain_decomposition",
     "closeness_centrality",
     "clustering",
+    "color",
     "condensation",
     "connected_components",
     "core_number",
@@ -112,6 +115,7 @@ __all__ = [
     "has_cycle",
     "has_eulerian_path",
     "has_path",
+    "hopcroft_karp_matching",
     "immediate_dominators",
     "in_degree_centrality",
     "intersection_array",
@@ -120,6 +124,7 @@ __all__ = [
     "is_attracting_component",
     "is_biconnected",
     "is_bipartite",
+    "is_bipartite_node_set",
     "is_branching",
     "is_coloring",
     "is_connected",
@@ -161,6 +166,7 @@ __all__ = [
     "negative_edge_cycle",
     "newman_betweenness_centrality",
     "node_connected_component",
+    "node_redundancy",
     "number_attracting_components",
     "number_connected_components",
     "number_of_isolates",
@@ -177,6 +183,7 @@ __all__ = [
     "root_to_leaf_paths",
     "root_trees",
     "rooted_tree_isomorphism",
+    "sets",
     "shortest_path",
     "shortest_path_length",
     "single_source_all_shortest_paths",
@@ -193,6 +200,7 @@ __all__ = [
     "square_clustering",
     "strongly_connected_components",
     "to_prufer_sequence",
+    "to_vertex_cover",
     "topological_generations",
     "topological_sort",
     "transitive_closure",
@@ -4623,3 +4631,153 @@ def weisfeiler_lehman_subgraph_hashes(
         return {}
     per_node = G._core.wl_hashes(labels, edge_text, split, steps, digest_size, initial, True)[1]
     return dict(zip(G._nodes, per_node))
+
+
+# Bipartite graphs (todo item 37), added in the same batch.
+
+
+def color(G):
+    if G.is_directed():
+        G._ensure_exact_pred()  # predecessors come first, in NetworkX's order
+    found = G._core.bipartite_color()
+    if found is None:
+        raise nx.NetworkXError("Graph is not bipartite.")
+    order, colors = found
+    nodes = G._nodes
+    return dict(zip([nodes[v] for v in order], colors))
+
+
+def sets(G, top_nodes=None):
+    if top_nodes is not None:
+        X = set(top_nodes)
+        Y = set(G) - X
+        return (X, Y)
+    connected = is_weakly_connected(G) if G.is_directed() else is_connected(G)
+    if not connected:
+        raise nx.AmbiguousSolution("Disconnected graph: Ambiguous solution for bipartite sets.")
+    c = color(G)
+    # Built in NetworkX's insertion order, so the sets iterate the same way.
+    X = {n for n, is_top in c.items() if is_top}
+    Y = {n for n, is_top in c.items() if not is_top}
+    return (X, Y)
+
+
+def is_bipartite_node_set(G, nodes):
+    S = set(nodes)
+    if len(S) < len(nodes):
+        raise nx.AmbiguousSolution(
+            "The input node set contains duplicates.\n"
+            "This may lead to incorrect results when using it in bipartite algorithms.\n"
+            "Consider using set(nodes) as the input"
+        )
+    _undirected_only(G)  # connected_components
+    result = G._core.is_bipartite_node_set([v in S for v in G._nodes])
+    if result is None:
+        raise nx.NetworkXError("Graph is not bipartite.")
+    return result
+
+
+def _bipartite_sides(G, top_nodes):
+    """NetworkX's ``bipartite_sets`` for the matching functions, as node
+    positions in set order (``NotImplementedError`` for nodes not in G)."""
+    if G.is_directed():
+        raise NotImplementedError("rustnx supports undirected graphs here")
+    left, right = sets(G, top_nodes)
+    index = G._index
+    if any(v not in index for v in left):
+        raise NotImplementedError("top_nodes has nodes not in the graph")
+    return left, right, [index[v] for v in left], [index[v] for v in right]
+
+
+def hopcroft_karp_matching(G, top_nodes=None):
+    left, right, left_pos, right_pos = _bipartite_sides(G, top_nodes)
+    found = G._core.hopcroft_karp(left_pos)
+    if found is None:
+        raise NotImplementedError("a top node has a neighbor among the top nodes")
+    mate, depth = found
+    if depth >= sys.getrecursionlimit() // 4:
+        # NetworkX's depth_first_search recurses this deep; leave the
+        # outcome (perhaps a RecursionError) to it.
+        raise NotImplementedError("deep augmenting paths run in NetworkX")
+    nodes = G._nodes
+    matching = {v: nodes[mate[i]] for v, i in zip(left, left_pos) if mate[i] is not None}
+    matching.update((v, nodes[mate[i]]) for v, i in zip(right, right_pos) if mate[i] is not None)
+    return matching
+
+
+def to_vertex_cover(G, matching, top_nodes=None):
+    L, R, _, _ = _bipartite_sides(G, top_nodes)
+    unmatched_vertices = set(G) - set(matching)
+    U = unmatched_vertices & L
+    index = G._index
+    try:
+        pairs = [(index[u], index[v]) for u, v in matching.items() if u in index and v in index]
+    except (AttributeError, TypeError):
+        raise NotImplementedError("matching must be a dict of hashable nodes") from None
+    reach = G._core.alternating_reach([v in U for v in G._nodes], pairs)
+    # NetworkX's set comprehension over G: the same insertions, the same set.
+    Z = {v for v, ok in zip(G._nodes, reach) if ok}
+    return (L - Z) | (R & Z)
+
+
+def bipartite_closeness_centrality(G, nodes, normalized=True):
+    top = set(nodes)
+    bottom = set(G) - top
+    n = len(top)
+    m = len(bottom)
+    index = G._index
+    for node in top:
+        if node not in index:
+            raise nx.NodeNotFound(f"Source {node} is not in G")
+    order = list(top) + list(bottom)
+    stats = G._core.bfs_stats([index[v] for v in order])
+    size = len(G)
+    closeness = {}
+    for i, node in enumerate(order):
+        reached, totsp, _ = stats[i]
+        if totsp > 0.0 and size > 1:
+            closeness[node] = ((m + 2 * (n - 1)) if i < n else (n + 2 * (m - 1))) / totsp
+            if normalized:
+                s = (reached - 1) / (size - 1)
+                closeness[node] *= s
+        else:
+            closeness[node] = 0.0
+    return closeness
+
+
+def node_redundancy(G, nodes=None):
+    if nodes is None:
+        nodes = G._nodes
+    else:
+        try:
+            if iter(nodes) is nodes:
+                raise NotImplementedError("rustnx needs a reusable container of nodes")
+        except TypeError:
+            raise NotImplementedError("nodes is not a container of nodes") from None
+    index = G._index
+    try:
+        positions = [index[v] for v in nodes]
+    except (KeyError, TypeError):
+        raise NotImplementedError("nodes must be nodes of the graph") from None
+    counts = G._core.redundancy_overlaps(positions)
+    if any(d < 2 for d, _ in counts):
+        raise nx.NetworkXError(
+            "Cannot compute redundancy coefficient for a node"
+            " that has fewer than two neighbors."
+        )
+    return {v: (2 * overlap) / (d * (d - 1)) for v, (d, overlap) in zip(nodes, counts)}
+
+
+def butterflies(G, nodes=None):
+    if G._core.number_of_edges() == 0:
+        counts = [0] * len(G)
+    else:
+        counts = G._core.butterflies()
+    if nodes is None:
+        return dict(zip(G._nodes, counts))
+    try:
+        picked = _nbunch_list(G, nodes)
+    except TypeError:
+        raise NotImplementedError("nodes is not a node or a container of nodes") from None
+    index = G._index
+    return {v: counts[index[v]] for v in picked}
