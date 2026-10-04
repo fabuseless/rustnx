@@ -2040,8 +2040,8 @@ impl CoreGraph {
         py.detach(|| {
             let table = |g: &CoreGraph, deg: Option<Vec<usize>>| {
                 let n = g.n;
-                let tri = triangles
-                    .then(|| cluster::triangle_counts(&g.succ, None, n, &all_nodes(n)));
+                let tri =
+                    triangles.then(|| cluster::triangle_counts(&g.succ, None, n, &all_nodes(n)));
                 let clq = cliques.then(|| isomorphism::maximal_clique_counts(&g.succ, n));
                 let mut rows: Vec<[u64; 3]> = (0..n)
                     .map(|v| {

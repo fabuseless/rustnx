@@ -153,8 +153,10 @@ pub fn wl_step(labels: &[String], groups: &[WlGroup], digest_size: usize) -> Vec
                 match group.prefix {
                     WlPrefix::Same(prefix) => {
                         // A shared prefix keeps the order of the labels.
-                        let mut parts: Vec<&str> =
-                            row.iter().map(|&(w, _)| labels[w as usize].as_str()).collect();
+                        let mut parts: Vec<&str> = row
+                            .iter()
+                            .map(|&(w, _)| labels[w as usize].as_str())
+                            .collect();
                         parts.sort_unstable();
                         for part in parts {
                             text.push_str(prefix);
@@ -246,7 +248,13 @@ fn intersect(a: &[u32], b: &[u32]) -> Vec<u32> {
 
 /// Bron-Kerbosch with Tomita pivoting: adds one to `counts[v]` for each
 /// member `v` of each maximal clique `r + (subset of p)` found.
-fn bron_kerbosch(nbrs: &[Vec<u32>], r: &mut Vec<u32>, p: Vec<u32>, x: Vec<u32>, counts: &mut [u64]) {
+fn bron_kerbosch(
+    nbrs: &[Vec<u32>],
+    r: &mut Vec<u32>,
+    p: Vec<u32>,
+    x: Vec<u32>,
+    counts: &mut [u64],
+) {
     if p.is_empty() {
         if x.is_empty() {
             for &v in r.iter() {
@@ -436,15 +444,25 @@ fn prepare(side: &Side, directed: bool) -> Prepared {
 /// Joint color refinement of both graphs (isomorphism only): colors that
 /// any isomorphism must preserve. Returns `None` if the color counts
 /// already differ, so the graphs can't be isomorphic.
-fn refine(a: &Prepared, b: &Prepared, la: &[u32], lb: &[u32], directed: bool) -> Option<(Vec<u32>, Vec<u32>)> {
+fn refine(
+    a: &Prepared,
+    b: &Prepared,
+    la: &[u32],
+    lb: &[u32],
+    directed: bool,
+) -> Option<(Vec<u32>, Vec<u32>)> {
     let (na, nb) = (a.deg.len(), b.deg.len());
     let mut ids: HashMap<(u32, (u32, u32), u32), u32> = HashMap::new();
     let mut initial = |l: u32, d: (u32, u32), s: u32| {
         let next = ids.len() as u32;
         *ids.entry((l, d, s)).or_insert(next)
     };
-    let mut ca: Vec<u32> = (0..na).map(|v| initial(la[v], a.deg[v], a.loops[v])).collect();
-    let mut cb: Vec<u32> = (0..nb).map(|v| initial(lb[v], b.deg[v], b.loops[v])).collect();
+    let mut ca: Vec<u32> = (0..na)
+        .map(|v| initial(la[v], a.deg[v], a.loops[v]))
+        .collect();
+    let mut cb: Vec<u32> = (0..nb)
+        .map(|v| initial(lb[v], b.deg[v], b.loops[v]))
+        .collect();
     let mut classes = ids.len();
     loop {
         if !same_histogram(&ca, &cb, classes) {
@@ -463,8 +481,14 @@ fn refine(a: &Prepared, b: &Prepared, la: &[u32], lb: &[u32], directed: bool) ->
             }
             s
         };
-        let sa: Vec<Vec<u32>> = (0..na).into_par_iter().map(|v| signature(a, &ca, v)).collect();
-        let sb: Vec<Vec<u32>> = (0..nb).into_par_iter().map(|v| signature(b, &cb, v)).collect();
+        let sa: Vec<Vec<u32>> = (0..na)
+            .into_par_iter()
+            .map(|v| signature(a, &ca, v))
+            .collect();
+        let sb: Vec<Vec<u32>> = (0..nb)
+            .into_par_iter()
+            .map(|v| signature(b, &cb, v))
+            .collect();
         let mut ids: HashMap<&[u32], u32> = HashMap::new();
         let mut next_a = Vec::with_capacity(na);
         for s in &sa {
@@ -522,7 +546,13 @@ fn matching_order(p: &Prepared, labels: &[u32], label_count: &HashMap<u32, usize
         while !layer.is_empty() {
             let mut next = Vec::new();
             // Within a layer: most ordered neighbors first, then degree.
-            layer.sort_by_key(|&v| (std::cmp::Reverse(used[v]), std::cmp::Reverse(total_deg(v)), v));
+            layer.sort_by_key(|&v| {
+                (
+                    std::cmp::Reverse(used[v]),
+                    std::cmp::Reverse(total_deg(v)),
+                    v,
+                )
+            });
             for &v in &layer {
                 order.push(v as u32);
                 for &w in &p.und[v] {
@@ -556,9 +586,13 @@ pub fn has_morphism(small: &Side, big: &Side, directed: bool, problem: Problem) 
     let pb = prepare(big, directed);
     let mut big_by_label: HashMap<u32, Vec<u32>> = HashMap::new();
     for v in 0..nb {
-        big_by_label.entry(big.labels[v]).or_default().push(v as u32);
+        big_by_label
+            .entry(big.labels[v])
+            .or_default()
+            .push(v as u32);
     }
-    let label_count: HashMap<u32, usize> = big_by_label.iter().map(|(&l, v)| (l, v.len())).collect();
+    let label_count: HashMap<u32, usize> =
+        big_by_label.iter().map(|(&l, v)| (l, v.len())).collect();
     let mut small_count: HashMap<u32, usize> = HashMap::new();
     for v in 0..ns {
         *small_count.entry(small.labels[v]).or_insert(0) += 1;
@@ -818,7 +852,10 @@ pub fn rooted_tree_isomorphism(
             if children[v].is_empty() {
                 continue;
             }
-            let mut s: Vec<(u32, u32)> = children[v].iter().map(|&c| (label[c as usize], c)).collect();
+            let mut s: Vec<(u32, u32)> = children[v]
+                .iter()
+                .map(|&c| (label[c as usize], c))
+                .collect();
             s.sort_unstable();
             if descending {
                 s.reverse();
