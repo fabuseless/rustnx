@@ -18,8 +18,8 @@ use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
     approximation, bipartite, centrality, centrality_more, cluster, communities, connectivity,
-    cores_more, dag, directed, distance, flow, graph_classes, isomorphism, leftovers, matching,
-    measures, paths, pyset, spectral, structure, structure_more, trees_more,
+    cores_more, dag, directed, distance, flow, generators, graph_classes, isomorphism, leftovers,
+    matching, measures, paths, pyset, spectral, structure, structure_more, trees_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -4699,6 +4699,60 @@ impl CoreGraph {
         }))
     }
 
+    // --- Batch 17: deterministic generators ---
+
+    /// Builds generator `kind` (see `generators::build`) straight into a new
+    /// NetworkX graph's dicts `node`, `adj` and, for a directed graph,
+    /// `pred`. Node labels are the ids, `labels[id]`, or `(labels[i],
+    /// cols[j])` for `grid_2d`. `False` (with the graph untouched) for a
+    /// case rustnx leaves to NetworkX.
+    #[staticmethod]
+    #[pyo3(signature = (kind, params, lists, node, adj, pred, multigraph, labels=None, cols=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn generate_graph<'py>(
+        py: Python<'py>,
+        kind: &str,
+        params: Vec<i64>,
+        lists: Vec<Vec<i64>>,
+        node: &Bound<'py, PyDict>,
+        adj: &Bound<'py, PyDict>,
+        pred: Option<Bound<'py, PyDict>>,
+        multigraph: bool,
+        labels: Option<Vec<Bound<'py, PyAny>>>,
+        cols: Option<Vec<Bound<'py, PyAny>>>,
+    ) -> PyResult<bool> {
+        let directed = pred.is_some();
+        let kind_owned = kind.to_owned();
+        let Some(built) =
+            py.detach(|| generators::build(&kind_owned, &params, &lists, directed, multigraph))
+        else {
+            return Ok(false);
+        };
+        let cap = built.sim.capacity();
+        let labels = match (labels, cols) {
+            (Some(rows), Some(cols)) => {
+                if rows.len().checked_mul(cols.len()) != Some(cap) && cap != 0 {
+                    return Err(PyValueError::new_err("labels must cover every node"));
+                }
+                let mut out = vec![None; cap];
+                for &v in &built.sim.order {
+                    let (i, j) = (v as usize / cols.len(), v as usize % cols.len());
+                    out[v as usize] = Some(PyTuple::new(py, [&rows[i], &cols[j]])?.into_any());
+                }
+                out
+            }
+            (Some(given), None) => {
+                if given.len() < cap {
+                    return Err(PyValueError::new_err("labels must cover every node"));
+                }
+                given.into_iter().take(cap).map(Some).collect()
+            }
+            _ => generated_labels(py, &built)?,
+        };
+        write_generated(py, &built, &labels, node, adj, pred.as_ref())?;
+        Ok(true)
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -5277,6 +5331,101 @@ impl CliqueQueue {
         }
         Ok(out)
     }
+}
+
+// --- Batch 17: deterministic generators ---
+
+/// Labels made in Rust: the ids, ints, or tuples of ints.
+fn generated_labels<'py>(
+    py: Python<'py>,
+    built: &generators::Built,
+) -> PyResult<Vec<Option<Bound<'py, PyAny>>>> {
+    let mut out = vec![None; built.sim.capacity()];
+    let w = built.width;
+    for &v in &built.sim.order {
+        let v = v as usize;
+        out[v] = Some(if w == 0 {
+            let x = if built.labels.is_empty() {
+                v as i64
+            } else {
+                built.labels[v]
+            };
+            x.into_pyobject(py)?.into_any()
+        } else {
+            PyTuple::new(py, &built.labels[v * w..(v + 1) * w])?.into_any()
+        });
+    }
+    Ok(out)
+}
+
+/// Writes a generated graph into a new NetworkX graph's dicts, in
+/// NetworkX's order: one `_node` / `_adj` (and `_pred`) entry per node in
+/// node order, rows in insertion order, and one attribute dict per edge
+/// (a key dict per pair for multigraphs) shared by both of its rows.
+fn write_generated<'py>(
+    py: Python<'py>,
+    built: &generators::Built,
+    labels: &[Option<Bound<'py, PyAny>>],
+    node: &Bound<'py, PyDict>,
+    adj: &Bound<'py, PyDict>,
+    pred: Option<&Bound<'py, PyDict>>,
+) -> PyResult<()> {
+    let g = &built.sim;
+    let label = |v: u32| -> PyResult<&Bound<'py, PyAny>> {
+        labels[v as usize]
+            .as_ref()
+            .ok_or_else(|| PyValueError::new_err("node without a label"))
+    };
+    let mut slots: Vec<Option<Bound<'py, PyDict>>> = vec![None; g.keys.len()];
+    let mut slot = |s: u32| -> PyResult<Bound<'py, PyDict>> {
+        let entry = &mut slots[s as usize];
+        if let Some(d) = entry.take() {
+            return Ok(d); // the pair's second row: nothing else needs it
+        }
+        let d = PyDict::new(py);
+        if g.multigraph {
+            for k in 0..g.keys[s as usize] {
+                d.set_item(k, PyDict::new(py))?;
+            }
+        }
+        *entry = Some(d.clone());
+        Ok(d)
+    };
+    let (attr_name, pos_name) = (
+        match &built.attr {
+            generators::Attr::Ints(name, _) => Some(pyo3::types::PyString::intern(py, name)),
+            _ => None,
+        },
+        pyo3::intern!(py, "pos"),
+    );
+    for &u in &g.order {
+        let lu = label(u)?;
+        let data = PyDict::new(py);
+        match &built.attr {
+            generators::Attr::None => {}
+            generators::Attr::Ints(_, values) => {
+                data.set_item(attr_name.as_ref().unwrap(), values[u as usize])?
+            }
+            generators::Attr::Pos(values) => {
+                let (x, y) = values[u as usize];
+                data.set_item(pos_name, (x, y))?
+            }
+        }
+        node.set_item(lu, data)?;
+        let row = PyDict::new(py);
+        for &(v, s) in &g.succ[u as usize] {
+            row.set_item(label(v)?, slot(s)?)?;
+        }
+        adj.set_item(lu, row)?;
+        if let Some(pred) = pred {
+            let row = PyDict::new(py);
+            for &(v, s) in &g.pred[u as usize] {
+                row.set_item(label(v)?, slot(s)?)?;
+            }
+            pred.set_item(lu, row)?;
+        }
+    }
+    Ok(())
 }
 
 // --- Batch 16: approximation algorithms and graph operations ---
