@@ -18,6 +18,9 @@ import networkx as nx
 from networkx.algorithms.centrality import betweenness as _nx_betweenness
 
 __all__ = [
+    "all_pairs_all_shortest_paths",
+    "all_pairs_bellman_ford_path",
+    "all_pairs_bellman_ford_path_length",
     "all_pairs_dijkstra",
     "all_pairs_dijkstra_path",
     "all_pairs_dijkstra_path_length",
@@ -26,9 +29,14 @@ __all__ = [
     "all_shortest_paths",
     "ancestors",
     "articulation_points",
+    "astar_path",
+    "astar_path_length",
     "attracting_components",
     "average_clustering",
     "average_shortest_path_length",
+    "bellman_ford_path",
+    "bellman_ford_path_length",
+    "bellman_ford_predecessor_and_distance",
     "betweenness_centrality",
     "bfs_edges",
     "bfs_layers",
@@ -56,9 +64,11 @@ __all__ = [
     "diameter",
     "dijkstra_path",
     "dijkstra_path_length",
+    "dijkstra_predecessor_and_distance",
     "eccentricity",
     "edge_betweenness_centrality",
     "eigenvector_centrality",
+    "find_negative_cycle",
     "greedy_color",
     "harmonic_centrality",
     "has_path",
@@ -79,6 +89,10 @@ __all__ = [
     "maximum_spanning_tree",
     "minimum_spanning_edges",
     "minimum_spanning_tree",
+    "multi_source_dijkstra",
+    "multi_source_dijkstra_path",
+    "multi_source_dijkstra_path_length",
+    "negative_edge_cycle",
     "node_connected_component",
     "number_attracting_components",
     "number_connected_components",
@@ -87,15 +101,21 @@ __all__ = [
     "out_degree_centrality",
     "pagerank",
     "periphery",
+    "predecessor",
     "radius",
     "shortest_path",
     "shortest_path_length",
+    "single_source_all_shortest_paths",
+    "single_source_bellman_ford",
+    "single_source_bellman_ford_path",
+    "single_source_bellman_ford_path_length",
     "single_source_dijkstra",
     "single_source_dijkstra_path",
     "single_source_dijkstra_path_length",
     "single_source_shortest_path",
     "single_source_shortest_path_length",
     "single_target_shortest_path",
+    "single_target_shortest_path_length",
     "strongly_connected_components",
     "topological_generations",
     "topological_sort",
@@ -679,14 +699,14 @@ def wiener_index(G, weight=None):
 _ALL_PAIRS_BATCH = 1024
 
 
-def _all_pairs(G, compute):
+def _all_pairs(G, compute, batch_size=_ALL_PAIRS_BATCH):
     guard = _MutationGuard(G)
 
     def generate():
         nodes = G._nodes
         try:
-            for start in range(0, len(nodes), _ALL_PAIRS_BATCH):
-                batch = list(range(start, min(start + _ALL_PAIRS_BATCH, len(nodes))))
+            for start in range(0, len(nodes), batch_size):
+                batch = list(range(start, min(start + batch_size, len(nodes))))
                 for s, lengths in zip(batch, compute(batch)):
                     if guard.changed():
                         raise RuntimeError("Graph changed during iteration")
@@ -1793,3 +1813,537 @@ def is_forest(G):
     # Every component has at least (size - 1) edges, so each has exactly
     # that many (NetworkX's test) if and only if the totals agree.
     return G._core.number_of_edges() == len(G) - _component_count(G)
+
+
+# --- Batch 2: shortest paths -------------------------------------------------------
+
+
+_BELLMAN_FORD_UNBOUNDED = "Negative cycle detected."
+_NO_PARENT = 2**32 - 1  # `paths::NO_PARENT`
+
+
+def _same_node_type(G, node, i):
+    """Decline when the caller's node object is an equal object of another
+    type (``1.0`` for ``1``): NetworkX puts the caller's object in some
+    results and the graph's in others, and rustnx doesn't track which."""
+    if type(node) is not type(G._nodes[i]):
+        raise NotImplementedError("node given as an equal object of another type")
+
+
+def _require_hashable(node):
+    try:
+        hash(node)
+    except TypeError:
+        raise NotImplementedError("unhashable node") from None
+
+
+def _position(G, node):
+    """Position of ``node``, or ``None`` if it isn't in G (unhashable nodes
+    are declined: NetworkX raises a TypeError for them at some later point)."""
+    _require_hashable(node)
+    i = G._index.get(node)
+    if i is not None:
+        _same_node_type(G, node, i)
+    return i
+
+
+def _cutoff(cutoff):
+    return None if cutoff is None else float(cutoff)
+
+
+def _lists(G, keys, flat, ends):
+    """``{node: [nodes]}`` from flattened lists of positions."""
+    nodes = G._nodes
+    result = {}
+    begin = 0
+    for k, end in zip(keys, ends):
+        result[nodes[k]] = [nodes[i] for i in flat[begin:end]]
+        begin = end
+    return result
+
+
+def _length_dict(G, order, dists, all_int, zeros=(0,)):
+    """``{node: distance}``; the entries at ``zeros`` (order indices) are the
+    int 0 NetworkX starts its sources at."""
+    if all_int:
+        dists = [int(d) for d in dists]
+    for k in zeros:
+        dists[k] = 0
+    nodes = G._nodes
+    return dict(zip([nodes[i] for i in order], dists))
+
+
+# Multi-source Dijkstra
+
+
+def _multi_sources(G, sources):
+    if iter(sources) is sources:
+        # NetworkX consumes an iterator while checking it.
+        raise NotImplementedError("rustnx needs a reusable container of sources")
+    if not sources:
+        raise ValueError("sources must not be empty")
+    positions = []
+    for s in sources:
+        i = _index_of(G, s, f"Node {s} not found in graph")
+        _same_node_type(G, s, i)
+        positions.append(i)
+    return positions
+
+
+def _multi_forest(G, positions, weight, cutoff, lengths):
+    weight, all_int, _ = _check_weight(G, weight, distances=lengths)
+    order, dists, parents, seen, roots = G._core.dijkstra_forest(positions, weight, _cutoff(cutoff))
+    return order, _length_dict(G, order, dists, all_int, roots), parents, seen, roots
+
+
+def multi_source_dijkstra_path_length(G, sources, cutoff=None, weight="weight"):
+    positions = _multi_sources(G, sources)
+    return _multi_forest(G, positions, weight, cutoff, True)[1]
+
+
+def _multi_paths(G, positions, order, parents, seen, roots):
+    distinct = list(dict.fromkeys(positions))
+    k = len(distinct)
+    if _dijkstra_paths_in_pop_order():
+        # NetworkX 3.6+ skips the first `len(sources)` popped nodes, assuming
+        # they are the sources. Negative weights can break that (and make it
+        # raise KeyError); leave those cases to NetworkX.
+        if len(roots) != k or set(order[:k]) != set(distinct):
+            raise NotImplementedError("negative weights reorder the sources")
+        key_order = distinct + order[k:]
+    else:
+        key_order = seen
+    nodes = G._nodes
+    by_index = {}
+    for v, p in zip(order, parents):
+        by_index[v] = [nodes[v]] if p == _NO_PARENT else [*by_index[p], nodes[v]]
+    return {nodes[i]: by_index[i] for i in key_order}
+
+
+def multi_source_dijkstra(G, sources, target=None, cutoff=None, weight="weight"):
+    return _multi_source_dijkstra(G, sources, target, cutoff, weight, True)
+
+
+def _multi_source_dijkstra(G, sources, target, cutoff, weight, lengths):
+    positions = _multi_sources(G, sources)
+    if target in sources:
+        return (0, [target])
+    if target is None:
+        order, dist, parents, seen, roots = _multi_forest(G, positions, weight, cutoff, lengths)
+        return dist, _multi_paths(G, positions, order, parents, seen, roots)
+    t = _position(G, target)
+    weight, all_int, _ = _check_weight(G, weight, distances=lengths)
+    found = None
+    if t is not None:
+        found = G._core.dijkstra_forest_path(positions, t, weight, _cutoff(cutoff))
+    else:
+        # NetworkX searches the whole graph first: a negative cycle would
+        # raise before NoPath does.
+        G._core.dijkstra_forest(positions, weight, _cutoff(cutoff))
+    if found is None:
+        raise nx.NetworkXNoPath(f"No path to {target}.")
+    dist, path = found
+    nodes = G._nodes
+    return int(dist) if all_int else dist, [nodes[i] for i in path]
+
+
+def multi_source_dijkstra_path(G, sources, cutoff=None, weight="weight"):
+    return _multi_source_dijkstra(G, sources, None, cutoff, weight, False)[1]
+
+
+def dijkstra_predecessor_and_distance(G, source, cutoff=None, weight="weight"):
+    s = _index_of(G, source, f"Node {source} is not found in the graph")
+    _same_node_type(G, source, s)
+    weight, all_int, _ = _check_weight(G, weight, distances=True)
+    order, dists, keys, flat, ends = G._core.dijkstra_pred_dist(s, weight, _cutoff(cutoff))
+    return _lists(G, keys, flat, ends), _length_dict(G, order, dists, all_int)
+
+
+# Unweighted
+
+
+def _max_level(cutoff):
+    """The last BFS level ``nx.predecessor`` builds: it stops after the
+    first level with ``cutoff <= level`` (a falsy cutoff never stops it)."""
+    if not cutoff:
+        return None
+    if type(cutoff) not in (int, float, bool):
+        raise NotImplementedError("rustnx needs an int or float cutoff")
+    if math.isnan(cutoff) or cutoff == math.inf:
+        return None
+    if cutoff <= 1:
+        return 1
+    level = max(1, math.ceil(cutoff))
+    if level >= 2**32 - 1:
+        return None
+    return level
+
+
+def predecessor(G, source, target=None, cutoff=None, return_seen=None):
+    s = _index_of(G, source, f"Source {source} not in G")
+    _same_node_type(G, source, s)
+    t = None if target is None else _position(G, target)
+    keys, levels, flat, ends = G._core.bfs_pred(s, _max_level(cutoff))
+    if target is not None:
+        try:
+            k = keys.index(t) if t is not None else None
+        except ValueError:
+            k = None
+        if k is None:
+            return ([], -1) if return_seen else []
+        nodes = G._nodes
+        found = [nodes[i] for i in flat[ends[k - 1] if k else 0 : ends[k]]]
+        return (found, levels[k]) if return_seen else found
+    pred = _lists(G, keys, flat, ends)
+    if return_seen:
+        return pred, dict(zip(pred, levels))
+    return pred
+
+
+@functools.cache
+def _single_target_length_iterator():
+    """``(True, message)`` if the installed NetworkX (3.4) returns an
+    iterator from ``single_target_shortest_path_length`` and warns with
+    ``message``; ``(False, None)`` if it returns a dict."""
+    H = nx.Graph([(0, 1)])
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = nx.single_target_shortest_path_length(H, 0, backend="networkx")
+    if isinstance(result, dict):
+        return False, None
+    for w in caught:
+        if issubclass(w.category, FutureWarning):
+            return True, str(w.message)
+    return True, None
+
+
+def single_target_shortest_path_length(G, target, cutoff=None):
+    t = _index_of(G, target, f"Target {target} is not in G")
+    _same_node_type(G, target, t)
+    if G.is_directed():
+        G._ensure_exact_pred()
+    cutoff = math.inf if cutoff is None else float(cutoff)
+    is_iter, message = _single_target_length_iterator()
+    if message is not None:
+        warnings.warn(message, FutureWarning, stacklevel=2)
+    order, levels = G._core.bfs_lengths_reverse(t, cutoff)
+    nodes = G._nodes
+    if not is_iter:
+        return dict(zip([nodes[i] for i in order], levels))
+
+    def produce():
+        for i, level in zip(order, levels):
+            yield nodes[i], level
+
+    return _traversal(G, produce)
+
+
+# All shortest paths from one source
+
+
+@functools.cache
+def _all_paths_over_pred():
+    """Whether the installed NetworkX (3.5+) yields
+    ``single_source_all_shortest_paths`` in predecessor-dict order, rather
+    than in graph order skipping unreached nodes (3.4)."""
+    H = nx.Graph()
+    H.add_nodes_from([0, 1, 2])
+    H.add_edges_from([(0, 2), (2, 1)])
+    found = nx.single_source_all_shortest_paths(H, 0, backend="networkx")
+    return [n for n, _ in found] == [0, 2, 1]
+
+
+def _bf_weight(G, weight, lengths=True):
+    weight, all_int, has_hidden = _check_weight(G, weight, distances=lengths)
+    if has_hidden:
+        # NetworkX's Bellman-Ford adds the None and raises TypeError, if and
+        # when it reaches such an edge.
+        raise NotImplementedError("rustnx does not support None edge weights here")
+    return weight, all_int
+
+
+def _pred_paths(G, s, source, weight, method):
+    """The predecessor lists ``single_source_all_shortest_paths`` builds,
+    raising what NetworkX raises (lazily, from inside its generator)."""
+    if method == "unweighted":
+        if s is None:
+            raise nx.NodeNotFound(f"Source {source} not in G")
+        return G._core.pred_paths(s, 0)
+    if method == "dijkstra":
+        if s is None:
+            raise nx.NodeNotFound(f"Node {source} is not found in the graph")
+        return G._core.pred_paths(s, 1, weight)
+    if method == "bellman-ford":
+        if s is None:
+            raise nx.NodeNotFound(f"Node {source} is not found in the graph")
+        if G._core.negative_selfloop(weight):
+            raise nx.NetworkXUnbounded(_BELLMAN_FORD_UNBOUNDED)
+        found = G._core.pred_paths(s, 2, weight)
+        if found is None:
+            raise nx.NetworkXUnbounded(_BELLMAN_FORD_UNBOUNDED)
+        return found
+    raise ValueError(f"method not supported: {method}")
+
+
+def _check_paths_method(G, weight, method):
+    method = "unweighted" if weight is None else method
+    if method == "dijkstra":
+        weight, _, _ = _check_weight(G, weight)
+    elif method == "bellman-ford":
+        weight, _ = _bf_weight(G, weight, lengths=False)
+    return weight, method
+
+
+def _all_paths_from(G, s, source, weight, method):
+    """``[(node, [paths])]`` as ``single_source_all_shortest_paths`` yields."""
+    found = _pred_paths(G, s, source, weight, method)
+    if _all_paths_over_pred():
+        targets = found.order()
+    else:
+        targets = list(range(len(G)))
+    reached, flat, ends, groups = found.all_paths(targets, _path_skip_ends_pass())
+    nodes = G._nodes
+    result = []
+    begin = 0
+    path_begin = 0
+    for t, group_end in zip(reached, groups):
+        group = []
+        for end in ends[begin:group_end]:
+            group.append([nodes[i] for i in flat[path_begin:end]])
+            path_begin = end
+        begin = group_end
+        result.append((nodes[t], group))
+    return result
+
+
+def single_source_all_shortest_paths(G, source, weight=None, method="dijkstra"):
+    weight, method = _check_paths_method(G, weight, method)
+    try:
+        s = G._index.get(source)
+    except TypeError:
+        s = None  # NetworkX's `source not in G` is True
+    if s is not None:
+        _same_node_type(G, source, s)
+    guard = _MutationGuard(G)
+
+    def generate():
+        # NetworkX builds the predecessors when iteration starts. From 3.5
+        # it then never reads the graph again, so only a change before then
+        # matters; 3.4 keeps iterating over the graph's nodes.
+        try:
+            if guard.changed():
+                guard.release()
+                yield from nx.single_source_all_shortest_paths(
+                    guard.graph, source, weight=weight, method=method, backend="networkx"
+                )
+                return
+            found = _all_paths_from(G, s, source, weight, method)
+            live = not _all_paths_over_pred()
+            if not live:
+                guard.release()
+            for item in found:
+                if live and guard.changed():
+                    raise RuntimeError("Graph changed during iteration")
+                yield item
+        finally:
+            guard.release()
+
+    return generate()
+
+
+def all_pairs_all_shortest_paths(G, weight=None, method="dijkstra"):
+    weight, method = _check_paths_method(G, weight, method)
+    if method not in ("unweighted", "dijkstra", "bellman-ford"):
+        # Raised lazily, from the first source: an empty graph never raises.
+        def failing():
+            if len(G):
+                raise ValueError(f"method not supported: {method}")
+            yield from ()
+
+        return failing()
+
+    def compute(batch):
+        for s in batch:
+            yield dict(_all_paths_from(G, s, G._nodes[s], weight, method))
+
+    return _all_pairs(G, compute, batch_size=1)
+
+
+# Bellman-Ford
+
+
+def _bellman_ford(G, s, weight, heuristic=True, shortcut=False, mode=3, target=None):
+    found = G._core.bellman_ford(s, weight, heuristic, shortcut, mode, target)
+    if found is None:
+        raise nx.NetworkXUnbounded(_BELLMAN_FORD_UNBOUNDED)
+    return found
+
+
+def bellman_ford_predecessor_and_distance(G, source, target=None, weight="weight", heuristic=False):
+    s = _index_of(G, source, f"Node {source} is not found in the graph")
+    _same_node_type(G, source, s)
+    weight, all_int = _bf_weight(G, weight)
+    if G._core.negative_selfloop(weight):
+        raise nx.NetworkXUnbounded(_BELLMAN_FORD_UNBOUNDED)
+    order, dists, flat, ends = _bellman_ford(G, s, weight, bool(heuristic), True, mode=0)
+    return _lists(G, order, flat, ends), _length_dict(G, order, dists, all_int)
+
+
+def _bf_source(G, source):
+    # NetworkX builds `{source: [...]}` before checking `source in G`.
+    _require_hashable(source)
+    s = _index_of(G, source, f"Source {source} not in G")
+    _same_node_type(G, source, s)
+    return s
+
+
+def single_source_bellman_ford_path_length(G, source, weight="weight"):
+    s = _bf_source(G, source)
+    weight, all_int = _bf_weight(G, weight)
+    order, dists, _, _ = _bellman_ford(G, s, weight)
+    return _length_dict(G, order, dists, all_int)
+
+
+def bellman_ford_path_length(G, source, target, weight="weight"):
+    if source == target:
+        if source not in G:
+            raise nx.NodeNotFound(f"Node {source} not found in graph")
+        return 0
+    s = _bf_source(G, source)
+    t = _position(G, target)
+    weight, all_int = _bf_weight(G, weight)
+    order, dists, _, _ = _bellman_ford(G, s, weight)
+    if t is not None:
+        try:
+            d = dists[order.index(t)]
+        except ValueError:
+            pass
+        else:
+            return int(d) if all_int else d
+    raise nx.NetworkXNoPath(f"node {target} not reachable from {source}")
+
+
+def single_source_bellman_ford(G, source, target=None, weight="weight"):
+    return _single_source_bellman_ford(G, source, target, weight, True)
+
+
+def _single_source_bellman_ford(G, source, target, weight, lengths):
+    if source == target:
+        if source not in G:
+            raise nx.NodeNotFound(f"Node {source} is not found in the graph")
+        return (0, [source])
+    s = _bf_source(G, source)
+    t = None if target is None else _position(G, target)
+    weight, all_int = _bf_weight(G, weight, lengths=lengths)
+    if target is None:
+        order, dists, flat, ends = _bellman_ford(G, s, weight, mode=1)
+        return _length_dict(G, order, dists, all_int), _lists(G, order, flat, ends)
+    order, dists, flat, ends = _bellman_ford(G, s, weight, mode=2, target=t)
+    if not ends:
+        raise nx.NetworkXNoPath(f"Target {target} cannot be reached from given sources")
+    d = dists[order.index(t)]
+    nodes = G._nodes
+    return int(d) if all_int else d, [nodes[i] for i in flat]
+
+
+def bellman_ford_path(G, source, target, weight="weight"):
+    return _single_source_bellman_ford(G, source, target, weight, False)[1]
+
+
+def single_source_bellman_ford_path(G, source, weight="weight"):
+    return _single_source_bellman_ford(G, source, None, weight, False)[1]
+
+
+# Each source's Bellman-Ford output can be large; keep batches small.
+_BELLMAN_FORD_BATCH = 64
+
+
+def all_pairs_bellman_ford_path_length(G, weight="weight"):
+    weight, all_int = _bf_weight(G, weight)
+
+    def compute(batch):
+        for found in G._core.bellman_ford_many(batch, weight, 3):
+            if found is None:
+                raise nx.NetworkXUnbounded(_BELLMAN_FORD_UNBOUNDED)
+            order, dists, _, _ = found
+            yield _length_dict(G, order, dists, all_int)
+
+    return _all_pairs(G, compute, _BELLMAN_FORD_BATCH)
+
+
+def all_pairs_bellman_ford_path(G, weight="weight"):
+    weight, _ = _bf_weight(G, weight, lengths=False)
+
+    def compute(batch):
+        for found in G._core.bellman_ford_many(batch, weight, 1):
+            if found is None:
+                raise nx.NetworkXUnbounded(_BELLMAN_FORD_UNBOUNDED)
+            order, _, flat, ends = found
+            yield _lists(G, order, flat, ends)
+
+    return _all_pairs(G, compute, _BELLMAN_FORD_BATCH)
+
+
+def negative_edge_cycle(G, weight="weight", heuristic=True):
+    if G._core.number_of_edges() == 0:
+        return False
+    weight, _ = _bf_weight(G, weight, lengths=False)
+    return G._core.negative_edge_cycle(weight, bool(heuristic))
+
+
+def find_negative_cycle(G, source, weight="weight"):
+    s = _bf_source(G, source)
+    weight, _ = _bf_weight(G, weight, lengths=False)
+    found = G._core.find_negative_cycle(s, weight)
+    if found is None:
+        raise nx.NetworkXError("No negative cycles detected.")
+    identified, cycle = found
+    if not identified:
+        v = cycle[0]
+        if G._core.has_edge(v, v):
+            # NetworkX calls `weight(G, v, v)` here, which fails in ways
+            # that depend on the node type.
+            raise NotImplementedError("negative cycle not identified")
+        raise nx.NetworkXError("Negative cycle is detected but not found")
+    nodes = G._nodes
+    return [nodes[i] for i in cycle]
+
+
+# A*
+
+
+def _astar(G, s, t, source, target, heuristic, weight, cutoff, lengths):
+    if heuristic is not None:
+        raise NotImplementedError("rustnx supports A* without a heuristic only")
+    _same_node_type(G, source, s)
+    _same_node_type(G, target, t)
+    weight, all_int, _ = _check_weight(G, weight, distances=lengths)
+    if G._core.has_negative_weight(weight):
+        # A* may never finish on a negative cycle; leave these to NetworkX.
+        raise NotImplementedError("rustnx's A* needs non-negative weights")
+    if cutoff:
+        if type(cutoff) not in (int, float, bool):
+            raise NotImplementedError("rustnx needs an int or float cutoff")
+        cutoff = float(cutoff)
+    else:
+        cutoff = None
+    found = G._core.astar(s, t, weight, cutoff)
+    if found is None:
+        raise nx.NetworkXNoPath(f"Node {target} not reachable from {source}")
+    path, costs = found
+    nodes = G._nodes
+    return [nodes[i] for i in path], [int(c) for c in costs] if all_int else costs
+
+
+def astar_path(G, source, target, heuristic=None, weight="weight", *, cutoff=None):
+    s = _index_of(G, source, f"Source {source} is not in G")
+    t = _index_of(G, target, f"Target {target} is not in G")
+    return _astar(G, s, t, source, target, heuristic, weight, cutoff, False)[0]
+
+
+def astar_path_length(G, source, target, heuristic=None, weight="weight", *, cutoff=None):
+    if source not in G or target not in G:
+        raise nx.NodeNotFound(f"Either source {source} or target {target} is not in G")
+    s, t = G._index[source], G._index[target]
+    # The same additions as NetworkX's `sum(weight(u, v, G[u][v]) ...)`.
+    return sum(_astar(G, s, t, source, target, heuristic, weight, cutoff, True)[1])

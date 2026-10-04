@@ -938,25 +938,28 @@ impl CoreGraph {
         Ok(w.is_some_and(|w| w.iter().any(|&x| x < 0.0)))
     }
 
-    /// `find_negative_cycle`: the cycle, or `None` if none is detected.
-    /// Raises NotImplementedError where NetworkX reaches code it never
-    /// expects to (its errors there are accidental).
+    /// `find_negative_cycle`: `None` if no cycle is detected, else
+    /// `(true, cycle)`, or `(false, [v])` where NetworkX's search through the
+    /// predecessors of `v` fails ("should not reach here").
     #[pyo3(signature = (source, weight=None))]
     fn find_negative_cycle(
         &self,
         py: Python<'_>,
         source: usize,
         weight: Option<&str>,
-    ) -> PyResult<Option<Vec<u32>>> {
+    ) -> PyResult<Option<(bool, Vec<u32>)>> {
         self.check_index(source)?;
         let w = self.weight_slice(weight, false)?;
-        py.detach(|| {
+        Ok(py.detach(|| {
             let bf = more_paths::bellman_ford(&self.succ, self.n, w, source, true);
-            let Some(v) = bf.cycle else { return Ok(None) };
-            more_paths::negative_cycle_from(&bf.pred.lists, self.n, v)
-                .map(Some)
-                .ok_or_else(|| PyNotImplementedError::new_err("negative cycle not identified"))
-        })
+            let v = bf.cycle?;
+            Some(
+                match more_paths::negative_cycle_from(&bf.pred.lists, self.n, v) {
+                    Some(cycle) => (true, cycle),
+                    None => (false, vec![v]),
+                },
+            )
+        }))
     }
 
     /// `nx.negative_edge_cycle` for a graph with edges.

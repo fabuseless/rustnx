@@ -8,6 +8,7 @@ merged attributes for duplicate edges, and so the same algorithm results.
 import math
 import pickle
 import random
+import warnings
 
 import networkx as nx
 import pytest
@@ -118,6 +119,13 @@ def test_structure_matches_networkx(seed, directed):
         assert list(back.adj[v]) == list(H.adj[v])
 
 
+def target_lengths(G, target, backend):
+    # NetworkX 3.4 returns an iterator, with a FutureWarning.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        return dict(nx.single_target_shortest_path_length(G, target, backend=backend))
+
+
 def algorithm_calls(H, directed):
     nodes = list(H)
     src = nodes[0] if nodes else None
@@ -180,6 +188,15 @@ def algorithm_calls(H, directed):
         calls["bfs_layers"] = lambda G, b: list(nx.bfs_layers(G, src, backend=b))
         calls["bfs_successors"] = lambda G, b: list(nx.bfs_successors(G, src, backend=b))
         calls["at_distance"] = lambda G, b: nx.descendants_at_distance(G, src, 2, backend=b)
+        calls["multi_source"] = lambda G, b: nx.multi_source_dijkstra(G, [src, dst], backend=b)
+        calls["dijkstra_pred"] = lambda G, b: nx.dijkstra_predecessor_and_distance(G, src, backend=b)
+        calls["predecessor"] = lambda G, b: nx.predecessor(G, src, backend=b)
+        calls["ss_all_sp"] = lambda G, b: list(nx.single_source_all_shortest_paths(G, src, weight="weight", backend=b))
+        calls["bellman_ford"] = lambda G, b: nx.single_source_bellman_ford(G, src, backend=b)
+        calls["bf_pred"] = lambda G, b: nx.bellman_ford_predecessor_and_distance(G, src, backend=b)
+        calls["neg_cycle"] = lambda G, b: nx.negative_edge_cycle(G, backend=b)
+        calls["astar"] = lambda G, b: nx.astar_path_length(G, src, dst, backend=b)
+        calls["target_length"] = lambda G, b: target_lengths(G, src, b)
     if directed:
         calls["scc"] = lambda G, b: list(nx.strongly_connected_components(G, backend=b))
         calls["wcc"] = lambda G, b: list(nx.weakly_connected_components(G, backend=b))
