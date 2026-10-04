@@ -518,3 +518,20 @@ def test_batch2_equal_nodes_of_other_types():
         exact_outcome(call, G)
         with pytest.raises(NotImplementedError):
             call(G, backend="rustnx")
+
+
+def test_batch2_probes_do_not_dispatch(restore_config):
+    # NetworkX's single_source_dijkstra_path calls the dispatchable
+    # multi_source_dijkstra_path; the version probes must not run through
+    # rustnx again (that recursed).
+    from rustnx import algorithms
+
+    probes = [algorithms._dijkstra_paths_in_pop_order, algorithms._path_skip_ends_pass,
+              algorithms._all_paths_over_pred]
+    for probe in probes:
+        probe.cache_clear()
+    nx.config.backend_priority.algos = ["rustnx"]
+    G = nx.path_graph(5)
+    nx.set_edge_attributes(G, 1, "weight")
+    assert nx.multi_source_dijkstra_path(G, [0], backend="rustnx")[4] == [0, 1, 2, 3, 4]
+    assert list(nx.single_source_all_shortest_paths(G, 0, weight="weight", backend="rustnx"))[-1] == (4, [[0, 1, 2, 3, 4]])

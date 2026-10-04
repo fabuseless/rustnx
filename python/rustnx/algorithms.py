@@ -772,7 +772,13 @@ def _dijkstra_paths_in_pop_order():
     order (3.6+) rather than by when each node was first reached."""
     H = nx.DiGraph()
     H.add_weighted_edges_from([(0, 1, 5), (0, 2, 1), (2, 1, 1), (1, 3, 1)])
-    paths = nx.single_source_dijkstra_path(H, 0, backend="networkx")
+    # NetworkX's private helper, called directly: the public functions
+    # dispatch nested calls (to `multi_source_dijkstra_path`), which can
+    # land back in rustnx and in this probe.
+    from networkx.algorithms.shortest_paths import weighted
+
+    paths = {0: [0]}
+    weighted._dijkstra_multisource(H, [0], lambda u, v, d: d["weight"], paths=paths)
     return list(paths) == [0, 2, 1, 3]
 
 
@@ -1471,7 +1477,13 @@ def _path_skip_ends_pass():
     the path, which re-yields paths through zero-weight cycles."""
     H = nx.DiGraph()
     H.add_weighted_edges_from([(0, 1, 0), (1, 0, 0), (1, 2, 1), (0, 2, 1), (2, 3, 0)])
-    return len(list(nx.all_shortest_paths(H, 0, 3, weight="weight", backend="networkx"))) == 4
+    # NetworkX's private helpers, called directly so that no nested call is
+    # dispatched (possibly back to rustnx).
+    from networkx.algorithms.shortest_paths import generic, weighted
+
+    pred = {0: []}
+    weighted._dijkstra_multisource(H, [0], lambda u, v, d: d["weight"], pred=pred)
+    return len(list(generic._build_paths_from_predecessors({0}, 3, pred))) == 4
 
 
 def all_shortest_paths(G, source, target, weight=None, method="dijkstra"):
@@ -2046,11 +2058,13 @@ def _all_paths_over_pred():
     """Whether the installed NetworkX (3.5+) yields
     ``single_source_all_shortest_paths`` in predecessor-dict order, rather
     than in graph order skipping unreached nodes (3.4)."""
-    H = nx.Graph()
-    H.add_nodes_from([0, 1, 2])
-    H.add_edges_from([(0, 2), (2, 1)])
-    found = nx.single_source_all_shortest_paths(H, 0, backend="networkx")
-    return [n for n, _ in found] == [0, 2, 1]
+    # Read from the source: running it would dispatch its nested
+    # `nx.predecessor` call, possibly back to rustnx.
+    try:
+        source = inspect.getsource(nx.single_source_all_shortest_paths.orig_func)
+    except (AttributeError, OSError, TypeError):
+        return True
+    return "for n in G:" not in source
 
 
 def _bf_weight(G, weight, lengths=True):
