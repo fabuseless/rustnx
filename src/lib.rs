@@ -17,7 +17,7 @@ use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
-    bipartite, centrality, centrality_more, cluster, cores_more, dag, directed, distance,
+    bipartite, centrality, centrality_more, cluster, cores_more, dag, directed, distance, flow,
     graph_classes, isomorphism, leftovers, matching, paths, spectral, structure, structure_more,
     trees_more,
 };
@@ -3190,6 +3190,274 @@ impl CoreGraph {
         py.detach(|| bipartite::butterflies(&self.succ, self.n, &degree))
     }
 
+    // --- Batch 12: flows and cut measures ---
+
+    /// `build_residual_network(G, capacity)`. `rows` is `list(G._adj.values())`
+    /// of the NetworkX graph this snapshot was made from (rows in node order,
+    /// as in `succ`); `capacity` is the attribute name.
+    fn residual_network(
+        &self,
+        py: Python<'_>,
+        rows: &Bound<'_, PyList>,
+        capacity: &Bound<'_, PyAny>,
+        compensated: bool,
+    ) -> PyResult<FlowRun> {
+        let caps = self.edge_values(rows, &[(capacity, flow::FLOAT_INF)])?;
+        let mut edges = Vec::new();
+        for u in 0..self.n {
+            for e in self.succ.range(u) {
+                let v = self.succ.targets[e] as usize;
+                // Undirected `G.edges` reports each edge from its first end.
+                if self.directed || v >= u {
+                    edges.push((u as u32, v as u32, caps[0][e]));
+                }
+            }
+        }
+        let (n, directed) = (self.n, self.directed);
+        let res = py
+            .detach(|| flow::Residual::build(n, directed, &edges, compensated))
+            .map_err(fail_err)?;
+        Ok(FlowRun {
+            res,
+            g_offsets: self.succ.offsets.clone(),
+            g_targets: self.succ.targets.clone(),
+            outcome: None,
+        })
+    }
+
+    /// `network_simplex` on G (`as_directed`: on `nx.DiGraph(G)` of an
+    /// undirected G, as `max_flow_min_cost` does). `rows` as for
+    /// `residual_network`, `node_rows` is `list(G._node.values())`, and
+    /// `overrides` replaces some demands. Returns `(0, cost, flow_dict)`,
+    /// or an error code with the node or edge positions it is about.
+    #[allow(clippy::too_many_arguments)]
+    fn network_simplex<'py>(
+        &self,
+        py: Python<'py>,
+        rows: &Bound<'py, PyList>,
+        node_rows: &Bound<'py, PyList>,
+        nodes: &Bound<'py, PyList>,
+        demand: &Bound<'py, PyAny>,
+        capacity: &Bound<'py, PyAny>,
+        weight: &Bound<'py, PyAny>,
+        overrides: Vec<(u32, Bound<'py, PyAny>)>,
+        as_directed: bool,
+        max_single_demand: bool,
+        compensated: bool,
+    ) -> PyResult<(u8, Bound<'py, PyAny>, Bound<'py, PyAny>)> {
+        if !self.directed && !as_directed {
+            return Err(PyNotImplementedError::new_err(
+                "network_simplex needs a directed graph",
+            ));
+        }
+        if node_rows.len() != self.n || nodes.len() != self.n {
+            return Err(PyValueError::new_err("node rows do not match this graph"));
+        }
+        let mut demands = Vec::with_capacity(self.n);
+        for row in node_rows.iter() {
+            let row = row
+                .cast::<PyDict>()
+                .map_err(|_| PyNotImplementedError::new_err("node data is not a dict"))?;
+            demands.push(match row.get_item(demand)? {
+                Some(d) => py_val(&d)?,
+                None => flow::Val::I(0),
+            });
+        }
+        for (u, value) in &overrides {
+            self.check_index(*u as usize)?;
+            demands[*u as usize] = py_val(value)?;
+        }
+        let vals = self.edge_values(
+            rows,
+            &[(capacity, flow::FLOAT_INF), (weight, flow::Val::I(0))],
+        )?;
+        let (caps, weights) = (&vals[0], &vals[1]);
+        // Arcs in `G.edges` order: edges with a nonzero capacity take
+        // part; zero-capacity edges and self-loops don't.
+        let (mut src, mut dst, mut cap, mut w) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut arcs = Vec::new();
+        let mut loops = Vec::new();
+        let mut loop_arcs = Vec::new();
+        let mut zero_arcs = Vec::new(); // in `G.edges` order, with self-loops
+        for u in 0..self.n {
+            for e in self.succ.range(u) {
+                let v = self.succ.targets[e] as usize;
+                if v == u {
+                    loops.push((caps[e], weights[e]));
+                    loop_arcs.push(e);
+                    zero_arcs.push((e, true));
+                } else if caps[e].eq(flow::Val::I(0)) {
+                    zero_arcs.push((e, false));
+                } else {
+                    src.push(u as u32);
+                    dst.push(v as u32);
+                    cap.push(caps[e]);
+                    w.push(weights[e]);
+                    arcs.push(e);
+                }
+            }
+        }
+        let input = flow::SimplexInput {
+            demands: &demands,
+            src: &src,
+            dst: &dst,
+            cap: &cap,
+            weight: &w,
+            loops: &loops,
+        };
+        let result = py.detach(|| flow::network_simplex(&input, max_single_demand, compensated));
+        let err = |code: u8,
+                   a: usize,
+                   b: usize|
+         -> PyResult<(u8, Bound<'py, PyAny>, Bound<'py, PyAny>)> {
+            Ok((
+                code,
+                a.into_pyobject(py)?.into_any(),
+                b.into_pyobject(py)?.into_any(),
+            ))
+        };
+        let arc_ends = |e: usize| -> (usize, usize) {
+            let u = self.succ.offsets.partition_point(|&o| o <= e) - 1;
+            (u, self.succ.targets[e] as usize)
+        };
+        let res = match result {
+            Ok(res) => res,
+            Err(flow::SimplexError::Fail(f)) => return Err(fail_err(f)),
+            Err(flow::SimplexError::InfiniteDemand(i)) => return err(1, i, i),
+            Err(flow::SimplexError::InfiniteWeight(k)) => {
+                let (a, b) = arc_ends(arcs[k]);
+                return err(2, a, b);
+            }
+            Err(flow::SimplexError::SelfLoopInfiniteWeight(k)) => {
+                let (a, b) = arc_ends(loop_arcs[k]);
+                return err(2, a, b);
+            }
+            Err(flow::SimplexError::DemandNotZero) => return err(3, 0, 0),
+            Err(flow::SimplexError::NegativeCapacity(k)) => {
+                let (a, b) = arc_ends(arcs[k]);
+                return err(4, a, b);
+            }
+            Err(flow::SimplexError::SelfLoopNegativeCapacity(k)) => {
+                let (a, b) = arc_ends(loop_arcs[k]);
+                return err(4, a, b);
+            }
+            Err(flow::SimplexError::NoFeasibleFlow) => return err(5, 0, 0),
+            Err(flow::SimplexError::Unbounded) => return err(6, 0, 0),
+        };
+        // flow_dict: every node, then each edge's flow in edge order, then
+        // the zero entries (and self-loop flows) in `G.edges` order.
+        let objects: Vec<Bound<'py, PyAny>> = nodes.iter().collect();
+        let rows_out: Vec<Bound<'py, PyDict>> = (0..self.n).map(|_| PyDict::new(py)).collect();
+        let flow_dict = PyDict::new(py);
+        for (obj, row) in objects.iter().zip(&rows_out) {
+            flow_dict.set_item(obj, row)?;
+        }
+        for (k, &e) in arcs.iter().enumerate() {
+            let (u, v) = arc_ends(e);
+            rows_out[u].set_item(&objects[v], val_obj(py, res.flows[k])?)?;
+        }
+        let zero = 0i64.into_pyobject(py)?.into_any();
+        let mut next_loop = 0;
+        for &(e, is_loop) in &zero_arcs {
+            let (u, v) = arc_ends(e);
+            let value = if is_loop {
+                let f = res.loop_flows[next_loop];
+                next_loop += 1;
+                match f {
+                    Some(c) => val_obj(py, c)?,
+                    None => zero.clone(),
+                }
+            } else {
+                zero.clone()
+            };
+            rows_out[u].set_item(&objects[v], value)?;
+        }
+        Ok((0, val_obj(py, res.cost)?, flow_dict.into_any()))
+    }
+
+    /// `cost_of_flow(G, flowDict, weight)`. `rows` as for `residual_network`.
+    fn cost_of_flow<'py>(
+        &self,
+        py: Python<'py>,
+        rows: &Bound<'py, PyList>,
+        nodes: &Bound<'py, PyList>,
+        flow_dict: &Bound<'py, PyAny>,
+        weight: &Bound<'py, PyAny>,
+        compensated: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let weights = self.edge_values(rows, &[(weight, flow::Val::I(0))])?;
+        let objects: Vec<Bound<'py, PyAny>> = nodes.iter().collect();
+        let mut products = Vec::new();
+        for u in 0..self.n {
+            let row = flow_dict
+                .get_item(&objects[u])
+                .map_err(|_| PyNotImplementedError::new_err("flowDict lacks a node"))?;
+            for e in self.succ.range(u) {
+                let v = self.succ.targets[e] as usize;
+                if !self.directed && v < u {
+                    continue;
+                }
+                let f = row
+                    .get_item(&objects[v])
+                    .map_err(|_| PyNotImplementedError::new_err("flowDict lacks an edge"))?;
+                products.push(py_val(&f)?.mul(weights[0][e]).map_err(fail_err)?);
+            }
+        }
+        val_obj(py, flow::py_sum(products, compensated).map_err(fail_err)?)
+    }
+
+    /// `cut_size`: the parts are `(nset1 order, nset2)` (see `flow::cut_size`).
+    #[pyo3(signature = (parts, compensated, weight=None))]
+    fn cut_size_value<'py>(
+        &self,
+        py: Python<'py>,
+        parts: Vec<(Vec<u32>, Option<Vec<u32>>)>,
+        compensated: bool,
+        weight: Option<&str>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        for (order, nset2) in &parts {
+            self.membership(order)?;
+            if let Some(s) = nset2 {
+                self.membership(s)?;
+            }
+        }
+        let w = self.cut_weights(weight)?;
+        let (n, directed) = (self.n, self.directed);
+        let value = py
+            .detach(|| flow::cut_size(&self.succ, n, directed, w, &parts, compensated))
+            .map_err(fail_err)?;
+        val_obj(py, value)
+    }
+
+    /// `volume(G, S, weight)` for the positions of `nbunch_iter(S)`.
+    #[pyo3(signature = (nodes, compensated, weight=None))]
+    fn volume_value<'py>(
+        &self,
+        py: Python<'py>,
+        nodes: Vec<u32>,
+        compensated: bool,
+        weight: Option<&str>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.membership(&nodes)?;
+        let w = self.cut_weights(weight)?;
+        let directed = self.directed;
+        let value = py
+            .detach(|| flow::volume(&self.succ, directed, w, &nodes, compensated))
+            .map_err(fail_err)?;
+        val_obj(py, value)
+    }
+
+    /// The number of distinct neighbors of `nodes`, and of those not in
+    /// `nodes` (`node_expansion`, `boundary_expansion`).
+    fn neighborhood_sizes(&self, py: Python<'_>, nodes: Vec<u32>) -> PyResult<(usize, usize)> {
+        let inside = self.membership(&nodes)?;
+        Ok(py.detach(|| {
+            let union = matching::neighbor_union(&self.succ, self.n, &nodes);
+            let outside = union.iter().filter(|&&v| !inside[v as usize]).count();
+            (union.len(), outside)
+        }))
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -3978,6 +4246,372 @@ fn unzip3(items: Vec<(u32, u32, u8)>) -> (Vec<u32>, Vec<u32>, Vec<u8>) {
     (us, vs, labels)
 }
 
+// --- Batch 12: flows and cut measures ---
+
+impl CoreGraph {
+    /// Edge attributes read from NetworkX's adjacency rows (`list(G._adj
+    /// .values())`, aligned with `succ`), one vector per `(name, default)`.
+    fn edge_values(
+        &self,
+        rows: &Bound<'_, PyList>,
+        attrs: &[(&Bound<'_, PyAny>, flow::Val)],
+    ) -> PyResult<Vec<Vec<flow::Val>>> {
+        if rows.len() != self.n {
+            return Err(PyNotImplementedError::new_err(
+                "adjacency does not match this graph",
+            ));
+        }
+        let m = self.succ.targets.len();
+        let mut out: Vec<Vec<flow::Val>> = attrs.iter().map(|_| Vec::with_capacity(m)).collect();
+        for (u, row) in rows.iter().enumerate() {
+            let row = row
+                .cast::<PyDict>()
+                .map_err(|_| PyNotImplementedError::new_err("adjacency rows are not dicts"))?;
+            if row.len() != self.succ.range(u).len() {
+                return Err(PyNotImplementedError::new_err(
+                    "adjacency does not match this graph",
+                ));
+            }
+            for (_, data) in row.iter() {
+                let data = data
+                    .cast::<PyDict>()
+                    .map_err(|_| PyNotImplementedError::new_err("edge data is not a dict"))?;
+                for (k, (name, default)) in attrs.iter().enumerate() {
+                    out[k].push(match data.get_item(name)? {
+                        Some(x) => py_val(&x)?,
+                        None => *default,
+                    });
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Weights for the cut measures: as Python numbers, ints or floats
+    /// (an attribute mixing both, or with `None` values, falls back).
+    fn cut_weights(&self, weight: Option<&str>) -> PyResult<flow::Weights<'_>> {
+        let Some(attr) = weight else {
+            return Ok(flow::Weights {
+                values: None,
+                all_int: true,
+            });
+        };
+        let (all_int, hidden) = self.weights_info(Some(attr));
+        if hidden || self.weights_mixed(Some(attr)) {
+            return Err(PyNotImplementedError::new_err(
+                "weights mix ints and floats, or are None",
+            ));
+        }
+        Ok(flow::Weights {
+            values: self.weight_slice(Some(attr), false)?,
+            all_int,
+        })
+    }
+}
+
+/// A Python int (within `i64`, not a bool) or float (not NaN) as a `Val`.
+fn py_val(x: &Bound<'_, PyAny>) -> PyResult<flow::Val> {
+    if x.is_exact_instance_of::<PyInt>() {
+        return x
+            .extract::<i64>()
+            .map(flow::Val::I)
+            .map_err(|_| PyNotImplementedError::new_err("integer too large"));
+    }
+    if x.is_exact_instance_of::<PyFloat>() {
+        let f = x.cast::<PyFloat>()?.value();
+        if !f.is_nan() {
+            return Ok(flow::Val::F(f));
+        }
+    }
+    Err(PyNotImplementedError::new_err(
+        "rustnx needs int or float values here",
+    ))
+}
+
+fn val_obj(py: Python<'_>, v: flow::Val) -> PyResult<Bound<'_, PyAny>> {
+    Ok(match v {
+        flow::Val::I(i) => i.into_pyobject(py)?.into_any(),
+        flow::Val::F(f) => PyFloat::new(py, f).into_any(),
+    })
+}
+
+fn fail_err(f: flow::Fail) -> PyErr {
+    let raise = |name: &str, msg: &str| {
+        Python::attach(|py| -> PyErr {
+            match py
+                .import("networkx")
+                .and_then(|nx| nx.getattr(name))
+                .and_then(|cls| cls.call1((msg,)))
+            {
+                Ok(exc) => PyErr::from_value(exc),
+                Err(e) => e,
+            }
+        })
+    };
+    match f {
+        flow::Fail::Unsupported => PyNotImplementedError::new_err(
+            "NetworkX raises an error rustnx doesn't reproduce, or a value is too large",
+        ),
+        flow::Fail::Unbounded(msg) => raise("NetworkXUnbounded", msg),
+    }
+}
+
+/// A residual network and the flow last computed on it (batch 12).
+#[pyclass(module = "rustnx._core")]
+pub struct FlowRun {
+    res: flow::Residual,
+    /// G's own adjacency, for `build_flow_dict`.
+    g_offsets: Vec<usize>,
+    g_targets: Vec<u32>,
+    outcome: Option<flow::Outcome>,
+}
+
+fn flow_algo(name: &str, two_phase: bool, d: i64, threshold: f64) -> PyResult<flow::Algo> {
+    Ok(match name {
+        "edmonds_karp" => flow::Algo::EdmondsKarp,
+        "shortest_augmenting_path" => flow::Algo::ShortestAugmentingPath(two_phase, d),
+        "dinitz" => flow::Algo::Dinitz,
+        "boykov_kolmogorov" => flow::Algo::BoykovKolmogorov,
+        "preflow_push" => flow::Algo::PreflowPush(threshold),
+        _ => return Err(PyValueError::new_err("unknown flow algorithm")),
+    })
+}
+
+#[pymethods]
+impl FlowRun {
+    /// `R.size()`.
+    fn edge_count(&self) -> usize {
+        self.res.tail.len()
+    }
+
+    /// Run a maximum flow algorithm from scratch; returns the flow value.
+    /// `cutoff` is the caller's value (None for NetworkX's default),
+    /// `d` and `threshold` as `flow::Algo` describes.
+    #[pyo3(signature = (algorithm, s, t, cutoff=None, value_only=false, two_phase=false, d=0, threshold=0.0, hashes=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn run<'py>(
+        &mut self,
+        py: Python<'py>,
+        algorithm: &str,
+        s: u32,
+        t: u32,
+        cutoff: Option<&Bound<'py, PyAny>>,
+        value_only: bool,
+        two_phase: bool,
+        d: i64,
+        threshold: f64,
+        hashes: Option<Vec<i64>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let algo = flow_algo(algorithm, two_phase, d, threshold)?;
+        let cutoff = match cutoff {
+            Some(c) if !c.is_none() => Some(py_val(c)?),
+            _ => None,
+        };
+        let n = self.res.n;
+        if s as usize >= n || t as usize >= n {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        let hashes = hashes.unwrap_or_default();
+        let res = &mut self.res;
+        let outcome = py
+            .detach(|| flow::run_flow(res, algo, s, t, cutoff, value_only, &hashes))
+            .map_err(fail_err)?;
+        let value = val_obj(py, outcome.value)?;
+        self.outcome = Some(outcome);
+        Ok(value)
+    }
+
+    /// `minimum_cut`'s reverse search from `t` (see `Residual::cut_order`).
+    fn cut_order(&self, t: u32, strict: bool) -> PyResult<Vec<u32>> {
+        if t as usize >= self.res.n {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        Ok(self.res.cut_order(t, strict))
+    }
+
+    /// Fill a fresh `R`: `succ_rows`/`pred_rows` are `R._succ` and
+    /// `R._pred` rows in node order; edge dicts hold the capacity (and the
+    /// flow, `with_flow`). Each edge's dict is shared by both rows.
+    fn fill<'py>(
+        &self,
+        py: Python<'py>,
+        succ_rows: &Bound<'py, PyList>,
+        pred_rows: &Bound<'py, PyList>,
+        nodes: &Bound<'py, PyList>,
+        with_flow: bool,
+    ) -> PyResult<()> {
+        let r = &self.res;
+        if succ_rows.len() != r.n || pred_rows.len() != r.n || nodes.len() != r.n {
+            return Err(PyValueError::new_err(
+                "rows do not match the residual network",
+            ));
+        }
+        let objects: Vec<Bound<'py, PyAny>> = nodes.iter().collect();
+        let capacity = pyo3::intern!(py, "capacity");
+        let flow_key = pyo3::intern!(py, "flow");
+        let mut dicts: Vec<Option<Bound<'py, PyDict>>> = vec![None; r.tail.len()];
+        for (u, row) in succ_rows.iter().enumerate() {
+            let row = row.cast::<PyDict>()?;
+            for &e in &r.succ[u] {
+                let e = e as usize;
+                let d = PyDict::new(py);
+                d.set_item(capacity, val_obj(py, r.cap[e])?)?;
+                if with_flow {
+                    d.set_item(flow_key, val_obj(py, r.flow[e])?)?;
+                }
+                row.set_item(&objects[r.head[e] as usize], &d)?;
+                dicts[e] = Some(d);
+            }
+        }
+        for (v, row) in pred_rows.iter().enumerate() {
+            let row = row.cast::<PyDict>()?;
+            for &e in &r.pred[v] {
+                let e = e as usize;
+                let d = dicts[e]
+                    .as_ref()
+                    .ok_or_else(|| PyValueError::new_err("edge missing"))?;
+                row.set_item(&objects[r.tail[e] as usize], d)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Set the `excess` and `height` node attributes the last run left
+    /// (`node_rows` is `list(R._node.values())`); returns the positions of
+    /// the `curr_edge`s, if the run set them.
+    fn set_node_attrs<'py>(
+        &self,
+        py: Python<'py>,
+        node_rows: &Bound<'py, PyList>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let Some(out) = &self.outcome else {
+            return Ok(None);
+        };
+        if node_rows.len() != self.res.n {
+            return Err(PyValueError::new_err(
+                "rows do not match the residual network",
+            ));
+        }
+        if let Some(excess) = &out.excess {
+            let key = pyo3::intern!(py, "excess");
+            for (row, &x) in node_rows.iter().zip(excess) {
+                row.set_item(key, val_obj(py, x)?)?;
+            }
+        }
+        let Some(state) = &out.state else {
+            return Ok(None);
+        };
+        let key = pyo3::intern!(py, "height");
+        for (row, &h) in node_rows.iter().zip(&state.height) {
+            row.set_item(key, h)?;
+        }
+        Ok(Some(state.curr.clone()))
+    }
+
+    /// `R.graph["trees"]` after `boykov_kolmogorov`.
+    fn trees<'py>(
+        &self,
+        py: Python<'py>,
+        nodes: &Bound<'py, PyList>,
+    ) -> PyResult<Option<Bound<'py, PyTuple>>> {
+        let Some((source, target)) = self.outcome.as_ref().and_then(|o| o.trees.as_ref()) else {
+            return Ok(None);
+        };
+        let objects: Vec<Bound<'py, PyAny>> = nodes.iter().collect();
+        let to_dict = |tree: &Vec<(u32, Option<u32>)>| -> PyResult<Bound<'py, PyDict>> {
+            let d = PyDict::new(py);
+            for &(k, p) in tree {
+                match p {
+                    Some(p) => d.set_item(&objects[k as usize], &objects[p as usize])?,
+                    None => d.set_item(&objects[k as usize], py.None())?,
+                }
+            }
+            Ok(d)
+        };
+        Ok(Some(PyTuple::new(
+            py,
+            [to_dict(source)?, to_dict(target)?],
+        )?))
+    }
+
+    /// `build_flow_dict(G, R)` for the last run.
+    fn flow_dict<'py>(
+        &self,
+        py: Python<'py>,
+        nodes: &Bound<'py, PyList>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let r = &self.res;
+        let objects: Vec<Bound<'py, PyAny>> = nodes.iter().collect();
+        if objects.len() != r.n {
+            return Err(PyValueError::new_err(
+                "nodes do not match the residual network",
+            ));
+        }
+        let zero = 0i64.into_pyobject(py)?.into_any();
+        let out = PyDict::new(py);
+        for u in 0..r.n {
+            let row = PyDict::new(py);
+            for &v in &self.g_targets[self.g_offsets[u]..self.g_offsets[u + 1]] {
+                row.set_item(&objects[v as usize], &zero)?;
+            }
+            for &e in &r.succ[u] {
+                let f = r.flow[e as usize];
+                if f.gt(flow::Val::I(0)) {
+                    row.set_item(&objects[r.head[e as usize] as usize], val_obj(py, f)?)?;
+                }
+            }
+            out.set_item(&objects[u], row)?;
+        }
+        Ok(out)
+    }
+
+    /// `gomory_hu_tree` from this (fresh) residual network: each non-root
+    /// node's parent position and edge weight, in node order.
+    #[pyo3(signature = (algorithm, strict_cut, two_phase=false, d=0, threshold=0.0, hashes=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn gomory_hu<'py>(
+        &mut self,
+        py: Python<'py>,
+        algorithm: &str,
+        strict_cut: bool,
+        two_phase: bool,
+        d: i64,
+        threshold: f64,
+        hashes: Option<Vec<i64>>,
+    ) -> PyResult<Vec<(u32, Bound<'py, PyAny>)>> {
+        let algo = flow_algo(algorithm, two_phase, d, threshold)?;
+        let hashes = hashes.unwrap_or_default();
+        let res = &mut self.res;
+        let tree = py
+            .detach(|| flow::gomory_hu(res, algo, &hashes, strict_cut))
+            .map_err(fail_err)?;
+        tree.into_iter()
+            .map(|(p, w)| Ok((p, val_obj(py, w)?)))
+            .collect()
+    }
+}
+
+/// Replays set operations on `flow::PySet` (the runtime check that it
+/// matches the interpreter's sets); see `flow::replay_sets`.
+#[pyfunction]
+fn _replay_sets(
+    hashes: Vec<i64>,
+    nsets: usize,
+    ops: Vec<(u8, u32, u32)>,
+) -> PyResult<(Vec<i64>, Vec<Vec<u32>>)> {
+    for &(op, s, k) in &ops {
+        let key_ok = match op {
+            0 | 1 => (k as usize) < hashes.len(),
+            3 => (k as usize) < nsets,
+            _ => true,
+        };
+        if s as usize >= nsets || !key_ok {
+            return Err(PyIndexError::new_err("set or key out of range"));
+        }
+    }
+    Ok(flow::replay_sets(&hashes, nsets, &ops))
+}
+
 /// CPython's float `sum()` (exposed for tests).
 #[pyfunction]
 fn _py_sum(values: Vec<f64>, compensated: bool) -> f64 {
@@ -4001,6 +4635,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<TreeLca>()?;
     m.add_class::<Boruvka>()?;
     m.add_class::<CliqueQueue>()?;
+    m.add_class::<FlowRun>()?;
     m.add_function(wrap_pyfunction!(graph::build_graph, m)?)?;
     m.add_function(wrap_pyfunction!(serialize::_core_graph_from_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(native::build_native, m)?)?;
@@ -4010,5 +4645,6 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(_degree_sequence_test, m)?)?;
     m.add_function(wrap_pyfunction!(_digraphical, m)?)?;
     m.add_function(wrap_pyfunction!(_plain_int_list, m)?)?;
+    m.add_function(wrap_pyfunction!(_replay_sets, m)?)?;
     Ok(())
 }
