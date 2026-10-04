@@ -1953,7 +1953,13 @@ impl CoreGraph {
     }
 
     /// `nx.is_d_separator` on a DAG, after NetworkX's input checks.
-    fn is_d_separator(&self, py: Python<'_>, x: Vec<u32>, y: Vec<u32>, z: Vec<u32>) -> PyResult<bool> {
+    fn is_d_separator(
+        &self,
+        py: Python<'_>,
+        x: Vec<u32>,
+        y: Vec<u32>,
+        z: Vec<u32>,
+    ) -> PyResult<bool> {
         self.membership(&x)?;
         self.membership(&y)?;
         self.membership(&z)?;
@@ -2044,7 +2050,9 @@ impl CoreGraph {
     fn first_matching_failure(&self, us: Vec<u32>, vs: Vec<u32>) -> PyResult<Option<usize>> {
         self.membership(&us)?;
         self.membership(&vs)?;
-        Ok(matching::first_matching_failure(&self.succ, self.n, &us, &vs))
+        Ok(matching::first_matching_failure(
+            &self.succ, self.n, &us, &vs,
+        ))
     }
 
     /// Whether an edge (not a self-loop) has neither end in `matched`.
@@ -2055,7 +2063,11 @@ impl CoreGraph {
 
     /// `nx.maximal_matching`: chosen edges in order.
     fn maximal_matching(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
-        py.detach(|| matching::maximal_matching(&self.succ, self.n).into_iter().unzip())
+        py.detach(|| {
+            matching::maximal_matching(&self.succ, self.n)
+                .into_iter()
+                .unzip()
+        })
     }
 
     /// `nx.max_weight_matching` (or, with `inverted`, `min_weight_matching`)
@@ -2129,7 +2141,11 @@ impl CoreGraph {
     /// `nx.max_weight_clique` with integer node weights (`None`: all 1):
     /// the clique and its weight.
     #[pyo3(signature = (weights=None))]
-    fn max_weight_clique(&self, py: Python<'_>, weights: Option<Vec<i64>>) -> PyResult<(Vec<u32>, i64)> {
+    fn max_weight_clique(
+        &self,
+        py: Python<'_>,
+        weights: Option<Vec<i64>>,
+    ) -> PyResult<(Vec<u32>, i64)> {
         let weights = weights.unwrap_or_else(|| vec![1; self.n]);
         if weights.len() != self.n {
             return Err(PyValueError::new_err("one weight per node"));
@@ -2664,7 +2680,10 @@ impl CliqueQueue {
         }
         let out = PyList::empty(py);
         for clique in batch {
-            out.append(PyList::new(py, clique.iter().map(|&v| &objects[v as usize]))?)?;
+            out.append(PyList::new(
+                py,
+                clique.iter().map(|&v| &objects[v as usize]),
+            )?)?;
         }
         Ok(out)
     }

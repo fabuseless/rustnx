@@ -112,6 +112,22 @@ SECTIONS = [
         "is_eulerian", "has_eulerian_path", "is_semieulerian", "eulerian_circuit",
         "eulerian_path", "cycle_basis", "find_cycle", "girth",
     ]),
+    ("Triads and d-separation", [
+        "triadic_census", "is_d_separator", "is_minimal_d_separator", "find_minimal_d_separator",
+    ]),
+    ("Degree sequences", [
+        "is_graphical", "is_digraphical", "is_multigraphical", "is_pseudographical",
+        "is_valid_degree_sequence_erdos_gallai", "is_valid_degree_sequence_havel_hakimi",
+    ]),
+    ("Boundaries and dominating sets", [
+        "node_boundary", "edge_boundary", "is_dominating_set", "connected_dominating_set",
+        "is_connected_dominating_set",
+    ]),
+    ("Matching and covers", [
+        "maximal_matching", "max_weight_matching", "min_weight_matching", "is_matching",
+        "is_maximal_matching", "is_perfect_matching", "min_edge_cover",
+    ]),
+    ("Cliques", ["enumerate_all_cliques", "node_clique_number", "max_weight_clique"]),
 ]
 
 LENGTHS = "Falls back when weights mix ints and floats (NetworkX's length types then depend on the path)."
@@ -245,6 +261,27 @@ NOTES = {
     "has_eulerian_path": "A `source` not in the graph falls back.",
     "cycle_basis": "A `root` not in the graph falls back.",
     "find_cycle": "A `source` that isn't one node of the graph, and invalid orientations on directed graphs, fall back.",
+    "triadic_census": "A `nodelist` that is one node or an iterator falls back.",
+    "is_d_separator": "Arguments other than nodes and sets of nodes (lists, for example) fall back.",
+    "is_minimal_d_separator": "Arguments other than nodes and sets of nodes (lists, for example) fall back.",
+    "find_minimal_d_separator": "Arguments other than nodes and sets of nodes fall back, as do nodes equal to but of a different type than G's. The set iterates in NetworkX's order.",
+    "is_graphical": "Takes a sequence, not a graph: runs in rustnx with `backend=\"rustnx\"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.",
+    "is_digraphical": "Takes a sequence, not a graph: runs in rustnx with `backend=\"rustnx\"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.",
+    "is_multigraphical": "Takes a sequence, not a graph: runs in rustnx with `backend=\"rustnx\"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.",
+    "is_pseudographical": "Takes a sequence, not a graph: runs in rustnx with `backend=\"rustnx\"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.",
+    "is_valid_degree_sequence_erdos_gallai": "Takes a sequence, not a graph: runs in rustnx with `backend=\"rustnx\"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.",
+    "is_valid_degree_sequence_havel_hakimi": "Takes a sequence, not a graph: runs in rustnx with `backend=\"rustnx\"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.",
+    "node_boundary": "The set iterates in NetworkX's order.",
+    "edge_boundary": "`data` falls back.",
+    "connected_dominating_set": "NetworkX 3.5 and newer. The set iterates in NetworkX's order.",
+    "is_connected_dominating_set": "NetworkX 3.5 and newer.",
+    "maximal_matching": "The set iterates in NetworkX's order.",
+    "max_weight_matching": "Integer weights beyond 2**49 in magnitude fall back. The set (and each pair's orientation) is NetworkX's.",
+    "min_weight_matching": "Integer weights beyond 2**49 in magnitude fall back. The set (and each pair's orientation) is NetworkX's.",
+    "min_edge_cover": "`matching_algorithm` falls back. The set iterates in NetworkX's order.",
+    "enumerate_all_cliques": "Computed in batches when iteration starts, as NetworkX does.",
+    "node_clique_number": "`nodes=None` (the dict follows `find_cliques`' set order) and `cliques` fall back, as do directed graphs and nodes not in G.",
+    "max_weight_clique": "Node weights are read from the NetworkX graph; native graphs support `weight=None` only.",
 }
 
 # Functions NetworkX only exposes under `nx.dag`.

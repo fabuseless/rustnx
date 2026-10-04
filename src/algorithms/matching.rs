@@ -263,7 +263,13 @@ pub fn is_d_separator(succ: &Csr, pred: &Csr, n: usize, x: &[u32], y: &[u32], z:
 
 /// `nx.ancestors(G, v)` in insertion order: BFS discovery order along
 /// `pred` (NetworkX's own in-edge order), without `v`.
-pub fn ancestors_in_order(pred: &Csr, n: usize, v: u32, seen: &mut Vec<u32>, stamp: u32) -> Vec<u32> {
+pub fn ancestors_in_order(
+    pred: &Csr,
+    n: usize,
+    v: u32,
+    seen: &mut Vec<u32>,
+    stamp: u32,
+) -> Vec<u32> {
     if seen.len() < n {
         seen.resize(n, u32::MAX);
     }
@@ -286,7 +292,14 @@ pub fn ancestors_in_order(pred: &Csr, n: usize, v: u32, seen: &mut Vec<u32>, sta
 
 /// `_reachable(G, x, a, z)` from `networkx.algorithms.d_separation`: the
 /// second element of each entry of `processed`, in order (repeats kept).
-pub fn d_reachable(succ: &Csr, pred: &Csr, n: usize, x: &[u32], a: &[bool], z: &[bool]) -> Vec<u32> {
+pub fn d_reachable(
+    succ: &Csr,
+    pred: &Csr,
+    n: usize,
+    x: &[u32],
+    a: &[bool],
+    z: &[bool],
+) -> Vec<u32> {
     // Entry `(f, v)` has index 2 * v + f.
     let mut processed = vec![false; 2 * n];
     let mut order: Vec<(bool, u32)> = Vec::new();
@@ -1142,7 +1155,10 @@ impl<'a> Blossoms<'a> {
                     }
                 }
                 1 => {
-                    let i = self.childs[b].iter().position(|&c| c == f.t).expect("child") as isize;
+                    let i = self.childs[b]
+                        .iter()
+                        .position(|&c| c == f.t)
+                        .expect("child") as isize;
                     f.i = i;
                     f.j = i;
                     if i & 1 != 0 {
@@ -1516,9 +1532,7 @@ impl AllCliques {
                 row
             })
             .collect();
-        let queue = (0..n)
-            .map(|u| (vec![u as u32], later[u].clone()))
-            .collect();
+        let queue = (0..n).map(|u| (vec![u as u32], later[u].clone())).collect();
         AllCliques { later, queue }
     }
 
