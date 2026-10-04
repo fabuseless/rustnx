@@ -19,6 +19,11 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "docs" / "API.md"
 
 SECTIONS = [
+    ("Shortest paths: A*", ["astar_path", "astar_path_length"]),
+    ("Reachability", ["has_path", "descendants", "ancestors"]),
+    ("Trees", ["is_tree", "is_forest", "is_arborescence", "is_branching", "to_prufer_sequence"]),
+    ("Tournaments", ["is_reachable", "tournament_is_strongly_connected", "score_sequence"]),
+    ("Cliques", ["enumerate_all_cliques", "node_clique_number", "max_weight_clique"]),
     ("Centrality", [
         "degree_centrality", "in_degree_centrality", "out_degree_centrality",
         "betweenness_centrality", "edge_betweenness_centrality", "closeness_centrality",
@@ -56,7 +61,6 @@ SECTIONS = [
         "all_pairs_bellman_ford_path", "all_pairs_bellman_ford_path_length",
         "negative_edge_cycle", "find_negative_cycle",
     ]),
-    ("Shortest paths: A*", ["astar_path", "astar_path_length"]),
     ("Shortest paths: Floyd-Warshall, Johnson and Goldberg-Radzik", [
         "floyd_warshall", "floyd_warshall_predecessor_and_distance", "floyd_warshall_tree",
         "floyd_warshall_numpy", "johnson", "goldberg_radzik",
@@ -64,7 +68,6 @@ SECTIONS = [
     ("Simple paths", [
         "all_simple_paths", "all_simple_edge_paths", "shortest_simple_paths", "is_simple_path",
     ]),
-    ("Reachability", ["has_path", "descendants", "ancestors"]),
     ("Distance measures", [
         "eccentricity", "diameter", "radius", "center", "periphery",
         "average_shortest_path_length", "wiener_index",
@@ -106,7 +109,6 @@ SECTIONS = [
         "dfs_postorder_nodes", "dfs_predecessors", "dfs_successors",
         "generic_bfs_edges", "bfs_labeled_edges", "dfs_labeled_edges", "edge_bfs", "edge_dfs",
     ]),
-    ("Trees", ["is_tree", "is_forest", "is_arborescence", "is_branching", "to_prufer_sequence"]),
     ("Spanning trees", [
         "minimum_spanning_edges", "maximum_spanning_edges",
         "minimum_spanning_tree", "maximum_spanning_tree", "kruskal_mst_edges",
@@ -136,7 +138,6 @@ SECTIONS = [
         "get_counterexample_recursive", "is_chordal", "chordal_graph_treewidth",
         "complete_to_chordal_graph", "is_at_free", "is_perfect_graph",
     ]),
-    ("Tournaments", ["is_reachable", "tournament_is_strongly_connected", "score_sequence"]),
     ("Triads and d-separation", [
         "triadic_census", "is_d_separator", "is_minimal_d_separator", "find_minimal_d_separator",
     ]),
@@ -152,7 +153,6 @@ SECTIONS = [
         "maximal_matching", "max_weight_matching", "min_weight_matching", "is_matching",
         "is_maximal_matching", "is_perfect_matching", "min_edge_cover",
     ]),
-    ("Cliques", ["enumerate_all_cliques", "node_clique_number", "max_weight_clique"]),
     ("Isomorphism and graph hashing", [
         "could_be_isomorphic", "fast_could_be_isomorphic", "faster_could_be_isomorphic",
         "is_isomorphic", "vf2pp_is_isomorphic", "vf2pp_subgraph_is_isomorphic",
@@ -203,6 +203,17 @@ SECTIONS = [
     ("Reciprocity, rich club and walks", [
         "reciprocity", "overall_reciprocity", "rich_club_coefficient", "s_metric",
         "number_of_walks",
+    ]),
+    ("Communities", [
+        "modularity", "overlapping_modularity", "partition_quality", "is_partition", "is_cover",
+        "intra_community_edges", "inter_community_edges", "inter_community_non_edges",
+        "greedy_modularity_communities", "naive_greedy_modularity_communities",
+        "girvan_newman", "edge_betweenness_partition", "asyn_lpa_communities",
+        "fast_label_propagation_communities", "asyn_fluidc",
+    ]),
+    ("Efficiency, vitality and distance indices", [
+        "efficiency", "global_efficiency", "local_efficiency", "closeness_vitality",
+        "gutman_index", "schultz_index", "hyper_wiener_index", "flow_hierarchy", "voronoi_cells",
     ]),
 ]
 
@@ -276,6 +287,30 @@ NOTES = {
     "periphery": "`e`, empty graphs and `usebounds=True` on undirected graphs fall back.",
     "average_shortest_path_length": "Weighted sums are added in NetworkX's order. Methods other than `unweighted` and `dijkstra`, and the null graph, fall back.",
     "wiener_index": "Weighted sums are added in NetworkX's order.",
+    "modularity": "Bit-for-bit identical: sums follow `set(community)` order. Weights must be all ints or all floats. A non-partition, and an edgeless graph on NetworkX 3.4, fall back (to raise NetworkX's error).",
+    "overlapping_modularity": "NetworkX 3.7+. Bit-for-bit identical: sums follow `set(community)` order. Weights must be all ints or all floats.",
+    "partition_quality": "Counts in Rust.",
+    "is_partition": "",
+    "is_cover": "NetworkX 3.7+.",
+    "intra_community_edges": "Blocks that NetworkX rejects (unhashable nodes) fall back.",
+    "inter_community_edges": "Linear time (NetworkX checks every pair of blocks). Iterator partitions fall back.",
+    "inter_community_non_edges": "Linear time (NetworkX builds the complement graph). Iterator partitions fall back.",
+    "greedy_modularity_communities": "Replays NetworkX's mapped-heap merges (ties by node order: int or str labels only) and its frozenset unions, so communities iterate alike. Weights must be all ints or all floats.",
+    "naive_greedy_modularity_communities": "Unit or integer weights (float sums would follow frozenset order: those fall back). Incremental modularity, added in NetworkX's order.",
+    "girvan_newman": "Lazy, like NetworkX. Exact edge betweenness (sources added in order) on NetworkX's rebuilt copy of G, so the same edge is removed on ties. `most_valuable_edge` and 2-tuple node labels fall back.",
+    "edge_betweenness_partition": "Exact edge betweenness (sources added in order) on NetworkX's rebuilt copy of G, so the same edge is removed on ties. 2-tuple node labels and `None` weights fall back.",
+    "asyn_lpa_communities": "Replays CPython's Mersenne Twister, so a `random.Random` seed (or `seed=None`, the global generator) gives NetworkX's exact draws and leaves the generator in the same state; NumPy seeds fall back.",
+    "fast_label_propagation_communities": "Replays CPython's Mersenne Twister, so a `random.Random` seed (or `seed=None`, the global generator) gives NetworkX's exact draws and leaves the generator in the same state; NumPy seeds fall back.",
+    "asyn_fluidc": "Replays CPython's Mersenne Twister, so a `random.Random` seed (or `seed=None`, the global generator) gives NetworkX's exact draws and leaves the generator in the same state; NumPy seeds fall back. Follows each version's loop limit.",
+    "efficiency": "",
+    "global_efficiency": "Parallel BFS; `1 / d` added in NetworkX's order.",
+    "local_efficiency": "Parallel. Visits each neighborhood in the order of NetworkX's subgraph view (a Python set's order for small neighborhoods), so sums match bit for bit.",
+    "closeness_vitality": "Parallel. Wiener indices summed in NetworkX's order. Weights must be non-negative and all ints or all floats.",
+    "gutman_index": "Parallel. Weights must be non-negative and all ints or all floats.",
+    "schultz_index": "Parallel. Weights must be non-negative and all ints or all floats.",
+    "hyper_wiener_index": "NetworkX 3.6+. Parallel. Unweighted or integer weights (float squares fall back).",
+    "flow_hierarchy": "Unweighted or integer weights.",
+    "voronoi_cells": "Multi-source Dijkstra in Rust.",
     "topological_sort": "Raises NetworkX's errors if the graph changes during iteration.",
     "topological_generations": "Raises NetworkX's errors if the graph changes during iteration.",
     "triangles": "Bit-for-bit identical.",
@@ -502,6 +537,21 @@ DAG_ONLY = {"v_structures", "root_to_leaf_paths", "has_cycle", "antichain_width"
 
 # Functions NetworkX exposes only in a submodule, not as `nx.<name>`.
 SUBMODULE = {
+    "modularity": "nx.community",
+    "overlapping_modularity": "nx.community",
+    "partition_quality": "nx.community",
+    "is_partition": "nx.community",
+    "is_cover": "nx.community",
+    "intra_community_edges": "nx.community.quality",
+    "inter_community_edges": "nx.community.quality",
+    "inter_community_non_edges": "nx.community.quality",
+    "greedy_modularity_communities": "nx.community",
+    "naive_greedy_modularity_communities": "nx.community",
+    "girvan_newman": "nx.community",
+    "edge_betweenness_partition": "nx.community",
+    "asyn_lpa_communities": "nx.community",
+    "fast_label_propagation_communities": "nx.community",
+    "asyn_fluidc": "nx.community",
     "label_propagation_communities": "nx.community",
     "is_coloring": "nx.algorithms.coloring.equitable_coloring",
     "is_equitable": "nx.algorithms.coloring.equitable_coloring",

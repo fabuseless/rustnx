@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 340 NetworkX functions. Call them as usual (for
+rustnx implements 364 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -16,6 +16,47 @@ Results match the installed NetworkX (3.4 or newer) exactly.
   NetworkX automatically (converting would cost more than it saves); pass
   `backend="rustnx"` to force rustnx.
 - Callable weights always run in NetworkX.
+
+### Shortest paths: A*
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.astar_path` | `source`, `target`, `heuristic`, `weight`, `cutoff` | yes | NetworkX | Only without a `heuristic`; graphs with negative weights fall back. |
+| `nx.astar_path_length` | `source`, `target`, `heuristic`, `weight`, `cutoff` | yes | NetworkX | Only without a `heuristic`; graphs with negative weights fall back. Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). |
+
+### Reachability
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.has_path` | `source`, `target` | yes | NetworkX |  |
+| `nx.descendants` | `source` | yes | NetworkX |  |
+| `nx.ancestors` | `source` | yes | NetworkX |  |
+
+### Trees
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.is_tree` | none | no | NetworkX |  |
+| `nx.is_forest` | none | no | NetworkX |  |
+| `nx.is_arborescence` | none | no | NetworkX |  |
+| `nx.is_branching` | none | no | NetworkX |  |
+| `nx.to_prufer_sequence` | none | no | NetworkX | Bit-for-bit identical. |
+
+### Tournaments
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.tournament.is_reachable` | `s`, `t` | no | rustnx | Unhashable nodes fall back. |
+| `nx.tournament.is_strongly_connected` | none | no | rustnx |  |
+| `nx.tournament.score_sequence` | none | no | NetworkX |  |
+
+### Cliques
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `Computed in batches when iteration starts, as NetworkX does.` | none | no | rustnx |  |
+| ``nodes=None` (the dict follows `find_cliques`' set order) and `cliques` fall back, as do directed graphs and nodes not in G.` | `nodes`, `cliques`, `separate_nodes` | no | rustnx |  |
+| `Node weights are read from the NetworkX graph; native graphs support `weight=None` only.` | `weight` | no | rustnx |  |
 
 ### Centrality
 
@@ -108,13 +149,6 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.negative_edge_cycle` | `weight`, `heuristic` | yes | rustnx | Doesn't add (and remove) a temporary node in the graph, as NetworkX does. `None` weights fall back. |
 | `nx.find_negative_cycle` | `source`, `weight` | yes | rustnx | `None` weights fall back. |
 
-### Shortest paths: A*
-
-| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
-|---|---|---|---|---|
-| `nx.astar_path` | `source`, `target`, `heuristic`, `weight`, `cutoff` | yes | NetworkX | Only without a `heuristic`; graphs with negative weights fall back. |
-| `nx.astar_path_length` | `source`, `target`, `heuristic`, `weight`, `cutoff` | yes | NetworkX | Only without a `heuristic`; graphs with negative weights fall back. Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). |
-
 ### Shortest paths: Floyd-Warshall, Johnson and Goldberg-Radzik
 
 | Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
@@ -134,14 +168,6 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.all_simple_edge_paths` | `source`, `target`, `cutoff` | no | rustnx | Paths are generated lazily in Rust, in NetworkX's order. Raises RuntimeError if the graph changes during iteration. |
 | `nx.shortest_simple_paths` | `source`, `target`, `weight` | no | rustnx | Yen's algorithm with NetworkX's bidirectional searches and tie-breaking, one path per step. Mixed int and float, and infinite, weights fall back. |
 | `nx.is_simple_path` | `nodes` | yes | NetworkX |  |
-
-### Reachability
-
-| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
-|---|---|---|---|---|
-| `nx.has_path` | `source`, `target` | yes | NetworkX |  |
-| `nx.descendants` | `source` | yes | NetworkX |  |
-| `nx.ancestors` | `source` | yes | NetworkX |  |
 
 ### Distance measures
 
@@ -264,16 +290,6 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.edge_bfs` | `source`, `orientation` | no | NetworkX | A `source` that is neither a node nor a list, tuple, set or dict of hashable nodes falls back. |
 | `nx.edge_dfs` | `source`, `orientation` | no | NetworkX | A `source` that is neither a node nor a list, tuple, set or dict of hashable nodes falls back. |
 
-### Trees
-
-| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
-|---|---|---|---|---|
-| `nx.is_tree` | none | no | NetworkX |  |
-| `nx.is_forest` | none | no | NetworkX |  |
-| `nx.is_arborescence` | none | no | NetworkX |  |
-| `nx.is_branching` | none | no | NetworkX |  |
-| `nx.to_prufer_sequence` | none | no | NetworkX | Bit-for-bit identical. |
-
 ### Spanning trees
 
 | Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
@@ -356,14 +372,6 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.is_at_free` | none | no | rustnx |  |
 | `nx.is_perfect_graph` | none | no | rustnx | NetworkX 3.7 and later. |
 
-### Tournaments
-
-| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
-|---|---|---|---|---|
-| `nx.tournament.is_reachable` | `s`, `t` | no | rustnx | Unhashable nodes fall back. |
-| `nx.tournament.is_strongly_connected` | none | no | rustnx |  |
-| `nx.tournament.score_sequence` | none | no | NetworkX |  |
-
 ### Triads and d-separation
 
 | Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
@@ -405,14 +413,6 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.is_maximal_matching` | `matching` | no | NetworkX |  |
 | `nx.is_perfect_matching` | `matching` | yes | NetworkX |  |
 | ``matching_algorithm` falls back. The set iterates in NetworkX's order.` | `matching_algorithm` | no | rustnx |  |
-
-### Cliques
-
-| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
-|---|---|---|---|---|
-| `Computed in batches when iteration starts, as NetworkX does.` | none | no | rustnx |  |
-| ``nodes=None` (the dict follows `find_cliques`' set order) and `cliques` fall back, as do directed graphs and nodes not in G.` | `nodes`, `cliques`, `separate_nodes` | no | rustnx |  |
-| `Node weights are read from the NetworkX graph; native graphs support `weight=None` only.` | `weight` | no | rustnx |  |
 
 ### Isomorphism and graph hashing
 
@@ -556,6 +556,40 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | ``normalized=False` only: normalizing uses random edge swaps, so the default falls back.` | `normalized`, `Q`, `seed` | no | NetworkX |  |
 | `nx.s_metric` | none | no | NetworkX |  |
 | `Exact int64 arithmetic (wrapping on overflow as NumPy and SciPy do). Graphs without edges (NetworkX returns floats) and walks longer than 100 fall back.` | `walk_length` | no | rustnx |  |
+
+### Communities
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.community.modularity` | `communities`, `weight`, `resolution` | no | NetworkX | Bit-for-bit identical: sums follow `set(community)` order. Weights must be all ints or all floats. A non-partition, and an edgeless graph on NetworkX 3.4, fall back (to raise NetworkX's error). |
+| `nx.community.overlapping_modularity` | `communities`, `weight`, `resolution` | no | NetworkX | NetworkX 3.7+. Bit-for-bit identical: sums follow `set(community)` order. Weights must be all ints or all floats. |
+| `nx.community.partition_quality` | `partition` | no | NetworkX | Counts in Rust. |
+| `nx.community.is_partition` | `communities` | no | NetworkX |  |
+| `nx.community.is_cover` | `communities` | no | NetworkX | NetworkX 3.7+. |
+| `nx.community.quality.intra_community_edges` | `partition` | no | NetworkX | Blocks that NetworkX rejects (unhashable nodes) fall back. |
+| `nx.community.quality.inter_community_edges` | `partition` | no | rustnx | Linear time (NetworkX checks every pair of blocks). Iterator partitions fall back. |
+| `nx.community.quality.inter_community_non_edges` | `partition` | no | rustnx | Linear time (NetworkX builds the complement graph). Iterator partitions fall back. |
+| `nx.community.greedy_modularity_communities` | `weight`, `resolution`, `cutoff`, `best_n` | no | rustnx | Replays NetworkX's mapped-heap merges (ties by node order: int or str labels only) and its frozenset unions, so communities iterate alike. Weights must be all ints or all floats. |
+| `nx.community.naive_greedy_modularity_communities` | `resolution`, `weight` | no | rustnx | Unit or integer weights (float sums would follow frozenset order: those fall back). Incremental modularity, added in NetworkX's order. |
+| `nx.community.girvan_newman` | `most_valuable_edge` | no | rustnx | Lazy, like NetworkX. Exact edge betweenness (sources added in order) on NetworkX's rebuilt copy of G, so the same edge is removed on ties. `most_valuable_edge` and 2-tuple node labels fall back. |
+| `nx.community.edge_betweenness_partition` | `number_of_sets`, `weight` | no | rustnx | Exact edge betweenness (sources added in order) on NetworkX's rebuilt copy of G, so the same edge is removed on ties. 2-tuple node labels and `None` weights fall back. |
+| `nx.community.asyn_lpa_communities` | `weight`, `seed` | no | NetworkX | Replays CPython's Mersenne Twister, so a `random.Random` seed (or `seed=None`, the global generator) gives NetworkX's exact draws and leaves the generator in the same state; NumPy seeds fall back. |
+| `nx.community.fast_label_propagation_communities` | `weight`, `seed` | no | NetworkX | Replays CPython's Mersenne Twister, so a `random.Random` seed (or `seed=None`, the global generator) gives NetworkX's exact draws and leaves the generator in the same state; NumPy seeds fall back. |
+| `nx.community.asyn_fluidc` | `k`, `max_iter`, `seed` | no | rustnx | Replays CPython's Mersenne Twister, so a `random.Random` seed (or `seed=None`, the global generator) gives NetworkX's exact draws and leaves the generator in the same state; NumPy seeds fall back. Follows each version's loop limit. |
+
+### Efficiency, vitality and distance indices
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.efficiency` | `u`, `v` | yes | NetworkX |  |
+| `nx.global_efficiency` | none | yes | rustnx | Parallel BFS; `1 / d` added in NetworkX's order. |
+| `nx.local_efficiency` | none | yes | rustnx | Parallel. Visits each neighborhood in the order of NetworkX's subgraph view (a Python set's order for small neighborhoods), so sums match bit for bit. |
+| `nx.closeness_vitality` | `node`, `weight`, `wiener_index` | yes | rustnx | Parallel. Wiener indices summed in NetworkX's order. Weights must be non-negative and all ints or all floats. |
+| `nx.gutman_index` | `weight` | no | rustnx | Parallel. Weights must be non-negative and all ints or all floats. |
+| `nx.schultz_index` | `weight` | no | rustnx | Parallel. Weights must be non-negative and all ints or all floats. |
+| `nx.hyper_wiener_index` | `weight` | no | rustnx | NetworkX 3.6+. Parallel. Unweighted or integer weights (float squares fall back). |
+| `nx.flow_hierarchy` | `weight` | no | NetworkX | Unweighted or integer weights. |
+| `nx.voronoi_cells` | `center_nodes`, `weight` | yes | NetworkX | Multi-source Dijkstra in Rust. |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 

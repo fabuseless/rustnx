@@ -23,6 +23,7 @@ _LINEAR_TIME = {
     "articulation_points",
     "astar_path",
     "astar_path_length",
+    "asyn_lpa_communities",
     "attracting_components",
     "attribute_assortativity_coefficient",
     "attribute_mixing_dict",
@@ -83,10 +84,13 @@ _LINEAR_TIME = {
     "edge_boundary",
     "edge_dfs",
     "edge_expansion",
+    "efficiency",
     "eulerian_circuit",
     "eulerian_path",
+    "fast_label_propagation_communities",
     "faster_could_be_isomorphic",
     "find_cycle",
+    "flow_hierarchy",
     "generic_bfs_edges",
     "greedy_color",
     "group_closeness_centrality",
@@ -100,6 +104,7 @@ _LINEAR_TIME = {
     "immediate_dominators",
     "in_degree_centrality",
     "intersection_array",
+    "intra_community_edges",
     "is_aperiodic",
     "is_arborescence",
     "is_attracting_component",
@@ -111,6 +116,7 @@ _LINEAR_TIME = {
     "is_coloring",
     "is_connected",
     "is_connected_dominating_set",
+    "is_cover",
     "is_d_separator",
     "is_directed_acyclic_graph",
     "is_distance_regular",
@@ -122,6 +128,7 @@ _LINEAR_TIME = {
     "is_k_regular",
     "is_matching",
     "is_maximal_matching",
+    "is_partition",
     "is_perfect_matching",
     "is_planar",
     "is_regular",
@@ -153,6 +160,7 @@ _LINEAR_TIME = {
     "minimum_spanning_edges",
     "minimum_spanning_tree",
     "mixing_expansion",
+    "modularity",
     "multi_source_dijkstra",
     "multi_source_dijkstra_path",
     "multi_source_dijkstra_path_length",
@@ -172,6 +180,8 @@ _LINEAR_TIME = {
     "onion_layers",
     "out_degree_centrality",
     "overall_reciprocity",
+    "overlapping_modularity",
+    "partition_quality",
     "predecessor",
     "reciprocity",
     "rich_club_coefficient",
@@ -197,6 +207,7 @@ _LINEAR_TIME = {
     "unconstrained_one_edge_augmentation",
     "v_structures",
     "volume",
+    "voronoi_cells",
     "weakly_connected_components",
 }
 SMALL_GRAPH_NODES = 500
@@ -240,6 +251,7 @@ MULTIGRAPH_FUNCTIONS = {
     "boundary_expansion",
     "center",
     "closeness_centrality",
+    "closeness_vitality",
     "color",
     "condensation",
     "connected_components",
@@ -258,8 +270,10 @@ MULTIGRAPH_FUNCTIONS = {
     "dijkstra_predecessor_and_distance",
     "dominance_frontiers",
     "eccentricity",
+    "efficiency",
     "find_negative_cycle",
     "generic_bfs_edges",
+    "global_efficiency",
     "harmonic_centrality",
     "harmonic_diameter",
     "has_path",
@@ -280,6 +294,7 @@ MULTIGRAPH_FUNCTIONS = {
     "isolates",
     "johnson",
     "kosaraju_strongly_connected_components",
+    "local_efficiency",
     "multi_source_dijkstra",
     "multi_source_dijkstra_path",
     "multi_source_dijkstra_path_length",
@@ -314,6 +329,7 @@ MULTIGRAPH_FUNCTIONS = {
     "square_clustering",
     "strongly_connected_components",
     "transitive_reduction",
+    "voronoi_cells",
     "weakly_connected_components",
     "wiener_index",
 }
@@ -492,6 +508,9 @@ def can_run(name, args, kwargs):
     if unsupported:
         return f"unsupported arguments: {', '.join(unsupported)}"
     G = arguments.get("G")
+    if G is not None and not hasattr(G, "is_multigraph"):
+        # e.g. NetworkX's own tests call is_partition(G.nodes(), ...)
+        return "the graph argument is not a graph"
     if G is not None and G.is_multigraph() and name not in MULTIGRAPH_FUNCTIONS:
         return "multigraphs are not supported by this function"
     for param in _WEIGHT_PARAMS:

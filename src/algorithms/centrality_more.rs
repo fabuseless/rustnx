@@ -19,7 +19,7 @@ const UNSET: u32 = u32::MAX;
 /// Runs `work` for every source, in parallel blocks, and passes each result
 /// to `apply` in source order. `item_bytes` estimates the size of one result,
 /// to bound memory.
-fn in_source_order<S, T, I, W, A>(
+pub(crate) fn in_source_order<S, T, I, W, A>(
     sources: &[u32],
     item_bytes: usize,
     init: I,
@@ -90,15 +90,15 @@ impl PySum {
 /// build it: `S` (finalization order), `sigma` and the predecessor lists `P`
 /// in NetworkX's order, with the arc each predecessor arrived by.
 pub struct Spt {
-    order: Vec<u32>,
-    sigma: Vec<f64>,
-    delta: Vec<f64>,
+    pub(crate) order: Vec<u32>,
+    pub(crate) sigma: Vec<f64>,
+    pub(crate) delta: Vec<f64>,
     level: Vec<u32>,
     done: Vec<bool>,
     seen: Vec<f64>,
     has_seen: Vec<bool>,
-    preds: Vec<Vec<u32>>,
-    pred_arcs: Vec<Vec<u32>>,
+    pub(crate) preds: Vec<Vec<u32>>,
+    pub(crate) pred_arcs: Vec<Vec<u32>>,
     touched: Vec<u32>,
     heap: MinHeap<(u32, u32)>,
     /// Position of each reached node in `order` (`UNSET` otherwise); only
@@ -140,7 +140,7 @@ impl Spt {
         self.heap.clear();
     }
 
-    fn run(&mut self, adj: &Csr, weights: Option<&[f64]>, s: usize) {
+    pub(crate) fn run(&mut self, adj: &Csr, weights: Option<&[f64]>, s: usize) {
         self.reset();
         match weights {
             None => self.bfs(adj, s),

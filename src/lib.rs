@@ -17,9 +17,9 @@ use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
-    bipartite, centrality, centrality_more, cluster, connectivity, cores_more, dag, directed,
-    distance, flow, graph_classes, isomorphism, leftovers, matching, measures, paths, spectral,
-    structure, structure_more, trees_more,
+    bipartite, centrality, centrality_more, cluster, communities, connectivity, cores_more, dag,
+    directed, distance, flow, graph_classes, isomorphism, leftovers, matching, measures, paths,
+    spectral, structure, structure_more, trees_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -4006,6 +4006,436 @@ impl CoreGraph {
         py.detach(|| measures::walk_counts(&self.succ, self.n, k))
     }
 
+    // --- Batch 15: communities, efficiency and structural holes ---
+
+    /// `global_efficiency`'s running total of `1 / d`, before the division.
+    fn global_efficiency_total(&self, py: Python<'_>) -> f64 {
+        py.detach(|| communities::global_efficiency(&self.succ, self.n))
+    }
+
+    /// `local_efficiency`'s per-node efficiencies (`None`: NetworkX's int
+    /// 0). `orders[v]`: the nodes of `G.subgraph(G[v])` in its iteration
+    /// order when that is a set's order, else `None` (G's order).
+    fn local_efficiencies(
+        &self,
+        py: Python<'_>,
+        orders: Vec<Option<Vec<u32>>>,
+    ) -> PyResult<Vec<Option<f64>>> {
+        if orders.len() != self.n {
+            return Err(PyValueError::new_err("one order per node expected"));
+        }
+        for order in orders.iter().flatten() {
+            for &v in order {
+                self.check_index(v as usize)?;
+            }
+        }
+        Ok(py.detach(|| communities::local_efficiency(&self.succ, self.n, &orders)))
+    }
+
+    /// The sum in `gutman_index` (kind 0), `schultz_index` (1) or
+    /// `hyper_wiener_index` (2), before halving, in NetworkX's order;
+    /// `None` if it can't be matched (overflow, a negative cycle).
+    fn distance_index(
+        &self,
+        py: Python<'_>,
+        kind: u8,
+        weight: Option<&str>,
+        float: bool,
+        compensated: bool,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        let kind = match kind {
+            0 => communities::IndexKind::Gutman,
+            1 => communities::IndexKind::Schultz,
+            _ => communities::IndexKind::HyperWiener,
+        };
+        let w = self.weight_slice(weight, false)?;
+        // NetworkX's `dict(G.degree, weight=weight)` holds unweighted degrees.
+        let degrees = self.degrees();
+        let total = py.detach(|| {
+            if float {
+                let deg: Vec<f64> = degrees.iter().map(|&d| d as f64).collect();
+                communities::distance_index_float(&self.succ, self.n, w?, &deg, kind, compensated)
+                    .map(communities::Num::Float)
+            } else {
+                let deg: Vec<i128> = degrees.iter().map(|&d| d as i128).collect();
+                communities::distance_index_int(&self.succ, self.n, w, &deg, kind)
+                    .map(communities::Num::Int)
+            }
+        });
+        total.map(|t| num_object(py, t)).transpose()
+    }
+
+    /// `closeness_vitality`'s Wiener index totals: G's (if `whole`), and
+    /// G's without each node of `removals` (`None`: not connected).
+    #[allow(clippy::type_complexity)]
+    fn vitality_totals(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+        float: bool,
+        compensated: bool,
+        removals: Vec<u32>,
+        whole: bool,
+    ) -> PyResult<(Option<Py<PyAny>>, Vec<Option<Py<PyAny>>>)> {
+        let w = self.weight_slice(weight, false)?;
+        let removals = self.sources_or_all(Some(removals))?;
+        let (whole, without) = py.detach(|| {
+            communities::vitality_totals(
+                &self.succ,
+                self.n,
+                w,
+                float,
+                compensated,
+                &removals,
+                whole,
+            )
+        });
+        let whole = whole.map(|t| num_object(py, t)).transpose()?;
+        let without = without
+            .into_iter()
+            .map(|t| t.map(|t| num_object(py, t)).transpose())
+            .collect::<PyResult<_>>()?;
+        Ok((whole, without))
+    }
+
+    /// `flow_hierarchy`'s integer sums: arc weight inside strongly
+    /// connected components, and in total.
+    #[pyo3(signature = (weight=None))]
+    fn scc_arc_weights(&self, py: Python<'_>, weight: Option<&str>) -> PyResult<(i128, i128)> {
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| communities::scc_arc_weights(&self.succ, self.n, w)))
+    }
+
+    /// Edges inside one block and between two blocks, given each node's
+    /// block (`-1`: none). `None` if `strict` and an edge has an end in no
+    /// block.
+    fn block_edge_counts(
+        &self,
+        py: Python<'_>,
+        block: Vec<i64>,
+        strict: bool,
+    ) -> PyResult<Option<(u64, u64)>> {
+        if block.len() != self.n {
+            return Err(PyValueError::new_err("one block per node expected"));
+        }
+        Ok(py.detach(|| {
+            communities::block_edge_counts(&self.succ, self.n, self.directed, &block, strict)
+        }))
+    }
+
+    /// Edges inside each block (positions, flattened with `ends`), summed.
+    fn edges_inside_blocks(
+        &self,
+        py: Python<'_>,
+        flat: Vec<u32>,
+        ends: Vec<usize>,
+    ) -> PyResult<u64> {
+        self.check_flat(&flat, &ends)?;
+        Ok(py.detach(|| {
+            communities::edges_inside_blocks(&self.succ, self.n, self.directed, &flat, &ends)
+        }))
+    }
+
+    /// `modularity`'s sums (see `communities::modularity_stats`). Float
+    /// weights on a directed graph need exact in-edge order loaded.
+    #[allow(clippy::type_complexity)]
+    fn modularity_stats(
+        &self,
+        py: Python<'_>,
+        flat: Vec<u32>,
+        ends: Vec<usize>,
+        weight: Option<&str>,
+        float: bool,
+        compensated: bool,
+    ) -> PyResult<(Py<PyAny>, Vec<(Py<PyAny>, Py<PyAny>, Py<PyAny>)>)> {
+        self.check_flat(&flat, &ends)?;
+        let w = self.weight_slice(weight, false)?;
+        if float && w.is_none() {
+            return Err(PyValueError::new_err("float sums need a weight"));
+        }
+        if !float && communities::degrees_int(&self.succ, self.n, w).is_none() {
+            return Err(PyNotImplementedError::new_err(
+                "integer weights are too large",
+            ));
+        }
+        let pred = if !self.directed {
+            None
+        } else if float {
+            Some(self.reverse_exact(weight)?)
+        } else {
+            Some((self.adj(true), self.weight_slice(weight, true)?))
+        };
+        let (total, per) = py.detach(|| {
+            communities::modularity_stats(
+                &self.succ,
+                pred,
+                self.n,
+                w,
+                float,
+                compensated,
+                &flat,
+                &ends,
+            )
+        });
+        let per = per
+            .into_iter()
+            .map(|(l, o, i)| Ok((num_object(py, l)?, num_object(py, o)?, num_object(py, i)?)))
+            .collect::<PyResult<_>>()?;
+        Ok((num_object(py, total)?, per))
+    }
+
+    /// `greedy_modularity_communities`' merges and whether the generator ran
+    /// out (`None`: hand the call to NetworkX). `rank[v]`: v's position in
+    /// sorted order, for ties. Float weights on a directed graph need exact
+    /// in-edge order loaded.
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::type_complexity)]
+    fn greedy_modularity(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+        float: bool,
+        compensated: bool,
+        resolution: f64,
+        rank: Vec<u32>,
+        cutoff: f64,
+        best_n: f64,
+    ) -> PyResult<Option<(Vec<(u32, u32)>, bool)>> {
+        if rank.len() != self.n {
+            return Err(PyValueError::new_err("one rank per node expected"));
+        }
+        let n = self.n;
+        let w = self.weight_slice(weight, false)?;
+        // Degrees as `G.degree`, `G.out_degree` and `G.in_degree` give them.
+        let (out_deg, in_deg, total): (Vec<f64>, Vec<f64>, f64) = if self.directed {
+            let (pred, pw) = if float {
+                self.reverse_exact(weight)?
+            } else {
+                (self.adj(true), self.weight_slice(weight, true)?)
+            };
+            if float {
+                let out =
+                    communities::row_sums_float(&self.succ, n, w.expect("weight"), compensated);
+                let inn = communities::row_sums_float(pred, n, pw.expect("weight"), compensated);
+                let deg: Vec<f64> = out.iter().zip(&inn).map(|(a, b)| a + b).collect();
+                let s = spectral::py_sum(deg.into_iter(), compensated);
+                (out, inn, s)
+            } else {
+                let out = communities::row_sums_int(&self.succ, n, w);
+                let inn = communities::row_sums_int(pred, n, pw);
+                let s: i128 = out.iter().chain(&inn).sum();
+                let f = |v: Vec<i128>| v.into_iter().map(|x| x as f64).collect::<Vec<f64>>();
+                (f(out), f(inn), s as f64)
+            }
+        } else if float {
+            let deg = communities::degrees_float(&self.succ, n, w.expect("weight"), compensated);
+            let s = spectral::py_sum(deg.iter().copied(), compensated);
+            (deg, Vec::new(), s)
+        } else {
+            let Some(deg) = communities::degrees_int(&self.succ, n, w) else {
+                return Ok(None);
+            };
+            let s: i128 = deg.iter().sum();
+            (
+                deg.into_iter().map(|x| x as f64).collect(),
+                Vec::new(),
+                s as f64,
+            )
+        };
+        // `G.size(weight)`: the degree sum halved (exact: it is even).
+        let m = total / 2.0;
+        if m == 0.0 || !m.is_finite() {
+            return Ok(None);
+        }
+        let q0 = 1.0 / m;
+        let (a, b) = if self.directed {
+            (
+                out_deg.iter().map(|&d| d * q0).collect(),
+                in_deg.iter().map(|&d| d * q0).collect(),
+            )
+        } else {
+            (out_deg.iter().map(|&d| d * q0 * 0.5).collect(), Vec::new())
+        };
+        let mut edges = Vec::new();
+        for u in 0..n {
+            for e in self.succ.range(u) {
+                let v = self.succ.targets[e];
+                if self.directed || v as usize >= u {
+                    edges.push((u as u32, v, w.map_or(1.0, |w| w[e])));
+                }
+            }
+        }
+        let input = communities::GreedyInput {
+            n,
+            directed: self.directed,
+            edges,
+            a,
+            b,
+            q0,
+            resolution,
+            rank: &rank,
+            cutoff,
+            best_n,
+        };
+        Ok(py.detach(|| communities::greedy_modularity(input)))
+    }
+
+    /// `naive_greedy_modularity_communities`' merges for unit or integer
+    /// weights (`None`: hand the call to NetworkX). `m` and `norm` are
+    /// computed by Python, as `modularity` does.
+    #[allow(clippy::too_many_arguments)]
+    fn naive_greedy_modularity(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+        m: f64,
+        norm: f64,
+        res_int: Option<i128>,
+        res_float: f64,
+        compensated: bool,
+    ) -> PyResult<Option<Vec<(u32, u32)>>> {
+        let w = self.weight_slice(weight, false)?;
+        let res = match res_int {
+            Some(r) => communities::Resolution::Int(r),
+            None => communities::Resolution::Float(res_float),
+        };
+        Ok(py.detach(|| {
+            communities::naive_greedy_modularity(&self.succ, self.n, w, m, norm, res, compensated)
+        }))
+    }
+
+    /// `girvan_newman`'s state after `G.copy().to_undirected()` and removing
+    /// self-loops. `scale`: `edge_betweenness_centrality`'s normalization.
+    #[pyo3(signature = (scale=None))]
+    fn girvan_newman(&self, scale: Option<f64>) -> GirvanNewman {
+        let mut g = communities::EditableGraph::rebuilt(&self.succ, self.n, None);
+        g.remove_self_loops();
+        GirvanNewman { g, scale }
+    }
+
+    /// `edge_betweenness_partition` for an undirected graph (on `G.copy()`).
+    #[pyo3(signature = (number_of_sets, weight=None, scale=None))]
+    fn edge_betweenness_partition(
+        &self,
+        py: Python<'_>,
+        number_of_sets: usize,
+        weight: Option<&str>,
+        scale: Option<f64>,
+    ) -> PyResult<Vec<Vec<u32>>> {
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| {
+            let mut g = communities::EditableGraph::rebuilt(&self.succ, self.n, w);
+            g.betweenness_partition(number_of_sets, w.is_some(), scale)
+        }))
+    }
+
+    /// `asyn_lpa_communities`: final labels, and the generator's new state
+    /// (`state`: `random.Random.getstate()[1]`). `None` for a bad state.
+    #[allow(clippy::type_complexity)]
+    fn asyn_lpa(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+        state: Vec<u32>,
+    ) -> PyResult<Option<(Vec<u32>, Vec<u32>)>> {
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| {
+            let mut rng = communities::Mt19937::from_state(&state)?;
+            let labels = communities::asyn_lpa(&self.succ, self.n, w, &mut rng);
+            Some((labels, rng.state()))
+        }))
+    }
+
+    /// `fast_label_propagation_communities`: final labels and the
+    /// generator's new state. Directed graphs need exact in-edge order.
+    #[allow(clippy::type_complexity)]
+    fn fast_label_propagation(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+        state: Vec<u32>,
+    ) -> PyResult<Option<(Vec<u32>, Vec<u32>)>> {
+        let w = self.weight_slice(weight, false)?;
+        let pred = if self.directed {
+            Some(self.reverse_exact_order(weight)?)
+        } else {
+            None
+        };
+        Ok(py.detach(|| {
+            let mut rng = communities::Mt19937::from_state(&state)?;
+            let labels = communities::fast_label_propagation(&self.succ, pred, self.n, w, &mut rng);
+            Some((labels, rng.state()))
+        }))
+    }
+
+    /// `asyn_fluidc`: each node's community (`None`: unassigned), the order
+    /// nodes joined NetworkX's dict, and the generator's new state. `None`
+    /// where NetworkX would fail or for a bad state.
+    #[allow(clippy::type_complexity)]
+    fn asyn_fluidc(
+        &self,
+        py: Python<'_>,
+        k: usize,
+        max_iter: i64,
+        legacy: bool,
+        state: Vec<u32>,
+    ) -> Option<(Vec<Option<u32>>, Vec<u32>, Vec<u32>)> {
+        if k == 0 || k > self.n {
+            return None;
+        }
+        py.detach(|| {
+            let mut rng = communities::Mt19937::from_state(&state)?;
+            let (com, order) =
+                communities::asyn_fluidc(&self.succ, self.n, k, max_iter, legacy, &mut rng)?;
+            let com = com
+                .into_iter()
+                .map(|c| (c != u32::MAX).then_some(c))
+                .collect();
+            Some((com, order, rng.state()))
+        })
+    }
+
+    /// `overlapping_modularity`'s sums (see `communities::overlap_stats`).
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::type_complexity)]
+    fn overlap_stats(
+        &self,
+        py: Python<'_>,
+        flat: Vec<u32>,
+        ends: Vec<usize>,
+        membership: Vec<u64>,
+        weight: Option<&str>,
+        float: bool,
+        compensated: bool,
+    ) -> PyResult<(Py<PyAny>, Vec<(f64, f64)>)> {
+        self.check_flat(&flat, &ends)?;
+        if membership.len() != self.n {
+            return Err(PyValueError::new_err("one count per node expected"));
+        }
+        let w = self.weight_slice(weight, false)?;
+        if float && w.is_none() {
+            return Err(PyValueError::new_err("float sums need a weight"));
+        }
+        if !float && communities::degrees_int(&self.succ, self.n, w).is_none() {
+            return Err(PyNotImplementedError::new_err(
+                "integer weights are too large",
+            ));
+        }
+        let (total, per) = py.detach(|| {
+            communities::overlap_stats(
+                &self.succ,
+                self.n,
+                w,
+                float,
+                compensated,
+                &membership,
+                &flat,
+                &ends,
+            )
+        });
+        Ok((num_object(py, total)?, per))
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -4843,6 +5273,49 @@ fn unzip3(items: Vec<(u32, u32, u8)>) -> (Vec<u32>, Vec<u32>, Vec<u8>) {
     (us, vs, labels)
 }
 
+// --- Batch 15: communities, efficiency and structural holes ---
+
+impl CoreGraph {
+    /// Checks node lists flattened with `ends` (each list's end).
+    fn check_flat(&self, flat: &[u32], ends: &[usize]) -> PyResult<()> {
+        if ends.windows(2).any(|w| w[0] > w[1]) || ends.last().is_some_and(|&e| e != flat.len()) {
+            return Err(PyValueError::new_err("bad list ends"));
+        }
+        for &v in flat {
+            self.check_index(v as usize)?;
+        }
+        Ok(())
+    }
+}
+
+/// A batch 15 sum as the Python int or float NetworkX gets.
+fn num_object(py: Python<'_>, x: communities::Num) -> PyResult<Py<PyAny>> {
+    Ok(match x {
+        communities::Num::Int(i) => i.into_pyobject(py)?.into_any().unbind(),
+        communities::Num::Float(f) => PyFloat::new(py, f).into_any().unbind(),
+    })
+}
+
+/// `girvan_newman`'s working graph, one level of communities per call.
+#[pyclass(module = "rustnx._core")]
+pub struct GirvanNewman {
+    g: communities::EditableGraph,
+    scale: Option<f64>,
+}
+
+#[pymethods]
+impl GirvanNewman {
+    /// The next tuple of components, or `None` once the graph has no edges.
+    fn next_level(&mut self, py: Python<'_>) -> Option<Vec<Vec<u32>>> {
+        if self.g.number_of_edges() == 0 {
+            return None;
+        }
+        let scale = self.scale;
+        let g = &mut self.g;
+        Some(py.detach(|| g.girvan_newman_step(scale)))
+    }
+}
+
 /// Link prediction scores for batches of pairs (`CoreGraph.link_scorer`).
 #[pyclass(module = "rustnx._core", frozen)]
 pub struct LinkScorer {
@@ -5284,6 +5757,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Boruvka>()?;
     m.add_class::<CliqueQueue>()?;
     m.add_class::<FlowRun>()?;
+    m.add_class::<GirvanNewman>()?;
     m.add_function(wrap_pyfunction!(graph::build_graph, m)?)?;
     m.add_function(wrap_pyfunction!(serialize::_core_graph_from_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(native::build_native, m)?)?;

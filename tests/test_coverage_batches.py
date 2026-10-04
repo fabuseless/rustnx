@@ -4227,3 +4227,375 @@ def test_batch14_link_prediction_notices_changes():
     G.add_edge(0, 29)
     with pytest.raises(RuntimeError):
         list(it)
+
+
+# --- Batch 15: communities, efficiency and structural holes -----------------------
+
+import math  # noqa: E402
+
+community = nx.community
+
+
+def _b15_nan_safe(func):
+    """``func`` with NaN floats (inf - inf in closeness_vitality) replaced by
+    a marker, since NaN never compares equal."""
+
+    def convert(value):
+        if isinstance(value, float) and math.isnan(value):
+            return "nan"
+        if isinstance(value, dict):
+            return {k: convert(v) for k, v in value.items()}
+        return value
+
+    return lambda *args, **kwargs: convert(func(*args, **kwargs))
+
+
+def _b15_rough_weights(G, seed, kind):
+    """``G`` with arbitrary float (or int) weights: sums of these are inexact,
+    so any change in summation order shows up in the last bits."""
+    rng = random.Random(seed)
+    H = G.copy()
+    for _, _, d in H.edges(data=True):
+        d["weight"] = rng.random() * 3 if kind == "float" else rng.randint(1, 9)
+    return H
+
+
+def _b15_connected(seed, kind="float"):
+    """A connected undirected graph with rough weights, half with str labels."""
+    rng = random.Random(seed)
+    n = rng.randint(4, 40)
+    G = nx.connected_watts_strogatz_graph(n, min(4, n - 1), 0.3, seed=seed)
+    if seed % 2:
+        G = nx.relabel_nodes(G, {v: f"v{(v * 7) % n}" for v in G})
+    H = nx.Graph()
+    nodes = list(G)
+    rng.shuffle(nodes)
+    H.add_nodes_from(nodes)
+    edges = list(G.edges)
+    rng.shuffle(edges)
+    H.add_edges_from(edges)
+    return _b15_rough_weights(H, seed, kind)
+
+
+def _b15_partitions(G, seed):
+    """Partitions of G's nodes in several container types, and a few
+    collections that aren't partitions."""
+    rng = random.Random(seed)
+    nodes = list(G)
+    rng.shuffle(nodes)
+    k = rng.randint(1, 5)
+    blocks = [nodes[i::k] for i in range(k)]
+    good = [
+        [set(b) for b in blocks],
+        [frozenset(b) for b in blocks],
+        [list(b) for b in blocks],
+        tuple(set(b) for b in blocks),
+        [set(b) for b in blocks] + [set()],
+    ]
+    bad = [[set(nodes[:-1])] if nodes else [{"x"}], [set(nodes), set(nodes[:1])], [set(nodes) | {"missing"}]]
+    return good, bad
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch15_measures(seed, directed, weights):
+    G = graph_for(seed, directed, weights)
+    wt = None if weights == "none" else "weight"
+    nodes = list(G)
+    exact_outcome(nx.global_efficiency, G)
+    exact_outcome(nx.local_efficiency, G)
+    for u, v in [(nodes[0], nodes[-1]), (nodes[0], nodes[0]), (nodes[0], "missing")]:
+        exact_outcome(nx.efficiency, G, u, v)
+    exact_outcome(nx.gutman_index, G, weight=wt)
+    exact_outcome(nx.schultz_index, G, weight=wt)
+    if hasattr(nx, "hyper_wiener_index"):
+        exact_outcome(nx.hyper_wiener_index, G, weight=wt)
+    exact_outcome(_b15_nan_safe(nx.closeness_vitality), G, weight=wt)
+    exact_outcome(_b15_nan_safe(nx.closeness_vitality), G, nodes[0], weight=wt)
+    exact_outcome(_b15_nan_safe(nx.closeness_vitality), G, "missing", weight=wt)
+    exact_outcome(_b15_nan_safe(nx.closeness_vitality), G, nodes[-1], weight=wt, wiener_index=7)
+    exact_outcome(nx.flow_hierarchy, G, weight=wt)
+    for centers in [nodes[:1], nodes[:3], nodes[:2] + nodes[:1], [], ["missing"]]:
+        exact_outcome(with_set_order(nx.voronoi_cells), G, centers)
+        exact_outcome(with_set_order(nx.voronoi_cells), G, set(centers), weight=wt)
+
+
+@pytest.mark.parametrize("kind", ["float", "int"])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch15_rough_weights(seed, kind):
+    # Inexact float sums: these match only if every sum runs in NetworkX's order.
+    G = _b15_connected(seed, kind)
+    nodes = list(G)
+    exact_outcome(nx.gutman_index, G, weight="weight")
+    exact_outcome(nx.schultz_index, G, weight="weight")
+    exact_outcome(nx.closeness_vitality, G, weight="weight")
+    exact_outcome(nx.local_efficiency, G)
+    exact_outcome(nx.global_efficiency, G)
+    good, _ = _b15_partitions(G, seed)
+    for resolution in [1, 0.7, 2]:
+        exact_outcome(community.modularity, G, good[0], resolution=resolution)
+    exact_outcome(with_set_order(community.greedy_modularity_communities), G, weight="weight")
+    exact_outcome(with_set_order(community.edge_betweenness_partition), G, 3, weight="weight")
+    exact_outcome(listed(community.asyn_lpa_communities), G, weight="weight", seed=seed)
+    exact_outcome(listed(community.fast_label_propagation_communities), G, weight="weight", seed=seed)
+    D = _b15_rough_weights(nx.gnp_random_graph(len(nodes), 0.15, seed=seed, directed=True), seed, kind)
+    exact_outcome(community.modularity, D, [set(D)], weight="weight")
+    exact_outcome(with_set_order(community.greedy_modularity_communities), D, weight="weight")
+    exact_outcome(listed(community.fast_label_propagation_communities), D, weight="weight", seed=seed)
+    if hasattr(community, "overlapping_modularity"):
+        cover = [set(nodes[::2]), set(nodes[1::2]) | set(nodes[:3])]
+        exact_outcome(community.overlapping_modularity, G, cover)
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch15_quality(seed, directed, weights):
+    G = graph_for(seed, directed, weights)
+    wt = None if weights == "none" else "weight"
+    good, bad = _b15_partitions(G, seed)
+    quality = community.quality
+    for part in good + bad:
+        exact_outcome(community.is_partition, G, part)
+        exact_outcome(community.modularity, G, part, weight=wt)
+        exact_outcome(community.modularity, G, part, weight=wt, resolution=0.5)
+        exact_outcome(community.partition_quality, G, part)
+        exact_outcome(quality.intra_community_edges, G, part)
+        exact_outcome(quality.inter_community_edges, G, part)
+        exact_outcome(quality.inter_community_non_edges, G, part)
+        if hasattr(community, "is_cover"):
+            exact_outcome(community.is_cover, G, part)
+            if not directed:
+                exact_outcome(community.overlapping_modularity, G, part, weight=wt)
+    # Generators, dict partitions, and partitions of only some of the nodes.
+    blocks = good[0]
+    exact_outcome(lambda G, **kw: community.is_partition(G, (set(b) for b in blocks), **kw), G)
+    exact_outcome(lambda G, **kw: community.modularity(G, (set(b) for b in blocks), **kw), G)
+    exact_outcome(lambda G, **kw: community.partition_quality(G, (set(b) for b in blocks), **kw), G)
+    exact_outcome(lambda G, **kw: quality.inter_community_edges(G, (set(b) for b in blocks), **kw), G)
+    exact_outcome(quality.inter_community_edges, G, dict(enumerate(good[0])))
+    exact_outcome(quality.inter_community_edges, G, good[0][1:])
+    exact_outcome(quality.inter_community_non_edges, G, good[0][1:])
+    exact_outcome(quality.intra_community_edges, G, [list(G)[0], ["missing"]])
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch15_greedy_modularity(seed, directed, weights):
+    G = graph_for(seed, directed, weights)
+    wt = None if weights == "none" else "weight"
+    n = len(G)
+    greedy = with_set_order(community.greedy_modularity_communities)
+    exact_outcome(greedy, G, weight=wt)
+    for kwargs in [{"resolution": 0.5}, {"resolution": 2}, {"cutoff": 2}, {"best_n": 2},
+                   {"cutoff": 2, "best_n": 3}, {"best_n": 1}, {"best_n": n}, {"cutoff": 0},
+                   {"cutoff": n + 1}, {"best_n": 1, "cutoff": 2}, {"cutoff": 1.5}]:
+        exact_outcome(greedy, G, weight=wt, **kwargs)
+    if not directed and n <= 20:
+        naive = with_set_order(community.naive_greedy_modularity_communities)
+        exact_outcome(naive, G, weight=wt)
+        exact_outcome(naive, G, weight=wt, resolution=0.5)
+        exact_outcome(naive, G, weight=wt, resolution=2)
+
+
+@pytest.mark.parametrize("weights", ["none", "float"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch15_divisive(seed, directed, weights):
+    G = graph_for(seed, directed, weights)
+    wt = None if weights == "none" else "weight"
+    if len(G) <= 25:
+        exact_outcome(listed(community.girvan_newman), G)
+    else:
+        first = lambda G, **kw: list(zip(range(3), community.girvan_newman(G, **kw)))  # noqa: E731
+        exact_outcome(with_set_order(first), G)
+    for k in [0, 1, 2, 3, len(G), len(G) + 1, 2.0]:
+        exact_outcome(with_set_order(community.edge_betweenness_partition), G, k, weight=wt)
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch15_label_propagation(seed, directed, weights):
+    G = graph_for(seed, directed, weights)
+    wt = None if weights == "none" else "weight"
+    for func in [community.asyn_lpa_communities, community.fast_label_propagation_communities]:
+        exact_outcome(listed(func), G, weight=wt, seed=seed)
+        # A fresh generator for each backend.
+        exact_outcome(listed(lambda G, **kw: func(G, weight=wt, seed=random.Random(seed), **kw)), G)
+        # The global generator: the draws and the state left behind match.
+        def with_global(G, func=func, **kw):
+            random.seed(seed)
+            result = list(func(G, weight=wt, **kw))
+            return result, random.random()
+
+        exact_outcome(with_set_order(with_global), G)
+    if not directed:
+        for k in [1, 2, 3, 0, 2.0, len(G) + 1]:
+            exact_outcome(listed(community.asyn_fluidc), G, k, seed=seed)
+        exact_outcome(listed(community.asyn_fluidc), G, 2, max_iter=1, seed=seed)
+        exact_outcome(listed(community.asyn_fluidc), G, 2, max_iter=0, seed=seed)
+
+
+@pytest.mark.parametrize(
+    "G",
+    [
+        nx.empty_graph(0),
+        nx.empty_graph(1),
+        nx.empty_graph(3),
+        nx.path_graph(2),
+        nx.path_graph(4),
+        nx.complete_graph(4),
+        nx.barbell_graph(4, 2),
+        nx.Graph([(0, 0)]),
+        nx.Graph([(0, 0), (0, 1)]),
+        nx.DiGraph([(0, 1), (1, 0), (1, 2)]),
+        nx.DiGraph([(0, 0)]),
+    ],
+    ids=lambda G: f"{type(G).__name__}{list(G.edges)}",
+)
+def test_batch15_small_cases(G):
+    nodes = list(G)
+    part = [set(nodes[::2]), set(nodes[1::2])]
+    funcs = [
+        nx.global_efficiency, nx.local_efficiency, nx.gutman_index, nx.schultz_index,
+        _b15_nan_safe(nx.closeness_vitality), nx.flow_hierarchy,
+        lambda G, **kw: community.modularity(G, part, **kw),
+        lambda G, **kw: community.partition_quality(G, part, **kw),
+        lambda G, **kw: community.quality.inter_community_non_edges(G, part, **kw),
+        with_set_order(community.greedy_modularity_communities),
+        with_set_order(community.naive_greedy_modularity_communities),
+        listed(community.girvan_newman),
+        listed(lambda G, **kw: community.asyn_lpa_communities(G, seed=1, **kw)),
+        listed(lambda G, **kw: community.fast_label_propagation_communities(G, seed=1, **kw)),
+        listed(lambda G, **kw: community.asyn_fluidc(G, 1, seed=1, **kw)),
+        with_set_order(lambda G, **kw: community.edge_betweenness_partition(G, 2, **kw)),
+    ]
+    if hasattr(nx, "hyper_wiener_index"):
+        funcs.append(nx.hyper_wiener_index)
+    for func in funcs:
+        exact_outcome(func, G)
+    if nodes:
+        exact_outcome(_b15_nan_safe(nx.closeness_vitality), G, nodes[0])
+        exact_outcome(nx.efficiency, G, nodes[0], nodes[-1])
+        exact_outcome(with_set_order(nx.voronoi_cells), G, nodes[:1])
+
+
+def test_batch15_known_cases():
+    G = nx.karate_club_graph()
+    exact_outcome(with_set_order(community.greedy_modularity_communities), G)
+    exact_outcome(with_set_order(community.greedy_modularity_communities), G, weight="weight")
+    exact_outcome(with_set_order(community.naive_greedy_modularity_communities), G)
+    exact_outcome(with_set_order(lambda G, **kw: list(zip(range(4), community.girvan_newman(G, **kw)))), G)
+    exact_outcome(community.modularity, G, community.label_propagation_communities(G))
+    exact_outcome(nx.local_efficiency, G)
+    exact_outcome(nx.closeness_vitality, G, weight="weight")
+    # Ties everywhere: equal betweenness, equal modularity gains.
+    for H in [nx.cycle_graph(8), nx.complete_graph(6), nx.grid_2d_graph(3, 4), nx.star_graph(5)]:
+        exact_outcome(listed(community.girvan_newman), H)
+        exact_outcome(with_set_order(community.greedy_modularity_communities), H)
+        exact_outcome(with_set_order(community.naive_greedy_modularity_communities), H)
+        exact_outcome(with_set_order(community.edge_betweenness_partition), H, 3)
+    # A directed graph whose undirected copy reorders neighbors.
+    D = nx.DiGraph([(3, 0), (2, 0), (1, 0), (0, 4), (4, 1), (2, 3)])
+    exact_outcome(listed(community.girvan_newman), D)
+    exact_outcome(nx.flow_hierarchy, D)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(10))
+def test_batch15_multigraphs(seed, directed, restore_config):
+    M = random_multigraph(seed, directed, "int")
+    nodes = list(M)
+    if not directed:
+        exact_outcome(nx.global_efficiency, M)
+        exact_outcome(nx.local_efficiency, M)
+        exact_outcome(nx.efficiency, M, nodes[0], nodes[-1])
+    exact_outcome(_b15_nan_safe(nx.closeness_vitality), M, weight="weight")
+    exact_outcome(with_set_order(nx.voronoi_cells), M, nodes[:2])
+    # These fall back.
+    exact_outcome(community.modularity, M, [set(M)])
+    exact_outcome(with_set_order(community.greedy_modularity_communities), M)
+    exact_outcome(nx.flow_hierarchy, M)
+    exact_outcome(listed(lambda G, **kw: community.asyn_lpa_communities(G, seed=1, **kw)), M)
+
+
+def test_batch15_unsupported_fall_back(restore_config):
+    G = graph_for(3, False, "int")
+    nodes = list(G)
+    G.add_edge(nodes[0], nodes[1], weight=0.5)  # mixed int and float weights
+    exact_outcome(community.modularity, G, [set(G)])
+    exact_outcome(with_set_order(community.greedy_modularity_communities), G, weight="weight")
+    exact_outcome(nx.gutman_index, G, weight="weight")
+    exact_outcome(with_set_order(community.naive_greedy_modularity_communities), _b15_connected(1), weight="weight")
+    exact_outcome(listed(community.girvan_newman), G, most_valuable_edge=lambda G: next(iter(G.edges)))
+    T = nx.relabel_nodes(nx.path_graph(5), {i: (i, i) for i in range(5)})  # 2-tuple labels
+    exact_outcome(listed(community.girvan_newman), T)
+    exact_outcome(with_set_order(community.edge_betweenness_partition), T, 2)
+    # Node labels that can't be sorted break greedy modularity's ties.
+    Mixed = nx.relabel_nodes(nx.cycle_graph(6), {0: "a", 1: (1,)})
+    exact_outcome(with_set_order(community.greedy_modularity_communities), Mixed)
+    W = nx.path_graph(4)
+    W.add_node("weight")
+    exact_outcome(nx.gutman_index, W)
+    import numpy as np
+
+    exact_outcome(
+        listed(lambda G, **kw: community.asyn_lpa_communities(G, seed=np.random.RandomState(1), **kw)), G
+    )
+
+
+def test_batch15_graph_changes_before_iteration():
+    # girvan_newman and the label propagation generators read the graph
+    # when iteration starts, as NetworkX does.
+    for make in [lambda G, b: community.girvan_newman(G, backend=b),
+                 lambda G, b: community.asyn_lpa_communities(G, seed=1, backend=b),
+                 lambda G, b: community.fast_label_propagation_communities(G, seed=1, backend=b)]:
+        results = []
+        for backend in ["rustnx", "networkx"]:
+            G = nx.barbell_graph(4, 1)
+            it = make(G, backend)
+            G.remove_edge(0, 1)
+            first = next(it)
+            G.add_edge("x", "y")
+            results.append([first, *it])
+        assert results[0] == results[1]
+
+
+def test_batch15_runs_in_rust():
+    G = nx.connected_watts_strogatz_graph(30, 4, 0.2, seed=1)
+    D = nx.gnp_random_graph(30, 0.1, seed=1, directed=True)
+    part = [set(range(15)), set(range(15, 30))]
+    calls = [
+        lambda: nx.efficiency(G, 0, 9, backend="rustnx"),
+        lambda: nx.global_efficiency(G, backend="rustnx"),
+        lambda: nx.local_efficiency(G, backend="rustnx"),
+        lambda: nx.closeness_vitality(G, backend="rustnx"),
+        lambda: nx.gutman_index(G, backend="rustnx"),
+        lambda: nx.schultz_index(G, backend="rustnx"),
+        lambda: nx.flow_hierarchy(D, backend="rustnx"),
+        lambda: nx.voronoi_cells(G, [0, 5], backend="rustnx"),
+        lambda: community.modularity(G, part, backend="rustnx"),
+        lambda: community.modularity(D, part, backend="rustnx"),
+        lambda: community.partition_quality(G, part, backend="rustnx"),
+        lambda: community.is_partition(G, part, backend="rustnx"),
+        lambda: community.quality.intra_community_edges(G, part, backend="rustnx"),
+        lambda: community.quality.inter_community_edges(G, part, backend="rustnx"),
+        lambda: community.quality.inter_community_non_edges(G, part, backend="rustnx"),
+        lambda: community.greedy_modularity_communities(G, backend="rustnx"),
+        lambda: community.naive_greedy_modularity_communities(nx.path_graph(8), backend="rustnx"),
+        lambda: list(community.girvan_newman(G, backend="rustnx")),
+        lambda: community.edge_betweenness_partition(G, 3, backend="rustnx"),
+        lambda: list(community.asyn_lpa_communities(G, seed=1, backend="rustnx")),
+        lambda: list(community.fast_label_propagation_communities(D, seed=1, backend="rustnx")),
+        lambda: list(community.asyn_fluidc(G, 3, seed=1, backend="rustnx")),
+    ]
+    if hasattr(nx, "hyper_wiener_index"):
+        calls.append(lambda: nx.hyper_wiener_index(G, backend="rustnx"))
+    if hasattr(community, "is_cover"):
+        calls.append(lambda: community.is_cover(G, part, backend="rustnx"))
+        calls.append(lambda: community.overlapping_modularity(G, part, backend="rustnx"))
+    for call in calls:
+        call()

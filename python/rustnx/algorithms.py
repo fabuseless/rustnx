@@ -10,6 +10,7 @@ from collections import Counter, defaultdict
 from collections.abc import Set
 import inspect
 from itertools import chain, islice
+from itertools import chain, combinations
 import math
 import operator
 import random
@@ -45,6 +46,8 @@ __all__ = [
     "articulation_points",
     "astar_path",
     "astar_path_length",
+    "asyn_fluidc",
+    "asyn_lpa_communities",
     "attracting_components",
     "attribute_assortativity_coefficient",
     "attribute_mixing_dict",
@@ -88,6 +91,7 @@ __all__ = [
     "check_planarity_recursive",
     "chordal_graph_treewidth",
     "closeness_centrality",
+    "closeness_vitality",
     "clustering",
     "cn_soundarajan_hopcroft",
     "color",
@@ -129,6 +133,7 @@ __all__ = [
     "eccentricity",
     "edge_betweenness_centrality",
     "edge_betweenness_centrality_subset",
+    "edge_betweenness_partition",
     "edge_bfs",
     "edge_boundary",
     "edge_connectivity",
@@ -137,15 +142,18 @@ __all__ = [
     "edge_expansion",
     "edge_load_centrality",
     "edmonds_karp",
+    "efficiency",
     "eigenvector_centrality",
     "enumerate_all_cliques",
     "eulerian_circuit",
     "eulerian_path",
     "fast_could_be_isomorphic",
+    "fast_label_propagation_communities",
     "faster_could_be_isomorphic",
     "find_cycle",
     "find_minimal_d_separator",
     "find_negative_cycle",
+    "flow_hierarchy",
     "floyd_warshall",
     "floyd_warshall_numpy",
     "floyd_warshall_predecessor_and_distance",
@@ -157,16 +165,20 @@ __all__ = [
     "get_counterexample",
     "get_counterexample_recursive",
     "girth",
+    "girvan_newman",
+    "global_efficiency",
     "global_reaching_centrality",
     "goldberg_radzik",
     "gomory_hu_tree",
     "greedy_branching",
     "greedy_color",
+    "greedy_modularity_communities",
     "group_betweenness_centrality",
     "group_closeness_centrality",
     "group_degree_centrality",
     "group_in_degree_centrality",
     "group_out_degree_centrality",
+    "gutman_index",
     "harmonic_centrality",
     "harmonic_diameter",
     "has_bridges",
@@ -174,9 +186,13 @@ __all__ = [
     "has_eulerian_path",
     "has_path",
     "hopcroft_karp_matching",
+    "hyper_wiener_index",
     "immediate_dominators",
     "in_degree_centrality",
+    "inter_community_edges",
+    "inter_community_non_edges",
     "intersection_array",
+    "intra_community_edges",
     "is_aperiodic",
     "is_arborescence",
     "is_at_free",
@@ -189,6 +205,7 @@ __all__ = [
     "is_coloring",
     "is_connected",
     "is_connected_dominating_set",
+    "is_cover",
     "is_d_separator",
     "is_digraphical",
     "is_directed_acyclic_graph",
@@ -206,6 +223,7 @@ __all__ = [
     "is_maximal_matching",
     "is_minimal_d_separator",
     "is_multigraphical",
+    "is_partition",
     "is_perfect_graph",
     "is_perfect_matching",
     "is_planar",
@@ -240,6 +258,7 @@ __all__ = [
     "lexicographical_topological_sort",
     "local_bridges",
     "local_edge_connectivity",
+    "local_efficiency",
     "local_node_connectivity",
     "local_reaching_centrality",
     "lowest_common_ancestor",
@@ -270,9 +289,11 @@ __all__ = [
     "minimum_st_edge_cut",
     "minimum_st_node_cut",
     "mixing_expansion",
+    "modularity",
     "multi_source_dijkstra",
     "multi_source_dijkstra_path",
     "multi_source_dijkstra_path_length",
+    "naive_greedy_modularity_communities",
     "negative_edge_cycle",
     "network_simplex",
     "newman_betweenness_centrality",
@@ -297,7 +318,9 @@ __all__ = [
     "onion_layers",
     "out_degree_centrality",
     "overall_reciprocity",
+    "overlapping_modularity",
     "pagerank",
+    "partition_quality",
     "partition_spanning_tree",
     "percolation_centrality",
     "periphery",
@@ -315,6 +338,7 @@ __all__ = [
     "root_trees",
     "rooted_tree_isomorphism",
     "s_metric",
+    "schultz_index",
     "score_sequence",
     "sets",
     "shortest_augmenting_path",
@@ -357,6 +381,7 @@ __all__ = [
     "vf2pp_is_monomorphic",
     "vf2pp_subgraph_is_isomorphic",
     "volume",
+    "voronoi_cells",
     "voterank",
     "weakly_connected_components",
     "weisfeiler_lehman_graph_hash",
@@ -8538,3 +8563,609 @@ def number_of_walks(G, walk_length):
     rows = G._core.walk_counts(walk_length)
     nodes = G._nodes
     return {u: dict(zip(nodes, row)) for u, row in zip(nodes, rows)}
+
+
+# --- Batch 15: communities, efficiency and structural holes ----------------------
+#
+# Communities come back as sets built in NetworkX's insertion order (or from
+# the same frozenset operations, replayed in Python), so they iterate alike.
+
+
+def efficiency(G, u, v):
+    _undirected_only(G)
+    if u is None or v is None:
+        raise NotImplementedError("NetworkX's shortest_path_length returns a dict here")
+    try:
+        eff = 1 / shortest_path_length(G, u, v)
+    except nx.NetworkXNoPath:
+        eff = 0
+    return eff
+
+
+def global_efficiency(G):
+    _undirected_only(G)
+    n = len(G)
+    denom = n * (n - 1)
+    if denom != 0:
+        # NetworkX adds `1 / d` pair by pair, sources in order, each in BFS
+        # order; the Rust total adds them in that order.
+        return G._core.global_efficiency_total() / denom
+    return 0
+
+
+def local_efficiency(G):
+    _undirected_only(G)
+    n = len(G)
+    core, nodes, index = G._core, G._nodes, G._index
+    orders = []
+    for v in range(n):
+        nbrs = core.neighbors(v)
+        if 2 * len(nbrs) < n:
+            # `G.subgraph(G[v])` iterates its node set, a Python set, when
+            # it holds fewer than half of G's nodes: build the same set.
+            orders.append([index[x] for x in set([nodes[i] for i in nbrs])])
+        else:
+            orders.append(None)
+    values = core.local_efficiencies(orders)
+    return sum([0 if x is None else x for x in values]) / n
+
+
+def _distance_index(G, weight, kind):
+    """``gutman_index`` (kind 0), ``schultz_index`` (1) and
+    ``hyper_wiener_index`` (2)."""
+    _undirected_only(G)
+    _check_not_null(G)
+    if not is_connected(G):
+        return float("inf")
+    if "weight" in G:
+        # NetworkX's `dict(G.degree, weight=weight)` adds a "weight" key.
+        raise NotImplementedError("a node named 'weight' runs in NetworkX")
+    float_mode = False
+    if weight is not None:
+        weight, all_int, has_hidden = _check_weight(G, weight)
+        if has_hidden or G._core.weight_mixed(weight) or G._core.has_negative_weight(weight):
+            raise NotImplementedError("rustnx needs non-negative numeric weights here")
+        float_mode = not all_int
+        if float_mode and kind == 2:
+            raise NotImplementedError("float powers run in NetworkX")
+    total = G._core.distance_index(kind, weight, float_mode, _COMPENSATED_SUM)
+    if total is None:
+        raise NotImplementedError("the sum is too large to match exactly")
+    return total / 2
+
+
+def gutman_index(G, weight=None):
+    return _distance_index(G, weight, 0)
+
+
+def schultz_index(G, weight=None):
+    return _distance_index(G, weight, 1)
+
+
+def hyper_wiener_index(G, weight=None):
+    return _distance_index(G, weight, 2)
+
+
+def closeness_vitality(G, node=None, weight=None, wiener_index=None):
+    float_mode = False
+    if weight is not None:
+        weight, all_int, has_hidden = _check_weight(G, weight)
+        if has_hidden or G._core.weight_mixed(weight) or G._core.has_negative_weight(weight):
+            raise NotImplementedError("rustnx needs non-negative numeric weights here")
+        float_mode = not all_int
+    directed = G.is_directed()
+
+    def value(total):
+        if total is None:
+            return float("inf")
+        return total if directed else total / 2
+
+    n = len(G)
+    whole = wiener_index is None
+    if whole:
+        _check_not_null(G)  # nx.wiener_index raises on the null graph
+    if node is not None:
+        {node}  # raises TypeError for an unhashable node, as `set(G) - {node}` does
+        i = G._index.get(node)
+        if (n - (i is not None)) == 0:
+            raise nx.NetworkXPointlessConcept("Connectivity is undefined for the null graph.")
+        removals = [] if i is None else [i]
+        total, after = G._core.vitality_totals(
+            weight, float_mode, _COMPENSATED_SUM, removals, whole or i is None
+        )
+        if whole:
+            wiener_index = value(total)
+        return wiener_index - value(total if i is None else after[0])
+    if n == 0:
+        return {}
+    if n == 1:
+        raise nx.NetworkXPointlessConcept("Connectivity is undefined for the null graph.")
+    total, after = G._core.vitality_totals(
+        weight, float_mode, _COMPENSATED_SUM, list(range(n)), whole
+    )
+    if whole:
+        wiener_index = value(total)
+    return {v: wiener_index - value(t) for v, t in zip(G._nodes, after)}
+
+
+def flow_hierarchy(G, weight=None):
+    if G._core.number_of_edges() == 0:
+        raise nx.NetworkXError("flow_hierarchy not applicable to empty graphs")
+    if not G.is_directed():
+        raise nx.NetworkXError("G must be a digraph in flow_hierarchy")
+    if weight is not None:
+        weight, all_int, has_hidden = _check_weight(G, weight)
+        if has_hidden or not all_int:
+            raise NotImplementedError("rustnx sums integer weights here")
+    inside, total = G._core.scc_arc_weights(weight)
+    if weight is None:
+        return 1 - inside / total
+    if max(abs(inside), abs(total)) >= _MAX_EXACT_INT:
+        raise NotImplementedError("weights too large to sum exactly as floats")
+    # `size(weight)` halves the degree sum with `/`: floats.
+    return 1 - float(inside) / float(total)
+
+
+def voronoi_cells(G, center_nodes, weight="weight"):
+    positions = _multi_sources(G, center_nodes)
+    weight, _, _ = _check_weight(G, weight)
+    order, _, parents, seen, roots = G._core.dijkstra_forest(positions, weight, None)
+    # The key order of `multi_source_dijkstra_path`'s result (see `_multi_paths`).
+    distinct = list(dict.fromkeys(positions))
+    k = len(distinct)
+    if _dijkstra_paths_in_pop_order():
+        if len(roots) != k or set(order[:k]) != set(distinct):
+            raise NotImplementedError("negative weights reorder the sources")
+        key_order = distinct + order[k:]
+    else:
+        key_order = seen
+    root = {}
+    for v, p in zip(order, parents):
+        root[v] = v if p == _NO_PARENT else root[p]
+    nodes = G._nodes
+    nearest = {nodes[v]: nodes[root[v]] for v in key_order}
+    cells = nx.utils.groups(nearest)
+    unreachable = set(nodes) - set(nearest)
+    if unreachable:
+        cells["unreachable"] = unreachable
+    return cells
+
+
+# Communities (todo item 40).
+
+
+def _present_nodes(G, communities):
+    """``{n for c in communities for n in c if n in G}``."""
+    index = G._index
+    try:
+        return {n for c in communities for n in c if n in index}
+    except TypeError:
+        return {n for c in communities for n in c if n in G}
+
+
+def is_partition(G, communities):
+    if not isinstance(communities, list):
+        communities = list(communities)
+    nodes = _present_nodes(G, communities)
+    return len(G) == len(nodes) == sum(len(c) for c in communities)
+
+
+def is_cover(G, communities):
+    if not isinstance(communities, list):
+        communities = list(communities)
+    nodes = _present_nodes(G, communities)
+    return len(nodes) == len(G)
+
+
+@functools.cache
+def _modularity_zero_check():
+    """Whether NetworkX's ``modularity`` returns 0 for a graph without edge
+    weight (3.5+); before, it divided by zero."""
+    try:
+        return "if m == 0" in inspect.getsource(nx.community.modularity.orig_func)
+    except (AttributeError, OSError, TypeError):
+        return False
+
+
+def _modularity_weight(G, weight):
+    """``(weight, float sums?)`` for NetworkX's weighted degree and edge
+    sums; declines weights whose Python sums mix ints and floats."""
+    if weight is None:
+        return None, False
+    weight, all_int, has_hidden = _check_weight(G, weight)
+    if has_hidden or G._core.weight_mixed(weight):
+        raise NotImplementedError("rustnx needs all-int or all-float weights here")
+    return weight, not all_int
+
+
+def _community_positions(G, communities):
+    """Each community's nodes as positions, in ``set(community)`` order,
+    flattened with each community's end."""
+    index = G._index
+    flat, ends = [], []
+    for c in communities:
+        flat.extend([index[n] for n in set(c)])
+        ends.append(len(flat))
+    return flat, ends
+
+
+def modularity(G, communities, weight="weight", resolution=1):
+    if not isinstance(communities, list):
+        communities = list(communities)
+    if not is_partition(G, communities):
+        # NetworkX's NotAPartition names its own graph.
+        raise NotImplementedError("NetworkX raises NotAPartition here")
+    weight, float_mode = _modularity_weight(G, weight)
+    if float_mode and G.is_directed():
+        G._ensure_exact_pred()  # in-degree sums follow G._pred's order
+    flat, ends = _community_positions(G, communities)
+    total, per = G._core.modularity_stats(flat, ends, weight, float_mode, _COMPENSATED_SUM)
+    if G.is_directed():
+        m = total
+        if m == 0:
+            if not _modularity_zero_check():
+                raise NotImplementedError("NetworkX divides by zero here")
+            return 0
+        norm = 1 / m**2
+    else:
+        deg_sum = total
+        m = deg_sum / 2
+        if m == 0:
+            if not _modularity_zero_check():
+                raise NotImplementedError("NetworkX divides by zero here")
+            return 0
+        norm = 1 / deg_sum**2
+    return sum([l_c / m - resolution * out_sum * in_sum * norm for l_c, out_sum, in_sum in per])
+
+
+def partition_quality(G, partition):
+    node_community = {}
+    for i, community in enumerate(partition):
+        for node in community:
+            node_community[node] = i
+    possible_inter_community_edges = sum(
+        len(p1) * len(p2) for p1, p2 in combinations(partition, 2)
+    )
+    if G.is_directed():
+        possible_inter_community_edges *= 2
+    n = len(G)
+    total_pairs = n * (n - 1)
+    if not G.is_directed():
+        total_pairs //= 2
+    index = G._index
+    block = [-1] * n
+    for node, i in node_community.items():
+        j = index.get(node)
+        if j is not None:
+            block[j] = i
+    counts = G._core.block_edge_counts(block, True)
+    if counts is None:
+        raise NotImplementedError("NetworkX raises KeyError for a node in no community")
+    intra_community_edges, inter = counts
+    inter_community_non_edges = possible_inter_community_edges - inter
+    coverage = intra_community_edges / G._core.number_of_edges()
+    performance = (intra_community_edges + inter_community_non_edges) / total_pairs
+    return coverage, performance
+
+
+def _subgraph_positions(G, nbunch):
+    """The nodes ``G.subgraph(nbunch)`` keeps, as distinct positions."""
+    index = G._index
+    if nbunch in G:
+        return [index[nbunch]]
+    try:
+        return list(dict.fromkeys([index[n] for n in nbunch if n in index]))
+    except TypeError:
+        raise NotImplementedError("NetworkX raises its nbunch errors here") from None
+
+
+def intra_community_edges(G, partition):
+    flat, ends = [], []
+    for block in partition:
+        flat.extend(_subgraph_positions(G, block))
+        ends.append(len(flat))
+    return G._core.edges_inside_blocks(flat, ends)
+
+
+def _quotient_blocks(G, partition):
+    """``quotient_graph``'s checks: each node's block (``-1``: not in the
+    partition) and the block sizes."""
+    if isinstance(partition, dict):
+        partition = list(partition.values())
+    if iter(partition) is partition:
+        raise NotImplementedError("rustnx needs a reusable partition")
+    partition_nodes = set().union(*partition)
+    index = G._index
+    if len(partition_nodes) != len(G):
+        # NetworkX checks the partition on `G.subgraph(partition_nodes)`.
+        kept = {n for n in partition_nodes if n in index}
+    else:
+        kept = None
+    communities = partition if isinstance(partition, list) else list(partition)
+    if kept is None:
+        size = len(G)
+        nodes = _present_nodes(G, communities)
+    else:
+        size = len(kept)
+        nodes = {n for c in communities for n in c if n in kept}
+    if not size == len(nodes) == sum(len(c) for c in communities):
+        raise nx.NetworkXException("each node must be in exactly one part of `partition`")
+    block = [-1] * len(G)
+    sizes = []
+    for i, c in enumerate(communities):
+        for n in c:
+            block[index[n]] = i
+        sizes.append(len(c))
+    return block, sizes
+
+
+def inter_community_edges(G, partition):
+    block, _ = _quotient_blocks(G, partition)
+    return G._core.block_edge_counts(block, False)[1]
+
+
+def inter_community_non_edges(G, partition):
+    # NetworkX counts the edges of nx.complement(G) between blocks: the
+    # pairs of nodes in different blocks, less G's edges between blocks.
+    block, sizes = _quotient_blocks(G, partition)
+    total = sum(sizes)
+    pairs = total * total - sum(s * s for s in sizes)
+    if not G.is_directed():
+        pairs //= 2
+    return pairs - G._core.block_edge_counts(block, False)[1]
+
+
+def _pair_labels(G):
+    """NetworkX's edge betweenness dict also holds the nodes as keys, so a
+    node that is a 2-tuple could collide with an edge."""
+    if any(type(v) is tuple and len(v) == 2 for v in G._nodes):
+        raise NotImplementedError("2-tuple node labels run in NetworkX")
+
+
+def _betweenness_scale(n):
+    """``edge_betweenness_centrality``'s normalization (the same formula in
+    ``_rescale_e`` and in 3.6's ``_rescale``)."""
+    return 1 / (n * (n - 1)) if n >= 2 else None
+
+
+def girvan_newman(G, most_valuable_edge=None):
+    if most_valuable_edge is not None:
+        raise NotImplementedError("rustnx does not support most_valuable_edge")
+    _pair_labels(G)
+
+    def compute():
+        if G._core.number_of_edges() == 0:
+            yield tuple(connected_components(G))
+            return
+        nodes = G._nodes
+        state = G._core.girvan_newman(_betweenness_scale(len(G)))
+        while True:
+            level = state.next_level()
+            if level is None:
+                return
+            yield tuple({nodes[i] for i in comp} for comp in level)
+
+    return _computed_on_first_next(G, compute, lambda H: nx.community.girvan_newman(H, backend="networkx"))
+
+
+def edge_betweenness_partition(G, number_of_sets, *, weight=None):
+    if number_of_sets <= 0:
+        raise nx.NetworkXError("number_of_sets must be >0")
+    if number_of_sets == 1:
+        return [set(G._nodes)]
+    if number_of_sets == len(G):
+        return [{n} for n in G._nodes]
+    if number_of_sets > len(G):
+        raise nx.NetworkXError("number_of_sets must be <= len(G)")
+    _undirected_only(G)  # connected_components(G.copy())
+    if type(number_of_sets) is not int:
+        raise NotImplementedError("rustnx needs an int number_of_sets")
+    _pair_labels(G)
+    if weight is not None:
+        weight, _, has_hidden = _check_weight(G, weight)
+        if has_hidden:
+            raise NotImplementedError("rustnx does not support None edge weights here")
+    comps = G._core.edge_betweenness_partition(number_of_sets, weight, _betweenness_scale(len(G)))
+    nodes = G._nodes
+    return [{nodes[i] for i in comp} for comp in comps]
+
+
+def _plain_number(value, name):
+    if type(value) not in (int, float, bool) or not abs(value) < _MAX_EXACT_INT:
+        raise NotImplementedError(f"rustnx needs a plain number for {name}")
+    return float(value)
+
+
+def greedy_modularity_communities(G, weight=None, resolution=1, cutoff=1, best_n=None):
+    if not G._core.number_of_edges():
+        return [{n} for n in G._nodes]
+    if (cutoff < 1) or (cutoff > len(G)):
+        raise ValueError(f"cutoff must be between 1 and {len(G)}. Got {cutoff}.")
+    if best_n is not None:
+        if (best_n < 1) or (best_n > len(G)):
+            raise ValueError(f"best_n must be between 1 and {len(G)}. Got {best_n}.")
+        if best_n < cutoff:
+            raise ValueError(f"Must have best_n >= cutoff. Got {best_n} < {cutoff}")
+        if best_n == 1:
+            return [set(G._nodes)]
+    else:
+        best_n = len(G)
+    numbers = [_plain_number(x, name) for x, name in
+               [(resolution, "resolution"), (cutoff, "cutoff"), (best_n, "best_n")]]
+    rank = _node_rank(G)  # ties compare the node tuples
+    weight, float_mode = _modularity_weight(G, weight)
+    if float_mode and G.is_directed():
+        G._ensure_exact_pred()
+    found = G._core.greedy_modularity(weight, float_mode, _COMPENSATED_SUM, numbers[0], rank, *numbers[1:])
+    if found is None:
+        raise NotImplementedError("NetworkX's merge loop fails or can't be followed here")
+    merges, exhausted = found
+    nodes = G._nodes
+    communities = {n: frozenset([n]) for n in nodes}
+    for u, v in merges:
+        u, v = nodes[u], nodes[v]
+        communities[v] = frozenset(communities[u] | communities[v])
+        del communities[u]
+    if exhausted:
+        # The generator ran out: merge the largest communities, as NetworkX does.
+        communities = sorted(communities.values(), key=len, reverse=True)
+        while len(communities) > best_n:
+            comm1, comm2, *rest = communities
+            communities = [comm1 ^ comm2]
+            communities.extend(rest)
+        return communities
+    return sorted(communities.values(), key=len, reverse=True)
+
+
+def naive_greedy_modularity_communities(G, resolution=1, weight=None):
+    _undirected_only(G)
+    weight, float_mode = _modularity_weight(G, weight)
+    if float_mode:
+        raise NotImplementedError("float sums follow frozenset order: NetworkX runs these")
+    if type(resolution) not in (int, float, bool) or (
+        type(resolution) is not float and not abs(resolution) < 2**62
+    ):
+        raise NotImplementedError("rustnx needs a plain number for resolution")
+    deg_sum, _ = G._core.modularity_stats([], [], weight, False, _COMPENSATED_SUM)
+    nodes = G._nodes
+    m = deg_sum / 2
+    if m == 0:
+        if not _modularity_zero_check():
+            raise NotImplementedError("NetworkX divides by zero here")
+        # Every modularity is 0: nothing is merged.
+        return [frozenset([u]) for u in nodes]
+    if deg_sum >= _MAX_EXACT_INT:
+        raise NotImplementedError("weights too large to match exactly")
+    norm = 1 / deg_sum**2
+    if type(resolution) is float:
+        res_int, res_float = None, resolution
+    else:
+        res_int, res_float = int(resolution), 0.0
+    merges = G._core.naive_greedy_modularity(weight, m, norm, res_int, res_float, _COMPENSATED_SUM)
+    if merges is None:
+        raise NotImplementedError("weights too large to match exactly")
+    communities = [frozenset([u]) for u in nodes]
+    for i, j in merges:
+        u, v = communities[i], communities[j]
+        communities[j] = u | v
+        communities[i] = frozenset([])
+    return sorted((c for c in communities if len(c) > 0), key=len, reverse=True)
+
+
+def asyn_lpa_communities(G, weight=None, seed=None):
+    # `seed` is already a `random.Random` (py_random_state); rustnx replays
+    # CPython's Mersenne Twister from its state and hands the state back.
+    if type(seed) is not random.Random:
+        raise NotImplementedError("rustnx replays random.Random generators only")
+    if weight is not None:
+        weight, _, has_hidden = _check_weight(G, weight)
+        if has_hidden:
+            raise NotImplementedError("rustnx does not support None edge weights here")
+
+    def compute():
+        version, internal, gauss = seed.getstate()
+        found = G._core.asyn_lpa(weight, list(internal))
+        if found is None:
+            raise RuntimeError("unexpected random.Random state")
+        labels, internal = found
+        seed.setstate((version, tuple(internal), gauss))
+        yield from nx.utils.groups(dict(zip(G._nodes, labels))).values()
+
+    return _computed_on_first_next(
+        G, compute, lambda H: nx.community.asyn_lpa_communities(H, weight, seed, backend="networkx")
+    )
+
+
+def fast_label_propagation_communities(G, *, weight=None, seed=None):
+    if type(seed) is not random.Random:
+        raise NotImplementedError("rustnx replays random.Random generators only")
+    if weight is not None:
+        weight, _, has_hidden = _check_weight(G, weight)
+        if has_hidden:
+            raise NotImplementedError("rustnx does not support None edge weights here")
+    if G.is_directed():
+        G._ensure_exact_pred()  # `all_neighbors` lists predecessors first
+
+    def compute():
+        version, internal, gauss = seed.getstate()
+        found = G._core.fast_label_propagation(weight, list(internal))
+        if found is None:
+            raise RuntimeError("unexpected random.Random state")
+        labels, internal = found
+        seed.setstate((version, tuple(internal), gauss))
+        yield from nx.utils.groups(dict(zip(G._nodes, labels))).values()
+
+    return _computed_on_first_next(
+        G,
+        compute,
+        lambda H: nx.community.fast_label_propagation_communities(
+            H, weight=weight, seed=seed, backend="networkx"
+        ),
+    )
+
+
+@functools.cache
+def _fluidc_legacy():
+    """Whether ``asyn_fluidc`` is NetworkX 3.5's or older: it loops while
+    ``cont``, breaking once ``iter_count > max_iter``, and accepts any
+    ``max_iter``. ``None`` if unrecognized."""
+    try:
+        source = inspect.getsource(nx.community.asyn_fluidc.orig_func)
+    except (AttributeError, OSError, TypeError):
+        return None
+    if "while cont and iter_count < max_iter:" in source and "must be greater than 0" in source:
+        return False
+    if "if iter_count > max_iter:" in source:
+        return True
+    return None
+
+
+def asyn_fluidc(G, k, max_iter=100, seed=None):
+    _undirected_only(G)
+    if not isinstance(k, int):
+        raise nx.NetworkXError("k must be an integer.")
+    if not k > 0:
+        raise nx.NetworkXError("k must be greater than 0.")
+    if not is_connected(G):
+        raise nx.NetworkXError("Fluid Communities require connected Graphs.")
+    if len(G) < k:
+        raise nx.NetworkXError("k cannot be bigger than the number of nodes.")
+    legacy = _fluidc_legacy()
+    if legacy is None:
+        raise NotImplementedError("unrecognized NetworkX asyn_fluidc")
+    if not legacy and max_iter <= 0:
+        msg = f"{max_iter=} must be greater than 0"
+        raise ValueError(msg)
+    if type(seed) is not random.Random or type(k) is not int or type(max_iter) is not int:
+        raise NotImplementedError("rustnx needs int arguments and a random.Random seed")
+    version, internal, gauss = seed.getstate()
+    found = G._core.asyn_fluidc(k, max(min(max_iter, 2**62), -(2**62)), legacy, list(internal))
+    if found is None:
+        raise NotImplementedError("NetworkX's loop fails here")
+    com, order, internal = found
+    seed.setstate((version, tuple(internal), gauss))
+    nodes = G._nodes
+    return iter(nx.utils.groups({nodes[v]: com[v] for v in order}).values())
+
+
+def overlapping_modularity(G, communities, *, weight="weight", resolution=1):
+    _undirected_only(G)
+    if not isinstance(communities, list):
+        communities = list(communities)
+    if not is_cover(G, communities):
+        raise nx.NetworkXError("`communities` is not a valid cover of the nodes of G")
+    index = G._index
+    membership = [0] * len(G)
+    for community in communities:
+        for node in community:
+            i = index.get(node) if node in G else None
+            if i is None:
+                # NetworkX raises KeyError when it reaches the node's degree.
+                raise NotImplementedError("a community holds a node not in G")
+            membership[i] += 1
+    weight, float_mode = _modularity_weight(G, weight)
+    flat, ends = _community_positions(G, communities)
+    deg_sum, per = G._core.overlap_stats(flat, ends, membership, weight, float_mode, _COMPENSATED_SUM)
+    if deg_sum == 0:
+        return 0.0
+    return sum([2 * l_c / deg_sum - resolution * (k_c / deg_sum) ** 2 for l_c, k_c in per])
