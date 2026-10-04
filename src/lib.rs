@@ -17,9 +17,9 @@ use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
-    bipartite, centrality, centrality_more, cluster, cores_more, dag, directed, distance, flow,
-    graph_classes, isomorphism, leftovers, matching, paths, spectral, structure, structure_more,
-    trees_more,
+    bipartite, centrality, centrality_more, cluster, connectivity, cores_more, dag, directed,
+    distance, flow, graph_classes, isomorphism, leftovers, matching, paths, spectral, structure,
+    structure_more, trees_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -33,6 +33,10 @@ impl From<NegativeCycle> for PyErr {
 
 fn planarity_bail() -> PyErr {
     PyNotImplementedError::new_err("NetworkX's planarity test fails on this graph")
+}
+
+fn unbounded() -> PyErr {
+    PyNotImplementedError::new_err("infinite capacity path")
 }
 
 fn all_nodes(n: usize) -> Vec<u32> {
@@ -3497,6 +3501,298 @@ impl CoreGraph {
         }))
     }
 
+    // --- Batch 13: connectivity, disjoint paths and augmentation ---
+
+    /// Edmonds-Karp flow value from `s` to `t` on the auxiliary digraph of
+    /// `local_node_connectivity` (`node_split`: from `sB` to `tA`) or
+    /// `local_edge_connectivity`. `s != t` for edge connectivity.
+    #[pyo3(signature = (node_split, s, t, cutoff=None))]
+    fn conn_local_flow(
+        &self,
+        py: Python<'_>,
+        node_split: bool,
+        s: u32,
+        t: u32,
+        cutoff: Option<f64>,
+    ) -> PyResult<i64> {
+        self.check_index(s as usize)?;
+        self.check_index(t as usize)?;
+        let values = self.conn_flows(py, node_split, vec![(s, t)], cutoff)?;
+        Ok(values[0])
+    }
+
+    /// Flow values (no cutoff) for each pair `(ss[i], ts[i])`, as
+    /// `conn_local_flow`; pairs run in parallel.
+    fn conn_pair_flows(
+        &self,
+        py: Python<'_>,
+        node_split: bool,
+        ss: Vec<u32>,
+        ts: Vec<u32>,
+    ) -> PyResult<Vec<i64>> {
+        if ss.len() != ts.len() {
+            return Err(PyValueError::new_err("one target per source"));
+        }
+        for (&s, &t) in ss.iter().zip(&ts) {
+            self.check_index(s as usize)?;
+            self.check_index(t as usize)?;
+            if !node_split && s == t {
+                return Err(PyValueError::new_err("source and sink are the same node"));
+            }
+        }
+        self.conn_flows(py, node_split, ss.into_iter().zip(ts).collect(), None)
+    }
+
+    /// `node_connectivity(G)` (no source and target given); `isolating`
+    /// is NetworkX 3.7's version (see `connectivity::node_connectivity`).
+    fn conn_node_connectivity(&self, py: Python<'_>, isolating: bool) -> PyResult<i64> {
+        let degree = self.degrees();
+        let pred = self.adj(true);
+        py.detach(|| {
+            let (v, k) = if isolating {
+                let (v, k, _) =
+                    connectivity::isolating_cut(&self.succ, pred, self.n, self.directed);
+                (v, k)
+            } else {
+                // min(G.degree(), key=itemgetter(1)): the first minimum.
+                let v = (0..self.n).min_by_key(|&u| degree[u]).unwrap_or(0);
+                (v, degree[v])
+            };
+            connectivity::node_connectivity(
+                &self.succ,
+                pred,
+                self.n,
+                self.directed,
+                v,
+                k as i64,
+                isolating,
+            )
+        })
+        .map_err(|_| unbounded())
+    }
+
+    /// `edge_connectivity(G)`'s minimum local connectivity with `cutoff`;
+    /// see `connectivity::edge_connectivity`.
+    fn conn_edge_connectivity(&self, py: Python<'_>, cutoff: f64) -> PyResult<Option<i64>> {
+        py.detach(|| connectivity::edge_connectivity(&self.succ, self.n, self.directed, cutoff))
+            .map_err(|_| unbounded())
+    }
+
+    /// One s-t minimum cut: `(flow value, sink side in insertion order,
+    /// cut arcs as us/offsets/vs)`, positions in the auxiliary digraph.
+    /// `graph_rows` reads the cut edges from G's rows instead of the
+    /// auxiliary digraph's (`minimum_st_edge_cut` called on G itself).
+    #[allow(clippy::type_complexity)]
+    fn conn_st_cut(
+        &self,
+        py: Python<'_>,
+        node_split: bool,
+        s: u32,
+        t: u32,
+        graph_rows: bool,
+    ) -> PyResult<(i64, Vec<u32>, Vec<u32>, Vec<u32>, Vec<u32>)> {
+        self.check_index(s as usize)?;
+        self.check_index(t as usize)?;
+        if !node_split && s == t {
+            return Err(PyValueError::new_err("source and sink are the same node"));
+        }
+        py.detach(|| {
+            let (h, s, t) = self.conn_aux(node_split, s, t);
+            let mut r = connectivity::Residual::build(&h);
+            let rows = if graph_rows && !node_split {
+                connectivity::CutRows::Graph(&self.succ)
+            } else {
+                connectivity::CutRows::Aux
+            };
+            let cut = connectivity::st_cut(&h, &mut r, s, t, &rows, false)?;
+            Ok((cut.value, cut.sink_order, cut.us, cut.offsets, cut.vs))
+        })
+        .map_err(|_: connectivity::Unbounded| unbounded())
+    }
+
+    /// `minimum_node_cut` / `minimum_edge_cut`'s search over the pairs
+    /// `(ss[i], ts[i])` on one shared residual network. Returns `None`
+    /// (the initial cut stands) or `(pair index, cut)`, the cut as in
+    /// `conn_st_cut` without the value, or `None` for adjacent nodes.
+    #[allow(clippy::type_complexity, clippy::too_many_arguments)]
+    fn conn_search_cuts(
+        &self,
+        py: Python<'_>,
+        node_split: bool,
+        ss: Vec<u32>,
+        ts: Vec<u32>,
+        skips: Vec<bool>,
+        initial_len: usize,
+        adjacent_both: bool,
+        requeue: bool,
+    ) -> PyResult<Option<(usize, Option<(Vec<u32>, Vec<u32>, Vec<u32>, Vec<u32>)>)>> {
+        if ss.len() != ts.len() || ss.len() != skips.len() {
+            return Err(PyValueError::new_err("one target and flag per source"));
+        }
+        let mut pairs = Vec::with_capacity(ss.len());
+        for ((&s, &t), &skip_if_edge) in ss.iter().zip(&ts).zip(&skips) {
+            self.check_index(s as usize)?;
+            self.check_index(t as usize)?;
+            if !node_split && s == t {
+                return Err(PyValueError::new_err("source and sink are the same node"));
+            }
+            pairs.push(connectivity::CutPair { s, t, skip_if_edge });
+        }
+        py.detach(|| {
+            let h = if node_split {
+                connectivity::node_aux(&self.succ, self.n, self.directed)
+            } else {
+                connectivity::edge_aux(&self.succ, self.n, self.directed)
+            };
+            let chosen = connectivity::search_cuts(
+                &self.succ,
+                &h,
+                node_split,
+                &pairs,
+                initial_len,
+                adjacent_both,
+                requeue,
+            )?;
+            Ok(chosen.map(|(i, cut)| (i, cut.map(|c| (c.sink_order, c.us, c.offsets, c.vs)))))
+        })
+        .map_err(|_: connectivity::Unbounded| unbounded())
+    }
+
+    /// `edge_disjoint_paths` / `node_disjoint_paths` (node positions of G).
+    /// Status 0: the paths; 1: `NetworkXNoPath`; 2: source and sink are the
+    /// same node (edge paths only).
+    #[pyo3(signature = (node_split, s, t, cutoff=None))]
+    fn conn_disjoint_paths(
+        &self,
+        py: Python<'_>,
+        node_split: bool,
+        s: u32,
+        t: u32,
+        cutoff: Option<f64>,
+    ) -> PyResult<(u8, Vec<Vec<u32>>)> {
+        self.check_index(s as usize)?;
+        self.check_index(t as usize)?;
+        py.detach(|| {
+            let (h, s, t) = self.conn_aux(node_split, s, t);
+            // possible = min(H.out_degree(s), H.in_degree(t))
+            let possible = h.succ[s as usize].len().min(h.pred[t as usize].len());
+            if possible == 0 {
+                return Ok((1, Vec::new()));
+            }
+            if s == t {
+                return Ok((2, Vec::new()));
+            }
+            let possible = possible as f64;
+            let cutoff = cutoff.map_or(possible, |c| if c <= possible { c } else { possible });
+            let mut r = connectivity::Residual::build(&h);
+            if r.edmonds_karp(s, t, cutoff)? == 0 {
+                return Ok((1, Vec::new()));
+            }
+            let mut paths = r.disjoint_paths(s, t, cutoff);
+            if node_split {
+                // Each auxiliary node's original node, first occurrences only.
+                let mut seen = vec![false; self.n];
+                for path in paths.iter_mut() {
+                    let mut ids = Vec::new();
+                    for &a in path.iter() {
+                        let i = a / 2;
+                        if !seen[i as usize] {
+                            seen[i as usize] = true;
+                            ids.push(i);
+                        }
+                    }
+                    for &i in &ids {
+                        seen[i as usize] = false;
+                    }
+                    *path = ids;
+                }
+            }
+            Ok((0, paths))
+        })
+        .map_err(|_: connectivity::Unbounded| unbounded())
+    }
+
+    /// `minimum_node_cut` (3.7+): the first node with the smallest
+    /// isolating cut, and whether that cut is its predecessors (directed).
+    fn conn_isolating_cut(&self) -> (usize, bool) {
+        let (v, _, use_pred) =
+            connectivity::isolating_cut(&self.succ, self.adj(true), self.n, self.directed);
+        (v, use_pred)
+    }
+
+    /// Predecessors of `v` in NetworkX's `G.pred[v]` order (call
+    /// `_ensure_exact_pred` first for converted graphs).
+    fn conn_exact_predecessors(&self, v: usize) -> PyResult<Vec<u32>> {
+        self.check_index(v)?;
+        let (rows, _) = self.reverse_exact_order(None)?;
+        Ok(rows.neighbors(v).to_vec())
+    }
+
+    /// `stoer_wagner` on a connected graph with two or more nodes:
+    /// `(status, cut value, nodes in the rebuilt graph's order, reachable
+    /// side in breadth-first order)`. Status 1: a negative weight (outside
+    /// self-loops); 2: an infinite weight, or int weights too large to sum
+    /// exactly in f64; both skip the computation.
+    #[allow(clippy::type_complexity)]
+    #[pyo3(signature = (weight=None))]
+    fn conn_stoer_wagner(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+    ) -> PyResult<(u8, f64, Vec<u32>, Vec<u32>)> {
+        let w = self.weight_slice(weight, false)?;
+        let (all_int, _) = self.weights_info(weight);
+        if let Some(ws) = w {
+            let mut total = 0.0f64;
+            let mut status = 0;
+            for u in 0..self.n {
+                for e in self.succ.range(u) {
+                    if self.succ.targets[e] as usize == u {
+                        continue;
+                    }
+                    let x = ws[e];
+                    if x < 0.0 {
+                        return Ok((1, 0.0, Vec::new(), Vec::new()));
+                    }
+                    if !x.is_finite() {
+                        status = 2;
+                    }
+                    total += x;
+                }
+            }
+            if status == 2 || (all_int && total > (1u64 << 52) as f64) {
+                return Ok((2, 0.0, Vec::new(), Vec::new()));
+            }
+        }
+        Ok(py.detach(|| {
+            let r = connectivity::stoer_wagner(&self.succ, self.n, w);
+            (0, r.cut_value, r.node_order, r.reachable)
+        }))
+    }
+
+    /// `bridge_components`: node positions per component, in insertion order.
+    fn conn_bridge_components(&self, py: Python<'_>) -> Vec<Vec<u32>> {
+        py.detach(|| {
+            let bridges = structure_more::bridges(&self.succ, self.n, None, false);
+            connectivity::bridge_components(&self.succ, self.n, &bridges)
+        })
+    }
+
+    /// `complement_edges` for `u` in `start..end`: flat position pairs.
+    fn conn_complement_edges(&self, py: Python<'_>, start: usize, end: usize) -> Vec<u32> {
+        let end = end.min(self.n);
+        py.detach(|| {
+            connectivity::complement_edges(
+                &self.succ,
+                self.adj(true),
+                self.n,
+                self.directed,
+                start.min(end),
+                end,
+            )
+        })
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -3808,6 +4104,44 @@ impl CoreGraph {
             flags[v as usize] = true;
         }
         Ok(flags)
+    }
+
+    /// The auxiliary digraph for local connectivity, and `s`, `t` mapped
+    /// into it (`sB`, `tA` when node-split).
+    fn conn_aux(&self, node_split: bool, s: u32, t: u32) -> (connectivity::Aux, u32, u32) {
+        if node_split {
+            let h = connectivity::node_aux(&self.succ, self.n, self.directed);
+            (h, 2 * s + 1, 2 * t)
+        } else {
+            (
+                connectivity::edge_aux(&self.succ, self.n, self.directed),
+                s,
+                t,
+            )
+        }
+    }
+
+    fn conn_flows(
+        &self,
+        py: Python<'_>,
+        node_split: bool,
+        pairs: Vec<(u32, u32)>,
+        cutoff: Option<f64>,
+    ) -> PyResult<Vec<i64>> {
+        py.detach(|| {
+            let h = if node_split {
+                connectivity::node_aux(&self.succ, self.n, self.directed)
+            } else {
+                connectivity::edge_aux(&self.succ, self.n, self.directed)
+            };
+            let pairs: Vec<(u32, u32)> = if node_split {
+                pairs.into_iter().map(|(s, t)| (2 * s + 1, 2 * t)).collect()
+            } else {
+                pairs
+            };
+            connectivity::pair_flows(&h, &pairs, cutoff.unwrap_or(f64::INFINITY))
+        })
+        .map_err(|_| unbounded())
     }
 
     fn check_index(&self, v: usize) -> PyResult<()> {

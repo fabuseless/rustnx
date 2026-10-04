@@ -3719,3 +3719,248 @@ def test_batch12_runs_in_rust(restore_config):
     ]
     for call in calls:
         assert _b12_norm(call("rustnx")) == _b12_norm(call("networkx"))
+
+
+# --- Batch 13: connectivity, disjoint paths and augmentation -----------------------
+
+import itertools  # noqa: E402
+
+from networkx.algorithms import connectivity as _b13_conn  # noqa: E402
+from networkx.algorithms.connectivity import edge_augmentation as _b13_aug  # noqa: E402
+
+
+def _b13_connected_graph(seed, directed, weights="none"):
+    """graph_for's graph, joined up along a random node order."""
+    G = graph_for(seed, directed, weights)
+    rng = random.Random(seed)
+    order = list(G)
+    rng.shuffle(order)
+    for a, b in zip(order, order[1:]):
+        if rng.random() < 0.3 or not (G.has_edge(a, b) or G.has_edge(b, a)):
+            if rng.random() < 0.5:
+                a, b = b, a
+            if weights == "int":
+                G.add_edge(a, b, weight=rng.randint(1, 4))
+            elif weights == "float":
+                G.add_edge(a, b, weight=rng.choice([0.5, 1.25, 0.1, 0.0]))
+            else:
+                G.add_edge(a, b)
+    return G
+
+
+def _b13_pairs(G, seed):
+    rng = random.Random(seed)
+    nodes = list(G)
+    pairs = [tuple(rng.sample(nodes, 2)) for _ in range(3)] if len(nodes) > 1 else []
+    if nodes:
+        pairs += [(nodes[0], nodes[0]), (nodes[0], "missing"), ("missing", nodes[0])]
+    return pairs
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch13_local_connectivity_and_paths(seed, directed):
+    for G in [graph_for(seed, directed), _b13_connected_graph(seed, directed)]:
+        for s, t in _b13_pairs(G, seed):
+            for cutoff in [None, 0, 1, 2, 2.5]:
+                exact_outcome(_b13_conn.local_node_connectivity, G, s, t, cutoff=cutoff)
+                exact_outcome(_b13_conn.local_edge_connectivity, G, s, t, cutoff=cutoff)
+                exact_outcome(listed(_b13_conn.node_disjoint_paths), G, s, t, cutoff=cutoff)
+                exact_outcome(listed(_b13_conn.edge_disjoint_paths), G, s, t, cutoff=cutoff)
+            exact_outcome(nx.node_connectivity, G, s, t)
+            exact_outcome(nx.edge_connectivity, G, s, t)
+            exact_outcome(nx.edge_connectivity, G, s, t, cutoff=1)
+            # Cut sets in iteration order (string labels make it depend on
+            # NetworkX's set construction).
+            exact_outcome(with_set_order(_b13_conn.minimum_st_edge_cut), G, s, t)
+            exact_outcome(with_set_order(_b13_conn.minimum_st_node_cut), G, s, t)
+            exact_outcome(with_set_order(nx.minimum_node_cut), G, s, t)
+            exact_outcome(with_set_order(nx.minimum_edge_cut), G, s, t)
+        exact_outcome(nx.node_connectivity, G, list(G)[0])  # only a source
+        exact_outcome(nx.minimum_edge_cut, G, t=list(G)[0])
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch13_global_connectivity(seed, directed):
+    for G in [graph_for(seed, directed), _b13_connected_graph(seed, directed)]:
+        exact_outcome(nx.node_connectivity, G)
+        for cutoff in [None, 1, 2, 2.5, 3.0, 100]:
+            exact_outcome(nx.edge_connectivity, G, cutoff=cutoff)
+        # Many cuts on one shared residual network (3.4 to 3.6 reorder it).
+        exact_outcome(with_set_order(nx.minimum_node_cut), G)
+        exact_outcome(with_set_order(nx.minimum_edge_cut), G)
+        nodes = list(G)
+        small = G.subgraph(nodes[:12]).copy()
+        exact_outcome(nx.average_node_connectivity, small)
+        exact_outcome(nx.all_pairs_node_connectivity, small)
+        for nbunch in [nodes[:5], nodes[:1], nodes[:3] + ["missing"], ["missing"] + nodes[:2], []]:
+            exact_outcome(nx.all_pairs_node_connectivity, small, nbunch=nbunch)
+
+
+@pytest.mark.parametrize(
+    "G",
+    [
+        nx.empty_graph(0),
+        nx.empty_graph(1),
+        nx.empty_graph(2),
+        nx.path_graph(2),
+        nx.complete_graph(5),
+        nx.cycle_graph(6),
+        nx.barbell_graph(4, 1),
+        nx.Graph([(0, 0), (0, 1)]),
+        nx.Graph([(0, 0), (1, 1), (0, 1)]),
+        nx.DiGraph([(0, 0)]),
+        nx.DiGraph([(0, 1), (1, 0)]),
+        nx.DiGraph([(0, 1), (1, 2), (2, 0), (0, 2)]),
+        nx.complete_graph(4, create_using=nx.DiGraph),
+    ],
+    ids=lambda G: f"{type(G).__name__}{list(G.edges)}",
+)
+def test_batch13_small_cases(G):
+    for func in [nx.node_connectivity, nx.edge_connectivity, nx.average_node_connectivity,
+                 nx.all_pairs_node_connectivity, with_set_order(nx.minimum_node_cut),
+                 with_set_order(nx.minimum_edge_cut)]:
+        exact_outcome(func, G)
+    for s, t in itertools.product(list(G)[:2], repeat=2):
+        exact_outcome(listed(_b13_conn.edge_disjoint_paths), G, s, t)
+        exact_outcome(listed(_b13_conn.node_disjoint_paths), G, s, t)
+        exact_outcome(with_set_order(_b13_conn.minimum_st_node_cut), G, s, t)
+        exact_outcome(with_set_order(_b13_conn.minimum_st_edge_cut), G, s, t)
+    if not G.is_directed():
+        exact_outcome(with_set_order(nx.stoer_wagner), G)
+        exact_outcome(listed(_b13_conn.bridge_components), G)
+        for k in [1, 2]:
+            exact_outcome(listed(_b13_conn.k_edge_augmentation), G, k)
+            exact_outcome(listed(_b13_conn.k_edge_augmentation), G, k, partial=True)
+            exact_outcome(_b13_conn.is_k_edge_connected, G, k)
+
+
+@pytest.mark.parametrize("seed", range(40))
+@pytest.mark.parametrize("weights", ["none", "int", "float", "missing"])
+def test_batch13_stoer_wagner(seed, weights):
+    C = _b13_connected_graph(seed, False, "none" if weights == "missing" else weights)
+    if weights == "missing":
+        for i, (u, v, d) in enumerate(C.edges(data=True)):
+            if i % 2:
+                d["weight"] = random.Random(seed + i).randint(1, 5)
+    exact_outcome(with_set_order(nx.stoer_wagner), C)
+    exact_outcome(with_set_order(nx.stoer_wagner), C, weight=None)
+    exact_outcome(with_set_order(nx.stoer_wagner), graph_for(seed, False, weights))  # maybe disconnected
+    if weights == "int" and C.number_of_edges():
+        D = C.copy()
+        u, v = next(iter(D.edges))
+        D.add_edge(u, v, weight=-1)  # add_edge clears the conversion cache
+        exact_outcome(nx.stoer_wagner, D)
+        D.add_edge(u, v, weight=0)
+        exact_outcome(with_set_order(nx.stoer_wagner), D)
+
+
+def test_batch13_stoer_wagner_falls_back():
+    G = nx.cycle_graph(5)
+    for u, v in list(G.edges):
+        G.add_edge(u, v, weight=1 if u % 2 else 1.5)  # mixed ints and floats
+    with pytest.raises(NotImplementedError):
+        nx.stoer_wagner(G, backend="rustnx")
+    G.add_edge(0, 1, weight=float("inf"))
+    with pytest.raises(NotImplementedError):
+        nx.stoer_wagner(G, backend="rustnx")
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_batch13_edge_components(seed):
+    D = graph_for(seed, True)
+    for G in [graph_for(seed, False), _b13_connected_graph(seed, False), D]:
+        if not G.is_directed():
+            exact_outcome(listed(_b13_conn.bridge_components), G)
+        for k in [1, 2, 0]:
+            exact_outcome(listed(_b13_conn.k_edge_components), G, k)
+            if k < 2 or not G.is_directed():
+                # Otherwise NetworkX pops subgraphs from a set of graphs
+                # (address order), so even its own runs differ.
+                exact_outcome(listed(_b13_conn.k_edge_subgraphs), G, k)
+    G = _b13_connected_graph(seed, False)
+    for k in [1, 2, 3, 4, 0]:
+        exact_outcome(_b13_conn.is_k_edge_connected, G, k)
+        for s, t in _b13_pairs(G, seed)[:4]:
+            exact_outcome(_b13_conn.is_locally_k_edge_connected, G, s, t, k)
+    # Dense enough for k = 3 to be decided by flows.
+    H = nx.relabel_nodes(nx.random_regular_graph(4, 12, seed=seed), {i: f"r{i}" for i in range(12)})
+    exact_outcome(_b13_conn.is_k_edge_connected, H, 3)
+    exact_outcome(_b13_conn.is_k_edge_connected, H, 4)
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_batch13_augmentation(seed):
+    for G in [graph_for(seed, False), _b13_connected_graph(seed, False)]:
+        exact_outcome(listed(_b13_aug.unconstrained_one_edge_augmentation), G)
+        exact_outcome(listed(_b13_aug.one_edge_augmentation), G)
+        exact_outcome(listed(_b13_aug.unconstrained_bridge_augmentation), G)
+        exact_outcome(listed(_b13_aug.bridge_augmentation), G)
+        for k in [1, 2, 0]:
+            for partial in [False, True]:
+                exact_outcome(listed(_b13_conn.k_edge_augmentation), G, k, partial=partial)
+    D = graph_for(seed, True)
+    exact_outcome(listed(_b13_aug.unconstrained_one_edge_augmentation), D)
+
+
+def _b13_converted(G, name):
+    from rustnx import interface
+
+    return interface.convert_from_nx(G, name=name)
+
+
+def test_batch13_generators_follow_mutation():
+    # NetworkX's generators start work on the first next(): changes made
+    # before that count.
+    makers = {
+        "edge_disjoint_paths": lambda G: _b13_conn.edge_disjoint_paths(G, 0, 5),
+        "node_disjoint_paths": lambda G: _b13_conn.node_disjoint_paths(G, 0, 5),
+        "bridge_components": lambda G: _b13_conn.bridge_components(G),
+        "k_edge_augmentation": lambda G: _b13_conn.k_edge_augmentation(G, 2),
+    }
+    for name, make in makers.items():
+        results = []
+        for ours in [True, False]:
+            G = nx.path_graph(8)
+            gen = make(_b13_converted(G, name) if ours else G)
+            G.add_edge(0, 4)
+            G.add_edge(1, 5)
+            G.add_edge(7, 3)
+            results.append([sorted(x) if isinstance(x, set) else x for x in gen])
+        assert results[0] == results[1], name
+
+
+def test_batch13_declines():
+    G = nx.complete_graph(5)
+    G.add_edge(0, 0)
+    calls = [
+        lambda: nx.edge_connectivity(G, backend="rustnx"),  # self-loops
+        lambda: _b13_conn.is_k_edge_connected(G, 3, backend="rustnx"),
+        lambda: list(_b13_conn.k_edge_components(G, 3, backend="rustnx")),
+        lambda: list(_b13_conn.k_edge_subgraphs(G, 3, backend="rustnx")),
+        lambda: list(_b13_conn.k_edge_augmentation(G, 3, backend="rustnx")),
+        lambda: list(_b13_aug.one_edge_augmentation(G, avail=[(0, 1)], backend="rustnx")),
+        lambda: nx.node_connectivity(G, flow_func=nx.flow.dinitz, backend="rustnx"),
+        lambda: _b13_conn.local_edge_connectivity(G, [1], 0, backend="rustnx"),
+    ]
+    for call in calls:
+        with pytest.raises(NotImplementedError):
+            call()
+    D = nx.MultiGraph(nx.cycle_graph(4))
+    with pytest.raises(NotImplementedError):
+        nx.node_connectivity(D, backend="rustnx")
+
+
+def test_batch13_runs_in_rust():
+    G = _b13_connected_graph(5, False)
+    D = _b13_connected_graph(5, True)
+    s, t = list(G)[:2]
+    for H in [G, D]:
+        nx.node_connectivity(H, backend="rustnx")
+        nx.edge_connectivity(H, backend="rustnx")
+        nx.minimum_node_cut(H, backend="rustnx")
+        nx.minimum_edge_cut(H, backend="rustnx")
+        list(_b13_conn.node_disjoint_paths(H, s, t, backend="rustnx"))
+    nx.stoer_wagner(G, backend="rustnx")
+    list(_b13_conn.k_edge_augmentation(G, 2, backend="rustnx"))
