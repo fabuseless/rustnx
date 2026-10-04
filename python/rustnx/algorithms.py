@@ -87,6 +87,7 @@ __all__ = [
     "build_flow_dict",
     "build_residual_network",
     "butterflies",
+    "cartesian_product",
     "center",
     "centroid",
     "chain_decomposition",
@@ -108,6 +109,7 @@ __all__ = [
     "connected_components",
     "connected_dominating_set",
     "core_number",
+    "corona_product",
     "cost_of_flow",
     "could_be_isomorphic",
     "cut_size",
@@ -269,7 +271,9 @@ __all__ = [
     "kosaraju_strongly_connected_components",
     "kruskal_mst_edges",
     "label_propagation_communities",
+    "lexicographic_product",
     "lexicographical_topological_sort",
+    "line_graph",
     "local_bridges",
     "local_edge_connectivity",
     "local_efficiency",
@@ -359,6 +363,7 @@ __all__ = [
     "rich_club_coefficient",
     "root_to_leaf_paths",
     "root_trees",
+    "rooted_product",
     "rooted_tree_isomorphism",
     "s_metric",
     "schultz_index",
@@ -383,8 +388,10 @@ __all__ = [
     "square_clustering",
     "steiner_tree",
     "stoer_wagner",
+    "strong_product",
     "strongly_connected_components",
     "symmetric_difference",
+    "tensor_product",
     "threshold_accepting_tsp",
     "to_nested_tuple",
     "to_prufer_sequence",
@@ -9914,3 +9921,92 @@ def moral_graph(G):
     view.add_to(H._node, H._adj, None, 2, deep=True)
     _core._op_pred_combinations(H._adj, base._pred)
     return H
+
+
+@functools.cache
+def _b21_tuple_hashes_match():
+    """Whether rustnx's copy of CPython's tuple hash gives this
+    interpreter's ``hash()`` (``line_graph`` iterates a set of tuples)."""
+    samples = [(), (1,), (1, 2), ("a", -1), (-2, 2**61 - 1), ((1, 2), (3, 4)),
+               ((("x", 0), 5), (2**64, -(2**61))), (1.5, None, "b")]
+
+    def ours(t):
+        return _core._tuple_hash([ours(x) if type(x) is tuple else hash(x) for x in t])
+
+    try:
+        return all(ours(t) == hash(t) for t in samples)
+    except Exception:
+        return False
+
+
+def _b21_canonical_view(G):
+    """``_b21_view``, declining graphs whose adjacency keys aren't
+    interchangeable with their nodes (results built from node objects)."""
+    base, view = _b21_view(G)
+    if not view.keys_canonical():
+        raise NotImplementedError("adjacency keys differ from the nodes")
+    return base, view
+
+
+def line_graph(G, create_using=None):
+    if create_using is not None:
+        raise NotImplementedError("rustnx supports create_using=None only")
+    if not G.is_directed() and not (_sets_replayable() and _b21_tuple_hashes_match()):
+        raise NotImplementedError("Python's set order can't be replayed here")
+    _, view = _b21_canonical_view(G)
+    L = _plain_result_class(G)()
+    view.line_graph_into(*_b21_target(L))
+    return L
+
+
+def _b21_product(G, H):
+    """``_init_product_graph`` and both graphs' views."""
+    if G.is_directed() != H.is_directed():
+        raise nx.NetworkXError("G and H must be both directed or both undirected")
+    _, g = _b21_canonical_view(G)
+    _, h = _b21_canonical_view(H)
+    return (nx.DiGraph() if G.is_directed() else nx.Graph()), g, h
+
+
+def _b21_simple_product(kind, G, H):
+    GH, g, h = _b21_product(G, H)
+    _core._op_product(kind, g, h, *_b21_target(GH))
+    return GH
+
+
+def tensor_product(G, H):
+    return _b21_simple_product("tensor", G, H)
+
+
+def cartesian_product(G, H):
+    return _b21_simple_product("cartesian", G, H)
+
+
+def lexicographic_product(G, H):
+    return _b21_simple_product("lexicographic", G, H)
+
+
+def strong_product(G, H):
+    return _b21_simple_product("strong", G, H)
+
+
+def rooted_product(G, H, root):
+    if root not in H:
+        raise nx.NodeNotFound("root must be a vertex in H")
+    r = H._index[root]
+    found = H._nodes[r]
+    if found is not root and not (type(found) is type(root) and type(root) in (int, str)):
+        # NetworkX's edges carry the root as passed.
+        raise NotImplementedError("root differs from H's node object")
+    _, g = _b21_canonical_view(G)
+    _, h = _b21_canonical_view(H)
+    R = nx.Graph()
+    _core._op_rooted_product(g, h, root, r, R._node, R._adj)
+    return R
+
+
+def corona_product(G, H):
+    _undirected_only(G)  # NetworkX checks G only; H's direction fails below
+    GH, g, h = _b21_product(G, H)
+    _core._op_corona_product(g, h, GH._node, GH._adj)
+    return GH

@@ -5135,3 +5135,65 @@ def test_batch21_reverse_and_moral(seed):
     exact_outcome(_b21_graphs(nx.reverse), G)
     exact_outcome(_b21_graphs(nx.moral_graph), D)
     exact_outcome(_b21_graphs(nx.moral_graph), G)
+
+
+def _b21_small(seed, directed, labels="mixed"):
+    """A small decorated graph for the products (whose results are large),
+    with self-loops and reciprocal edges sometimes."""
+    rng = random.Random(seed)
+    n = rng.randint(0, 7)
+    G = nx.gnp_random_graph(n, rng.choice([0.2, 0.5, 0.9]), seed=seed, directed=directed)
+    if labels == "mixed" and rng.random() < 0.5:
+        G = nx.relabel_nodes(G, {v: rng.choice([f"s{v}", (v, "t"), v + 0.5]) for v in G})
+    if n and rng.random() < 0.4:
+        v = rng.choice(list(G))
+        G.add_edge(v, v)
+    return _b21_decorate(G, seed)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch21_products(seed, directed):
+    G = _b21_small(seed, directed)
+    H = _b21_small(seed + 500, directed)
+    for func in [nx.tensor_product, nx.cartesian_product, nx.lexicographic_product,
+                 nx.strong_product, nx.corona_product]:
+        exact_outcome(_b21_graphs(func), G, H)
+        exact_outcome(_b21_graphs(func), H, G)
+        exact_outcome(_b21_graphs(func), G, G)
+        exact_outcome(_b21_graphs(func), G, H.to_undirected() if directed else H.to_directed())
+    for root in list(H)[:2] + ["missing", [1]]:
+        exact_outcome(_b21_graphs(nx.rooted_product), G, H, root)
+    if 0 in H:
+        exact_outcome(_b21_graphs(nx.rooted_product), G, H, 0.0)  # equal, not identical
+    exact_outcome(_b21_graphs(nx.rooted_product), G, H.to_undirected(), next(iter(H), 0))
+
+
+def test_batch21_corona_collisions():
+    # Corona products mix G's nodes and (g, h) tuples, which can collide.
+    G = nx.Graph([(0, (0, "a")), ((0, "a"), 1)])
+    H = nx.Graph([("a", "b")])
+    exact_outcome(_b21_graphs(nx.corona_product), G, H)
+    exact_outcome(_b21_graphs(nx.corona_product), H, G)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch21_line_graph(seed, directed):
+    G = _b21_decorate(graph_for(seed, directed), seed)
+    exact_outcome(_b21_graphs(nx.line_graph), G)
+    exact_outcome(_b21_graphs(nx.line_graph), _b21_small(seed, directed))
+    exact_outcome(_b21_graphs(nx.line_graph), G, create_using=nx.MultiGraph)
+    exact_outcome(_b21_graphs(nx.line_graph), nx.relabel_nodes(G, {v: ("t", v) for v in G}))
+
+
+def test_batch21_mismatched_keys_fall_back():
+    # An edge added with 1.0 where the node is 1: the adjacency row holds the
+    # key 1.0, which NetworkX's results would show.
+    G = nx.Graph()
+    G.add_nodes_from([2, 1])
+    G.add_edge(1.0, 2)
+    H = nx.path_graph(2)
+    exact_outcome(_b21_graphs(nx.line_graph), G)
+    exact_outcome(_b21_graphs(nx.cartesian_product), G, H)
+    exact_outcome(_b21_graphs(nx.union), G, nx.path_graph([5, 6]))

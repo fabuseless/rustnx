@@ -8,8 +8,9 @@
 
 use pyo3::exceptions::PyNotImplementedError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::{PyDict, PyFloat, PyList, PyTuple};
 
+use super::pyset::PySet as SetReplica;
 use crate::graph::CoreGraph;
 
 fn changed() -> PyErr {
@@ -254,6 +255,23 @@ impl OpView {
         })
     }
 
+    /// Whether every adjacency key is interchangeable with the node it
+    /// stands for (see `same_key`), so results can use the node objects.
+    fn keys_canonical(&self, py: Python<'_>) -> PyResult<bool> {
+        self.keys_canonical_impl(py)
+    }
+
+    /// `line_graph(G)` into the empty graph given by its dicts.
+    fn line_graph_into<'py>(
+        &self,
+        py: Python<'py>,
+        node: Bound<'py, PyDict>,
+        succ: Bound<'py, PyDict>,
+        pred: Option<Bound<'py, PyDict>>,
+    ) -> PyResult<()> {
+        self.line_graph_impl(py, node, succ, pred)
+    }
+
     /// Whether any node is already a key of `node` (`union_all`'s
     /// disjointness test against the nodes added so far).
     fn shares_node(&self, py: Python<'_>, node: &Bound<'_, PyDict>) -> PyResult<bool> {
@@ -373,4 +391,501 @@ pub fn _op_pred_combinations<'py>(
         }
     }
     Ok(())
+}
+
+/// CPython's `hash()` of a tuple, from its items' hashes (`tuplehash`, the
+/// same xxHash-based loop in 3.8 to 3.14; checked at runtime by
+/// `_b21_tuple_hashes_match`).
+pub fn tuple_hash(items: &[i64]) -> i64 {
+    const P1: u64 = 11400714785074694791;
+    const P2: u64 = 14029467366897019727;
+    const P5: u64 = 2870177450012600261;
+    let mut acc = P5;
+    for &h in items {
+        acc = acc.wrapping_add((h as u64).wrapping_mul(P2));
+        acc = acc.rotate_left(31);
+        acc = acc.wrapping_mul(P1);
+    }
+    acc = acc.wrapping_add(items.len() as u64 ^ (P5 ^ 3527539));
+    if acc == u64::MAX {
+        return 1546275796;
+    }
+    acc as i64
+}
+
+/// Whether the dict key `a` and the node `b` it equals are interchangeable
+/// in a result: the same object, or the same type all the way down (`1`
+/// and `1.0`, or `0.0` and `-0.0`, are equal keys a caller can tell apart).
+fn same_key(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>) -> PyResult<bool> {
+    if a.is(b) {
+        return Ok(true);
+    }
+    if !a.get_type().is(b.get_type()) {
+        return Ok(false);
+    }
+    if let (Ok(ta), Ok(tb)) = (a.cast::<PyTuple>(), b.cast::<PyTuple>()) {
+        if ta.len() != tb.len() {
+            return Ok(false);
+        }
+        for (x, y) in ta.iter().zip(tb.iter()) {
+            if !same_key(&x, &y)? {
+                return Ok(false);
+            }
+        }
+        return Ok(true);
+    }
+    if let (Ok(fa), Ok(fb)) = (a.cast::<PyFloat>(), b.cast::<PyFloat>()) {
+        return Ok(fa.value().to_bits() == fb.value().to_bits());
+    }
+    let simple = a.cast::<pyo3::types::PyInt>().is_ok() || a.cast::<pyo3::types::PyString>().is_ok();
+    Ok(simple)
+}
+
+/// The result graph's dicts, for builders that track its nodes by
+/// position (every node new, so no lookups).
+struct Out<'py> {
+    py: Python<'py>,
+    node: Bound<'py, PyDict>,
+    succ: Bound<'py, PyDict>,
+    pred: Option<Bound<'py, PyDict>>,
+}
+
+type RowPair<'py> = (Bound<'py, PyDict>, Option<Bound<'py, PyDict>>);
+
+impl<'py> Out<'py> {
+    /// `add_node` of a node known to be new: its rows (and attribute dict
+    /// `data`, or a new empty one).
+    fn create(&self, key: &Bound<'py, PyAny>, data: Option<Bound<'py, PyDict>>) -> PyResult<RowPair<'py>> {
+        let s = PyDict::new(self.py);
+        self.succ.set_item(key, &s)?;
+        let p = match &self.pred {
+            Some(pred) => {
+                let r = PyDict::new(self.py);
+                pred.set_item(key, &r)?;
+                Some(r)
+            }
+            None => None,
+        };
+        let d = data.unwrap_or_else(|| PyDict::new(self.py));
+        self.node.set_item(key, d)?;
+        Ok((s, p))
+    }
+
+    /// `add_node(key)` (no attributes) for a node that may exist.
+    fn ensure(&self, key: &Bound<'py, PyAny>) -> PyResult<RowPair<'py>> {
+        if self.node.contains(key)? {
+            let s = row_of(&self.succ, key)?;
+            let p = match &self.pred {
+                Some(pred) => Some(row_of(pred, key)?),
+                None => None,
+            };
+            return Ok((s, p));
+        }
+        self.create(key, None)
+    }
+
+    /// `add_edges_from([(a, b, dd)])` with both endpoints present, given
+    /// their rows. A fresh `dd` nobody else holds can serve as the new
+    /// edge's dict itself (NetworkX copies it into a new dict).
+    #[allow(clippy::too_many_arguments)]
+    fn edge(
+        &self,
+        a: (&Bound<'py, PyAny>, &RowPair<'py>),
+        b: (&Bound<'py, PyAny>, &RowPair<'py>),
+        dd: Option<&Bound<'py, PyDict>>,
+        fresh: bool,
+    ) -> PyResult<()> {
+        let datadict = match a.1 .0.get_item(b.0)? {
+            Some(d) => {
+                let d = d.cast_into::<PyDict>()?;
+                if let Some(dd) = dd {
+                    if !dd.is_empty() {
+                        d.update(dd.as_mapping())?;
+                    }
+                }
+                d
+            }
+            None => match dd {
+                Some(dd) if fresh => dd.clone(),
+                Some(dd) => {
+                    let d = PyDict::new(self.py);
+                    if !dd.is_empty() {
+                        d.update(dd.as_mapping())?;
+                    }
+                    d
+                }
+                None => PyDict::new(self.py),
+            },
+        };
+        a.1 .0.set_item(b.0, &datadict)?;
+        match &b.1 .1 {
+            Some(p) => p.set_item(a.0, &datadict),
+            None => b.1 .0.set_item(a.0, &datadict),
+        }
+    }
+}
+
+/// NetworkX's `_dict_product(d1, d2)`: `{k: (d1.get(k), d2.get(k)) for k
+/// in set(d1) | set(d2)}`, built with Python's own sets (the key order is
+/// their iteration order). Two empty dicts give a new empty dict.
+fn dict_product<'py>(py: Python<'py>, d1: &Bound<'py, PyDict>, d2: &Bound<'py, PyDict>) -> PyResult<Bound<'py, PyDict>> {
+    let out = PyDict::new(py);
+    if d1.is_empty() && d2.is_empty() {
+        return Ok(out);
+    }
+    let set = py.get_type::<pyo3::types::PySet>();
+    let keys = set.call1((d1,))?.bitor(set.call1((d2,))?)?;
+    for k in keys.try_iter()? {
+        let k = k?;
+        let a = d1.get_item(&k)?.unwrap_or_else(|| py.None().into_bound(py));
+        let b = d2.get_item(&k)?.unwrap_or_else(|| py.None().into_bound(py));
+        out.set_item(k, PyTuple::new(py, [a, b])?)?;
+    }
+    Ok(out)
+}
+
+fn as_dict<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyDict>> {
+    obj.cast::<PyDict>().cloned().map_err(|_| changed())
+}
+
+impl OpView {
+    /// Whether every adjacency key is interchangeable with the node it
+    /// stands for (see `same_key`), so results can use the node objects.
+    fn keys_canonical_impl(&self, py: Python<'_>) -> PyResult<bool> {
+        for (e, key) in self.keys.iter().enumerate() {
+            let t = self.targets[e] as usize;
+            if !same_key(key.bind(py), self.nodes[t].bind(py))? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// `line_graph(G)` into the empty graph given by its dicts.
+    fn line_graph_impl<'py>(
+        &self,
+        py: Python<'py>,
+        node: Bound<'py, PyDict>,
+        succ: Bound<'py, PyDict>,
+        pred: Option<Bound<'py, PyDict>>,
+    ) -> PyResult<()> {
+        let out = Out { py, node, succ, pred };
+        let n = self.n();
+        let m = self.targets.len();
+        if self.directed {
+            // `_lg_directed`: each edge (u, v) becomes a node, joined to
+            // every edge (v, w) out of v. Entry e is edge e's id.
+            let mut rows: Vec<Option<RowPair<'py>>> = (0..m).map(|_| None).collect();
+            let mut tuples: Vec<Option<Bound<'py, PyTuple>>> = (0..m).map(|_| None).collect();
+            let mut source = vec![0u32; m];
+            for u in 0..n {
+                for e in self.range(u) {
+                    source[e] = u as u32;
+                }
+            }
+            let tuple_of = |e: usize, tuples: &mut Vec<Option<Bound<'py, PyTuple>>>| -> PyResult<Bound<'py, PyTuple>> {
+                if tuples[e].is_none() {
+                    let u = source[e] as usize;
+                    let t = self.targets[e] as usize;
+                    tuples[e] = Some(PyTuple::new(py, [self.nodes[u].bind(py), self.nodes[t].bind(py)])?);
+                }
+                Ok(tuples[e].clone().unwrap())
+            };
+            for u in 0..n {
+                for e in self.range(u) {
+                    let te = tuple_of(e, &mut tuples)?;
+                    if rows[e].is_none() {
+                        rows[e] = Some(out.create(te.as_any(), None)?);
+                    }
+                    let v = self.targets[e] as usize;
+                    for f in self.range(v) {
+                        let tf = tuple_of(f, &mut tuples)?;
+                        if rows[f].is_none() {
+                            rows[f] = Some(out.create(tf.as_any(), None)?);
+                        }
+                        let (ra, rb) = (rows[e].as_ref().unwrap(), rows[f].as_ref().unwrap());
+                        out.edge((te.as_any(), ra), (tf.as_any(), rb), None, false)?;
+                    }
+                }
+            }
+            return Ok(());
+        }
+        // `_lg_undirected`: edge ids for the edges (p, q), p <= q by
+        // position, in `G.edges()` order.
+        let mut id_of = std::collections::HashMap::new();
+        let mut ends: Vec<(u32, u32)> = Vec::new();
+        for (u, e) in self.edge_entries() {
+            let t = self.targets[e];
+            id_of.insert((u as u32, t), ends.len() as u32);
+            ends.push((u as u32, t));
+        }
+        let node_hashes = self
+            .nodes
+            .iter()
+            .map(|v| v.bind(py).hash().map(|h| h as i64))
+            .collect::<PyResult<Vec<i64>>>()?;
+        let edge_hashes: Vec<i64> = ends
+            .iter()
+            .map(|&(p, q)| tuple_hash(&[node_hashes[p as usize], node_hashes[q as usize]]))
+            .collect();
+        // The `edges` set, built as `edges.update([...])` does.
+        let mut pairs: Vec<(u32, u32)> = Vec::new();
+        let mut pair_hashes: Vec<i64> = Vec::new();
+        let mut set = SetReplica::default();
+        let mut singles: Vec<u32> = Vec::new();
+        let mut ids: Vec<u32> = Vec::new();
+        for u in 0..n {
+            ids.clear();
+            for e in self.range(u) {
+                let t = self.targets[e];
+                let key = if (t as usize) < u { (t, u as u32) } else { (u as u32, t) };
+                ids.push(*id_of.get(&key).ok_or_else(changed)?);
+            }
+            if ids.len() == 1 {
+                singles.push(ids[0]);
+            }
+            for i in 0..ids.len() {
+                for j in i + 1..ids.len() {
+                    let (a, b) = (ids[i], ids[j]);
+                    let (a, b) = if ends[a as usize] <= ends[b as usize] { (a, b) } else { (b, a) };
+                    if pairs.len() >= (u32::MAX - 2) as usize {
+                        return Err(PyNotImplementedError::new_err("line graph too large"));
+                    }
+                    pair_hashes.push(tuple_hash(&[edge_hashes[a as usize], edge_hashes[b as usize]]));
+                    set.add(pairs.len() as u32, &pair_hashes);
+                    pairs.push((a, b));
+                }
+            }
+        }
+        let mut rows: Vec<Option<(Bound<'py, PyTuple>, RowPair<'py>)>> = (0..ends.len()).map(|_| None).collect();
+        let node_of = |id: u32, rows: &mut Vec<Option<(Bound<'py, PyTuple>, RowPair<'py>)>>| -> PyResult<()> {
+            let id = id as usize;
+            if rows[id].is_none() {
+                let (p, q) = ends[id];
+                let t = PyTuple::new(py, [self.nodes[p as usize].bind(py), self.nodes[q as usize].bind(py)])?;
+                let r = out.create(t.as_any(), None)?;
+                rows[id] = Some((t, r));
+            }
+            Ok(())
+        };
+        for id in singles {
+            node_of(id, &mut rows)?;
+        }
+        for k in set.iter() {
+            let (a, b) = pairs[k as usize];
+            node_of(a, &mut rows)?;
+            node_of(b, &mut rows)?;
+            let (ta, ra) = rows[a as usize].as_ref().unwrap();
+            let (tb, rb) = rows[b as usize].as_ref().unwrap();
+            out.edge((ta.as_any(), ra), (tb.as_any(), rb), None, false)?;
+        }
+        Ok(())
+    }
+}
+
+/// The graph products (`kind`: "tensor", "cartesian", "lexicographic",
+/// "strong") of the views `g` and `h` into the empty graph given by its
+/// dicts, adding nodes and edges in NetworkX's order.
+#[pyfunction]
+#[pyo3(signature = (kind, g, h, node, succ, pred))]
+pub fn _op_product<'py>(
+    py: Python<'py>,
+    kind: &str,
+    g: &OpView,
+    h: &OpView,
+    node: Bound<'py, PyDict>,
+    succ: Bound<'py, PyDict>,
+    pred: Option<Bound<'py, PyDict>>,
+) -> PyResult<()> {
+    let out = Out { py, node, succ, pred };
+    let (ng, nh) = (g.n(), h.n());
+    let directed = out.pred.is_some();
+    // `_node_product`: (u, x) for u in G for x in H.
+    let mut keys = Vec::with_capacity(ng * nh);
+    let mut rows = Vec::with_capacity(ng * nh);
+    for u in 0..ng {
+        let du = as_dict(g.ndata[u].bind(py))?;
+        for x in 0..nh {
+            let dx = as_dict(h.ndata[x].bind(py))?;
+            let t = PyTuple::new(py, [g.nodes[u].bind(py), h.nodes[x].bind(py)])?.into_any();
+            rows.push(out.create(&t, Some(dict_product(py, &du, &dx)?))?);
+            keys.push(t);
+        }
+    }
+    let id = |u: usize, x: usize| u * nh + x;
+    let add = |a: usize, b: usize, dd: Option<&Bound<'py, PyDict>>, fresh: bool| {
+        out.edge((&keys[a], &rows[a]), (&keys[b], &rows[b]), dd, fresh)
+    };
+    let gedges = g.edge_entries();
+    let hedges = h.edge_entries();
+    let cross_edges = |undirected: bool| -> PyResult<()> {
+        for &(u, e) in &gedges {
+            let v = g.targets[e] as usize;
+            let c = as_dict(g.data[e].bind(py))?;
+            for &(x, f) in &hedges {
+                let y = h.targets[f] as usize;
+                let d = as_dict(h.data[f].bind(py))?;
+                let dd = dict_product(py, &c, &d)?;
+                if undirected {
+                    add(id(v, x), id(u, y), Some(&dd), true)?;
+                } else {
+                    add(id(u, x), id(v, y), Some(&dd), true)?;
+                }
+            }
+        }
+        Ok(())
+    };
+    let edges_cross_nodes = || -> PyResult<()> {
+        for &(u, e) in &gedges {
+            let v = g.targets[e] as usize;
+            let d = as_dict(g.data[e].bind(py))?;
+            for x in 0..nh {
+                add(id(u, x), id(v, x), Some(&d), false)?;
+            }
+        }
+        Ok(())
+    };
+    let nodes_cross_edges = || -> PyResult<()> {
+        for x in 0..ng {
+            for &(u, f) in &hedges {
+                let v = h.targets[f] as usize;
+                let d = as_dict(h.data[f].bind(py))?;
+                add(id(x, u), id(x, v), Some(&d), false)?;
+            }
+        }
+        Ok(())
+    };
+    match kind {
+        "tensor" => {
+            cross_edges(false)?;
+            if !directed {
+                cross_edges(true)?;
+            }
+        }
+        "cartesian" => {
+            edges_cross_nodes()?;
+            nodes_cross_edges()?;
+        }
+        "lexicographic" => {
+            for &(u, e) in &gedges {
+                let v = g.targets[e] as usize;
+                let d = as_dict(g.data[e].bind(py))?;
+                for x in 0..nh {
+                    for y in 0..nh {
+                        add(id(u, x), id(v, y), Some(&d), false)?;
+                    }
+                }
+            }
+            nodes_cross_edges()?;
+        }
+        "strong" => {
+            nodes_cross_edges()?;
+            edges_cross_nodes()?;
+            cross_edges(false)?;
+            if !directed {
+                cross_edges(true)?;
+            }
+        }
+        _ => return Err(PyNotImplementedError::new_err("unknown product")),
+    }
+    Ok(())
+}
+
+/// `rooted_product(G, H, root)` into an empty `nx.Graph` (`root` is the
+/// root as passed, `r` its position in H).
+#[pyfunction]
+pub fn _op_rooted_product<'py>(
+    py: Python<'py>,
+    g: &OpView,
+    h: &OpView,
+    root: Bound<'py, PyAny>,
+    r: usize,
+    node: Bound<'py, PyDict>,
+    succ: Bound<'py, PyDict>,
+) -> PyResult<()> {
+    let out = Out { py, node, succ, pred: None };
+    let (ng, nh) = (g.n(), h.n());
+    if r >= nh {
+        return Err(changed());
+    }
+    let mut keys = Vec::with_capacity(ng * nh);
+    let mut rows = Vec::with_capacity(ng * nh);
+    for u in 0..ng {
+        for x in 0..nh {
+            let t = PyTuple::new(py, [g.nodes[u].bind(py), h.nodes[x].bind(py)])?.into_any();
+            rows.push(out.create(&t, None)?);
+            keys.push(t);
+        }
+    }
+    for (u, e) in g.edge_entries() {
+        let v = g.targets[e] as usize;
+        let a = PyTuple::new(py, [g.nodes[u].bind(py), &root])?.into_any();
+        let b = PyTuple::new(py, [g.nodes[v].bind(py), &root])?.into_any();
+        out.edge((&a, &rows[u * nh + r]), (&b, &rows[v * nh + r]), None, false)?;
+    }
+    let hedges = h.edge_entries();
+    for x in 0..ng {
+        for &(u, f) in &hedges {
+            let v = h.targets[f] as usize;
+            let (a, b) = (x * nh + u, x * nh + v);
+            out.edge((&keys[a], &rows[a]), (&keys[b], &rows[b]), None, false)?;
+        }
+    }
+    Ok(())
+}
+
+/// `corona_product(G, H)` into an empty `nx.Graph`. Its nodes mix G's
+/// nodes and `(g, h)` tuples, which may collide, so it looks nodes up.
+#[pyfunction]
+pub fn _op_corona_product<'py>(
+    py: Python<'py>,
+    g: &OpView,
+    h: &OpView,
+    node: Bound<'py, PyDict>,
+    succ: Bound<'py, PyDict>,
+) -> PyResult<()> {
+    let out = Out { py, node, succ, pred: None };
+    let mut grows = Vec::with_capacity(g.n());
+    for v in &g.nodes {
+        grows.push(out.ensure(v.bind(py))?);
+    }
+    for (u, e) in g.edge_entries() {
+        let t = g.targets[e] as usize;
+        out.edge(
+            (g.nodes[u].bind(py), &grows[u]),
+            (g.nodes[t].bind(py), &grows[t]),
+            None,
+            false,
+        )?;
+    }
+    let hedges = h.edge_entries();
+    for (i, gv) in g.nodes.iter().enumerate() {
+        let gv = gv.bind(py);
+        let mut keys = Vec::with_capacity(h.n());
+        let mut rows = Vec::with_capacity(h.n());
+        for hv in &h.nodes {
+            let t = PyTuple::new(py, [gv, hv.bind(py)])?.into_any();
+            rows.push(out.ensure(&t)?);
+            keys.push(t);
+        }
+        for &(u, f) in &hedges {
+            let v = h.targets[f] as usize;
+            let d = as_dict(h.data[f].bind(py))?;
+            // The rows again: an earlier add may have replaced nothing,
+            // but a collision can make two keys one node.
+            out.edge((&keys[u], &rows[u]), (&keys[v], &rows[v]), Some(&d), false)?;
+        }
+        let gi = out.ensure(gv)?;
+        let _ = i;
+        for (k, r) in keys.iter().zip(&rows) {
+            out.edge((gv, &gi), (k, r), None, false)?;
+        }
+    }
+    Ok(())
+}
+
+/// CPython's tuple hash from item hashes (for the runtime check).
+#[pyfunction]
+pub fn _tuple_hash(items: Vec<i64>) -> i64 {
+    tuple_hash(&items)
 }
