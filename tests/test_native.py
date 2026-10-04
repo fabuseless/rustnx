@@ -12,6 +12,7 @@ import random
 import warnings
 
 import networkx as nx
+from networkx.algorithms import approximation as approx
 from networkx.algorithms.coloring.equitable_coloring import is_coloring
 import pytest
 
@@ -186,6 +187,13 @@ def algorithm_calls(H, directed):
         "maximum_branching": lambda G, b: list(nx.maximum_branching(G, backend=b).edges(data=True)),
         "greedy_branching": lambda G, b: list(nx.tree.greedy_branching(G, backend=b).edges(data=True)),
         "branching_weight": lambda G, b: nx.tree.branching_weight(G, backend=b),
+        "vertex_cover": lambda G, b: list(approx.min_weighted_vertex_cover(G, backend=b)),
+        "dominating": lambda G, b: list(approx.min_weighted_dominating_set(G, backend=b)),
+        "approx_diameter": lambda G, b: approx.diameter(G, seed=1, backend=b),
+        "treewidth": lambda G, b: approx.treewidth_min_fill_in(G, backend=b)[0],
+        "kl_connected": lambda G, b: nx.is_kl_connected(G, 2, 2, backend=b),
+        "complement": lambda G, b: list(nx.complement(G, backend=b).edges),
+        "power": lambda G, b: list(nx.power(G, 2, backend=b).edges),
     }
     if src is not None:
         calls["bfs"] = lambda G, b: nx.single_source_shortest_path_length(G, src, backend=b)
@@ -237,6 +245,7 @@ def algorithm_calls(H, directed):
         calls["local_reaching"] = lambda G, b: nx.local_reaching_centrality(G, src, backend=b)
         calls["local_reaching_w"] = lambda G, b: nx.local_reaching_centrality(G, src, weight="weight", backend=b)
         calls["goldberg_radzik"] = lambda G, b: nx.goldberg_radzik(G, src, backend=b)
+        calls["steiner_tree"] = lambda G, b: list(approx.steiner_tree(G, [src, dst], backend=b).edges)
         calls["simple_paths"] = lambda G, b: list(islice(nx.all_simple_paths(G, src, dst, cutoff=4, backend=b), 100))
         calls["shortest_simple"] = lambda G, b: list(
             islice(nx.shortest_simple_paths(G, src, dst, weight="weight", backend=b), 20)
