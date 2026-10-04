@@ -889,3 +889,491 @@ pub fn _op_corona_product<'py>(
 pub fn _tuple_hash(items: Vec<i64>) -> i64 {
     tuple_hash(&items)
 }
+
+// --- Structural holes ---------------------------------------------------------------
+
+use super::flow::{self, Fail, Val};
+use std::collections::HashMap;
+
+extern "C" {
+    fn pow(x: f64, y: f64) -> f64;
+}
+
+fn unsupported(_: Fail) -> PyErr {
+    PyNotImplementedError::new_err("rustnx can't reproduce this arithmetic")
+}
+
+/// Python's `a / b` for ints and floats (`b` nonzero).
+fn true_div(a: Val, b: Val) -> PyResult<Val> {
+    const EXACT: u64 = 1 << 53;
+    match (a, b) {
+        (Val::I(x), Val::I(y)) => {
+            if x.unsigned_abs() > EXACT || y.unsigned_abs() > EXACT {
+                return Err(unsupported(Fail::Unsupported));
+            }
+            Ok(Val::F(x as f64 / y as f64))
+        }
+        _ => Ok(Val::F(a.to_f64() / b.to_f64())),
+    }
+}
+
+/// Python's `x ** 2`: exact for ints, the C library's `pow` for floats.
+fn square(x: Val) -> PyResult<Val> {
+    match x {
+        Val::I(a) => a.checked_mul(a).map(Val::I).ok_or_else(|| unsupported(Fail::Unsupported)),
+        Val::F(f) => Ok(Val::F(unsafe { pow(f, std::hint::black_box(2.0)) })),
+    }
+}
+
+/// `nx.algorithms.structuralholes` on one graph, computing what each node
+/// needs on first use: its neighbor set `set(nx.all_neighbors(G, v))` in
+/// Python's iteration order, its out-edge weights read from `G._adj`, and
+/// the `sum` / `max` normalizations.
+pub struct Holes<'a, 'py> {
+    g: &'a CoreGraph,
+    pred: Option<&'a crate::graph::Csr>,
+    nodes: &'a Bound<'py, PyList>,
+    adj: Option<&'a Bound<'py, PyDict>>,
+    weight: &'a Bound<'py, PyAny>,
+    compensated: bool,
+    hashes: HashMap<u32, i64>,
+    out: HashMap<u32, HashMap<u32, Val>>,
+    nbrs: HashMap<u32, std::rc::Rc<Vec<u32>>>,
+    sums: HashMap<u32, Val>,
+    maxes: HashMap<u32, Val>,
+}
+
+impl<'a, 'py> Holes<'a, 'py> {
+    pub fn new(
+        g: &'a CoreGraph,
+        nodes: &'a Bound<'py, PyList>,
+        adj: Option<&'a Bound<'py, PyDict>>,
+        weight: &'a Bound<'py, PyAny>,
+        compensated: bool,
+    ) -> PyResult<Self> {
+        let pred = if !g.directed {
+            None
+        } else if g.pred_is_exact {
+            g.pred.as_ref()
+        } else {
+            Some(&g.exact_pred.get().ok_or_else(changed)?.csr)
+        };
+        if nodes.len() != g.n {
+            return Err(changed());
+        }
+        Ok(Holes {
+            g,
+            pred,
+            nodes,
+            adj,
+            weight,
+            compensated,
+            hashes: HashMap::new(),
+            out: HashMap::new(),
+            nbrs: HashMap::new(),
+            sums: HashMap::new(),
+            maxes: HashMap::new(),
+        })
+    }
+
+    fn hash(&mut self, v: u32) -> PyResult<i64> {
+        if let Some(&h) = self.hashes.get(&v) {
+            return Ok(h);
+        }
+        let h = self.nodes.get_item(v as usize)?.hash()? as i64;
+        self.hashes.insert(v, h);
+        Ok(h)
+    }
+
+    /// `set(nx.all_neighbors(G, v))` in iteration order: predecessors then
+    /// successors for directed graphs.
+    fn neighbors(&mut self, v: u32) -> PyResult<std::rc::Rc<Vec<u32>>> {
+        if let Some(n) = self.nbrs.get(&v) {
+            return Ok(n.clone());
+        }
+        let mut seq: Vec<u32> = Vec::new();
+        if let Some(pred) = self.pred {
+            seq.extend_from_slice(pred.neighbors(v as usize));
+        }
+        seq.extend_from_slice(self.g.succ.neighbors(v as usize));
+        // Local ids for the distinct nodes, in first-seen order.
+        let mut local: HashMap<u32, u32> = HashMap::new();
+        let mut members: Vec<u32> = Vec::new();
+        let mut hashes: Vec<i64> = Vec::new();
+        let mut set = SetReplica::default();
+        for &w in &seq {
+            let id = match local.get(&w) {
+                Some(&id) => id,
+                None => {
+                    let id = members.len() as u32;
+                    local.insert(w, id);
+                    members.push(w);
+                    hashes.push(self.hash(w)?);
+                    id
+                }
+            };
+            set.add(id, &hashes);
+        }
+        let order = std::rc::Rc::new(set.iter().map(|id| members[id as usize]).collect::<Vec<u32>>());
+        self.nbrs.insert(v, order.clone());
+        Ok(order)
+    }
+
+    /// `G[v][w].get(weight, 1)` for each successor `w` of `v`.
+    fn out_weights(&mut self, v: u32) -> PyResult<&HashMap<u32, Val>> {
+        if !self.out.contains_key(&v) {
+            let targets = self.g.succ.neighbors(v as usize);
+            let mut map = HashMap::with_capacity(targets.len());
+            match self.adj {
+                None => {
+                    for &t in targets {
+                        map.insert(t, Val::I(1));
+                    }
+                }
+                Some(adj) => {
+                    let row = row_of(adj, &self.nodes.get_item(v as usize)?)?;
+                    if row.len() != targets.len() {
+                        return Err(changed());
+                    }
+                    for ((_, data), &t) in row.iter().zip(targets) {
+                        let data = data.cast_into::<PyDict>().map_err(|_| changed())?;
+                        let val = match data.get_item(self.weight)? {
+                            None => Val::I(1),
+                            Some(x) => crate::py_val(&x)?,
+                        };
+                        map.insert(t, val);
+                    }
+                }
+            }
+            self.out.insert(v, map);
+        }
+        Ok(&self.out[&v])
+    }
+
+    /// `mutual_weight(G, u, v, weight)`.
+    fn mutual(&mut self, u: u32, v: u32) -> PyResult<Val> {
+        let a = self.out_weights(u)?.get(&v).copied().unwrap_or(Val::I(0));
+        let b = self.out_weights(v)?.get(&u).copied().unwrap_or(Val::I(0));
+        a.add(b).map_err(unsupported)
+    }
+
+    /// `norm(mutual_weight(G, u, w) for w in set(nx.all_neighbors(G, u)))`
+    /// for `norm` `sum` or `max`.
+    fn scale(&mut self, u: u32, use_max: bool) -> PyResult<Val> {
+        let cache = if use_max { &self.maxes } else { &self.sums };
+        if let Some(&s) = cache.get(&u) {
+            return Ok(s);
+        }
+        let nbrs = self.neighbors(u)?;
+        let mut vals = Vec::with_capacity(nbrs.len());
+        for &w in nbrs.iter() {
+            vals.push(self.mutual(u, w)?);
+        }
+        let s = if use_max {
+            let mut it = vals.into_iter();
+            // `max()` of nothing raises; NetworkX never gets here empty.
+            let first = it.next().ok_or_else(|| unsupported(Fail::Unsupported))?;
+            it.fold(first, |m, x| m.max(x))
+        } else {
+            flow::py_sum(vals, self.compensated).map_err(unsupported)?
+        };
+        if use_max {
+            self.maxes.insert(u, s);
+        } else {
+            self.sums.insert(u, s);
+        }
+        Ok(s)
+    }
+
+    /// `normalized_mutual_weight(G, u, v, norm=sum or max, weight)`.
+    fn normalized(&mut self, u: u32, v: u32, use_max: bool) -> PyResult<Val> {
+        let scale = self.scale(u, use_max)?;
+        if scale.eq(Val::I(0)) {
+            return Ok(Val::I(0));
+        }
+        true_div(self.mutual(u, v)?, scale)
+    }
+
+    /// `local_constraint(G, u, v, weight)`.
+    pub fn local_constraint(&mut self, u: u32, v: u32) -> PyResult<Val> {
+        let direct = self.normalized(u, v, false)?;
+        let nbrs = self.neighbors(u)?;
+        let mut terms = Vec::with_capacity(nbrs.len());
+        for &w in nbrs.iter() {
+            let a = self.normalized(u, w, false)?;
+            let b = self.normalized(w, v, false)?;
+            terms.push(a.mul(b).map_err(unsupported)?);
+        }
+        let indirect = flow::py_sum(terms, self.compensated).map_err(unsupported)?;
+        square(direct.add(indirect).map_err(unsupported)?)
+    }
+
+    /// `constraint(G, [v], weight)[v]` (`None` for NaN).
+    pub fn constraint(&mut self, v: u32) -> PyResult<Option<Val>> {
+        if self.g.succ.neighbors(v as usize).is_empty() {
+            return Ok(None);
+        }
+        let nbrs = self.neighbors(v)?;
+        let mut terms = Vec::with_capacity(nbrs.len());
+        for &n in nbrs.iter() {
+            terms.push(self.local_constraint(v, n)?);
+        }
+        flow::py_sum(terms, self.compensated).map(Some).map_err(unsupported)
+    }
+
+    /// Whether `effective_size` gives `v` NaN: `len(G[v]) == 0` (NetworkX
+    /// 3.4) or `all(u == v for u in G[v])` (3.5+).
+    fn isolated(&self, v: u32, by_len: bool) -> bool {
+        let row = self.g.succ.neighbors(v as usize);
+        if by_len {
+            row.is_empty()
+        } else {
+            row.iter().all(|&u| u == v)
+        }
+    }
+
+    /// `effective_size(G, [v], weight)[v]` through redundancy (directed or
+    /// weighted graphs).
+    pub fn effective_size(&mut self, v: u32, by_len: bool) -> PyResult<Option<Val>> {
+        if self.isolated(v, by_len) {
+            return Ok(None);
+        }
+        let nbrs = self.neighbors(v)?;
+        let mut terms = Vec::with_capacity(nbrs.len());
+        for &u in nbrs.iter() {
+            let mut parts = Vec::with_capacity(nbrs.len());
+            for &w in nbrs.iter() {
+                let a = self.normalized(v, w, false)?;
+                let b = self.normalized(u, w, true)?;
+                parts.push(a.mul(b).map_err(unsupported)?);
+            }
+            let r = flow::py_sum(parts, self.compensated).map_err(unsupported)?;
+            terms.push(Val::I(1).sub(r).map_err(unsupported)?);
+        }
+        flow::py_sum(terms, self.compensated).map(Some).map_err(unsupported)
+    }
+
+    /// `effective_size` of an undirected graph with `weight=None`: from
+    /// `E = nx.ego_graph(G, v, center=False, undirected=True)`, `len(E) -
+    /// 2 * E.size() / len(E)`.
+    pub fn ego_effective_size(&self, v: u32, by_len: bool, mark: &mut [bool]) -> PyResult<Option<Val>> {
+        if self.isolated(v, by_len) {
+            return Ok(None);
+        }
+        let row = self.g.succ.neighbors(v as usize);
+        let others: Vec<u32> = row.iter().copied().filter(|&u| u != v).collect();
+        if others.is_empty() {
+            // NetworkX 3.4 divides by zero here.
+            return Err(unsupported(Fail::Unsupported));
+        }
+        for &u in &others {
+            mark[u as usize] = true;
+        }
+        // Twice E's edge count: degrees within E, self-loops counting two.
+        let mut twice: u64 = 0;
+        for &u in &others {
+            for &w in self.g.succ.neighbors(u as usize) {
+                if mark[w as usize] {
+                    twice += if w == u { 2 } else { 1 };
+                }
+            }
+        }
+        for &u in &others {
+            mark[u as usize] = false;
+        }
+        let n = others.len() as f64;
+        let size = (twice / 2) as f64;
+        Ok(Some(Val::F(n - 2.0 * size / n)))
+    }
+}
+
+// --- Subgraph copies ----------------------------------------------------------------
+
+/// `G.subgraph(nodes).copy()` into the empty graph given by its dicts:
+/// `members` are the subgraph's node positions in the order the subgraph
+/// view iterates them. `copy()` re-adds every adjacency entry of the view
+/// (each undirected edge from both ends) with `d.copy()`.
+#[allow(clippy::too_many_arguments)]
+pub fn subgraph_copy<'py>(
+    py: Python<'py>,
+    g: &CoreGraph,
+    nodes: &Bound<'py, PyList>,
+    node_dict: &Bound<'py, PyDict>,
+    adj: &Bound<'py, PyDict>,
+    members: &[u32],
+    out_node: Bound<'py, PyDict>,
+    succ: Bound<'py, PyDict>,
+    pred: Option<Bound<'py, PyDict>>,
+) -> PyResult<()> {
+    if nodes.len() != g.n || members.iter().any(|&p| p as usize >= g.n) {
+        return Err(changed());
+    }
+    let out = Out { py, node: out_node, succ, pred };
+    let mut slot: HashMap<u32, usize> = HashMap::with_capacity(members.len());
+    let mut objs = Vec::with_capacity(members.len());
+    let mut rows = Vec::with_capacity(members.len());
+    for &p in members {
+        let v = nodes.get_item(p as usize)?;
+        let data = node_dict.get_item(&v)?.ok_or_else(changed)?;
+        let d = PyDict::new(py);
+        update_from(&d, &data, None)?;
+        slot.insert(p, rows.len());
+        rows.push(out.create(&v, Some(d))?);
+        objs.push(v);
+    }
+    for (i, &p) in members.iter().enumerate() {
+        let row = row_of(adj, &objs[i])?;
+        let targets = g.succ.neighbors(p as usize);
+        if row.len() != targets.len() {
+            return Err(changed());
+        }
+        for ((key, data), &t) in row.iter().zip(targets) {
+            let Some(&j) = slot.get(&t) else { continue };
+            if !same_key(&key, &objs[j])? {
+                return Err(PyNotImplementedError::new_err("adjacency keys differ from the nodes"));
+            }
+            let data = data.cast_into::<PyDict>().map_err(|_| changed())?;
+            out.edge((&objs[i], &rows[i]), (&key, &rows[j]), Some(&data), false)?;
+        }
+    }
+    Ok(())
+}
+
+// --- Broadcasting -------------------------------------------------------------------
+
+/// `_get_max_broadcast_value(G, U, v, values)`: the neighbors of `v` in
+/// `U` sorted by value, largest first; the largest `values[u] + i` (ties
+/// in the sort don't change it). `None` where NetworkX's `max()` raises.
+fn max_broadcast(adj: &crate::graph::Csr, in_u: &[bool], values: &[i64], v: usize) -> Option<i64> {
+    let mut vals: Vec<i64> = adj
+        .neighbors(v)
+        .iter()
+        .filter(|&&u| in_u[u as usize])
+        .map(|&u| values[u as usize])
+        .collect();
+    vals.sort_unstable_by(|a, b| b.cmp(a));
+    vals.iter().enumerate().map(|(i, &x)| x + i as i64 + 1).max()
+}
+
+/// `tree_broadcast_center(G)` for a tree with at least 3 nodes, given each
+/// node's `hash()`: `(b_T, [v] + adj[:j])`, the list NetworkX makes its
+/// center set from. `None` where NetworkX would raise. `W` is a Python set
+/// whose iteration order decides `min(W, key=values.get)` among ties, so
+/// it is replayed with CPython's set table.
+pub fn tree_broadcast_center(g: &CoreGraph, hashes: &[i64]) -> Option<(i64, Vec<u32>)> {
+    let n = g.n;
+    let adj = &g.succ;
+    let deg: Vec<usize> = (0..n).map(|v| adj.neighbors(v).len()).collect();
+    let mut in_u: Vec<bool> = deg.iter().map(|&d| d == 1).collect();
+    let mut values: Vec<Option<i64>> = in_u.iter().map(|&u| if u { Some(0) } else { None }).collect();
+    let mut alive: Vec<bool> = in_u.iter().map(|&u| !u).collect();
+    let mut tdeg: Vec<usize> = (0..n)
+        .map(|v| adj.neighbors(v).iter().filter(|&&u| alive[u as usize]).count())
+        .collect();
+    let mut t_len = alive.iter().filter(|&&a| a).count();
+    let mut w_set = SetReplica::default();
+    for v in 0..n {
+        if alive[v] && tdeg[v] == 1 {
+            w_set.add(v as u32, hashes);
+            values[v] = Some(deg[v] as i64 - 1);
+        }
+    }
+    let plain = |values: &[Option<i64>]| -> Vec<i64> { values.iter().map(|x| x.unwrap_or(0)).collect() };
+    while t_len >= 2 {
+        let mut best: Option<(u32, i64)> = None;
+        for w in w_set.iter() {
+            let val = values[w as usize]?;
+            if best.is_none_or(|(_, b)| val < b) {
+                best = Some((w, val));
+            }
+        }
+        let (w, _) = best?;
+        let w = w as usize;
+        let v = *adj.neighbors(w).iter().find(|&&u| alive[u as usize])? as usize;
+        in_u[w] = true;
+        w_set.discard(w as u32, hashes);
+        alive[w] = false;
+        t_len -= 1;
+        for &u in adj.neighbors(w) {
+            if alive[u as usize] {
+                tdeg[u as usize] -= 1;
+            }
+        }
+        if tdeg[v] == 1 {
+            values[v] = Some(max_broadcast(adj, &in_u, &plain(&values), v)?);
+            w_set.add(v as u32, hashes);
+        }
+    }
+    let v = (0..n).find(|&v| alive[v])?;
+    let flat = plain(&values);
+    let b_t = max_broadcast(adj, &in_u, &flat, v)?;
+    // `_get_broadcast_centers`: neighbors sorted by value (stable), largest
+    // first, cut where `values[u] + i == b_T`.
+    let mut nbrs: Vec<u32> = adj.neighbors(v).to_vec();
+    if nbrs.iter().any(|&u| values[u as usize].is_none()) {
+        return None; // NetworkX compares None with ints and raises
+    }
+    nbrs.sort_by(|&a, &b| flat[b as usize].cmp(&flat[a as usize]));
+    let j = nbrs
+        .iter()
+        .enumerate()
+        .position(|(i, &u)| flat[u as usize] + i as i64 + 1 == b_t)?;
+    let mut centers = vec![v as u32];
+    centers.extend_from_slice(&nbrs[..=j]);
+    Some((b_t, centers))
+}
+
+/// Multi-source BFS distances from `sources` (`-1`: unreached).
+pub fn bfs_distances(g: &CoreGraph, sources: &[u32]) -> Vec<i64> {
+    let mut dist = vec![-1i64; g.n];
+    let mut queue = std::collections::VecDeque::new();
+    for &s in sources {
+        if dist[s as usize] < 0 {
+            dist[s as usize] = 0;
+            queue.push_back(s as usize);
+        }
+    }
+    while let Some(v) = queue.pop_front() {
+        for &u in g.succ.neighbors(v) {
+            if dist[u as usize] < 0 {
+                dist[u as usize] = dist[v] + 1;
+                queue.push_back(u as usize);
+            }
+        }
+    }
+    dist
+}
+
+/// Bipartite `degree_centrality`: `{n: d * s_top for n, d in G.degree(top)}`
+/// then the same for `bottom` (`index` maps nodes to positions; set
+/// members not in G are skipped, as `G.degree(nbunch)` does).
+pub fn bipartite_degree_centrality<'py>(
+    g: &CoreGraph,
+    index: &Bound<'py, PyDict>,
+    top: &Bound<'py, pyo3::types::PySet>,
+    bottom: &Bound<'py, pyo3::types::PySet>,
+    s_top: f64,
+    s_bottom: f64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let py = index.py();
+    let out = PyDict::new(py);
+    let degree = |v: usize| -> usize {
+        let row = g.succ.neighbors(v);
+        if g.directed {
+            row.len() + g.adj(true).neighbors(v).len()
+        } else {
+            row.len() + row.iter().filter(|&&u| u as usize == v).count()
+        }
+    };
+    for (set, s) in [(top, s_top), (bottom, s_bottom)] {
+        for n in set.iter() {
+            let Some(i) = index.get_item(&n)? else { continue };
+            let i: usize = i.extract()?;
+            if i >= g.n {
+                return Err(changed());
+            }
+            out.set_item(&n, PyFloat::new(py, degree(i) as f64 * s))?;
+        }
+    }
+    Ok(out)
+}

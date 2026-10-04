@@ -4712,6 +4712,96 @@ impl CoreGraph {
         operators::OpView::read(self, nodes, node_dict, adj)
     }
 
+    /// The structural holes measures (`kind`: 0 `constraint`, 1
+    /// `effective_size` by redundancy, 2 `effective_size` by ego graphs,
+    /// 3 `local_constraint` of `(targets[i], others[i])`). `adj` is
+    /// `G._adj` to read weights from (`None`: every weight is 1). `None`
+    /// in the result stands for NaN.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (kind, nodes, adj, weight, targets, others, by_len, compensated))]
+    fn structural_holes<'py>(
+        &self,
+        py: Python<'py>,
+        kind: u8,
+        nodes: &Bound<'py, PyList>,
+        adj: Option<Bound<'py, PyDict>>,
+        weight: &Bound<'py, PyAny>,
+        targets: Vec<u32>,
+        others: Vec<u32>,
+        by_len: bool,
+        compensated: bool,
+    ) -> PyResult<Vec<Option<Bound<'py, PyAny>>>> {
+        if targets.iter().chain(&others).any(|&v| v as usize >= self.n) {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        let mut holes = operators::Holes::new(self, nodes, adj.as_ref(), weight, compensated)?;
+        let mut mark = vec![false; if kind == 2 { self.n } else { 0 }];
+        let mut out = Vec::with_capacity(targets.len());
+        for (i, &v) in targets.iter().enumerate() {
+            let val = match kind {
+                0 => holes.constraint(v)?,
+                1 => holes.effective_size(v, by_len)?,
+                2 => holes.ego_effective_size(v, by_len, &mut mark)?,
+                _ => {
+                    let o = *others.get(i).ok_or_else(|| PyIndexError::new_err("missing pair"))?;
+                    Some(holes.local_constraint(v, o)?)
+                }
+            };
+            out.push(match val {
+                Some(x) => Some(val_obj(py, x)?),
+                None => None,
+            });
+        }
+        Ok(out)
+    }
+
+    /// `G.subgraph(nodes).copy()` (see `operators::subgraph_copy`).
+    #[allow(clippy::too_many_arguments)]
+    fn subgraph_copy_into<'py>(
+        &self,
+        py: Python<'py>,
+        nodes: &Bound<'py, PyList>,
+        node_dict: &Bound<'py, PyDict>,
+        adj: &Bound<'py, PyDict>,
+        members: Vec<u32>,
+        node: Bound<'py, PyDict>,
+        succ: Bound<'py, PyDict>,
+        pred: Option<Bound<'py, PyDict>>,
+    ) -> PyResult<()> {
+        operators::subgraph_copy(py, self, nodes, node_dict, adj, &members, node, succ, pred)
+    }
+
+    /// `tree_broadcast_center` on a tree of 3 or more nodes (see
+    /// `operators::tree_broadcast_center`), with `hashes` each node's
+    /// `hash()`; `None` where NetworkX raises.
+    fn tree_broadcast_center(&self, py: Python<'_>, hashes: Vec<i64>) -> PyResult<Option<(i64, Vec<u32>)>> {
+        if hashes.len() != self.n || self.directed {
+            return Err(PyValueError::new_err("one hash per node of an undirected graph"));
+        }
+        Ok(py.detach(|| operators::tree_broadcast_center(self, &hashes)))
+    }
+
+    /// Distances from the nearest of `sources` (`-1` where unreached).
+    fn multi_source_distances(&self, py: Python<'_>, sources: Vec<u32>) -> PyResult<Vec<i64>> {
+        if sources.iter().any(|&s| s as usize >= self.n) {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        Ok(py.detach(|| operators::bfs_distances(self, &sources)))
+    }
+
+    /// Bipartite `degree_centrality` (see
+    /// `operators::bipartite_degree_centrality`).
+    fn bipartite_degree_centrality<'py>(
+        &self,
+        index: &Bound<'py, PyDict>,
+        top: &Bound<'py, pyo3::types::PySet>,
+        bottom: &Bound<'py, pyo3::types::PySet>,
+        s_top: f64,
+        s_bottom: f64,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        operators::bipartite_degree_centrality(self, index, top, bottom, s_top, s_bottom)
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();

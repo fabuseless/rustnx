@@ -354,6 +354,7 @@ _BUILDS_FROM_SOURCE = {
     "compose",
     "compose_all",
     "dinitz",
+    "ego_graph",
     "disjoint_union",
     "disjoint_union_all",
     "edmonds_karp",

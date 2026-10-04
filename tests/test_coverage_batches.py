@@ -5197,3 +5197,121 @@ def test_batch21_mismatched_keys_fall_back():
     exact_outcome(_b21_graphs(nx.line_graph), G)
     exact_outcome(_b21_graphs(nx.cartesian_product), G, H)
     exact_outcome(_b21_graphs(nx.union), G, nx.path_graph([5, 6]))
+
+
+def _b21_nan_marked(func):
+    """``func`` with NaN values in its dict result replaced by a marker
+    (two NaN objects never compare equal)."""
+
+    def run(*args, **kwargs):
+        result = func(*args, **kwargs)
+        if isinstance(result, dict):
+            return {k: "nan" if v != v else v for k, v in result.items()}
+        return result
+
+    return run
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float", "missing", "random"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(20))
+def test_batch21_structural_holes(seed, directed, weights):
+    G = graph_for(seed, directed, "float" if weights == "random" else weights)
+    rng = random.Random(seed)
+    if weights == "random":
+        for u, v, d in G.edges(data=True):
+            d["weight"] = rng.random()
+    nodes = list(G)
+    if seed % 4 == 0:
+        G.add_edge("loop", "loop")  # only a self-loop
+        G.add_node("alone")
+        nodes += ["loop", "alone"]
+    picked = rng.sample(nodes, min(8, len(nodes)))
+    for weight in [None, "weight"]:
+        for func in [_b21_nan_marked(nx.constraint), _b21_nan_marked(nx.effective_size)]:
+            exact_outcome(func, G, picked, weight=weight)
+            exact_outcome(func, G, weight=weight)  # 3.5+ use SciPy here: falls back
+            # An iterator with repeats (a fresh one for each backend).
+            exact_outcome(lambda G, **kw: func(G, iter(picked[:3] + picked[:2]), **kw), G,
+                          weight=weight)
+            exact_outcome(func, G, picked[:2] + ["missing"], weight=weight)
+            exact_outcome(func, G, [], weight=weight)
+        for u in picked[:3]:
+            for v in picked[:3] + ["missing"]:
+                exact_outcome(nx.local_constraint, G, u, v, weight=weight)
+
+
+@pytest.mark.parametrize("weights", ["none", "float"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch21_ego_graph(seed, directed, weights):
+    G = _b21_decorate(graph_for(seed, directed, weights), seed)
+    rng = random.Random(seed)
+    if seed % 3 == 0:
+        # Larger graphs, so small ego graphs iterate `set(sp)` (the view's
+        # shortcut when the node set is under half the graph).
+        G.add_edges_from((("x", i), ("x", i + 1)) for i in range(60))
+        G.add_edge(("x", 0), next(iter(G)))
+    for n in rng.sample(list(G), min(4, len(G))) + ["missing"]:
+        for radius in [0, 1, 2, 3, 1.5]:
+            exact_outcome(_b21_graphs(nx.ego_graph), G, n, radius=radius)
+        exact_outcome(_b21_graphs(nx.ego_graph), G, n, center=False)
+        exact_outcome(_b21_graphs(nx.ego_graph), G, n, radius=2, distance="weight")
+        exact_outcome(_b21_graphs(nx.ego_graph), G, n, undirected=True)
+    if 0 in G:
+        exact_outcome(_b21_graphs(nx.ego_graph), G, 0.0)
+
+
+def _b21_tree(seed):
+    rng = random.Random(seed)
+    n = rng.randint(1, 40)
+    T = nx.random_labeled_tree(n, seed=seed) if hasattr(nx, "random_labeled_tree") else nx.random_tree(n, seed=seed)
+    if rng.random() < 0.5:
+        T = nx.relabel_nodes(T, {v: rng.choice([f"t{v}", (v,), v * 1000]) for v in T})
+    H = nx.Graph()
+    nodes = list(T)
+    rng.shuffle(nodes)
+    H.add_nodes_from(nodes)
+    edges = list(T.edges)
+    rng.shuffle(edges)
+    H.add_edges_from(edges)
+    return H
+
+
+@pytest.mark.parametrize("seed", range(80))
+def test_batch21_broadcasting(seed):
+    T = _b21_tree(seed)
+    exact_outcome(with_set_order(nx.tree_broadcast_center), T)
+    exact_outcome(nx.tree_broadcast_time, T)
+    for node in list(T)[:3] + ["missing", [1]]:
+        exact_outcome(nx.tree_broadcast_time, T, node)
+    # Spiders and caterpillars: many ties.
+    S = nx.star_graph(3 + seed % 5)
+    for leaf in range(1, 3 + seed % 3):
+        nx.add_path(S, [leaf] + [100 * leaf + i for i in range(seed % 4)])
+    exact_outcome(with_set_order(nx.tree_broadcast_center), S)
+    exact_outcome(nx.tree_broadcast_time, S)
+    # Not trees.
+    G = graph_for(seed, False)
+    exact_outcome(with_set_order(nx.tree_broadcast_center), G)
+    exact_outcome(nx.tree_broadcast_time, G)
+    exact_outcome(nx.tree_broadcast_time, G, "missing")
+    exact_outcome(with_set_order(nx.tree_broadcast_center), nx.Graph())
+    exact_outcome(with_set_order(nx.tree_broadcast_center), graph_for(seed, True))
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch21_bipartite_measures(seed, directed):
+    G = graph_for(seed, directed)
+    rng = random.Random(seed)
+    nodes = list(G)
+    top = rng.sample(nodes, rng.randint(0, len(nodes)))
+    for side in [top, top + ["missing", 10**6], set(top), nodes, [], top + top[:2]]:
+        exact_outcome(nx.bipartite.density, G, side)
+        exact_outcome(nx.bipartite.degree_centrality, G, side)
+    exact_outcome(nx.bipartite.density, G, iter(top))  # no len()
+    exact_outcome(nx.bipartite.density, nx.empty_graph(3), [0])
+    B = nx.complete_bipartite_graph(3, 4)
+    exact_outcome(nx.bipartite.density, B, [0, 1, 2])
+    exact_outcome(nx.bipartite.degree_centrality, B, [0, 1, 2])
