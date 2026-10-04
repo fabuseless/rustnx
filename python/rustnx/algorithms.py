@@ -7205,7 +7205,7 @@ def complement_edges(G):
     def generate():
         try:
             if guard.changed():
-                yield from nx.algorithms.connectivity.complement_edges(
+                yield from nx.algorithms.connectivity.edge_augmentation.complement_edges(
                     guard.graph, backend="networkx"
                 )
                 return

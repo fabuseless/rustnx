@@ -344,6 +344,22 @@ def algorithm_calls(H, directed):
             lambda H, alpha: (list(H.edges), list(alpha.items()))
         )(*nx.complete_to_chordal_graph(G, backend=b))
         calls["at_free"] = lambda G, b: nx.is_at_free(G, backend=b)
+    # Batch 13: connectivity, cuts, disjoint paths and augmentation.
+    conn = nx.algorithms.connectivity
+    calls["node_connectivity"] = lambda G, b: nx.node_connectivity(G, backend=b)
+    calls["edge_connectivity"] = lambda G, b: nx.edge_connectivity(G, backend=b)
+    calls["minimum_node_cut"] = lambda G, b: list(nx.minimum_node_cut(G, backend=b))
+    calls["minimum_edge_cut"] = lambda G, b: list(nx.minimum_edge_cut(G, backend=b))
+    if len(nodes) >= 2:
+        s, t = nodes[0], nodes[-1]
+        calls["node_disjoint_paths"] = lambda G, b: list(conn.node_disjoint_paths(G, s, t, backend=b))
+        calls["edge_disjoint_paths"] = lambda G, b: list(conn.edge_disjoint_paths(G, s, t, backend=b))
+        calls["minimum_st_edge_cut"] = lambda G, b: list(conn.minimum_st_edge_cut(G, s, t, backend=b))
+        calls["minimum_st_node_cut"] = lambda G, b: list(conn.minimum_st_node_cut(G, s, t, backend=b))
+    if not directed:
+        calls["stoer_wagner"] = lambda G, b: nx.stoer_wagner(G, backend=b)
+        calls["bridge_components"] = lambda G, b: [list(c) for c in conn.bridge_components(G, backend=b)]
+        calls["k_edge_augmentation"] = lambda G, b: list(conn.k_edge_augmentation(G, 2, backend=b))
     calls["is_planar"] = lambda G, b: nx.is_planar(G, backend=b)
     calls["planarity"] = lambda G, b: (
         lambda ok, E: (ok, None if E is None else list(E.edges(data=True)))
