@@ -311,6 +311,7 @@ _BUILDS_FROM_SOURCE = {
     "minimum_spanning_tree",
     "partition_spanning_tree",
     "prim_mst_edges",
+    "steiner_tree",
     "transitive_closure",
     "transitive_closure_dag",
 }

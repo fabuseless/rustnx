@@ -4,9 +4,10 @@
 //! positions: the same visiting order, the same tie-breaking and (for
 //! numbers) the same Python arithmetic, so the result matches exactly.
 
-use std::cmp::Ordering;
-use std::collections::{BTreeSet, HashSet};
+use std::cmp::{Ordering, Reverse};
+use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet};
 
+use crate::algorithms::paths::{DijkstraTree, NO_PARENT};
 use crate::algorithms::spectral::py_sum;
 use crate::algorithms::trees_more::Num;
 use crate::graph::Csr;
@@ -798,4 +799,312 @@ pub fn two_sweep(succ: &Csr, pred: Option<&Csr>, n: usize, source: usize) -> Res
             Ok(ecc(pred, a1).max(ecc(succ, a2)))
         }
     }
+}
+
+/// Mehlhorn's Steiner tree up to NetworkX's `G_2`, the spanning tree over
+/// the terminals. Each node's nearest terminal is the root of its
+/// multi-source Dijkstra path (`tree`), at that path's distance (or its
+/// edge count with `hops`, as NetworkX 3.4 and 3.5 use). `G_1'` is built
+/// in NetworkX's insertion order, then Kruskal's algorithm runs on it.
+/// Returns the tree's edges as terminal positions, or `Err(v)` for the
+/// first node no terminal reaches (NetworkX raises KeyError there).
+pub fn mehlhorn_terminal_mst(
+    adj: &Csr,
+    n: usize,
+    tree: &DijkstraTree,
+    hops: bool,
+    w: Option<&[f64]>,
+) -> Result<Vec<(u32, u32)>, u32> {
+    let mut root = vec![u32::MAX; n];
+    let mut d1 = vec![0.0f64; n];
+    for (k, &v) in tree.order.iter().enumerate() {
+        let v = v as usize;
+        let p = tree.parent[v];
+        if p == NO_PARENT {
+            root[v] = v as u32;
+        } else {
+            root[v] = root[p as usize];
+            if hops {
+                d1[v] = d1[p as usize] + 1.0;
+            }
+        }
+        if !hops {
+            d1[v] = tree.dist[k];
+        }
+    }
+    if let Some(v) = root.iter().position(|&r| r == u32::MAX) {
+        return Err(v as u32);
+    }
+    // G_1': nodes in insertion order, each row's neighbors in insertion
+    // order, and the weight of each edge.
+    let mut id = vec![u32::MAX; n];
+    let mut terminals: Vec<u32> = Vec::new();
+    let mut rows: Vec<Vec<u32>> = Vec::new();
+    let mut weight_of: HashMap<(u32, u32), f64> = HashMap::new();
+    let mut node_id = |t: u32, terminals: &mut Vec<u32>, rows: &mut Vec<Vec<u32>>| {
+        if id[t as usize] == u32::MAX {
+            id[t as usize] = terminals.len() as u32;
+            terminals.push(t);
+            rows.push(Vec::new());
+        }
+        id[t as usize]
+    };
+    for u in 0..n {
+        for e in adj.range(u) {
+            let v = adj.targets[e] as usize;
+            if v < u {
+                continue;
+            }
+            let here = d1[u] + w.map_or(1.0, |w| w[e]) + d1[v];
+            let a = node_id(root[u], &mut terminals, &mut rows);
+            let b = node_id(root[v], &mut terminals, &mut rows);
+            let key = (a.min(b), a.max(b));
+            match weight_of.get_mut(&key) {
+                // `min(weight_here, old)` keeps weight_here unless old is smaller.
+                Some(old) => {
+                    if *old >= here {
+                        *old = here;
+                    }
+                }
+                None => {
+                    weight_of.insert(key, here);
+                    rows[a as usize].push(b);
+                    if a != b {
+                        rows[b as usize].push(a);
+                    }
+                }
+            }
+        }
+    }
+    let mut edges = Vec::new();
+    for (a, row) in rows.iter().enumerate() {
+        for &b in row {
+            if b as usize >= a {
+                let key = (a as u32, b);
+                edges.push((a as u32, b, weight_of[&key]));
+            }
+        }
+    }
+    Ok(
+        crate::algorithms::structure::kruskal(terminals.len(), &edges, false)
+            .into_iter()
+            .map(|i| {
+                let (a, b, _) = edges[i as usize];
+                (terminals[a as usize], terminals[b as usize])
+            })
+            .collect(),
+    )
+}
+
+/// NetworkX's `BinaryHeap`: `insert` pushes only a smaller value (a new key
+/// always), `pop` skips stale entries; ties go to the earliest push.
+struct KeyHeap {
+    current: Vec<Option<f64>>,
+    heap: BinaryHeap<Reverse<(HeapValue, u64, u32)>>,
+    count: u64,
+}
+
+/// A heap value ordered as Python compares floats (no NaN here; `-0.0`
+/// equals `0.0`).
+#[derive(Clone, Copy, PartialEq)]
+struct HeapValue(f64);
+
+impl Eq for HeapValue {}
+
+impl PartialOrd for HeapValue {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for HeapValue {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (self.0 + 0.0).total_cmp(&(other.0 + 0.0))
+    }
+}
+
+impl KeyHeap {
+    fn new(n: usize) -> Self {
+        KeyHeap {
+            current: vec![None; n],
+            heap: BinaryHeap::new(),
+            count: 0,
+        }
+    }
+
+    fn insert(&mut self, key: u32, value: f64) {
+        if let Some(old) = self.current[key as usize] {
+            if value >= old {
+                return;
+            }
+        }
+        self.current[key as usize] = Some(value);
+        self.heap.push(Reverse((HeapValue(value), self.count, key)));
+        self.count += 1;
+    }
+
+    fn pop(&mut self) -> Option<u32> {
+        while let Some(Reverse((value, _, key))) = self.heap.pop() {
+            if self.current[key as usize] == Some(value.0) {
+                self.current[key as usize] = None;
+                return Some(key);
+            }
+        }
+        None
+    }
+}
+
+/// The best density a peeling run found, and the nodes removed in the run
+/// that found it (the best subgraph is what remained after the first
+/// `prefix` of them).
+pub struct Peeling {
+    pub density: f64,
+    pub removed: Vec<u32>,
+    pub prefix: Option<usize>,
+}
+
+/// `densest_subgraph(method="greedy++")`: `degree` as `G.degree` (self-loops
+/// twice), `m` the edge count.
+pub fn greedy_plus_plus(
+    adj: &Csr,
+    n: usize,
+    degree: &[usize],
+    m: usize,
+    iterations: usize,
+) -> Peeling {
+    let mut loads = vec![0i64; n];
+    let mut best = Peeling {
+        density: 0.0,
+        removed: Vec::new(),
+        prefix: None,
+    };
+    for _ in 0..iterations {
+        let mut heap = KeyHeap::new(n);
+        for v in 0..n {
+            heap.insert(v as u32, (loads[v] + degree[v] as i64) as f64);
+        }
+        let mut remaining = vec![true; n];
+        let mut left = n;
+        let mut num_edges = m as i64;
+        let mut current: Vec<i64> = degree.iter().map(|&d| d as i64).collect();
+        let mut removed = Vec::new();
+        let mut best_here = None;
+        while left > 0 {
+            let density = num_edges as f64 / left as f64;
+            if density > best.density {
+                best.density = density;
+                best_here = Some(removed.len());
+            }
+            let node = heap.pop().expect("remaining nodes are queued") as usize;
+            if !remaining[node] {
+                continue;
+            }
+            loads[node] += current[node];
+            for &w in adj.neighbors(node) {
+                let w = w as usize;
+                if remaining[w] {
+                    current[w] -= 1;
+                    num_edges -= 1;
+                    heap.insert(w as u32, (loads[w] + current[w]) as f64);
+                }
+            }
+            remaining[node] = false;
+            left -= 1;
+            removed.push(node as u32);
+        }
+        if best_here.is_some() {
+            best.prefix = best_here;
+            best.removed = removed;
+        }
+    }
+    best
+}
+
+/// `densest_subgraph(method="fista")` on a simple graph: NetworkX's FISTA
+/// iterations in float32 (as its NumPy arrays), then `_fractional_peeling`.
+/// `heap_init` lists `(node, index into b)` in the order NetworkX fills the
+/// peeling heap.
+pub fn fista_peeling(adj: &Csr, n: usize, iterations: usize, heap_init: &[(u32, u32)]) -> Peeling {
+    let edges = edge_list(adj, n, false);
+    let m = edges.len();
+    let src: Vec<usize> = edges
+        .iter()
+        .map(|e| e.0 as usize)
+        .chain(edges.iter().map(|e| e.1 as usize))
+        .collect();
+    let rev = |i: usize| if i < m { i + m } else { i - m };
+    let max_degree = (0..n).map(|v| adj.neighbors(v).len()).max().unwrap_or(0);
+    let learning_rate = 0.9 / max_degree as f64;
+    let step = (2.0 * learning_rate) as f32;
+    let mut x = vec![0.5f32; 2 * m];
+    let mut y = x.clone();
+    let mut z = vec![0.0f32; 2 * m];
+    let mut b = vec![0.0f32; n];
+    let mut tk = 1.0f64;
+    for _ in 0..iterations {
+        b.iter_mut().for_each(|v| *v = 0.0);
+        for (i, &s) in src.iter().enumerate() {
+            b[s] += y[i];
+        }
+        for (i, &s) in src.iter().enumerate() {
+            z[i] = y[i] - step * b[s];
+        }
+        let tknew = (1.0 + (1.0 + 4.0 * (tk * tk)).sqrt()) / 2.0;
+        let s1 = ((tk - 1.0) / tknew) as f32;
+        let s2 = (tk / tknew) as f32;
+        for i in 0..2 * m {
+            let new = (z[i] - z[rev(i)] + 1.0) / 2.0;
+            // np.clip(new, 0.0, 1.0)
+            let low = if new > 0.0 { new } else { 0.0 };
+            let clamped = if low < 1.0 { low } else { 1.0 };
+            y[i] = clamped + s1 * (clamped - x[i]) + s2 * (clamped - y[i]);
+            x[i] = clamped;
+        }
+        tk = tknew;
+    }
+    b.iter_mut().for_each(|v| *v = 0.0);
+    for (i, &s) in src.iter().enumerate() {
+        b[s] += x[i];
+    }
+    // `edge_to_idx[(neighbor, node)]` for each arc of the adjacency.
+    let mut arc_index: HashMap<(u32, u32), usize> = HashMap::with_capacity(2 * m);
+    for (k, &(u, v)) in edges.iter().enumerate() {
+        arc_index.insert((u, v), k);
+        arc_index.insert((v, u), k + m);
+    }
+    let mut heap = KeyHeap::new(n);
+    for &(node, idx) in heap_init {
+        heap.insert(node, b[idx as usize] as f64);
+    }
+    let mut remaining = vec![true; n];
+    let mut left = n;
+    let mut num_edges = m as i64;
+    let mut best = Peeling {
+        density: 0.0,
+        removed: Vec::new(),
+        prefix: None,
+    };
+    while left > 0 {
+        let density = num_edges as f64 / left as f64;
+        if density > best.density {
+            best.density = density;
+            best.prefix = Some(best.removed.len());
+        }
+        let mut node = heap.pop().expect("remaining nodes are queued") as usize;
+        while !remaining[node] {
+            node = heap.pop().expect("remaining nodes are queued") as usize;
+        }
+        for &w in adj.neighbors(node) {
+            let w = w as usize;
+            if remaining[w] {
+                b[w] -= x[arc_index[&(w as u32, node as u32)]];
+                num_edges -= 1;
+                heap.insert(w as u32, b[w] as f64);
+            }
+        }
+        remaining[node] = false;
+        left -= 1;
+        best.removed.push(node as u32);
+    }
+    best
 }

@@ -3365,6 +3365,71 @@ impl CoreGraph {
         py.detach(|| approximation::power_edges(&self.succ, self.n, k))
     }
 
+    /// Mehlhorn's spanning tree over the terminals (`steiner_tree`):
+    /// `(missing, us, vs)`, where `missing` is the first node no terminal
+    /// reaches. Distances use `dist_weight` (hop counts with `hops`); the
+    /// `G_1'` weights add the `weight` attribute.
+    #[pyo3(signature = (sources, dist_weight, hops, weight))]
+    #[allow(clippy::type_complexity)]
+    fn mehlhorn_terminal_mst(
+        &self,
+        py: Python<'_>,
+        sources: Vec<u32>,
+        dist_weight: Option<&str>,
+        hops: bool,
+        weight: Option<&str>,
+    ) -> PyResult<(Option<u32>, Vec<u32>, Vec<u32>)> {
+        let sources = self.sources_or_all(Some(sources))?;
+        let wd = self.weight_slice(dist_weight, false)?;
+        let w = self.weight_slice(weight, false)?;
+        let tree = py
+            .detach(|| more_paths::dijkstra_forest(&self.succ, self.n, wd, &sources, None, None))?;
+        Ok(
+            match py
+                .detach(|| approximation::mehlhorn_terminal_mst(&self.succ, self.n, &tree, hops, w))
+            {
+                Ok(pairs) => {
+                    let (us, vs) = pairs.into_iter().unzip();
+                    (None, us, vs)
+                }
+                Err(v) => (Some(v), Vec::new(), Vec::new()),
+            },
+        )
+    }
+
+    /// `densest_subgraph` by greedy++ (`heap_init` is `None`) or FISTA
+    /// (`heap_init`: the peeling heap's `(node, index into b)` fill order):
+    /// `(best density, nodes removed in the best run, prefix)`. The caller
+    /// checked FISTA's graph has no self-loops.
+    #[pyo3(signature = (iterations, fista, heap_init=None))]
+    #[allow(clippy::type_complexity)]
+    fn densest_peeling(
+        &self,
+        py: Python<'_>,
+        iterations: usize,
+        fista: bool,
+        heap_init: Option<Vec<(u32, u32)>>,
+    ) -> PyResult<(f64, Vec<u32>, Option<usize>)> {
+        let p = if fista {
+            let init = heap_init.unwrap_or_else(|| (0..self.n as u32).map(|v| (v, v)).collect());
+            if init.len() != self.n
+                || init
+                    .iter()
+                    .any(|&(a, b)| a as usize >= self.n || b as usize >= self.n)
+            {
+                return Err(PyValueError::new_err("one heap entry per node"));
+            }
+            py.detach(|| approximation::fista_peeling(&self.succ, self.n, iterations, &init))
+        } else {
+            let degree = self.degrees();
+            let m = self.number_of_edges();
+            py.detach(|| {
+                approximation::greedy_plus_plus(&self.succ, self.n, &degree, m, iterations)
+            })
+        };
+        Ok((p.density, p.removed, p.prefix))
+    }
+
     /// Edges of this graph, in `G.edges()` order, that `other` lacks;
     /// `map[v]` is node `v`'s position in `other`.
     fn edges_missing_from(

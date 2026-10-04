@@ -90,6 +90,7 @@ __all__ = [
     "dag_longest_path_length",
     "dag_to_branching",
     "degree_centrality",
+    "densest_subgraph",
     "descendants",
     "descendants_at_distance",
     "dfs_edges",
@@ -280,6 +281,7 @@ __all__ = [
     "single_target_shortest_path",
     "single_target_shortest_path_length",
     "square_clustering",
+    "steiner_tree",
     "strongly_connected_components",
     "symmetric_difference",
     "threshold_accepting_tsp",
@@ -7012,6 +7014,121 @@ def kl_connected_subgraph(G, k, l, low_memory=False, same_as_graph=False):
         return (H, not us)
     return H
 
+
+
+@functools.cache
+def _steiner_by_distance():
+    """NetworkX 3.6+'s Mehlhorn method finds each node's nearest terminal by
+    the ``weight`` distances; before, by the ``"weight"`` attribute, counting
+    the path's edges as the distance."""
+    from networkx.algorithms.approximation import steinertree
+
+    try:
+        text = " ".join(inspect.getsource(steinertree._mehlhorn_steiner_tree).split())
+    except (AttributeError, OSError, TypeError):
+        text = ""
+    if "nx.multi_source_dijkstra(G, terminal_nodes, weight=weight)" in text:
+        return True
+    if "nx.multi_source_dijkstra_path(G, terminal_nodes)" in text:
+        return False
+    return None
+
+
+def steiner_tree(G, terminal_nodes, weight="weight", method=None):
+    _undirected_only(G)
+    if method is not None and method != "mehlhorn":
+        # Kou's method starts from `set.pop()`.
+        raise NotImplementedError("rustnx supports the mehlhorn method only")
+    by_distance = _steiner_by_distance()
+    if by_distance is None:
+        raise NotImplementedError("unknown steiner_tree version")
+    base = _networkx_graph(G)
+    dist_weight = weight if by_distance else "weight"
+    for attr in {dist_weight, weight} - {None}:
+        attr, _, has_hidden = _check_weight(G, attr)
+        if has_hidden or G._core.has_negative_weight(attr):
+            raise NotImplementedError("rustnx needs non-negative, non-None weights here")
+    positions = _multi_sources(G, terminal_nodes)
+    missing, us, vs = G._core.mehlhorn_terminal_mst(positions, dist_weight, not by_distance, weight)
+    nodes = G._nodes
+    if missing is not None:
+        raise KeyError(nodes[missing])
+    # The rest works on small graphs: replay NetworkX's code.
+    G_3 = nx.Graph()
+    for u, v in zip(us, vs):
+        if weight is None:
+            path = bidirectional_shortest_path(G, nodes[u], nodes[v])
+        else:
+            path = _bidirectional_dijkstra(G, nodes[u], nodes[v], weight, False)[1]
+        for n1, n2 in zip(path, path[1:]):
+            if by_distance:
+                G_3.add_edge(n1, n2, weight=base[n1][n2].get(weight, 1))
+            else:
+                G_3.add_edge(n1, n2)
+    if by_distance:
+        G_3_mst = list(nx.minimum_spanning_edges(G_3, data=False, weight=weight))
+    else:
+        G_3_mst = list(nx.minimum_spanning_edges(G_3, data=False))
+    from networkx.algorithms.approximation import steinertree
+
+    G_4 = base.edge_subgraph(G_3_mst).copy()
+    steinertree._remove_nonterminal_leaves(G_4, terminal_nodes)
+    return base.edge_subgraph(G_4.edges())
+
+
+@functools.cache
+def _peeling_heap_in_node_order():
+    """NetworkX 3.7 fills ``_fractional_peeling``'s heap in node order. 3.5
+    and 3.6 iterate a set of the nodes and index ``b`` by node, which only
+    works for the nodes ``0..n-1`` (a set of those iterates in order)."""
+    try:
+        from networkx.algorithms.approximation import density
+
+        text = " ".join(inspect.getsource(density._fractional_peeling).split())
+    except (AttributeError, ImportError, OSError, TypeError):
+        return None
+    if "for idx, node in enumerate(G): heap.insert(node, b[idx])" in text:
+        return True
+    if "for idx in remaining_nodes: heap.insert(idx, b[idx])" in text:
+        return False
+    return None
+
+
+def densest_subgraph(G, iterations=1, *, method="fista"):
+    _undirected_only(G)
+    if method not in ("fista", "greedy++") or type(method) is not str:
+        raise NotImplementedError("NetworkX raises for this method")
+    if G._core.number_of_edges() == 0:
+        return 0.0, set()
+    if type(iterations) not in (int, bool):
+        raise NotImplementedError("rustnx needs an int number of iterations")
+    if iterations < 1:
+        raise ValueError(
+            f"The number of iterations must be an integer >= 1. Provided: {iterations}"
+        )
+    heap_init = None
+    if method == "fista":
+        import numpy  # noqa: F401  (NetworkX's FISTA needs it)
+
+        in_node_order = _peeling_heap_in_node_order()
+        if in_node_order is None or G._core.has_self_loops():
+            raise NotImplementedError("rustnx does not support this case")
+        if not in_node_order:
+            nodes = G._nodes
+            if any(type(v) is not int for v in nodes) or set(nodes) != set(range(len(nodes))):
+                raise NotImplementedError("NetworkX indexes by node here")
+            index = G._index
+            heap_init = [(index[v], v) for v in range(len(nodes))]
+    density, removed, prefix = G._core.densest_peeling(iterations, method == "fista", heap_init)
+    if prefix is None:
+        return density, set()
+    # `best_subgraph = set(remaining_nodes)` at the best point: replay the
+    # removals so the set iterates in NetworkX's order.
+    nodes = G._nodes
+    remaining = set(nodes)
+    for i in removed[:prefix]:
+        remaining.remove(nodes[i])
+    return density, set(remaining)
 
 def _plain_result_class(G):
     """``G.__class__`` of the NetworkX graph G stands for (plain graphs only)."""

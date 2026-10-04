@@ -3560,6 +3560,61 @@ def test_batch16_operators_on_subclasses():
     exact_outcome(_b16_graphs(nx.power), G, 2)
 
 
+
+@pytest.mark.parametrize("weights", ["none", "int", "float", "missing"])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch16_steiner_tree(seed, weights):
+    G = graph_for(seed, False, weights)
+    if seed % 3 == 0:
+        # One component, so every node reaches a terminal.
+        G.add_edges_from(zip(list(G), list(G)[1:]), weight=2)
+    nodes = list(G)
+    rng = random.Random(seed)
+    for k in [1, 2, 3, 6]:
+        terminals = rng.sample(nodes, min(k, len(nodes)))
+        for weight in ["weight", None, "other"]:
+            exact_outcome(_b16_graphs(approx.steiner_tree), G, terminals, weight=weight)
+        exact_outcome(_b16_graphs(approx.steiner_tree), G, terminals, method="mehlhorn")
+        exact_outcome(_b16_graphs(approx.steiner_tree), G, terminals + terminals[:1])
+    exact_outcome(_b16_graphs(approx.steiner_tree), G, nodes[:2], method="kou")
+    exact_outcome(_b16_graphs(approx.steiner_tree), G, nodes[:2], method="nope")
+    exact_outcome(_b16_graphs(approx.steiner_tree), G, [])
+    exact_outcome(_b16_graphs(approx.steiner_tree), G, ["missing"])
+    exact_outcome(_b16_graphs(approx.steiner_tree), graph_for(seed, True), nodes[:2])
+    if G.number_of_edges():
+        u, v = next(iter(G.edges))
+        H = G.copy()
+        H[u][v]["weight"] = -1
+        exact_outcome(_b16_graphs(approx.steiner_tree), H, nodes[:3])
+
+
+_b16_densest = getattr(approx, "densest_subgraph", None)
+
+
+@pytest.mark.skipif(_b16_densest is None, reason="NetworkX lacks densest_subgraph")
+@pytest.mark.parametrize("seed", range(60))
+def test_batch16_densest_subgraph(seed):
+    G = graph_for(seed, False)
+    rng = random.Random(seed)
+    if seed % 2:
+        # Plain 0..n-1 labels in a shuffled order (NetworkX 3.5 and 3.6 index
+        # by node there).
+        nodes = list(range(len(G)))
+        rng.shuffle(nodes)
+        H = nx.Graph()
+        H.add_nodes_from(nodes)
+        H.add_edges_from(nx.convert_node_labels_to_integers(G).edges)
+        G = H
+    for method in ["fista", "greedy++"]:
+        for iterations in [1, 2, 5, 30]:
+            exact_outcome(with_set_order(_b16_densest), G, iterations, method=method)
+        exact_outcome(with_set_order(_b16_densest), G, 0, method=method)
+    exact_outcome(with_set_order(_b16_densest), G, 3)
+    exact_outcome(with_set_order(_b16_densest), G, method="nope")
+    exact_outcome(with_set_order(_b16_densest), nx.Graph(), 3)
+    exact_outcome(with_set_order(_b16_densest), nx.empty_graph(4), 3)
+    exact_outcome(with_set_order(_b16_densest), graph_for(seed, True))
+
 @pytest.mark.parametrize("directed", [False, True])
 @pytest.mark.parametrize("seed", range(10))
 def test_batch16_multigraphs(seed, directed, restore_config):
@@ -3574,6 +3629,8 @@ def test_batch16_multigraphs(seed, directed, restore_config):
     exact_outcome(with_set_order(approx.min_maximal_matching), M)
     exact_outcome(_b16_graphs(nx.complement), M)
     exact_outcome(nx.is_kl_connected, M, 2, 2)
+    if not directed:
+        exact_outcome(_b16_graphs(approx.steiner_tree), M, list(M)[:2])
 
 
 def test_batch16_runs_in_rust():
@@ -3602,6 +3659,10 @@ def test_batch16_runs_in_rust():
         lambda: nx.power(G, 2, backend="rustnx"),
         lambda: nx.difference(G, G, backend="rustnx"),
         lambda: nx.symmetric_difference(D, D, backend="rustnx"),
+        lambda: approx.steiner_tree(G, [0, 5, 9], backend="rustnx"),
     ]
+    if _b16_densest is not None:
+        calls.append(lambda: _b16_densest(G, 5, backend="rustnx"))
+        calls.append(lambda: _b16_densest(G, 5, method="greedy++", backend="rustnx"))
     for call in calls:
         call()
