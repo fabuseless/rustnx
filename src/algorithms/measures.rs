@@ -106,11 +106,12 @@ impl<'a> PySet<'a> {
                 return;
             }
             if i + LINEAR_PROBES <= mask {
-                for j in i + 1..=i + LINEAR_PROBES {
-                    if table[j] == EMPTY {
-                        table[j] = key;
-                        return;
-                    }
+                if let Some(slot) = table[i + 1..=i + LINEAR_PROBES]
+                    .iter_mut()
+                    .find(|slot| **slot == EMPTY)
+                {
+                    *slot = key;
+                    return;
                 }
             }
             perturb >>= PERTURB_SHIFT;
