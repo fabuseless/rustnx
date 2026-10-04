@@ -88,12 +88,18 @@ class RustnxGraph:
         """Nodes, in order."""
         return list(self._nodes)
 
-    def edges(self, data=False):
-        """Edges in ``networkx.Graph.edges`` order.
+    @property
+    def edges(self):
+        """Edges in ``networkx.Graph.edges`` order: ``G.edges(data=False)``.
 
         With ``data=True``, ``(u, v, attrs)`` triples. Native graphs give the
         attributes they store; snapshots read them from the source graph.
+        Iterating ``G.edges`` itself gives the ``(u, v)`` pairs, as with
+        NetworkX's edge view (NetworkX's test harness does that).
         """
+        return _EdgeView(self)
+
+    def _edge_list(self, data=False):
         us, vs, ids = self._core.edges_in_order()
         nodes = self._nodes
         if not data:
@@ -185,6 +191,24 @@ class RustnxGraph:
             f"<{type(self).__name__} ({kind}) with {len(self)} nodes "
             f"and {self.number_of_edges()} edges>"
         )
+
+
+class _EdgeView:
+    """``RustnxGraph.edges``: callable like a method, iterable like a view."""
+
+    __slots__ = ("_graph",)
+
+    def __init__(self, graph):
+        self._graph = graph
+
+    def __call__(self, data=False):
+        return self._graph._edge_list(data)
+
+    def __iter__(self):
+        return iter(self._graph._edge_list())
+
+    def __len__(self):
+        return self._graph.number_of_edges()
 
 
 def _decode(value, kind):
