@@ -493,7 +493,6 @@ def test_batch3_graph_changes_during_iteration():
         lambda G, b: nx.dag.colliders(G, backend=b),
         lambda G, b: nx.dag.root_to_leaf_paths(G, backend=b),
         lambda G, b: nx.all_topological_sorts(G, backend=b),
-        lambda G, b: nx.lexicographical_topological_sort(G, backend=b),
     ]
     for call in calls:
         G = nx.DiGraph([(0, 1), (0, 2), (1, 3), (2, 3), (3, 4), (2, 4)])
@@ -502,6 +501,37 @@ def test_batch3_graph_changes_during_iteration():
         G.add_edge("x", "y")
         with pytest.raises(RuntimeError):
             list(it)
+
+
+def test_batch3_lexicographical_changes_like_networkx():
+    # lexicographical_topological_sort continues on the changed graph, as
+    # NetworkX does (its own test_topological_sort6 checks the errors).
+    changes = [
+        lambda G, x: G.add_edge(5 - x, 5),
+        lambda G, x: G.remove_node(4),
+        lambda G, x: G.remove_node(2),
+        lambda G, x: G.add_edge(4, 9),
+        lambda G, x: G.add_edge(1, 4),
+        lambda G, x: G.add_edge(0, 3),
+    ]
+    for change in changes:
+        for when in [0, 1, 2]:
+            def run(backend):
+                G = nx.DiGraph([(1, 2), (2, 3), (3, 4), (1, 3)])
+                out = []
+                try:
+                    it = nx.lexicographical_topological_sort(G, backend=backend)
+                    if when == 0:
+                        change(G, 1)
+                    for k, x in enumerate(it):
+                        out.append(x)
+                        if k + 1 == when:
+                            change(G, x)
+                except Exception as exc:
+                    out.append((type(exc), exc.args))
+                return out
+
+            assert run("rustnx") == run("networkx")
 
 
 def test_batch3_lazy_errors():

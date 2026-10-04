@@ -1927,20 +1927,83 @@ def lexicographical_topological_sort(G):
     rank = _sort_ranks(G) if G.is_directed() else None
     if G.is_directed() and rank is None:
         raise NotImplementedError("rustnx sorts ints, floats or strings only")
+    guard = _MutationGuard(G)
+    return _lexicographical_topological_sort(G, guard, rank)
 
-    def produce():
+
+def _lexicographical_topological_sort(G, guard, rank):
+    try:
         if not G.is_directed():
             raise nx.NetworkXError("Topological sort not defined on undirected graphs.")
         order, cycle = G._core.lexicographical_topological_sort(rank)
+        if guard.changed():
+            # Changed before iteration started: NetworkX would sort the
+            # changed graph.
+            yield from nx.lexicographical_topological_sort(guard.graph, backend="networkx")
+            return
         nodes = G._nodes
-        for v in order:
+        for i, v in enumerate(order):
             yield nodes[v]
+            if guard.changed():
+                yield from _resume_lexicographical(G, guard, order, i)
+                return
         if cycle:
             raise nx.NetworkXUnfeasible(
                 "Graph contains a cycle or graph changed during iteration"
             )
+    finally:
+        guard.release()
 
-    return _traversal(G, produce)
+
+def _resume_lexicographical(G, guard, order, done):
+    """Continue exactly as NetworkX would after the graph changed.
+
+    When NetworkX yields ``order[done]`` it has already processed that
+    node's out-edges, so rebuild its heap and in-degree map from the
+    snapshot and run NetworkX's loop on the live graph.
+    """
+    import heapq
+
+    nodes = G._nodes
+    processed = order[: done + 1]
+    remaining = G._core.indegrees_after(processed)
+    is_processed = [False] * len(nodes)
+    for v in processed:
+        is_processed[v] = True
+    indegree_map = {nodes[v]: d for v, d in enumerate(remaining) if d > 0}
+    nodeid_map = {n: i for i, n in enumerate(nodes)}
+
+    def create_tuple(node):
+        return node, nodeid_map[node], node
+
+    zero_indegree = [
+        create_tuple(nodes[v]) for v, d in enumerate(remaining) if d == 0 and not is_processed[v]
+    ]
+    heapq.heapify(zero_indegree)
+    live = guard.graph
+    # From networkx.algorithms.dag.lexicographical_topological_sort.
+    while zero_indegree:
+        _, _, node = heapq.heappop(zero_indegree)
+        if node not in live:
+            raise RuntimeError("Graph changed during iteration")
+        for _, child in live.edges(node):
+            try:
+                indegree_map[child] -= 1
+            except KeyError as err:
+                raise RuntimeError("Graph changed during iteration") from err
+            if indegree_map[child] == 0:
+                try:
+                    heapq.heappush(zero_indegree, create_tuple(child))
+                except TypeError as err:
+                    raise TypeError(
+                        "Consider using `key=` parameter to resolve ambiguities in the sort order."
+                    ) from err
+                del indegree_map[child]
+        yield node
+    if indegree_map:
+        raise nx.NetworkXUnfeasible(
+            "Graph contains a cycle or graph changed during iteration"
+        )
 
 
 def all_topological_sorts(G):
