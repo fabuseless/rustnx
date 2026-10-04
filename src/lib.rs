@@ -2003,6 +2003,38 @@ impl CoreGraph {
         })))
     }
 
+    /// `greedy_branching` on the converted `weight` (exact for ints and
+    /// floats alike): kept edges as `(us, vs)`, in the order added.
+    fn greedy_branching_edges(
+        &self,
+        py: Python<'_>,
+        weight: &str,
+        rank: Vec<u32>,
+        maximum: bool,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        if rank.len() != self.n {
+            return Err(PyValueError::new_err("one rank per node is needed"));
+        }
+        let w = self.weight_slice(Some(weight), false)?.unwrap_or(&[]);
+        Ok(py.detach(|| {
+            let (mut us, mut vs, mut ws) = (Vec::new(), Vec::new(), Vec::new());
+            for u in 0..self.n {
+                for e in self.succ.range(u) {
+                    let v = self.succ.targets[e];
+                    if self.directed || v as usize >= u {
+                        us.push(u as u32);
+                        vs.push(v);
+                        ws.push(trees_more::Num::Float(w[e]));
+                    }
+                }
+            }
+            trees_more::greedy_branching(self.n, &us, &vs, &ws, &rank, maximum)
+                .into_iter()
+                .map(|i| (us[i as usize], vs[i as usize]))
+                .unzip()
+        }))
+    }
+
     /// `prim_mst_edges` (undirected), growing a tree from each of `starts`.
     #[pyo3(signature = (starts, weight=None, minimum=true))]
     fn prim_edges(

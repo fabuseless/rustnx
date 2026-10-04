@@ -4434,6 +4434,23 @@ def greedy_branching(G, attr="weight", default=1, kind="max", seed=None):
         # NetworkX sorts by (weight, u, v); other labels may not compare.
         raise NotImplementedError("rustnx needs int or str node labels")
     base = _networkx_graph(G)
+    rank = [0] * len(nodes)
+    for r, x in enumerate(sorted(range(len(nodes)), key=nodes.__getitem__)):
+        rank[x] = r
+    if isinstance(attr, str):
+        # The weights as converted (ints are exact in floats, and compare
+        # with floats as Python does); the result keeps the edges' values.
+        core = _weight_core(G, attr, default)
+        if core.weight_info(attr)[1]:
+            raise NotImplementedError("rustnx needs int or float weights")
+        us, vs = core.greedy_branching_edges(attr, rank, kind != "min")
+        adj = base._adj
+        B = nx.DiGraph()
+        B.add_nodes_from(base)
+        for u, v in zip(us, vs):
+            a, b = nodes[u], nodes[v]
+            B.add_edge(a, b, **{attr: adj[a][b].get(attr, default)})
+        return B
     if attr is None:
         if type(default) not in (int, float) or math.isnan(default):
             raise NotImplementedError("rustnx needs an int or float default")
@@ -4443,9 +4460,6 @@ def greedy_branching(G, attr="weight", default=1, kind="max", seed=None):
         attr = random_string(seed=seed)
     edges = list(base.edges(data=True))
     weights = [data.get(attr, default) for _, _, data in edges]
-    rank = [0] * len(nodes)
-    for r, x in enumerate(sorted(range(len(nodes)), key=nodes.__getitem__)):
-        rank[x] = r
     us, vs = _edge_positions(G, edges)
     kept = _CoreGraph.greedy_branching(us, vs, weights, rank, kind != "min")
     if kept is None:
