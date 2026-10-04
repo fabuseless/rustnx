@@ -163,8 +163,28 @@ SECTIONS = [
         "color", "sets", "is_bipartite_node_set", "hopcroft_karp_matching", "to_vertex_cover",
         "bipartite_closeness_centrality", "node_redundancy", "butterflies",
     ]),
+    ("Assortativity and mixing", [
+        "degree_assortativity_coefficient", "degree_pearson_correlation_coefficient",
+        "attribute_assortativity_coefficient", "numeric_assortativity_coefficient",
+        "degree_mixing_dict", "degree_mixing_matrix", "attribute_mixing_dict",
+        "attribute_mixing_matrix", "node_degree_xy", "node_attribute_xy",
+        "average_degree_connectivity", "average_neighbor_degree",
+    ]),
+    ("Link prediction", [
+        "jaccard_coefficient", "adamic_adar_index", "resource_allocation_index",
+        "preferential_attachment", "cn_soundarajan_hopcroft", "ra_index_soundarajan_hopcroft",
+        "within_inter_cluster", "common_neighbor_centrality",
+    ]),
+    ("Reciprocity, rich club and walks", [
+        "reciprocity", "overall_reciprocity", "rich_club_coefficient", "s_metric",
+        "number_of_walks",
+    ]),
 ]
 
+DEGREE_WEIGHTS = "Integer edge weights only; float weights fall back."
+ATTRIBUTES = "Node attributes are read from the NetworkX graph."
+LINKS = "Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed."
+COMMUNITIES = "Community values must be ints, floats, strings, bools or `None`; others fall back."
 LENGTHS = "Falls back when weights mix ints and floats (NetworkX's length types then depend on the path)."
 NOTES = {
     "betweenness_centrality": "Parallel. Matches NetworkX to about 1e-15 (sums in a different order). `k` picks the same nodes as NetworkX for a given `seed`. `None` weights fall back.",
@@ -384,6 +404,29 @@ QUALIFIED = {
     "bipartite_closeness_centrality": "As `nx.bipartite.closeness_centrality`. Bit-for-bit identical; parallel searches.",
     "node_redundancy": "A one-shot iterator of nodes, and nodes not in the graph, fall back.",
     "butterflies": "NetworkX 3.7+.",
+    "degree_assortativity_coefficient": DEGREE_WEIGHTS + " Builds the mixing matrix in Rust; the last step is NetworkX's own NumPy code, so bit-for-bit identical.",
+    "degree_pearson_correlation_coefficient": DEGREE_WEIGHTS + " Pairs come from Rust and go to SciPy's `pearsonr` as in NetworkX. Fewer than two pairs fall back (NetworkX versions differ there).",
+    "attribute_assortativity_coefficient": ATTRIBUTES + " The last step is NetworkX's own NumPy code.",
+    "numeric_assortativity_coefficient": ATTRIBUTES + " Native graphs fall back.",
+    "degree_mixing_dict": DEGREE_WEIGHTS + " Same keys in the same order.",
+    "degree_mixing_matrix": DEGREE_WEIGHTS,
+    "attribute_mixing_dict": ATTRIBUTES + " Same keys (the same objects) in the same order.",
+    "attribute_mixing_matrix": ATTRIBUTES,
+    "node_degree_xy": DEGREE_WEIGHTS + " Pairs follow NetworkX's `set(nodes)` order.",
+    "node_attribute_xy": ATTRIBUTES,
+    "average_degree_connectivity": DEGREE_WEIGHTS,
+    "average_neighbor_degree": DEGREE_WEIGHTS + " A single node as `nodes` falls back (NetworkX raises `TypeError`).",
+    "jaccard_coefficient": LINKS,
+    "adamic_adar_index": LINKS + " Float sums follow the order of NetworkX's common-neighbor set, which rustnx replays (checked once against the running Python).",
+    "resource_allocation_index": LINKS + " Float sums follow NetworkX's set order, as for `adamic_adar_index`.",
+    "preferential_attachment": LINKS,
+    "cn_soundarajan_hopcroft": LINKS + " " + COMMUNITIES,
+    "ra_index_soundarajan_hopcroft": LINKS + " " + COMMUNITIES,
+    "within_inter_cluster": LINKS + " " + COMMUNITIES,
+    "common_neighbor_centrality": LINKS + " Distances come from one search per source node of `ebunch`.",
+    "reciprocity": "Undirected graphs with `nodes` fall back (NetworkX raises `AttributeError`).",
+    "rich_club_coefficient": "`normalized=False` only: normalizing uses random edge swaps, so the default falls back.",
+    "number_of_walks": "Exact int64 arithmetic (wrapping on overflow as NumPy and SciPy do). Graphs without edges (NetworkX returns floats) and walks longer than 100 fall back.",
 }
 
 # Functions NetworkX only exposes under `nx.isomorphism` or `nx.bipartite`

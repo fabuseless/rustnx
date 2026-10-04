@@ -344,6 +344,22 @@ def algorithm_calls(H, directed):
             lambda H, alpha: (list(H.edges), list(alpha.items()))
         )(*nx.complete_to_chordal_graph(G, backend=b))
         calls["at_free"] = lambda G, b: nx.is_at_free(G, backend=b)
+    calls["degree_mixing_dict"] = lambda G, b: nx.degree_mixing_dict(G, backend=b)
+    calls["degree_xy_w"] = lambda G, b: list(nx.node_degree_xy(G, weight="cap", backend=b))
+    calls["attribute_mixing_dict"] = lambda G, b: nx.attribute_mixing_dict(G, "c", backend=b)
+    calls["avg_neighbor_degree"] = lambda G, b: nx.average_neighbor_degree(G, backend=b)
+    calls["avg_degree_connectivity"] = lambda G, b: nx.average_degree_connectivity(G, backend=b)
+    calls["s_metric"] = lambda G, b: nx.s_metric(G, backend=b)
+    calls["number_of_walks"] = lambda G, b: nx.number_of_walks(G, 2, backend=b)
+    if directed:
+        calls["reciprocity"] = lambda G, b: nx.reciprocity(G, nodes, backend=b)
+        calls["overall_reciprocity"] = lambda G, b: nx.overall_reciprocity(G, backend=b)
+    else:
+        calls["jaccard"] = lambda G, b: list(nx.jaccard_coefficient(G, backend=b))
+        calls["resource_allocation"] = lambda G, b: list(nx.resource_allocation_index(G, backend=b))
+        calls["ra_soundarajan_hopcroft"] = lambda G, b: list(nx.ra_index_soundarajan_hopcroft(G, backend=b))
+        calls["ccpa"] = lambda G, b: list(nx.common_neighbor_centrality(G, nodes and [(nodes[0], nodes[-1])], backend=b))
+        calls["rich_club"] = lambda G, b: nx.rich_club_coefficient(G, normalized=False, backend=b)
     calls["is_planar"] = lambda G, b: nx.is_planar(G, backend=b)
     calls["planarity"] = lambda G, b: (
         lambda ok, E: (ok, None if E is None else list(E.edges(data=True)))

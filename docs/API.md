@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 267 NetworkX functions. Call them as usual (for
+rustnx implements 292 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -443,6 +443,46 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `As `nx.bipartite.closeness_centrality`. Bit-for-bit identical; parallel searches.` | `nodes`, `normalized` | yes | rustnx |  |
 | `A one-shot iterator of nodes, and nodes not in the graph, fall back.` | `nodes` | yes | rustnx |  |
 | `NetworkX 3.7+.` | `nodes` | no | rustnx |  |
+
+### Assortativity and mixing
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `Integer edge weights only; float weights fall back. Builds the mixing matrix in Rust; the last step is NetworkX's own NumPy code, so bit-for-bit identical.` | `x`, `y`, `weight`, `nodes` | no | NetworkX |  |
+| `Integer edge weights only; float weights fall back. Pairs come from Rust and go to SciPy's `pearsonr` as in NetworkX. Fewer than two pairs fall back (NetworkX versions differ there).` | `x`, `y`, `weight`, `nodes` | no | NetworkX |  |
+| `Node attributes are read from the NetworkX graph. The last step is NetworkX's own NumPy code.` | `attribute`, `nodes` | no | NetworkX |  |
+| `Node attributes are read from the NetworkX graph. Native graphs fall back.` | `attribute`, `nodes` | no | NetworkX |  |
+| `Integer edge weights only; float weights fall back. Same keys in the same order.` | `x`, `y`, `weight`, `nodes`, `normalized` | no | NetworkX |  |
+| `Integer edge weights only; float weights fall back.` | `x`, `y`, `weight`, `nodes`, `normalized`, `mapping` | no | NetworkX |  |
+| `Node attributes are read from the NetworkX graph. Same keys (the same objects) in the same order.` | `attribute`, `nodes`, `normalized` | no | NetworkX |  |
+| `Node attributes are read from the NetworkX graph.` | `attribute`, `nodes`, `mapping`, `normalized` | no | NetworkX |  |
+| `Integer edge weights only; float weights fall back. Pairs follow NetworkX's `set(nodes)` order.` | `x`, `y`, `weight`, `nodes` | no | NetworkX |  |
+| `Node attributes are read from the NetworkX graph.` | `attribute`, `nodes` | no | NetworkX |  |
+| `Integer edge weights only; float weights fall back.` | `source`, `target`, `nodes`, `weight` | no | NetworkX |  |
+| `Integer edge weights only; float weights fall back. A single node as `nodes` falls back (NetworkX raises `TypeError`).` | `source`, `target`, `nodes`, `weight` | no | NetworkX |  |
+
+### Link prediction
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed.` | `ebunch` | no | NetworkX |  |
+| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed. Float sums follow the order of NetworkX's common-neighbor set, which rustnx replays (checked once against the running Python).` | `ebunch` | no | NetworkX |  |
+| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed. Float sums follow NetworkX's set order, as for `adamic_adar_index`.` | `ebunch` | no | NetworkX |  |
+| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed.` | `ebunch` | no | NetworkX |  |
+| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed. Community values must be ints, floats, strings, bools or `None`; others fall back.` | `ebunch`, `community` | no | NetworkX |  |
+| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed. Community values must be ints, floats, strings, bools or `None`; others fall back.` | `ebunch`, `community` | no | NetworkX |  |
+| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed. Community values must be ints, floats, strings, bools or `None`; others fall back.` | `ebunch`, `delta`, `community` | no | NetworkX |  |
+| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed. Distances come from one search per source node of `ebunch`.` | `ebunch`, `alpha` | no | NetworkX |  |
+
+### Reciprocity, rich club and walks
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `Undirected graphs with `nodes` fall back (NetworkX raises `AttributeError`).` | `nodes` | no | NetworkX |  |
+| `nx.overall_reciprocity` | none | no | NetworkX |  |
+| ``normalized=False` only: normalizing uses random edge swaps, so the default falls back.` | `normalized`, `Q`, `seed` | no | NetworkX |  |
+| `nx.s_metric` | none | no | NetworkX |  |
+| `Exact int64 arithmetic (wrapping on overflow as NumPy and SciPy do). Graphs without edges (NetworkX returns floats) and walks longer than 100 fall back.` | `walk_length` | no | rustnx |  |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 
