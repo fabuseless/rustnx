@@ -3406,14 +3406,16 @@ impl CoreGraph {
         val_obj(py, flow::py_sum(products, compensated).map_err(fail_err)?)
     }
 
-    /// `cut_size`: the parts are `(nset1 order, nset2)` (see `flow::cut_size`).
-    #[pyo3(signature = (parts, compensated, weight=None))]
+    /// `cut_size`: the parts are `(nset1 order, nset2)` (see `flow::cut_size`);
+    /// `rows` as for `residual_network`, needed when weights mix ints and floats.
+    #[pyo3(signature = (parts, compensated, weight=None, rows=None))]
     fn cut_size_value<'py>(
         &self,
         py: Python<'py>,
         parts: Vec<(Vec<u32>, Option<Vec<u32>>)>,
         compensated: bool,
         weight: Option<&str>,
+        rows: Option<&Bound<'py, PyList>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         for (order, nset2) in &parts {
             self.membership(order)?;
@@ -3421,28 +3423,30 @@ impl CoreGraph {
                 self.membership(s)?;
             }
         }
-        let w = self.cut_weights(weight)?;
+        let w = self.cut_weights(weight, rows)?;
         let (n, directed) = (self.n, self.directed);
         let value = py
-            .detach(|| flow::cut_size(&self.succ, n, directed, w, &parts, compensated))
+            .detach(|| flow::cut_size(&self.succ, n, directed, &w, &parts, compensated))
             .map_err(fail_err)?;
         val_obj(py, value)
     }
 
-    /// `volume(G, S, weight)` for the positions of `nbunch_iter(S)`.
-    #[pyo3(signature = (nodes, compensated, weight=None))]
+    /// `volume(G, S, weight)` for the positions of `nbunch_iter(S)`; `rows`
+    /// as for `cut_size_value`.
+    #[pyo3(signature = (nodes, compensated, weight=None, rows=None))]
     fn volume_value<'py>(
         &self,
         py: Python<'py>,
         nodes: Vec<u32>,
         compensated: bool,
         weight: Option<&str>,
+        rows: Option<&Bound<'py, PyList>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.membership(&nodes)?;
-        let w = self.cut_weights(weight)?;
+        let w = self.cut_weights(weight, rows)?;
         let directed = self.directed;
         let value = py
-            .detach(|| flow::volume(&self.succ, directed, w, &nodes, compensated))
+            .detach(|| flow::volume(&self.succ, directed, &w, &nodes, compensated))
             .map_err(fail_err)?;
         val_obj(py, value)
     }
@@ -4287,24 +4291,31 @@ impl CoreGraph {
         Ok(out)
     }
 
-    /// Weights for the cut measures: as Python numbers, ints or floats
-    /// (an attribute mixing both, or with `None` values, falls back).
-    fn cut_weights(&self, weight: Option<&str>) -> PyResult<flow::Weights<'_>> {
+    /// Weights for the cut measures, as Python numbers: the converted ones,
+    /// or, for an attribute mixing ints and floats, read from `rows` (see
+    /// `edge_values`). `None` values fall back (NetworkX raises).
+    fn cut_weights(
+        &self,
+        weight: Option<&str>,
+        rows: Option<&Bound<'_, PyList>>,
+    ) -> PyResult<flow::Weights<'_>> {
         let Some(attr) = weight else {
-            return Ok(flow::Weights {
-                values: None,
-                all_int: true,
-            });
+            return Ok(flow::Weights::Unit);
         };
         let (all_int, hidden) = self.weights_info(Some(attr));
-        if hidden || self.weights_mixed(Some(attr)) {
-            return Err(PyNotImplementedError::new_err(
-                "weights mix ints and floats, or are None",
-            ));
+        if hidden {
+            return Err(PyNotImplementedError::new_err("None weights"));
         }
-        Ok(flow::Weights {
-            values: self.weight_slice(Some(attr), false)?,
-            all_int,
+        if self.weights_mixed(Some(attr)) {
+            let rows =
+                rows.ok_or_else(|| PyNotImplementedError::new_err("weights mix ints and floats"))?;
+            let name = pyo3::types::PyString::new(rows.py(), attr).into_any();
+            let mut vals = self.edge_values(rows, &[(&name, flow::Val::I(1))])?;
+            return Ok(flow::Weights::Exact(vals.pop().unwrap_or_default()));
+        }
+        Ok(match self.weight_slice(Some(attr), false)? {
+            Some(w) => flow::Weights::Stored(w, all_int),
+            None => flow::Weights::Unit,
         })
     }
 }

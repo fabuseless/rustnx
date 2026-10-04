@@ -2260,21 +2260,24 @@ impl Val {
 
 // --- Cut measures ---------------------------------------------------------------------------------
 
-/// Edge weights as Python numbers: `None` counts each edge as 1; `all_int`
-/// says the (exactly stored) values are ints.
-#[derive(Clone, Copy)]
-pub struct Weights<'a> {
-    pub values: Option<&'a [f64]>,
-    pub all_int: bool,
+/// Edge weights as Python numbers, per arc of the adjacency.
+pub enum Weights<'a> {
+    /// No weight: each edge counts 1.
+    Unit,
+    /// The converted values, all ints (`true`) or all floats.
+    Stored(&'a [f64], bool),
+    /// Read from the NetworkX graph, ints and floats mixed.
+    Exact(Vec<Val>),
 }
 
 impl Weights<'_> {
     #[inline]
     fn at(&self, e: usize) -> Val {
-        match self.values {
-            None => I(1),
-            Some(w) if self.all_int => I(w[e] as i64),
-            Some(w) => F(w[e]),
+        match self {
+            Weights::Unit => I(1),
+            Weights::Stored(w, true) => I(w[e] as i64),
+            Weights::Stored(w, false) => F(w[e]),
+            Weights::Exact(w) => w[e],
         }
     }
 }
@@ -2327,7 +2330,7 @@ pub fn cut_size(
     adj: &crate::graph::Csr,
     n: usize,
     directed: bool,
-    w: Weights,
+    w: &Weights,
     parts: &[(Vec<u32>, Option<Vec<u32>>)],
     compensated: bool,
 ) -> Res<Val> {
@@ -2345,7 +2348,7 @@ pub fn cut_size(
 pub fn volume(
     adj: &crate::graph::Csr,
     directed: bool,
-    w: Weights,
+    w: &Weights,
     nodes: &[u32],
     compensated: bool,
 ) -> Res<Val> {
@@ -2355,9 +2358,9 @@ pub fn volume(
         let self_loop = (!directed)
             .then(|| range.clone().find(|&e| adj.targets[e] == u))
             .flatten();
-        let mut d = match w.values {
-            None => I(range.len() as i64),
-            Some(_) => py_sum(range.map(|e| w.at(e)), compensated)?,
+        let mut d = match w {
+            Weights::Unit => I(range.len() as i64),
+            _ => py_sum(range.map(|e| w.at(e)), compensated)?,
         };
         if let Some(e) = self_loop {
             d = d.add(w.at(e))?;

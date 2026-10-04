@@ -6799,8 +6799,9 @@ def _residual_graph(G, run, value=None, algorithm=None):
         return R
     positions = run.set_node_attrs(list(R._node.values()))
     if positions is not None:
-        for row, edges, position in zip(R._node.values(), R._succ.values(), positions):
-            row["curr_edge"] = _current_edge(edges, position)
+        R_succ = R.succ  # NetworkX's CurrentEdges iterate these AtlasViews
+        for (u, row), position in zip(R._node.items(), positions):
+            row["curr_edge"] = _current_edge(R_succ[u], position)
     trees = run.trees(nodes)
     if trees is not None:
         R.graph["trees"] = trees
@@ -6980,13 +6981,14 @@ def cost_of_flow(G, flowDict, weight="weight"):
 
 
 def _cut_weight(G, weight):
-    """The weight attribute for the cut measures (``None``: each edge is 1)."""
+    """The weight attribute for the cut measures (``None``: each edge is 1)
+    and, if it mixes ints and floats, the adjacency rows to read it from."""
     if weight is None:
-        return None
+        return None, None
     if not isinstance(weight, str):
         raise NotImplementedError("rustnx needs an edge attribute name for weight")
     G._ensure_weight(weight)
-    return weight
+    return weight, (_flow_rows(G) if G._core.weight_mixed(weight) else None)
 
 
 def _reusable_sets(*args):
@@ -7011,18 +7013,18 @@ def _set_positions(G, nbunch):
 
 def cut_size(G, S, T=None, weight=None):
     _reusable_sets(S, T)
-    weight = _cut_weight(G, weight)
+    weight, rows = _cut_weight(G, weight)
     if G.is_directed() and T is None:
         raise NotImplementedError("NetworkX fails with T=None on directed graphs")
     parts = [(_nset_positions(G, S), None if T is None else _set_positions(G, T))]
     if G.is_directed():
         parts.append((_nset_positions(G, T), _set_positions(G, S)))
-    return G._core.cut_size_value(parts, _COMPENSATED_SUM, weight)
+    return G._core.cut_size_value(parts, _COMPENSATED_SUM, weight, rows)
 
 
 def volume(G, S, weight=None):
     _reusable_sets(S)
-    weight = _cut_weight(G, weight)
+    weight, rows = _cut_weight(G, weight)
     if S in G:
         raise NotImplementedError("NetworkX fails on a single node here")
     index = G._index
@@ -7030,12 +7032,11 @@ def volume(G, S, weight=None):
         positions = [index[n] for n in S if n in index]  # nbunch_iter
     except TypeError:
         raise NotImplementedError("NetworkX raises for this nbunch") from None
-    return G._core.volume_value(positions, _COMPENSATED_SUM, weight)
+    return G._core.volume_value(positions, _COMPENSATED_SUM, weight, rows)
 
 
 def normalized_cut_size(G, S, T=None, weight=None):
     _reusable_sets(S, T)
-    _cut_weight(G, weight)
     if T is None:
         T = set(G._nodes) - set(S)
     num_cut_edges = cut_size(G, S, T=T, weight=weight)
@@ -7046,7 +7047,6 @@ def normalized_cut_size(G, S, T=None, weight=None):
 
 def conductance(G, S, T=None, weight=None):
     _reusable_sets(S, T)
-    _cut_weight(G, weight)
     if T is None:
         T = set(G._nodes) - set(S)
     num_cut_edges = cut_size(G, S, T, weight=weight)
@@ -7057,7 +7057,6 @@ def conductance(G, S, T=None, weight=None):
 
 def edge_expansion(G, S, T=None, weight=None):
     _reusable_sets(S, T)
-    _cut_weight(G, weight)
     if T is None:
         T = set(G._nodes) - set(S)
     num_cut_edges = cut_size(G, S, T=T, weight=weight)
