@@ -8,6 +8,7 @@ pub mod distance;
 pub mod graph_classes;
 pub mod leftovers;
 pub mod link_analysis;
+pub mod matching;
 pub mod paths;
 pub mod shortest_paths_more;
 pub mod spectral;

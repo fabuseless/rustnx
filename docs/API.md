@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 222 NetworkX functions. Call them as usual (for
+rustnx implements 247 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -363,6 +363,56 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.tournament.is_reachable` | `s`, `t` | no | rustnx | Unhashable nodes fall back. |
 | `nx.tournament.is_strongly_connected` | none | no | rustnx |  |
 | `nx.tournament.score_sequence` | none | no | NetworkX |  |
+
+### Triads and d-separation
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `A `nodelist` that is one node or an iterator falls back.` | `nodelist` | no | NetworkX |  |
+| `Arguments other than nodes and sets of nodes (lists, for example) fall back.` | `x`, `y`, `z` | no | NetworkX |  |
+| `Arguments other than nodes and sets of nodes (lists, for example) fall back.` | `x`, `y`, `z`, `included`, `restricted` | no | rustnx |  |
+| `Arguments other than nodes and sets of nodes fall back, as do nodes equal to but of a different type than G's. The set iterates in NetworkX's order.` | `x`, `y`, `included`, `restricted` | no | rustnx |  |
+
+### Degree sequences
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `Takes a sequence, not a graph: runs in rustnx with `backend="rustnx"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.` | `sequence`, `method` | no | rustnx |  |
+| `Takes a sequence, not a graph: runs in rustnx with `backend="rustnx"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.` | `in_sequence`, `out_sequence` | no | rustnx |  |
+| `Takes a sequence, not a graph: runs in rustnx with `backend="rustnx"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.` | `sequence` | no | rustnx |  |
+| `Takes a sequence, not a graph: runs in rustnx with `backend="rustnx"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.` | `sequence` | no | rustnx |  |
+| `Takes a sequence, not a graph: runs in rustnx with `backend="rustnx"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.` | `deg_sequence` | no | rustnx |  |
+| `Takes a sequence, not a graph: runs in rustnx with `backend="rustnx"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.` | `deg_sequence` | no | rustnx |  |
+
+### Boundaries and dominating sets
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `The set iterates in NetworkX's order.` | `nbunch1`, `nbunch2` | yes | NetworkX |  |
+| ``data` falls back.` | `nbunch1`, `nbunch2`, `data`, `keys`, `default` | no | NetworkX |  |
+| `nx.is_dominating_set` | `nbunch` | yes | NetworkX |  |
+| `NetworkX 3.5 and newer. The set iterates in NetworkX's order.` | none | no | NetworkX |  |
+| `NetworkX 3.5 and newer.` | `nbunch` | no | NetworkX |  |
+
+### Matching and covers
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `The set iterates in NetworkX's order.` | none | no | NetworkX |  |
+| `Integer weights beyond 2**49 in magnitude fall back. The set (and each pair's orientation) is NetworkX's.` | `maxcardinality`, `weight` | no | rustnx |  |
+| `Integer weights beyond 2**49 in magnitude fall back. The set (and each pair's orientation) is NetworkX's.` | `weight` | no | rustnx |  |
+| `nx.is_matching` | `matching` | yes | NetworkX |  |
+| `nx.is_maximal_matching` | `matching` | no | NetworkX |  |
+| `nx.is_perfect_matching` | `matching` | yes | NetworkX |  |
+| ``matching_algorithm` falls back. The set iterates in NetworkX's order.` | `matching_algorithm` | no | rustnx |  |
+
+### Cliques
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `Computed in batches when iteration starts, as NetworkX does.` | none | no | rustnx |  |
+| ``nodes=None` (the dict follows `find_cliques`' set order) and `cliques` fall back, as do directed graphs and nodes not in G.` | `nodes`, `cliques`, `separate_nodes` | no | rustnx |  |
+| `Node weights are read from the NetworkX graph; native graphs support `weight=None` only.` | `weight` | no | rustnx |  |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 

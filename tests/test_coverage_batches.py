@@ -2388,3 +2388,393 @@ def test_batch9_multigraphs(seed, directed, restore_config):
     else:
         exact_outcome(nx.complete_to_chordal_graph, M)
         exact_outcome(nx.chordal_graph_treewidth, M)
+
+
+# --- Batch 10: triads, d-separation, degree sequences and matching -----------------
+
+
+def _random_dag(seed):
+    """A random DAG from ``graph_for``: edges kept only from earlier to
+    later nodes in a shuffled order (node and edge order stay random)."""
+    G = graph_for(seed, True)
+    rng = random.Random(seed)
+    rank = list(G)
+    rng.shuffle(rank)
+    rank = {v: i for i, v in enumerate(rank)}
+    G.remove_edges_from([(u, v) for u, v in G.edges if rank[u] >= rank[v]])
+    return G
+
+
+def _node_sets(G, rng):
+    """Disjoint random node sets (some as single nodes)."""
+    nodes = list(G)
+    rng.shuffle(nodes)
+    k = len(nodes)
+    cuts = sorted(rng.randint(0, k) for _ in range(3))
+    x, y, z = nodes[: cuts[0]], nodes[cuts[0] : cuts[1]], nodes[cuts[1] : cuts[2]]
+    out = []
+    for s in (x, y, z):
+        if len(s) == 1 and rng.random() < 0.5:
+            out.append(s[0])
+        else:
+            out.append(set(s) if rng.random() < 0.8 else frozenset(s))
+    return out
+
+
+@pytest.mark.parametrize("seed", range(60))
+def test_batch10_triadic_census(seed):
+    D = graph_for(seed, True)
+    rng = random.Random(seed)
+    nodes = list(D)
+    exact_outcome(nx.triadic_census, D)
+    for k in [0, 1, 3, len(nodes) // 2, len(nodes)]:
+        exact_outcome(nx.triadic_census, D, rng.sample(nodes, min(k, len(nodes))))
+    exact_outcome(nx.triadic_census, D, nodes[:2] + nodes[:1])  # duplicates
+    exact_outcome(nx.triadic_census, D, nodes[:2] + ["missing"])
+    exact_outcome(nx.triadic_census, D, tuple(nodes[:3]))
+    exact_outcome(nx.triadic_census, D, nodes[0])  # one node: len() fails
+    exact_outcome(nx.triadic_census, graph_for(seed, False))
+
+
+@pytest.mark.parametrize("seed", range(60))
+def test_batch10_d_separation(seed):
+    D = _random_dag(seed)
+    rng = random.Random(seed)
+    for _ in range(4):
+        x, y, z = _node_sets(D, rng)
+        exact_outcome(nx.is_d_separator, D, x, y, z)
+        exact_outcome(with_set_order(nx.find_minimal_d_separator), D, x, y)
+        exact_outcome(nx.is_minimal_d_separator, D, x, y, z)
+        found = nx.find_minimal_d_separator(D, x, y, backend="networkx")
+        if found is not None:
+            exact_outcome(nx.is_minimal_d_separator, D, x, y, found)
+            extra = set(found) | ({next(iter(z))} if isinstance(z, (set, frozenset)) and z else set())
+            exact_outcome(nx.is_minimal_d_separator, D, x, y, extra)
+        # included and restricted
+        rest = [v for v in D if v not in (x if isinstance(x, (set, frozenset)) else {x})
+                and v not in (y if isinstance(y, (set, frozenset)) else {y})]
+        inc = set(rng.sample(rest, min(1, len(rest))))
+        res = set(rng.sample(rest, min(len(rest), rng.randint(0, 6)))) | inc
+        for kw in [{"included": inc}, {"restricted": res}, {"included": inc, "restricted": res},
+                   {"restricted": inc}, {"included": res, "restricted": inc}]:
+            exact_outcome(with_set_order(nx.find_minimal_d_separator), D, x, y, **kw)
+            exact_outcome(nx.is_minimal_d_separator, D, x, y, z, **kw)
+    nodes = list(D)
+    a, b = nodes[0], nodes[-1]
+    # Errors: overlaps, missing nodes, non-sets, cycles, undirected graphs.
+    for args in [({a}, {a}, set()), ({a}, {b}, {a}), ({a}, {"missing"}, set()),
+                 ({a}, {b, "gone"}, {"missing"}), ([a], [b], []), (a, b, [a])]:
+        exact_outcome(nx.is_d_separator, D, *args)
+        exact_outcome(nx.is_minimal_d_separator, D, *args)
+        exact_outcome(with_set_order(nx.find_minimal_d_separator), D, *args[:2])
+        exact_outcome(nx.is_minimal_d_separator, D, *args, included={"missing"})
+        exact_outcome(nx.is_minimal_d_separator, D, *args, restricted={a})
+        exact_outcome(with_set_order(nx.find_minimal_d_separator), D, *args[:2], restricted=set(nodes[1:3]))
+    C = graph_for(seed, True)
+    if not nx.is_directed_acyclic_graph(C):
+        exact_outcome(nx.is_d_separator, C, {a}, {b}, set())
+        exact_outcome(nx.find_minimal_d_separator, C, a, b)
+    exact_outcome(nx.is_d_separator, graph_for(seed, False), a, b, set())
+
+
+def test_batch10_d_separation_known_graphs():
+    # NetworkX's documentation examples (collider, chain, fork).
+    D = nx.path_graph(4, create_using=nx.DiGraph)
+    exact_outcome(nx.is_d_separator, D, 0, 2, {1})
+    exact_outcome(nx.is_d_separator, D, 0, 2, set())
+    D = nx.DiGraph([("x", "z"), ("y", "z"), ("z", "w"), ("a", "x"), ("a", "y")])
+    for z in [set(), {"z"}, {"w"}, {"a"}, {"a", "w"}]:
+        exact_outcome(nx.is_d_separator, D, "x", "y", z)
+        exact_outcome(nx.is_minimal_d_separator, D, "x", "y", z)
+    exact_outcome(with_set_order(nx.find_minimal_d_separator), D, "x", "y")
+    exact_outcome(with_set_order(nx.find_minimal_d_separator), D, {"x"}, {"w"})
+    D = nx.DiGraph([(1, 2), (2, 3)])
+    D.add_node(1.0)  # equal to 1: the given object differs from G's
+    exact_outcome(with_set_order(nx.find_minimal_d_separator), D, {1.0}, {3})
+
+
+def _sequences(seed):
+    rng = random.Random(seed)
+    G = graph_for(seed, False)
+    degrees = [d for _, d in G.degree()]
+    yield degrees
+    yield sorted(degrees, reverse=True)
+    yield [rng.randint(0, 6) for _ in range(rng.randint(0, 12))]
+    yield [rng.randint(-1, 4) for _ in range(rng.randint(1, 8))]
+    yield [float(d) for d in degrees]
+    yield degrees[:3] + [2.5]
+    yield degrees[:2] + ["x"]
+    yield [True, True, 2, 0]
+    yield [2**70, 2**70]
+    yield []
+    yield [0]
+    yield [3, 3, 3, 3]
+
+
+def _sequence_outcome(func, *seqs):
+    """Both backends' results on fresh copies, with what each did to the
+    given lists (NetworkX converts some in place)."""
+    def run(backend):
+        copies = [list(s) if isinstance(s, list) else s for s in seqs]
+        try:
+            result = ("ok", func(*copies, backend=backend))
+        except Exception as exc:
+            result = (type(exc), exc.args)
+        return result, [(type(c), list(c)) if isinstance(c, list) else None for c in copies]
+
+    assert run("rustnx") == run("networkx")
+
+
+@pytest.mark.parametrize("seed", range(60))
+def test_batch10_degree_sequences(seed):
+    for seq in _sequences(seed):
+        for func in [nx.is_valid_degree_sequence_erdos_gallai, nx.is_valid_degree_sequence_havel_hakimi,
+                     nx.is_graphical, nx.is_multigraphical, nx.is_pseudographical]:
+            _sequence_outcome(func, seq)
+        _sequence_outcome(lambda s, **kw: nx.is_graphical(s, method="hh", **kw), seq)
+        _sequence_outcome(lambda s, **kw: nx.is_graphical(iter(s), **kw), seq)
+        _sequence_outcome(lambda s, **kw: nx.is_multigraphical(tuple(s), **kw), seq)
+        _sequence_outcome(lambda s, **kw: nx.is_pseudographical(iter(s), **kw), seq)
+        _sequence_outcome(nx.is_digraphical, seq, seq)
+        _sequence_outcome(nx.is_digraphical, seq, list(reversed(seq)))
+    D = graph_for(seed, True)
+    ins = [d for _, d in D.in_degree()]
+    outs = [d for _, d in D.out_degree()]
+    _sequence_outcome(nx.is_digraphical, ins, outs)
+    _sequence_outcome(nx.is_digraphical, ins, outs[:-1])
+    _sequence_outcome(nx.is_digraphical, ins + [1], outs + [0])
+    _sequence_outcome(lambda s, **kw: nx.is_graphical(s, method="bogus", **kw), [1, 1])
+
+
+def test_batch10_degree_sequences_dispatch_without_graphs(restore_config):
+    # No graph argument: rustnx runs only when asked, or by priority.
+    nx.config.backend_priority.algos = ["rustnx"]
+    assert nx.is_graphical([2, 2, 2]) is True
+    assert nx.is_valid_degree_sequence_erdos_gallai([3, 1]) is False
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(60))
+def test_batch10_boundaries(seed, directed):
+    G = graph_for(seed, directed)
+    rng = random.Random(seed)
+    nodes = list(G)
+    for _ in range(3):
+        a = rng.sample(nodes, rng.randint(0, len(nodes)))
+        b = rng.sample(nodes, rng.randint(0, len(nodes)))
+        for n1, n2 in [(a, None), (a, b), (a + ["missing", [1]], None), (iter(a), b + ["missing"]),
+                       (set(a), set(b)), (a, a)]:
+            if hasattr(n1, "__next__"):
+                exact_outcome(with_set_order(lambda G, **kw: nx.node_boundary(G, iter(a), b, **kw)), G)
+                exact_outcome(listed(lambda G, **kw: nx.edge_boundary(G, iter(a), b, **kw)), G)
+                continue
+            exact_outcome(with_set_order(nx.node_boundary), G, n1, n2)
+            exact_outcome(listed(nx.edge_boundary), G, n1, n2)
+        exact_outcome(listed(nx.edge_boundary), G, a, data=True)
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float", "missing"])
+@pytest.mark.parametrize("seed", range(60))
+def test_batch10_matching(seed, weights):
+    G = graph_for(seed, False, weights)
+    if seed % 4 == 0:
+        # Dense graphs make blossoms (and expand them) more often.
+        rng = random.Random(seed)
+        G = nx.gnp_random_graph(rng.randint(5, 25), 0.5, seed=seed)
+        for u, v, d in G.edges(data=True):
+            if weights == "int":
+                d["weight"] = rng.randint(1, 9)
+            elif weights == "float":
+                d["weight"] = rng.choice([0.1, 0.25, 0.7, 1.3, 2.9])
+            elif weights == "missing" and rng.random() < 0.5:
+                d["weight"] = rng.randint(-3, 9)
+    exact_outcome(with_set_order(nx.maximal_matching), G)
+    for card in [False, True]:
+        exact_outcome(with_set_order(nx.max_weight_matching), G, card)
+        exact_outcome(with_set_order(nx.max_weight_matching), G, card, weight=None)
+    exact_outcome(with_set_order(nx.min_weight_matching), G)
+    exact_outcome(with_set_order(nx.min_weight_matching), G, weight=None)
+    exact_outcome(with_set_order(nx.min_edge_cover), G)
+    H = G.copy()
+    H.remove_nodes_from(list(nx.isolates(H)))
+    exact_outcome(with_set_order(nx.min_edge_cover), H)
+    rng = random.Random(seed)
+    mate = nx.max_weight_matching(G, backend="networkx")
+    maximal = nx.maximal_matching(G, backend="networkx")
+    edges = list(G.edges)
+    matchings = [mate, maximal, list(mate)[:-1], dict(nx.utils.flatten([[(u, v), (v, u)] for u, v in mate]) and
+                 {k: v for u, w in mate for k, v in [(u, w), (w, u)]}), set()]
+    if edges:
+        matchings += [list(mate) + [rng.choice(edges)], [rng.choice(edges)] + list(mate)]
+    nodes = list(G)
+    matchings += [[(nodes[0], nodes[0])], [(nodes[0], "missing")], [(nodes[0],)],
+                  [(nodes[0], nodes[0]), (nodes[0], "missing")], [(nodes[0], nodes[0]), 5],
+                  [(nodes[0], "missing"), (nodes[0], nodes[0])], {nodes[0]: nodes[0]}]
+    for m in matchings:
+        for func in [nx.is_matching, nx.is_maximal_matching, nx.is_perfect_matching]:
+            exact_outcome(func, G, m)
+            exact_outcome(lambda G, **kw: func(G, iter(m) if not isinstance(m, dict) else m, **kw), G)
+    D = graph_for(seed, True, weights)
+    exact_outcome(nx.max_weight_matching, D)
+    exact_outcome(nx.maximal_matching, D)
+    exact_outcome(nx.is_matching, D, list(D.edges)[:2])
+
+
+def test_batch10_matching_known_graphs():
+    # NetworkX's blossom tests: nested blossoms, expansion, and S-blossom
+    # relabeling, with integer and float weights.
+    cases = [
+        [(1, 2, 8), (1, 3, 9), (2, 3, 10), (3, 4, 7)],
+        [(1, 2, 9), (1, 3, 8), (2, 3, 10), (1, 4, 5), (4, 5, 4), (1, 6, 3)],
+        [(1, 2, 9), (1, 3, 9), (2, 3, 10), (2, 4, 8), (3, 5, 8), (4, 5, 10), (5, 6, 6)],
+        [(1, 2, 10), (1, 7, 10), (2, 3, 12), (3, 4, 20), (3, 5, 20), (4, 5, 25), (5, 6, 10),
+         (6, 7, 10), (7, 8, 8)],
+        [(1, 2, 8), (1, 3, 8), (2, 3, 10), (2, 4, 12), (3, 5, 12), (4, 5, 14), (4, 6, 12),
+         (5, 7, 12), (6, 7, 14), (7, 8, 12)],
+        [(1, 2, 23), (1, 5, 22), (1, 6, 15), (2, 3, 25), (3, 4, 22), (4, 5, 25), (4, 8, 14),
+         (5, 7, 13)],
+        [(1, 2, 19), (1, 3, 20), (1, 8, 8), (2, 3, 25), (2, 4, 18), (3, 5, 18), (4, 5, 13),
+         (4, 7, 7), (5, 6, 7)],
+        [(1, 2, 45), (1, 5, 45), (2, 3, 50), (3, 4, 45), (4, 5, 50), (1, 6, 30), (3, 9, 35),
+         (4, 8, 35), (5, 7, 26), (9, 10, 5)],
+        [(1, 2, 45), (1, 5, 45), (2, 3, 50), (3, 4, 45), (4, 5, 50), (1, 6, 30), (3, 9, 35),
+         (4, 8, 26), (5, 7, 40), (9, 10, 5)],
+        [(1, 2, 40), (1, 3, 40), (2, 3, 60), (2, 4, 55), (3, 5, 55), (4, 5, 50), (1, 8, 15),
+         (5, 7, 30), (7, 6, 10), (8, 10, 10), (4, 9, 30)],
+    ]
+    for edges in cases:
+        for scale in [1, 0.1, 1.5]:
+            G = nx.Graph()
+            G.add_weighted_edges_from((u, v, w * scale if scale != 1 else w) for u, v, w in edges)
+            for card in [False, True]:
+                exact_outcome(with_set_order(nx.max_weight_matching), G, card)
+            exact_outcome(with_set_order(nx.min_weight_matching), G)
+    G = nx.Graph([(0, 1, {"weight": 2**60})])
+    exact_outcome(with_set_order(nx.max_weight_matching), G)  # falls back
+    G = nx.Graph([(0, 1, {"weight": None})])
+    exact_outcome(with_set_order(nx.max_weight_matching), G)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(60))
+def test_batch10_dominating(seed, directed):
+    G = graph_for(seed, directed)
+    rng = random.Random(seed)
+    nodes = list(G)
+    if not nodes:
+        return
+    ds = nx.dominating_set(G, backend="networkx")
+    for nb in [ds, list(ds)[:-1], nodes, nodes[:1], [], nodes + ["missing", [1]],
+               rng.sample(nodes, len(nodes) // 2)]:
+        exact_outcome(nx.is_dominating_set, G, nb)
+        exact_outcome(lambda G, **kw: nx.is_dominating_set(G, iter(nb), **kw), G)
+        if hasattr(nx, "is_connected_dominating_set"):
+            exact_outcome(nx.is_connected_dominating_set, G, nb)
+            exact_outcome(lambda G, **kw: nx.is_connected_dominating_set(G, iter(nb), **kw), G)
+    exact_outcome(nx.is_dominating_set, G, 5)
+    if hasattr(nx, "connected_dominating_set"):
+        exact_outcome(with_set_order(nx.connected_dominating_set), G)
+        if not directed and nodes:
+            H = G.subgraph(max(nx.connected_components(G), key=len)).copy()
+            exact_outcome(with_set_order(nx.connected_dominating_set), H)
+            cds = nx.connected_dominating_set(H, backend="networkx")
+            exact_outcome(nx.is_connected_dominating_set, H, cds)
+
+
+@nx_has("connected_dominating_set")
+def test_batch10_dominating_small_cases():
+    for G in [nx.Graph(), nx.empty_graph(1), nx.Graph([(0, 0)]), nx.path_graph(2), nx.star_graph(5),
+              nx.Graph([(0, 0), (0, 1), (1, 2)])]:
+        exact_outcome(with_set_order(nx.connected_dominating_set), G)
+        exact_outcome(nx.is_connected_dominating_set, G, list(G))
+        exact_outcome(nx.is_connected_dominating_set, G, [])
+    G = nx.Graph([("ab", "c"), ("c", "a"), ("a", "b")])
+    exact_outcome(nx.is_connected_dominating_set, G, "ab")  # a node, and a string
+
+
+@pytest.mark.parametrize("seed", range(60))
+def test_batch10_cliques(seed):
+    G = graph_for(seed, False)
+    rng = random.Random(seed)
+    if seed % 3 == 0:
+        G = nx.gnp_random_graph(rng.randint(3, 18), 0.6, seed=seed)
+    nodes = list(G)
+    exact_outcome(listed(nx.enumerate_all_cliques), G)
+    exact_outcome(nx.node_clique_number, G, nodes)
+    exact_outcome(nx.node_clique_number, G, nodes[:3] + nodes[:1])
+    exact_outcome(nx.node_clique_number, G, nodes[0])
+    exact_outcome(nx.node_clique_number, G, nodes[:2] + ["missing"])
+    exact_outcome(nx.node_clique_number, G)
+    exact_outcome(nx.max_weight_clique, G, weight=None)
+    exact_outcome(nx.max_weight_clique, G)  # no node weights: KeyError
+    for v in G:
+        G.nodes[v]["weight"] = rng.randint(-2, 9)
+    exact_outcome(nx.max_weight_clique, G)
+    G.nodes[nodes[-1]]["weight"] = 1.5
+    exact_outcome(nx.max_weight_clique, G)
+    D = graph_for(seed, True)
+    exact_outcome(listed(nx.enumerate_all_cliques), D)
+    exact_outcome(nx.max_weight_clique, D)
+    exact_outcome(nx.node_clique_number, D, list(D))
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_batch10_multigraphs(seed, restore_config):
+    M = random_multigraph(seed, False, "none")
+    nodes = list(M)
+    mate = list(nx.maximal_matching(nx.Graph(M), backend="networkx"))
+    exact_outcome(nx.is_matching, M, mate)
+    exact_outcome(nx.is_perfect_matching, M, mate)
+    exact_outcome(nx.is_dominating_set, M, nodes[: len(nodes) // 2])
+    exact_outcome(with_set_order(nx.node_boundary), M, nodes[: len(nodes) // 2])
+    # These fall back.
+    exact_outcome(nx.is_maximal_matching, M, mate)
+    exact_outcome(listed(nx.edge_boundary), M, nodes[:3])
+    exact_outcome(listed(nx.enumerate_all_cliques), M)
+    D = random_multigraph(seed, True, "none")
+    exact_outcome(nx.triadic_census, D)
+
+
+def test_batch10_graph_changes_during_iteration():
+    G = nx.path_graph(6)
+    it = nx.edge_boundary(G, [0, 1, 2], backend="rustnx")
+    G.add_edge(1, 9)
+    with pytest.raises(RuntimeError):
+        list(it)
+    # enumerate_all_cliques reads the graph when iteration starts.
+    results = []
+    for backend in ["rustnx", "networkx"]:
+        G = nx.complete_graph(4)
+        it = nx.enumerate_all_cliques(G, backend=backend)
+        G.remove_edge(0, 1)  # before the first item: seen
+        first = next(it)
+        G.add_edge("x", "y")  # after: not seen
+        results.append([first, *it])
+    assert results[0] == results[1]
+
+
+def test_batch10_runs_in_rust():
+    # Check rustnx really handles the common calls (no silent fallback).
+    G = nx.gnp_random_graph(30, 0.2, seed=1)
+    D = nx.gnp_random_graph(30, 0.1, seed=1, directed=True)
+    dag = nx.DiGraph([(u, v) for u, v in D.edges if u < v])
+    calls = [
+        lambda: nx.triadic_census(D, backend="rustnx"),
+        lambda: nx.is_d_separator(dag, 0, 1, set(), backend="rustnx"),
+        lambda: nx.find_minimal_d_separator(dag, {0}, {29}, backend="rustnx"),
+        lambda: nx.is_minimal_d_separator(dag, {0}, {29}, set(), backend="rustnx"),
+        lambda: nx.is_graphical([2, 2, 2], backend="rustnx"),
+        lambda: nx.is_digraphical([1, 1], [1, 1], backend="rustnx"),
+        lambda: nx.node_boundary(G, [0, 1], backend="rustnx"),
+        lambda: list(nx.edge_boundary(G, [0, 1], backend="rustnx")),
+        lambda: nx.max_weight_matching(G, backend="rustnx"),
+        lambda: nx.min_weight_matching(G, backend="rustnx"),
+        lambda: nx.maximal_matching(G, backend="rustnx"),
+        lambda: nx.is_matching(G, {(0, 1)}, backend="rustnx"),
+        lambda: nx.is_dominating_set(G, [0], backend="rustnx"),
+        lambda: list(nx.enumerate_all_cliques(G, backend="rustnx")),
+        lambda: nx.node_clique_number(G, [0, 1], backend="rustnx"),
+        lambda: nx.max_weight_clique(G, weight=None, backend="rustnx"),
+    ]
+    for call in calls:
+        call()

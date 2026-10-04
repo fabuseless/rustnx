@@ -7,6 +7,7 @@ makes NetworkX fall back to its own implementation.
 
 import functools
 from collections import Counter, defaultdict
+from collections.abc import Set
 import inspect
 from itertools import chain
 import math
@@ -17,6 +18,9 @@ import warnings
 
 import networkx as nx
 from networkx.algorithms.centrality import betweenness as _nx_betweenness
+from networkx.algorithms import matching as _nx_matching
+
+from . import _core
 
 __all__ = [
     "all_pairs_all_shortest_paths",
@@ -72,6 +76,7 @@ __all__ = [
     "complete_to_chordal_graph",
     "condensation",
     "connected_components",
+    "connected_dominating_set",
     "core_number",
     "cycle_basis",
     "dag_longest_path",
@@ -97,12 +102,15 @@ __all__ = [
     "edge_betweenness_centrality",
     "edge_betweenness_centrality_subset",
     "edge_bfs",
+    "edge_boundary",
     "edge_dfs",
     "edge_load_centrality",
     "eigenvector_centrality",
+    "enumerate_all_cliques",
     "eulerian_circuit",
     "eulerian_path",
     "find_cycle",
+    "find_minimal_d_separator",
     "find_negative_cycle",
     "floyd_warshall",
     "floyd_warshall_numpy",
@@ -143,14 +151,25 @@ __all__ = [
     "is_chordal",
     "is_coloring",
     "is_connected",
+    "is_connected_dominating_set",
+    "is_d_separator",
+    "is_digraphical",
     "is_directed_acyclic_graph",
     "is_distance_regular",
+    "is_dominating_set",
     "is_equitable",
     "is_eulerian",
     "is_forest",
+    "is_graphical",
     "is_k_regular",
+    "is_matching",
+    "is_maximal_matching",
+    "is_minimal_d_separator",
+    "is_multigraphical",
     "is_perfect_graph",
+    "is_perfect_matching",
     "is_planar",
+    "is_pseudographical",
     "is_reachable",
     "is_regular",
     "is_semiconnected",
@@ -160,6 +179,8 @@ __all__ = [
     "is_strongly_regular",
     "is_tournament",
     "is_tree",
+    "is_valid_degree_sequence_erdos_gallai",
+    "is_valid_degree_sequence_havel_hakimi",
     "is_weakly_connected",
     "isolates",
     "johnson",
@@ -176,10 +197,15 @@ __all__ = [
     "local_bridges",
     "local_reaching_centrality",
     "lowest_common_ancestor",
+    "max_weight_clique",
+    "max_weight_matching",
+    "maximal_matching",
     "maximum_branching",
     "maximum_spanning_arborescence",
     "maximum_spanning_edges",
     "maximum_spanning_tree",
+    "min_edge_cover",
+    "min_weight_matching",
     "minimal_branching",
     "minimum_branching",
     "minimum_cycle_basis",
@@ -191,6 +217,8 @@ __all__ = [
     "multi_source_dijkstra_path_length",
     "negative_edge_cycle",
     "newman_betweenness_centrality",
+    "node_boundary",
+    "node_clique_number",
     "node_connected_component",
     "number_attracting_components",
     "number_connected_components",
@@ -236,6 +264,7 @@ __all__ = [
     "transitivity",
     "tree_all_pairs_lowest_common_ancestor",
     "tree_centroid",
+    "triadic_census",
     "triangles",
     "v_structures",
     "voterank",
@@ -5618,3 +5647,502 @@ def is_perfect_graph(G):
     # NetworkX checks the graph type inside the dispatched function.
     _undirected_only(G)
     return G._core.is_perfect()
+
+
+# --- Batch 10: triads, d-separation, degree sequences and matching ---------------
+
+
+def triadic_census(G, nodelist=None):
+    _directed_only(G)
+    nodeset = None
+    if nodelist is not None:
+        if nodelist in G or iter(nodelist) is nodelist:
+            # NetworkX takes one node, or calls len() on an iterator.
+            raise NotImplementedError("rustnx needs a list of nodes")
+        nodeset = _node_subset(G, nodelist)
+        if len(nodelist) != len(nodeset):
+            raise ValueError("nodelist includes duplicate nodes or nodes not in G")
+    counts = G._core.triadic_census(nodeset)
+    return dict(zip(_TRIAD_NAMES, counts))
+
+
+_TRIAD_NAMES = (
+    "003", "012", "102", "021D", "021U", "021C", "111D", "111U",
+    "030T", "030C", "201", "120D", "120U", "120C", "210", "300",
+)
+
+
+class _NodeSet(Set):
+    """Stands in for ``G.nodes`` in set arithmetic (``s - G.nodes``), with
+    ``NodeView``'s semantics: the result is ``set(...)`` in ``s``'s order."""
+
+    def __init__(self, G):
+        self._G = G
+
+    def __contains__(self, node):
+        return node in self._G
+
+    def __iter__(self):
+        return iter(self._G._nodes)
+
+    def __len__(self):
+        return len(self._G)
+
+    @classmethod
+    def _from_iterable(cls, it):
+        return set(it)
+
+
+def _node_or_set(G, value):
+    """NetworkX's ``{value} if value in G else value`` for the d-separation
+    arguments; rustnx handles plain sets (anything else, NetworkX's own set
+    arithmetic decides what happens)."""
+    value = {value} if value in G else value
+    if type(value) not in (set, frozenset):
+        raise NotImplementedError("rustnx needs nodes or sets of nodes")
+    return value
+
+
+def _dag_or_raise(G):
+    if not is_directed_acyclic_graph(G):
+        raise nx.NetworkXError("graph should be directed acyclic")
+
+
+def is_d_separator(G, x, y, z):
+    _directed_only(G)
+    x, y, z = (_node_or_set(G, s) for s in (x, y, z))
+    intersection = x & y or x & z or y & z
+    if intersection:
+        raise nx.NetworkXError(f"The sets are not disjoint, with intersection {intersection}")
+    set_v = x | y | z
+    missing = set_v - _NodeSet(G)
+    if missing:
+        raise nx.NodeNotFound(f"The node(s) {missing} are not found in G")
+    _dag_or_raise(G)
+    index = G._index
+    return G._core.is_d_separator(*([index[v] for v in s] for s in (x, y, z)))
+
+
+def _included_restricted(G, included, restricted):
+    if included is None:
+        included = set()
+    elif included in G:
+        included = {included}
+    if restricted is not None:
+        restricted = _node_or_set(G, restricted)
+    if type(included) not in (set, frozenset):
+        raise NotImplementedError("rustnx needs nodes or sets of nodes")
+    return included, restricted
+
+
+def _check_found(G, given, restricted):
+    """NetworkX's ``set_y - G.nodes`` check, with ``set_y`` the union of
+    ``given`` and ``restricted`` (``set(G)`` by default)."""
+    nodes = _NodeSet(G)
+    if restricted is None:
+        if not functools.reduce(operator.or_, given) - nodes:
+            return
+        restricted = set(G._nodes)
+    missing = functools.reduce(operator.or_, (*given, restricted)) - nodes
+    if missing:
+        raise nx.NodeNotFound(f"The node(s) {missing} are not found in G")
+
+
+def is_minimal_d_separator(G, x, y, z, *, included=None, restricted=None):
+    _directed_only(G)
+    _dag_or_raise(G)
+    x, y, z = (_node_or_set(G, s) for s in (x, y, z))
+    included, restricted = _included_restricted(G, included, restricted)
+    _check_found(G, (x, y, included), restricted)
+    if not included <= z:
+        raise nx.NetworkXError(
+            f"Included nodes {included} must be in proposed separating set z {x}"
+        )
+    if restricted is None:
+        if any(v not in G for v in z):
+            restricted = set(G._nodes)
+    if restricted is not None and not z <= restricted:
+        raise nx.NetworkXError(
+            f"Separating set {z} must be contained in restricted set {restricted}"
+        )
+    intersection = x.intersection(y) or x.intersection(z) or y.intersection(z)
+    if intersection:
+        raise nx.NetworkXError(f"The sets are not disjoint, with intersection {intersection}")
+    index = G._index
+    return G._core.is_minimal_d_separator(
+        *([index[v] for v in s] for s in (x, y, z, included))
+    )
+
+
+def find_minimal_d_separator(G, x, y, *, included=None, restricted=None):
+    _directed_only(G)
+    _dag_or_raise(G)
+    x, y = (_node_or_set(G, s) for s in (x, y))
+    included, restricted = _included_restricted(G, included, restricted)
+    _check_found(G, (x, y, included), restricted)
+    if restricted is None:
+        restricted = set(G._nodes)
+    index, nodes = G._index, G._nodes
+    for s in (x, y, included, restricted):
+        for v in s:
+            if type(nodes[index[v]]) is not type(v):
+                # The result mixes the given objects and G's nodes.
+                raise NotImplementedError("rustnx needs G's own node objects")
+    if not included <= restricted:
+        raise nx.NetworkXError(
+            f"Included nodes {included} must be in restricted nodes {restricted}"
+        )
+    intersection = x & y or x & included or y & included
+    if intersection:
+        raise nx.NetworkXError(
+            f"The sets x, y, included are not disjoint. Overlap: {intersection}"
+        )
+    G._ensure_exact_pred()
+    core = G._core
+    nodeset = x | y | included
+    seeds = [index[v] for v in nodeset]
+    # The same sets built in the same order, so their iteration order (and
+    # the order of set operations on them) is NetworkX's.
+    ancestors = nodeset.union(*[{nodes[i] for i in a} for a in core.ancestor_lists(seeds)])
+    z_init = restricted & (ancestors - (x | y))
+
+    def reachable(start, z):
+        reached = core.d_reachable([index[v] for v in start], seeds, [index[v] for v in z])
+        return {nodes[i] for i in reached}
+
+    x_closure = reachable(x, z_init)
+    if x_closure & y:
+        return None
+    z_updated = z_init & (x_closure | included)
+    y_closure = reachable(y, z_updated)
+    return z_updated & (y_closure | included)
+
+
+def _int_list(sequence):
+    """``nx.utils.make_list_of_ints(sequence)``: a list of plain ints is
+    returned as is (NetworkX changes nothing in it); anything else goes
+    through NetworkX's helper, with its errors and in-place conversion."""
+    if type(sequence) is list and _core._plain_int_list(sequence):
+        return sequence
+    return nx.utils.make_list_of_ints(sequence)
+
+
+def _degree_test(kind, sequence, name):
+    seq = _int_list(sequence)
+    result = _core._degree_sequence_test(kind, seq)
+    if result is None:
+        # Ints beyond 64 bits: NetworkX's own code on the converted list.
+        return getattr(nx, name).orig_func(seq)
+    return result
+
+
+def is_valid_degree_sequence_havel_hakimi(deg_sequence):
+    return _degree_test("hh", deg_sequence, "is_valid_degree_sequence_havel_hakimi")
+
+
+def is_valid_degree_sequence_erdos_gallai(deg_sequence):
+    return _degree_test("eg", deg_sequence, "is_valid_degree_sequence_erdos_gallai")
+
+
+def is_graphical(sequence, method="eg"):
+    if method == "eg":
+        return is_valid_degree_sequence_erdos_gallai(list(sequence))
+    elif method == "hh":
+        return is_valid_degree_sequence_havel_hakimi(list(sequence))
+    msg = "`method` must be 'eg' or 'hh'"
+    raise nx.NetworkXException(msg)
+
+
+def is_multigraphical(sequence):
+    try:
+        seq = _int_list(sequence)
+    except nx.NetworkXError:
+        return False
+    result = _core._degree_sequence_test("multi", seq)
+    return nx.is_multigraphical.orig_func(seq) if result is None else result
+
+
+def is_pseudographical(sequence):
+    try:
+        seq = _int_list(sequence)
+    except nx.NetworkXError:
+        return False
+    result = _core._degree_sequence_test("pseudo", seq)
+    if result is None or not seq:
+        # Big ints, or `min()` of an empty sequence (which raises).
+        return sum(seq) % 2 == 0 and min(seq) >= 0
+    return result
+
+
+def is_digraphical(in_sequence, out_sequence):
+    try:
+        ins = _int_list(in_sequence)
+        outs = _int_list(out_sequence)
+    except nx.NetworkXError:
+        return False
+    result = _core._digraphical(ins, outs)
+    return nx.is_digraphical.orig_func(ins, outs) if result is None else result
+
+
+def node_boundary(G, nbunch1, nbunch2=None):
+    nset1 = {n for n in nbunch1 if n in G}
+    index, nodes = G._index, G._nodes
+    nbrs = G._core.neighbor_union([index[v] for v in nset1])
+    bdy = set([nodes[i] for i in nbrs]) - nset1
+    if nbunch2 is not None:
+        bdy &= set(nbunch2)
+    return bdy
+
+
+def edge_boundary(G, nbunch1, nbunch2=None, data=False, keys=False, default=None):
+    if data is not False:
+        raise NotImplementedError("rustnx does not support edge data here")
+    nset1 = {n for n in nbunch1 if n in G}
+    order = list(nset1)
+    index = G._index
+    positions = [index[v] for v in order]
+    second = None
+    if nbunch2 is not None:
+        second = [index[v] for v in set(nbunch2) if v in G]
+    sources, targets = G._core.edge_boundary(positions, second)
+
+    def produce():
+        nodes = G._nodes
+        for i, v in zip(sources, targets):
+            # The source is `nset1`'s object, as `nbunch_iter` yields it.
+            yield order[i], nodes[v]
+
+    return _traversal(G, produce)
+
+
+def _matching_pairs(G, matching):
+    """``is_matching``'s loop up to the first exception it would raise: the
+    node positions of each edge before it, and the exception (or ``None``).
+    NetworkX raises it only if no earlier edge makes it return False."""
+    if isinstance(matching, dict):
+        matching = _nx_matching.matching_dict_to_set(matching)
+    index = G._index
+    us, vs = [], []
+    edges = iter(matching)
+    while True:
+        try:
+            edge = next(edges)
+        except StopIteration:
+            return us, vs, None
+        except Exception as exc:
+            return us, vs, exc
+        try:
+            if len(edge) != 2:
+                return us, vs, nx.NetworkXError(f"matching has non-2-tuple edge {edge}")
+            u, v = edge
+        except Exception as exc:
+            return us, vs, exc
+        try:
+            i, j = index[u], index[v]
+        except (KeyError, TypeError):
+            return us, vs, nx.NetworkXError(f"matching contains edge {edge} with node not in G")
+        us.append(i)
+        vs.append(j)
+
+
+def _checked_matching(G, matching):
+    """``(us, vs)`` if ``matching`` passes ``is_matching``'s loop, else
+    ``None``; raises where it would."""
+    us, vs, error = _matching_pairs(G, matching)
+    failure = G._core.first_matching_failure(us, vs)
+    if failure is not None:
+        return None
+    if error is not None:
+        raise error
+    return us, vs
+
+
+def is_matching(G, matching):
+    return _checked_matching(G, matching) is not None
+
+
+def is_maximal_matching(G, matching):
+    pairs = _checked_matching(G, matching)
+    if pairs is None:
+        return False
+    return not G._core.has_unmatched_edge(pairs[0] + pairs[1])
+
+
+def is_perfect_matching(G, matching):
+    pairs = _checked_matching(G, matching)
+    if pairs is None:
+        return False
+    return len(set(pairs[0] + pairs[1])) == len(G)
+
+
+def maximal_matching(G):
+    _undirected_only(G)
+    us, vs = G._core.maximal_matching()
+    nodes = G._nodes
+    return {(nodes[u], nodes[v]) for u, v in zip(us, vs)}
+
+
+def _matching_set(G, weight, maxcardinality=False, inverted=False):
+    weight, _, has_hidden = _check_weight(G, weight)
+    if has_hidden:
+        raise NotImplementedError("rustnx does not support None edge weights here")
+    pairs = G._core.max_weight_matching(weight, maxcardinality, inverted)
+    if pairs is None:
+        raise NotImplementedError("integer edge weights are too large")
+    nodes = G._nodes
+    # `matching_dict_to_set` adds them in this order.
+    return {(nodes[u], nodes[v]) for u, v in zip(*pairs)}
+
+
+def max_weight_matching(G, maxcardinality=False, weight="weight"):
+    _undirected_only(G)
+    if type(maxcardinality) not in (bool, int):
+        raise NotImplementedError("rustnx needs a bool maxcardinality")
+    if len(G) == 0:
+        return set()
+    return _matching_set(G, weight, bool(maxcardinality))
+
+
+def min_weight_matching(G, weight="weight"):
+    _undirected_only(G)
+    if G._core.number_of_edges() == 0:
+        return set()
+    return _matching_set(G, weight, True, inverted=True)
+
+
+def min_edge_cover(G, matching_algorithm=None):
+    _undirected_only(G)
+    if len(G) == 0:
+        return set()
+    if number_of_isolates(G) > 0:
+        raise nx.NetworkXException(
+            "Graph has a node with no edge incident on it, so no edge cover exists."
+        )
+    if matching_algorithm is not None:
+        raise NotImplementedError("rustnx does not support matching_algorithm")
+    min_cover = _matching_set(G, "weight", True)
+    uncovered_nodes = set(G._nodes) - {v for u, v in min_cover} - {u for u, v in min_cover}
+    index, nodes, core = G._index, G._nodes, G._core
+    for v in uncovered_nodes:
+        u = nodes[core.neighbors(index[v])[0]]
+        min_cover.add((u, v))
+    return min_cover
+
+
+def _present_positions(G, nbunch):
+    """Positions of the items of ``nbunch`` that are nodes of G (as
+    ``{n for n in nbunch if n in G}`` picks them)."""
+    index = G._index
+    picked = []
+    for n in nbunch:
+        try:
+            i = index.get(n)
+        except TypeError:
+            continue
+        if i is not None:
+            picked.append(i)
+    return picked
+
+
+def is_dominating_set(G, nbunch):
+    return G._core.is_dominating(_present_positions(G, nbunch))
+
+
+def is_connected_dominating_set(G, nbunch):
+    _undirected_only(G)
+    if not is_dominating_set(G, nbunch):
+        return False
+    # `nx.subgraph(G, nbunch)` reads `nbunch` again, via `nbunch_iter`.
+    if nbunch in G:
+        picked = [G._index[nbunch]]
+    else:
+        index = G._index
+        picked = []
+        for n in nbunch:
+            try:
+                i = index.get(n)
+            except TypeError:
+                raise nx.NetworkXError(f"Node {n} in sequence nbunch is not a valid node.") from None
+            if i is not None:
+                picked.append(i)
+    if not picked:
+        raise nx.NetworkXPointlessConcept("Connectivity is undefined for the null graph.")
+    return G._core.induced_connected(picked)
+
+
+def connected_dominating_set(G):
+    _undirected_only(G)
+    if len(G) == 0:
+        return set()
+    if not is_connected(G):
+        raise nx.NetworkXError("G must be a connected graph")
+    nodes = G._nodes
+    if len(G) == 1:
+        return set(nodes)
+    return {nodes[i] for i in G._core.connected_dominating_set()}
+
+
+_CLIQUE_BATCH = 1024
+
+
+def enumerate_all_cliques(G):
+    _undirected_only(G)
+
+    def compute():
+        queue = G._core.all_cliques()
+        nodes = G._nodes
+        nodes = nodes if type(nodes) is list else list(nodes)
+        while True:
+            batch = queue.next_batch(nodes, _CLIQUE_BATCH)
+            yield from batch
+            if len(batch) < _CLIQUE_BATCH:
+                return
+
+    return _computed_on_first_next(
+        G, compute, lambda H: nx.enumerate_all_cliques(H, backend="networkx")
+    )
+
+
+def node_clique_number(G, nodes=None, cliques=None, separate_nodes=False):
+    if cliques is not None or nodes is None:
+        # Without `nodes`, the dict follows `find_cliques`' order, which
+        # depends on set iteration order.
+        raise NotImplementedError("rustnx needs nodes and no cliques here")
+    if G.is_directed():
+        raise NotImplementedError("NetworkX raises from find_cliques here")
+    index = G._index
+    if nodes in G:
+        return G._core.node_clique_numbers([index[nodes]])[0]
+    if iter(nodes) is nodes:
+        raise NotImplementedError("rustnx needs a reusable container of nodes")
+    try:
+        positions = [index[n] for n in nodes]
+    except (KeyError, TypeError):
+        raise NotImplementedError("NetworkX raises for missing nodes") from None
+    values = G._core.node_clique_numbers(positions)
+    return {n: values[i] for i, n in enumerate(nodes)}
+
+
+def max_weight_clique(G, weight="weight"):
+    _undirected_only(G)
+    weights = None
+    if weight is not None:
+        source = G._source
+        if source is None or not G._source_unchanged():
+            raise NotImplementedError("rustnx needs the NetworkX graph's node data")
+        node_data = source._node
+        weights = []
+        for v in G._nodes:
+            data = node_data[v]
+            if weight not in data:
+                errmsg = f"Node {v!r} does not have the requested weight field."
+                raise KeyError(errmsg)
+            if not isinstance(data[weight], int):
+                errmsg = f"The {weight!r} field of node {v!r} is not an integer."
+                raise ValueError(errmsg)
+            weights.append(data[weight])
+        if any(type(w) not in (int, bool) or not -(2**62) < w < 2**62 for w in weights):
+            raise NotImplementedError("rustnx needs plain integer node weights")
+    clique, total = G._core.max_weight_clique(weights)
+    nodes = G._nodes
+    return [nodes[i] for i in clique], total

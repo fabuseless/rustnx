@@ -276,6 +276,8 @@ def algorithm_calls(H, directed):
         calls["antichains"] = lambda G, b: list(islice(nx.antichains(G, backend=b), 200))
         calls["all_pairs_lca"] = lambda G, b: list(nx.all_pairs_lowest_common_ancestor(G, backend=b))
         calls["tree_lca"] = lambda G, b: list(nx.tree_all_pairs_lowest_common_ancestor(G, backend=b))
+        calls["triadic_census"] = lambda G, b: list(nx.triadic_census(G, backend=b).items())
+        calls["d_separator"] = lambda G, b: nx.is_d_separator(G, set(nodes[:2]), set(nodes[-2:]), set(), backend=b)
         if src is not None:
             calls["idom"] = lambda G, b: list(nx.immediate_dominators(G, src, backend=b).items())
             calls["frontiers"] = lambda G, b: [
@@ -303,6 +305,15 @@ def algorithm_calls(H, directed):
             nx.algorithms.tree.mst.boruvka_mst_edges(G, data=False, backend=b)
         )
         calls["partition_spanning_tree"] = lambda G, b: list(nx.partition_spanning_tree(G, backend=b).edges)
+        calls["max_weight_matching"] = lambda G, b: list(nx.max_weight_matching(G, backend=b))
+        calls["min_weight_matching"] = lambda G, b: list(nx.min_weight_matching(G, backend=b))
+        calls["maximal_matching"] = lambda G, b: list(nx.maximal_matching(G, backend=b))
+        calls["node_boundary"] = lambda G, b: list(nx.node_boundary(G, nodes[::2], backend=b))
+        calls["edge_boundary"] = lambda G, b: list(nx.edge_boundary(G, nodes[::2], backend=b))
+        calls["all_cliques"] = lambda G, b: list(nx.enumerate_all_cliques(G, backend=b))
+        calls["clique_number"] = lambda G, b: list(nx.node_clique_number(G, nodes, backend=b).items())
+        calls["max_weight_clique"] = lambda G, b: nx.max_weight_clique(G, weight=None, backend=b)
+        calls["dominating"] = lambda G, b: nx.is_dominating_set(G, nodes[::3], backend=b)
         if src is not None:
             calls["node_cc"] = lambda G, b: nx.node_connected_component(G, src, backend=b)
         calls["is_chordal"] = lambda G, b: nx.is_chordal(G, backend=b)

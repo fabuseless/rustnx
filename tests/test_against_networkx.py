@@ -737,7 +737,9 @@ def test_backend_function_list_matches_implementations():
         "antichain_width",
         "barycenter",
         "centroid",
+        "connected_dominating_set",
         "floyd_warshall_tree",
+        "is_connected_dominating_set",
         "is_perfect_graph",
         "tree_centroid",
     }
