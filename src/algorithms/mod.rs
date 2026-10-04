@@ -17,6 +17,7 @@ pub mod link_analysis;
 pub mod matching;
 pub mod measures;
 pub mod paths;
+pub mod pyset;
 pub mod shortest_paths_more;
 pub mod spectral;
 pub mod structure;

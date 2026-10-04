@@ -2,10 +2,10 @@
 //!
 //! NetworkX computes node and edge connectivity, minimum cuts and disjoint
 //! paths with maximum flows (Edmonds-Karp by default) on auxiliary digraphs
-//! and their residual networks. `Residual` replays NetworkX's residual
-//! `DiGraph`: arcs sit in its `_succ` and `_pred` insertion order, so the
-//! bidirectional BFS finds the same augmenting paths and the flows (and so
-//! the disjoint paths and cut orders) come out the same.
+//! and their residual networks, using `flow`'s residual network and
+//! Edmonds-Karp: arcs sit in NetworkX's `_succ` and `_pred` insertion
+//! order, so the bidirectional BFS finds the same augmenting paths and the
+//! flows (and so the disjoint paths and cut orders) come out the same.
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
@@ -13,6 +13,7 @@ use std::hash::BuildHasherDefault;
 
 use rayon::prelude::*;
 
+use super::flow::{edmonds_karp_with, EkScratch, Residual, Val, Val::F, Val::I};
 use super::structure_more::PairHasher;
 use crate::graph::Csr;
 
@@ -91,278 +92,94 @@ pub fn node_aux(adj: &Csr, n: usize, directed: bool) -> Aux {
     h
 }
 
-/// NetworkX's residual network (`build_residual_network`) with flows.
-#[derive(Clone)]
-pub struct Residual {
-    head: Vec<u32>,
-    tail: Vec<u32>,
-    cap: Vec<i64>,
-    flow: Vec<i64>,
-    rev: Vec<u32>,
-    /// Arc ids out of each node, in `R._succ` order.
-    succ: Vec<Vec<u32>>,
-    /// Arc ids into each node, in `R._pred` order.
-    pred: Vec<Vec<u32>>,
-    inf: i64,
-    // Bidirectional BFS scratch space.
-    stamp: u32,
-    in_pred: Vec<u32>,
-    in_succ: Vec<u32>,
-    pred_arc: Vec<u32>,
-    succ_arc: Vec<u32>,
-}
-
 /// An augmenting path with infinite capacity (can't happen with the unit
 /// capacities used here; reported so the caller can decline).
 pub struct Unbounded;
 
-impl Residual {
-    pub fn build(h: &Aux) -> Self {
-        let n = h.len();
-        let mut r = Residual {
-            head: Vec::new(),
-            tail: Vec::new(),
-            cap: Vec::new(),
-            flow: Vec::new(),
-            rev: Vec::new(),
-            succ: vec![Vec::new(); n],
-            pred: vec![Vec::new(); n],
-            inf: 1,
-            stamp: 0,
-            in_pred: vec![0; n],
-            in_succ: vec![0; n],
-            pred_arc: vec![NONE; n],
-            succ_arc: vec![NONE; n],
-        };
-        let mut index = PairMap::default();
-        let mut total = 0i64;
-        for u in 0..n as u32 {
-            for &v in &h.succ[u as usize] {
-                if u == v {
-                    continue;
-                }
-                total += 1;
-                if let Some(&a) = index.get(&pair(u, v)) {
-                    // The reverse arc of an earlier edge: R[u][v]['capacity'] = r.
-                    r.cap[a as usize] = 1;
-                    continue;
-                }
-                let a = r.head.len() as u32;
-                r.head.extend([v, u]);
-                r.tail.extend([u, v]);
-                r.cap.extend([1, 0]);
-                r.flow.extend([0, 0]);
-                r.rev.extend([a + 1, a]);
-                index.insert(pair(u, v), a);
-                index.insert(pair(v, u), a + 1);
-                r.succ[u as usize].push(a);
-                r.pred[v as usize].push(a);
-                r.succ[v as usize].push(a + 1);
-                r.pred[u as usize].push(a + 1);
-            }
-        }
-        if total > 0 {
-            r.inf = 3 * total;
-        }
-        r
-    }
+/// NetworkX's residual network (`build_residual_network`) of an auxiliary
+/// digraph: every arc has capacity 1, and arcs keep `H`'s `_succ` order
+/// so the bidirectional BFS finds the same augmenting paths.
+pub fn residual(h: &Aux) -> Residual {
+    let arcs: Vec<(u32, u32, Val)> = (0..h.len() as u32)
+        .flat_map(|u| h.succ[u as usize].iter().map(move |&v| (u, v, I(1))))
+        .collect();
+    // An int capacity sum can't overflow or need compensation here.
+    Residual::build(h.len(), true, &arcs, false).unwrap_or_else(|_| unreachable!())
+}
 
-    /// `edmonds_karp_core`: flows from zero, augmenting until `cutoff`.
-    pub fn edmonds_karp(&mut self, s: u32, t: u32, cutoff: f64) -> Result<i64, Unbounded> {
-        self.flow.iter_mut().for_each(|f| *f = 0);
-        let mut value = 0i64;
-        let mut path = Vec::new();
-        while (value as f64) < cutoff {
-            let Some(meet) = self.bidirectional_bfs(s, t) else {
-                break;
-            };
-            path.clear();
-            let mut u = meet;
-            while u != s {
-                let a = self.pred_arc[u as usize];
-                path.push(a);
-                u = self.tail[a as usize];
-            }
-            path.reverse();
-            let mut u = meet;
-            while u != t {
-                let a = self.succ_arc[u as usize];
-                path.push(a);
-                u = self.head[a as usize];
-            }
-            let mut f = self.inf;
-            for &a in &path {
-                f = f.min(self.cap[a as usize] - self.flow[a as usize]);
-            }
-            if f * 2 > self.inf {
-                return Err(Unbounded);
-            }
-            for &a in &path {
-                self.flow[a as usize] += f;
-                self.flow[self.rev[a as usize] as usize] -= f;
-            }
-            value += f;
-        }
-        Ok(value)
-    }
+/// `edmonds_karp` on `r`: flows from zero, augmenting until `cutoff`.
+pub fn max_flow(r: &mut Residual, s: u32, t: u32, cutoff: f64) -> Result<i64, Unbounded> {
+    max_flow_with(r, s, t, cutoff, &mut EkScratch::new(r.n))
+}
 
-    fn bidirectional_bfs(&mut self, s: u32, t: u32) -> Option<u32> {
-        self.stamp = self.stamp.wrapping_add(1);
-        if self.stamp == 0 {
-            self.in_pred.iter_mut().for_each(|x| *x = 0);
-            self.in_succ.iter_mut().for_each(|x| *x = 0);
-            self.stamp = 1;
+/// `max_flow` reusing scratch space across runs.
+fn max_flow_with(
+    r: &mut Residual,
+    s: u32,
+    t: u32,
+    cutoff: f64,
+    sc: &mut EkScratch,
+) -> Result<i64, Unbounded> {
+    r.reset_flows();
+    match edmonds_karp_with(r, s, t, F(cutoff), sc) {
+        Ok(I(v)) => Ok(v),
+        // Unit capacities give int flows; anything else is the unbounded case.
+        _ => Err(Unbounded),
+    }
+}
+
+/// `minimum_cut`'s sink side: nodes that reach `t` through unsaturated
+/// arcs, in the order NetworkX adds them, and a membership mask.
+pub fn sink_side(r: &Residual, t: u32) -> (Vec<u32>, Vec<bool>) {
+    let order = r.cut_order(t, true);
+    let mut seen = vec![false; r.n];
+    for &v in &order {
+        seen[v as usize] = true;
+    }
+    (order, seen)
+}
+
+/// `edge_disjoint_paths`: follow the saturated arcs the way NetworkX
+/// does (`flow_dict[u].popitem()` takes the last one added).
+pub fn disjoint_paths(r: &Residual, s: u32, t: u32, cutoff: f64) -> Vec<Vec<u32>> {
+    let mut out_arcs: Vec<Vec<u32>> = vec![Vec::new(); r.n];
+    for (u, row) in r.succ.iter().enumerate() {
+        for &a in row {
+            let (c, f) = (r.cap[a as usize], r.flow[a as usize]);
+            if c.eq(f) && f.gt(I(0)) {
+                out_arcs[u].push(r.head[a as usize]);
+            }
         }
-        let stamp = self.stamp;
-        self.in_pred[s as usize] = stamp;
-        self.in_succ[t as usize] = stamp;
-        let mut q_s = vec![s];
-        let mut q_t = vec![t];
+    }
+    let starts = out_arcs[s as usize].clone();
+    let mut paths = Vec::new();
+    let mut found = 0i64;
+    for v in starts {
+        if found as f64 >= cutoff {
+            break;
+        }
+        let mut path = vec![s];
+        if v == t {
+            path.push(v);
+            paths.push(path);
+            continue;
+        }
+        let mut u = v;
         loop {
-            let mut q = Vec::new();
-            if q_s.len() <= q_t.len() {
-                for &u in &q_s {
-                    for &a in &self.succ[u as usize] {
-                        let v = self.head[a as usize];
-                        if self.in_pred[v as usize] != stamp
-                            && self.flow[a as usize] < self.cap[a as usize]
-                        {
-                            self.in_pred[v as usize] = stamp;
-                            self.pred_arc[v as usize] = a;
-                            if self.in_succ[v as usize] == stamp {
-                                return Some(v);
-                            }
-                            q.push(v);
-                        }
-                    }
-                }
-                if q.is_empty() {
-                    return None;
-                }
-                q_s = q;
-            } else {
-                for &u in &q_t {
-                    for &a in &self.pred[u as usize] {
-                        let v = self.tail[a as usize];
-                        if self.in_succ[v as usize] != stamp
-                            && self.flow[a as usize] < self.cap[a as usize]
-                        {
-                            self.in_succ[v as usize] = stamp;
-                            self.succ_arc[v as usize] = a;
-                            if self.in_pred[v as usize] == stamp {
-                                return Some(v);
-                            }
-                            q.push(v);
-                        }
-                    }
-                }
-                if q.is_empty() {
-                    return None;
-                }
-                q_t = q;
-            }
-        }
-    }
-
-    /// `minimum_cut`'s sink side: nodes that reach `t` through unsaturated
-    /// arcs, in the breadth-first order NetworkX adds them (a BFS over
-    /// `R._pred`; 3.4 to 3.6 remove the saturated arcs first, which keeps
-    /// the order of the rest).
-    pub fn sink_side(&self, t: u32) -> (Vec<u32>, Vec<bool>) {
-        let n = self.succ.len();
-        let mut seen = vec![false; n];
-        seen[t as usize] = true;
-        let mut order = vec![t];
-        let mut i = 0;
-        while i < order.len() {
-            let v = order[i];
-            for &a in &self.pred[v as usize] {
-                let u = self.tail[a as usize];
-                if !seen[u as usize] && self.flow[a as usize] < self.cap[a as usize] {
-                    seen[u as usize] = true;
-                    order.push(u);
-                }
-            }
-            i += 1;
-        }
-        (order, seen)
-    }
-
-    /// NetworkX 3.4 to 3.6's `minimum_cut` removes the saturated arcs and
-    /// adds them back, which moves them to the end of `R._succ` and
-    /// `R._pred`. A residual network shared between calls keeps that order.
-    pub fn requeue_saturated(&mut self) {
-        let mut saturated = Vec::new();
-        let mut is_sat = vec![false; self.head.len()];
-        for row in &self.succ {
-            for &a in row {
-                if self.flow[a as usize] == self.cap[a as usize] {
-                    saturated.push(a);
-                    is_sat[a as usize] = true;
-                }
-            }
-        }
-        if saturated.is_empty() {
-            return;
-        }
-        for row in self.succ.iter_mut() {
-            let (keep, moved): (Vec<u32>, Vec<u32>) =
-                row.iter().partition(|&&a| !is_sat[a as usize]);
-            row.clear();
-            row.extend(keep);
-            row.extend(moved);
-        }
-        for row in self.pred.iter_mut() {
-            row.retain(|&a| !is_sat[a as usize]);
-        }
-        for &a in &saturated {
-            self.pred[self.head[a as usize] as usize].push(a);
-        }
-    }
-
-    /// `edge_disjoint_paths`: follow the saturated arcs the way NetworkX
-    /// does (`flow_dict[u].popitem()` takes the last one added).
-    pub fn disjoint_paths(&self, s: u32, t: u32, cutoff: f64) -> Vec<Vec<u32>> {
-        let n = self.succ.len();
-        let mut out_arcs: Vec<Vec<u32>> = vec![Vec::new(); n];
-        for (u, row) in self.succ.iter().enumerate() {
-            for &a in row {
-                let (c, f) = (self.cap[a as usize], self.flow[a as usize]);
-                if c == f && f > 0 {
-                    out_arcs[u].push(self.head[a as usize]);
-                }
-            }
-        }
-        let starts = out_arcs[s as usize].clone();
-        let mut paths = Vec::new();
-        let mut found = 0i64;
-        for v in starts {
-            if found as f64 >= cutoff {
+            if u == t {
+                path.push(t);
+                paths.push(path);
+                found += 1;
                 break;
             }
-            let mut path = vec![s];
-            if v == t {
-                path.push(v);
-                paths.push(path);
-                continue;
-            }
-            let mut u = v;
-            loop {
-                if u == t {
-                    path.push(t);
-                    paths.push(path);
-                    found += 1;
-                    break;
-                }
-                path.push(u);
-                match out_arcs[u as usize].pop() {
-                    Some(x) => u = x,
-                    None => break,
-                }
+            path.push(u);
+            match out_arcs[u as usize].pop() {
+                Some(x) => u = x,
+                None => break,
             }
         }
-        paths
     }
+    paths
 }
 
 /// Arcs `u -> v` of `rows` from the source side to the sink side, grouped
@@ -410,10 +227,10 @@ pub fn st_cut(
     rows: &CutRows,
     requeue: bool,
 ) -> Result<StCut, Unbounded> {
-    let value = r.edmonds_karp(s, t, f64::INFINITY)?;
-    let (sink_order, sink) = r.sink_side(t);
+    let value = max_flow(r, s, t, f64::INFINITY)?;
+    let (sink_order, sink) = sink_side(r, t);
     if requeue {
-        r.requeue_saturated();
+        r.move_saturated_last();
     }
     let (us, offsets, vs) = match rows {
         CutRows::Graph(adj) => cut_arcs(h.len(), |u| adj.neighbors(u), &sink),
@@ -476,7 +293,7 @@ pub fn search_cuts(
     adjacent_both: bool,
     requeue: bool,
 ) -> Result<ChosenCut, Unbounded> {
-    let mut r = Residual::build(h);
+    let mut r = residual(h);
     let has_edge = |u: u32, v: u32| adj.neighbors(u as usize).contains(&v);
     let mut best = initial_len;
     let mut chosen = None;
@@ -513,10 +330,13 @@ pub fn search_cuts(
 /// Flow values for many pairs, each from scratch (the shared residual
 /// network is reset by every Edmonds-Karp run, so pairs are independent).
 pub fn pair_flows(h: &Aux, pairs: &[(u32, u32)], cutoff: f64) -> Result<Vec<i64>, Unbounded> {
-    let base = Residual::build(h);
+    let base = residual(h);
     pairs
         .par_iter()
-        .map_init(|| base.clone(), |r, &(s, t)| r.edmonds_karp(s, t, cutoff))
+        .map_init(
+            || (base.clone(), EkScratch::new(base.n)),
+            |(r, sc), &(s, t)| max_flow_with(r, s, t, cutoff, sc),
+        )
         .collect()
 }
 
