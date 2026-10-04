@@ -9797,6 +9797,12 @@ def _b19_source(G):
     return G._source
 
 
+def _b19_nodes(G):
+    """``G._nodes`` as a list (native graphs from arrays keep a range)."""
+    nodes = G._nodes
+    return nodes if type(nodes) is list else list(nodes)
+
+
 def _b19_node_map(G, nodelist):
     """``map[v]``: node ``v``'s position in ``nodelist``, or -1. Missing,
     unhashable or repeated nodes fall back (NetworkX's checks for them
@@ -10060,7 +10066,7 @@ def biadjacency_matrix(G, row_order, column_order=None, dtype=None, weight="weig
 def to_dict_of_lists(G, nodelist=None):
     source = _b19_source(G)
     adj = None if source is None else source._adj
-    nodes = G._nodes
+    nodes = _b19_nodes(G)
     if nodelist is None:
         return G._core.dict_of_lists(nodes, adj, list(zip(nodes, range(len(nodes)))))
     if type(nodelist) not in (list, tuple, set, frozenset, dict):
@@ -10125,7 +10131,7 @@ def get_edge_attributes(G, name, default=None):
     source = _b19_source(G)
     if source is None:
         raise NotImplementedError("native graphs keep no edge data dicts")
-    return G._core.edge_attributes(G._nodes, source._adj, name, default)
+    return G._core.edge_attributes(_b19_nodes(G), source._adj, name, default)
 
 
 def relabel_nodes(G, mapping, copy=True):
@@ -10155,7 +10161,7 @@ def relabel_nodes(G, mapping, copy=True):
             labels.append(None)
     H = cls()
     G._core.relabel_copy(
-        G._nodes, base._node, base._adj, labels, H._node, H._adj,
+        _b19_nodes(G), base._node, base._adj, labels, H._node, H._adj,
         H._pred if cls is nx.DiGraph else None,
     )
     H.graph.update(base.graph)
