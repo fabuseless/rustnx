@@ -278,8 +278,7 @@ impl<'a> Lr<'a> {
             let e = self.parent_edge[vi];
             let row = &adj[vi];
             let start = ind[vi];
-            for i in start..row.len() {
-                let w = row[i];
+            for (i, &w) in row.iter().enumerate().skip(start) {
                 let id = self.ids[vi][i] as usize;
                 if !(skip_init[id] && self.src[id] == v) {
                     if self.oriented[id] {
@@ -469,7 +468,9 @@ impl<'a> Lr<'a> {
         if self.lowpt[e as usize] < hu {
             let top = self.stack.last().ok_or(Bail)?;
             let (hl, hr) = (top.left.high, top.right.high);
-            let value = if hl != NONE && (hr == NONE || self.lowpt[hl as usize] > self.lowpt[hr as usize]) {
+            let value = if hl != NONE
+                && (hr == NONE || self.lowpt[hl as usize] > self.lowpt[hr as usize])
+            {
                 hl
             } else {
                 hr
@@ -617,7 +618,10 @@ impl EmbeddingBuilder {
     }
 
     fn find(&self, start: u32, end: u32) -> Result<usize, Bail> {
-        self.index.get(&directed_key(start, end)).map(|&h| h as usize).ok_or(Bail)
+        self.index
+            .get(&directed_key(start, end))
+            .map(|&h| h as usize)
+            .ok_or(Bail)
     }
 
     fn tick(&mut self) -> u64 {
@@ -625,7 +629,14 @@ impl EmbeddingBuilder {
         self.clock
     }
 
-    fn create(&mut self, start: u32, end: u32, cw: u32, ccw: u32, ccw_first: bool) -> Result<(), Bail> {
+    fn create(
+        &mut self,
+        start: u32,
+        end: u32,
+        cw: u32,
+        ccw: u32,
+        ccw_first: bool,
+    ) -> Result<(), Bail> {
         let h = self.edges.len() as u32;
         if self.index.insert(directed_key(start, end), h).is_some() {
             return Err(Bail); // NetworkX would update the existing half-edge
@@ -715,7 +726,9 @@ impl EmbeddingBuilder {
             layout.offsets.push(layout.target.len());
         }
         for row in &self.pred {
-            layout.pred.extend(row.iter().map(|&h| position[h as usize]));
+            layout
+                .pred
+                .extend(row.iter().map(|&h| position[h as usize]));
             layout.pred_offsets.push(layout.pred.len());
         }
         layout
@@ -1095,7 +1108,12 @@ impl Adjacency for Sparse {
 
     fn neighbors(&self, v: u32, alive: &[bool], out: &mut Vec<u32>) {
         out.clear();
-        out.extend(self.rows[v as usize].iter().copied().filter(|&w| alive[w as usize]));
+        out.extend(
+            self.rows[v as usize]
+                .iter()
+                .copied()
+                .filter(|&w| alive[w as usize]),
+        );
     }
 
     fn adjacent(&self, u: u32, v: u32) -> bool {
@@ -1382,13 +1400,19 @@ fn odd_hole_from<A: Adjacency>(g: &A, alive: &[bool], blocked: &mut [i32], stem:
 /// `chordless_cycles` does) and none in its complement. `None` if the
 /// complement doesn't fit in memory.
 pub fn is_perfect(adj: &Csr, n: usize) -> Option<bool> {
-    let looped: Vec<bool> = (0..n).map(|v| adj.neighbors(v).contains(&(v as u32))).collect();
+    let looped: Vec<bool> = (0..n)
+        .map(|v| adj.neighbors(v).contains(&(v as u32)))
+        .collect();
     let rows: Vec<Vec<u32>> = (0..n)
         .map(|v| {
             let mut row: Vec<u32> = if looped[v] {
                 Vec::new()
             } else {
-                adj.neighbors(v).iter().copied().filter(|&w| !looped[w as usize]).collect()
+                adj.neighbors(v)
+                    .iter()
+                    .copied()
+                    .filter(|&w| !looped[w as usize])
+                    .collect()
             };
             row.sort_unstable();
             row.dedup();
@@ -1406,7 +1430,11 @@ pub fn is_perfect(adj: &Csr, n: usize) -> Option<bool> {
     for v in 0..n {
         let row = &mut bits[v * words..(v + 1) * words];
         for (k, word) in row.iter_mut().enumerate() {
-            *word = if (k + 1) * 64 <= n { !0 } else { (1u64 << (n - k * 64)) - 1 };
+            *word = if (k + 1) * 64 <= n {
+                !0
+            } else {
+                (1u64 << (n - k * 64)) - 1
+            };
         }
         row[v / 64] &= !(1u64 << (v % 64));
         for &w in adj.neighbors(v) {

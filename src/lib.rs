@@ -17,8 +17,8 @@ use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
-    centrality, centrality_more, cluster, cores_more, dag, directed, distance, graph_classes, paths,
-    spectral, structure, structure_more,
+    centrality, centrality_more, cluster, cores_more, dag, directed, distance, graph_classes,
+    paths, spectral, structure, structure_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -1968,7 +1968,15 @@ impl CoreGraph {
         });
         let (result, layout) = result.map_err(|_| planarity_bail())?;
         let embedding: Py<PyAny> = match (result.embedding, layout) {
-            (_, Some(l)) => (l.offsets, l.target, l.cw, l.ccw, l.ccw_first, l.pred_offsets, l.pred)
+            (_, Some(l)) => (
+                l.offsets,
+                l.target,
+                l.cw,
+                l.ccw,
+                l.ccw_first,
+                l.pred_offsets,
+                l.pred,
+            )
                 .into_pyobject(py)?
                 .into_any()
                 .unbind(),
@@ -2026,7 +2034,12 @@ impl CoreGraph {
 
     /// `nx.tournament.is_reachable` for positions (`None`: not in G).
     #[pyo3(signature = (s=None, t=None))]
-    fn tournament_reachable(&self, py: Python<'_>, s: Option<u32>, t: Option<u32>) -> PyResult<bool> {
+    fn tournament_reachable(
+        &self,
+        py: Python<'_>,
+        s: Option<u32>,
+        t: Option<u32>,
+    ) -> PyResult<bool> {
         let s = s.unwrap_or(u32::MAX);
         let t = t.unwrap_or(u32::MAX);
         for v in [s, t] {
