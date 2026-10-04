@@ -1429,6 +1429,9 @@ def _bidirectional_dijkstra(G, source, target, weight, lengths):
 # Python 3.12 made sum() of floats use compensated summation; convergence
 # checks that call sum() must add the same way.
 _COMPENSATED_SUM = sys.version_info >= (3, 12)
+# Python 3.14 also compensates ints met after the first float (3.12 and 3.13
+# add them plainly); rustnx's mixed int/float sums must do the same.
+_core._set_sum_ints_compensated(sum([1.0, 1e100, 1, -1e100]) == 2.0)
 
 
 def _nbunch_list(G, nbunch):

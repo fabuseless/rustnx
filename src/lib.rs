@@ -6106,6 +6106,13 @@ fn _replay_sets(
     Ok(flow::replay_sets(&hashes, nsets, &ops))
 }
 
+/// Tells the core whether `sum()` compensates ints after the first float
+/// (Python 3.14+), as detected by `rustnx.algorithms` at import.
+#[pyfunction]
+fn _set_sum_ints_compensated(on: bool) {
+    flow::SUM_INTS_COMPENSATED.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// CPython's float `sum()` (exposed for tests).
 #[pyfunction]
 fn _py_sum(values: Vec<f64>, compensated: bool) -> f64 {
@@ -6140,6 +6147,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(native::build_native_arrays, m)?)?;
     m.add_function(wrap_pyfunction!(rx::build_rx, m)?)?;
     m.add_function(wrap_pyfunction!(_py_sum, m)?)?;
+    m.add_function(wrap_pyfunction!(_set_sum_ints_compensated, m)?)?;
     m.add_function(wrap_pyfunction!(_degree_sequence_test, m)?)?;
     m.add_function(wrap_pyfunction!(_digraphical, m)?)?;
     m.add_function(wrap_pyfunction!(_plain_int_list, m)?)?;

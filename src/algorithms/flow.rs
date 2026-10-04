@@ -180,9 +180,15 @@ fn cmp_int_float(i: i64, f: f64) -> Option<Ordering> {
     }
 }
 
+/// Whether the running Python compensates ints met after the first float in
+/// `sum()` (3.14+; 3.12 and 3.13 add them plainly). Set once at import from
+/// a behavioural check (`_set_sum_ints_compensated`).
+pub static SUM_INTS_COMPENSATED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// CPython's `sum()` (start 0) of ints and floats: ints add exactly until
 /// the first float, then floats add in a C double (with Neumaier
-/// compensation from Python 3.12, which ints after that skip).
+/// compensation from Python 3.12, which ints after that skip until 3.14).
 pub fn py_sum(items: impl IntoIterator<Item = Val>, compensated: bool) -> Res<Val> {
     let mut it = items.into_iter();
     let mut acc: i64 = 0;
@@ -194,7 +200,13 @@ pub fn py_sum(items: impl IntoIterator<Item = Val>, compensated: bool) -> Res<Va
         }
     };
     let mut c = 0.0f64;
+    let ints_compensated =
+        compensated && SUM_INTS_COMPENSATED.load(std::sync::atomic::Ordering::Relaxed);
     for item in it {
+        let item = match item {
+            I(v) if ints_compensated => F(v as f64),
+            other => other,
+        };
         match item {
             F(x) => {
                 if compensated {
