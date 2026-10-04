@@ -57,8 +57,12 @@ __all__ = [
     "center",
     "centroid",
     "chain_decomposition",
+    "check_planarity",
+    "check_planarity_recursive",
+    "chordal_graph_treewidth",
     "closeness_centrality",
     "clustering",
+    "complete_to_chordal_graph",
     "condensation",
     "connected_components",
     "core_number",
@@ -95,6 +99,8 @@ __all__ = [
     "find_negative_cycle",
     "generalized_degree",
     "generic_bfs_edges",
+    "get_counterexample",
+    "get_counterexample_recursive",
     "girth",
     "global_reaching_centrality",
     "greedy_color",
@@ -114,10 +120,12 @@ __all__ = [
     "intersection_array",
     "is_aperiodic",
     "is_arborescence",
+    "is_at_free",
     "is_attracting_component",
     "is_biconnected",
     "is_bipartite",
     "is_branching",
+    "is_chordal",
     "is_coloring",
     "is_connected",
     "is_directed_acyclic_graph",
@@ -126,6 +134,8 @@ __all__ = [
     "is_eulerian",
     "is_forest",
     "is_k_regular",
+    "is_planar",
+    "is_reachable",
     "is_regular",
     "is_semiconnected",
     "is_semieulerian",
@@ -171,6 +181,7 @@ __all__ = [
     "prominent_group",
     "radius",
     "root_to_leaf_paths",
+    "score_sequence",
     "shortest_path",
     "shortest_path_length",
     "single_source_all_shortest_paths",
@@ -189,6 +200,7 @@ __all__ = [
     "to_prufer_sequence",
     "topological_generations",
     "topological_sort",
+    "tournament_is_strongly_connected",
     "transitive_closure",
     "transitive_closure_dag",
     "transitive_reduction",
@@ -4321,3 +4333,163 @@ def kruskal_mst_edges(G, minimum, weight="weight", keys=True, data=True, ignore_
             guard.release()
 
     return generate()
+
+
+# --- Batch 9: planarity, chordal graphs and graph classes --------------------------
+
+
+def _replay_embedding(G, ordered, calls):
+    """The ``PlanarEmbedding`` NetworkX's ``lr_planarity`` builds, made with
+    the same ``add_half_edge`` calls in the same order (rustnx ran the
+    left-right test that decides them)."""
+    nodes = G._nodes
+    embedding = nx.PlanarEmbedding()
+    embedding.add_nodes_from(nodes)
+    add = embedding.add_half_edge
+    for v, row in zip(nodes, ordered):
+        previous = None
+        for w in row:
+            w = nodes[w]
+            add(v, w, ccw=previous)
+            previous = w
+    first = embedding.add_half_edge_first
+    for kind, a, b, r in calls:
+        if kind == 0:
+            first(nodes[a], nodes[b])
+        elif kind == 1:
+            add(nodes[a], nodes[b], ccw=nodes[r])
+        else:
+            add(nodes[a], nodes[b], cw=nodes[r])
+    return embedding
+
+
+def _check_recursion(depth):
+    """The recursive planarity functions recurse once per level of the DFS
+    tree (and of ``ref`` chains); decline graphs where NetworkX might hit
+    the recursion limit, so it raises (or not) itself."""
+    frames = 0
+    frame = sys._getframe()
+    while frame is not None:
+        frames += 1
+        frame = frame.f_back
+    if frames + depth + 100 >= sys.getrecursionlimit():
+        raise NotImplementedError("NetworkX may reach the recursion limit here")
+
+
+def _counterexample(G, recursive):
+    edges, depth = G._core.planarity_counterexample()
+    if recursive:
+        _check_recursion(depth)
+    if edges is None:
+        raise nx.NetworkXException("G is planar - no counter example.")
+    nodes = G._nodes
+    subgraph = nx.Graph()
+    subgraph.add_edges_from((nodes[u], nodes[v]) for u, v in zip(*edges))
+    return subgraph
+
+
+def _check_planarity(G, counterexample, recursive):
+    planar, embedding, depth = G._core.planarity(True)
+    if recursive:
+        _check_recursion(depth)
+    if planar:
+        return True, _replay_embedding(G, *embedding)
+    if counterexample:
+        return False, _counterexample(G, recursive)
+    return False, None
+
+
+def is_planar(G):
+    return G._core.planarity(False)[0]
+
+
+def check_planarity(G, counterexample=False):
+    return _check_planarity(G, counterexample, False)
+
+
+def check_planarity_recursive(G, counterexample=False):
+    return _check_planarity(G, counterexample, True)
+
+
+def get_counterexample(G):
+    return _counterexample(G, False)
+
+
+def get_counterexample_recursive(G):
+    return _counterexample(G, True)
+
+
+def _chordal(G):
+    """``(is_chordal, treewidth)`` for an undirected graph of 4 or more
+    nodes. With self-loops, NetworkX raises or not depending on the order
+    its maximum cardinality search visits nodes in (set order)."""
+    if G._core.has_self_loops():
+        raise NotImplementedError("rustnx does not support self-loops here")
+    return G._core.chordal()
+
+
+def is_chordal(G):
+    _undirected_only(G)
+    if len(G) <= 3:
+        return True
+    return _chordal(G)[0]
+
+
+def chordal_graph_treewidth(G):
+    _undirected_only(G)  # raised by is_chordal
+    if len(G) == 0:
+        # NetworkX 3.4 and 3.5 return -2; later releases raise ValueError.
+        raise NotImplementedError("rustnx does not support the null graph here")
+    if G._core.has_self_loops():
+        raise NotImplementedError("rustnx does not support self-loops here")
+    chordal, treewidth = G._core.chordal()
+    if not chordal:
+        raise nx.NetworkXError("Input graph is not chordal.")
+    return treewidth
+
+
+def complete_to_chordal_graph(G):
+    _undirected_only(G)
+    H = _networkx_graph(G).copy()
+    nodes = G._nodes
+    alpha = {node: 0 for node in nodes}
+    if len(G) <= 3 or _chordal(G)[0]:
+        return H, alpha
+    values, zs, ys = G._core.complete_to_chordal()
+    alpha = dict(zip(nodes, values))
+    # NetworkX collects the chords in a set and adds them in its order.
+    chords = set()
+    for z, y in zip(zs, ys):
+        chords.add((nodes[z], nodes[y]))
+    H.add_edges_from(chords)
+    return H, alpha
+
+
+def is_at_free(G):
+    _undirected_only(G)
+    return G._core.is_at_free()
+
+
+def _membership_position(G, node):
+    """Position of a node NetworkX only tests membership with (``None`` if
+    not in G); unhashable nodes make NetworkX raise or not depending on
+    what it reaches first."""
+    try:
+        return G._index.get(node)
+    except TypeError:
+        raise NotImplementedError("unhashable node") from None
+
+
+def is_reachable(G, s, t):
+    _directed_only(G)
+    return G._core.tournament_reachable(_membership_position(G, s), _membership_position(G, t))
+
+
+def tournament_is_strongly_connected(G):
+    _directed_only(G)
+    return G._core.tournament_strongly_connected()
+
+
+def score_sequence(G):
+    _directed_only(G)
+    return G._core.sorted_out_degrees()

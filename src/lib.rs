@@ -17,8 +17,8 @@ use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
-    centrality, centrality_more, cluster, cores_more, dag, directed, distance, paths, spectral,
-    structure, structure_more,
+    centrality, centrality_more, cluster, cores_more, dag, directed, distance, graph_classes, paths,
+    spectral, structure, structure_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -28,6 +28,10 @@ impl From<NegativeCycle> for PyErr {
         // Same arguments as NetworkX's `_dijkstra_multisource`.
         PyValueError::new_err(("Contradictory paths found:", "negative weights?"))
     }
+}
+
+fn planarity_bail() -> PyErr {
+    PyNotImplementedError::new_err("NetworkX's planarity test fails on this graph")
 }
 
 fn all_nodes(n: usize) -> Vec<u32> {
@@ -1939,6 +1943,102 @@ impl CoreGraph {
         let pos = self.sources_or_all(Some(pos))?;
         let degree = self.degrees();
         Ok(py.detach(|| structure_more::prufer(&self.succ, self.n, &pos, &degree)))
+    }
+
+    // --- Batch 9: planarity, chordal graphs and graph classes ---
+
+    /// NetworkX's left-right planarity test: `(planar, embedding, depth)`.
+    /// The embedding (if `embed` and planar) is each node's first
+    /// half-edges in order, then the `(kind, a, b, ref)` calls of the
+    /// depth-first phase (kind 0: `add_half_edge_first(a, b)`, 1:
+    /// `ccw=ref`, 2: `cw=ref`). `depth` bounds the recursive variant's
+    /// recursion.
+    #[allow(clippy::type_complexity)]
+    fn planarity(
+        &self,
+        py: Python<'_>,
+        embed: bool,
+    ) -> PyResult<(bool, Option<(Vec<Vec<u32>>, Vec<(u8, u32, u32, u32)>)>, usize)> {
+        // The embedding is always built: NetworkX builds it for a planar
+        // graph even when only the answer is wanted (`is_planar`).
+        let result = py.detach(|| {
+            let adj = graph_classes::planarity_graph(&self.succ, self.n, self.directed);
+            graph_classes::lr_planarity(&adj, true)
+        });
+        let result = result.map_err(|_| planarity_bail())?;
+        let embedding = result.embedding.filter(|_| embed).map(|emb| {
+            let calls = emb
+                .calls
+                .into_iter()
+                .map(|call| match call {
+                    graph_classes::HalfEdge::First(a, b) => (0, a, b, 0),
+                    graph_classes::HalfEdge::Ccw(a, b, r) => (1, a, b, r),
+                    graph_classes::HalfEdge::Cw(a, b, r) => (2, a, b, r),
+                })
+                .collect();
+            (emb.ordered, calls)
+        });
+        Ok((result.planar, embedding, result.depth))
+    }
+
+    /// NetworkX's `get_counterexample`: the edges it adds to the
+    /// counterexample, in order (`None` if planar), and the recursion
+    /// depth the recursive variant would need.
+    #[allow(clippy::type_complexity)]
+    fn planarity_counterexample(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<(Option<(Vec<u32>, Vec<u32>)>, usize)> {
+        let result = py.detach(|| {
+            let adj = graph_classes::planarity_graph(&self.succ, self.n, self.directed);
+            graph_classes::counterexample(&adj)
+        });
+        let (edges, depth) = result.map_err(|_| planarity_bail())?;
+        Ok((edges.map(|e| e.into_iter().unzip()), depth))
+    }
+
+    /// `(is_chordal, treewidth)` of an undirected graph without self-loops.
+    fn chordal(&self, py: Python<'_>) -> (bool, u32) {
+        py.detach(|| graph_classes::chordal(&self.succ, self.n))
+    }
+
+    /// `complete_to_chordal_graph` on a non-chordal graph without
+    /// self-loops: each node's alpha, and the chords `(z, y)` in order.
+    fn complete_to_chordal(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+        let (alpha, chords) = py.detach(|| graph_classes::complete_to_chordal(&self.succ, self.n));
+        let (zs, ys) = chords.into_iter().unzip();
+        (alpha, zs, ys)
+    }
+
+    /// `nx.is_at_free` on an undirected graph.
+    fn is_at_free(&self, py: Python<'_>) -> PyResult<bool> {
+        py.detach(|| graph_classes::is_at_free(&self.succ, self.n))
+            .ok_or_else(|| PyNotImplementedError::new_err("graph too large for is_at_free"))
+    }
+
+    /// `nx.tournament.is_reachable` for positions (`None`: not in G).
+    #[pyo3(signature = (s=None, t=None))]
+    fn tournament_reachable(&self, py: Python<'_>, s: Option<u32>, t: Option<u32>) -> PyResult<bool> {
+        let s = s.unwrap_or(u32::MAX);
+        let t = t.unwrap_or(u32::MAX);
+        for v in [s, t] {
+            if v != u32::MAX {
+                self.check_index(v as usize)?;
+            }
+        }
+        Ok(py.detach(|| graph_classes::tournament_reachable(&self.succ, self.n, s, t)))
+    }
+
+    /// Out-degrees in increasing order (`nx.tournament.score_sequence`).
+    fn sorted_out_degrees(&self) -> Vec<usize> {
+        let mut degrees: Vec<usize> = (0..self.n).map(|v| self.succ.neighbors(v).len()).collect();
+        degrees.sort_unstable();
+        degrees
+    }
+
+    /// `nx.tournament.is_strongly_connected`.
+    fn tournament_strongly_connected(&self, py: Python<'_>) -> bool {
+        py.detach(|| graph_classes::tournament_strongly_connected(&self.succ, self.n))
     }
 
     /// `greedy_color` (largest_first): processing order and each node's color.
