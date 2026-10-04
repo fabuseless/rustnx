@@ -60,6 +60,7 @@ __all__ = [
     "average_neighbor_degree",
     "average_node_connectivity",
     "average_shortest_path_length",
+    "barabasi_albert_graph",
     "barycenter",
     "bellman_ford_path",
     "bellman_ford_path_length",
@@ -105,6 +106,7 @@ __all__ = [
     "conductance",
     "connected_components",
     "connected_dominating_set",
+    "connected_watts_strogatz_graph",
     "core_number",
     "cost_of_flow",
     "could_be_isomorphic",
@@ -118,6 +120,7 @@ __all__ = [
     "degree_mixing_dict",
     "degree_mixing_matrix",
     "degree_pearson_correlation_coefficient",
+    "dense_gnm_random_graph",
     "densest_subgraph",
     "descendants",
     "descendants_at_distance",
@@ -136,6 +139,7 @@ __all__ = [
     "dinitz",
     "dispersion",
     "dominance_frontiers",
+    "dual_barabasi_albert_graph",
     "eccentricity",
     "edge_betweenness_centrality",
     "edge_betweenness_centrality_subset",
@@ -153,7 +157,9 @@ __all__ = [
     "enumerate_all_cliques",
     "eulerian_circuit",
     "eulerian_path",
+    "extended_barabasi_albert_graph",
     "fast_could_be_isomorphic",
+    "fast_gnp_random_graph",
     "fast_label_propagation_communities",
     "faster_could_be_isomorphic",
     "find_cycle",
@@ -174,6 +180,12 @@ __all__ = [
     "girvan_newman",
     "global_efficiency",
     "global_reaching_centrality",
+    "gn_graph",
+    "gnc_graph",
+    "gnm_random_graph",
+    "gnmk_random_graph",
+    "gnp_random_graph",
+    "gnr_graph",
     "goldberg_radzik",
     "gomory_hu_tree",
     "greedy_branching",
@@ -310,6 +322,7 @@ __all__ = [
     "negative_edge_cycle",
     "network_simplex",
     "newman_betweenness_centrality",
+    "newman_watts_strogatz_graph",
     "node_attribute_xy",
     "node_boundary",
     "node_clique_number",
@@ -338,7 +351,9 @@ __all__ = [
     "partition_spanning_tree",
     "percolation_centrality",
     "periphery",
+    "planted_partition_graph",
     "power",
+    "powerlaw_cluster_graph",
     "predecessor",
     "preferential_attachment",
     "preflow_push",
@@ -346,6 +361,14 @@ __all__ = [
     "prominent_group",
     "ra_index_soundarajan_hopcroft",
     "radius",
+    "random_geometric_graph",
+    "random_graph",
+    "random_lobster",
+    "random_lobster_graph",
+    "random_partition_graph",
+    "random_regular_graph",
+    "random_tournament",
+    "random_uniform_k_out_graph",
     "randomized_partitioning",
     "reciprocity",
     "resource_allocation_index",
@@ -375,6 +398,7 @@ __all__ = [
     "single_target_shortest_path_length",
     "square_clustering",
     "steiner_tree",
+    "stochastic_block_model",
     "stoer_wagner",
     "strongly_connected_components",
     "symmetric_difference",
@@ -405,6 +429,8 @@ __all__ = [
     "volume",
     "voronoi_cells",
     "voterank",
+    "watts_strogatz_graph",
+    "waxman_graph",
     "weakly_connected_components",
     "weisfeiler_lehman_graph_hash",
     "weisfeiler_lehman_subgraph_hashes",
@@ -9762,3 +9788,618 @@ def symmetric_difference(G, H):
     us += [back[u] for u in hus]
     vs += [back[v] for v in hvs]
     return _graph_with_plain_edges(cls, G._nodes, us, vs)
+
+
+# --- Batch 18: random generators ---
+#
+# Seeded generators replay NetworkX's draws on CPython's Mersenne Twister in
+# Rust (`pyrandom.rs`). NetworkX's @py_random_state runs before dispatch, so
+# `seed` arrives as a `random.Random` (`random._inst` for `seed=None`); any
+# other generator (NumPy's, or a subclass) falls back. The state is read with
+# `getstate()` and handed back with `setstate()`, so the caller's generator
+# ends where NetworkX's code would leave it. Rust fills the dicts of a fresh
+# NetworkX graph (`fill_generated`), in the order NetworkX's calls leave them.
+
+from networkx.utils.misc import check_create_using as _check_create_using  # noqa: E402
+
+_RG_CLASSES = (nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph)
+_RG_MAX_NODES = 2**31
+
+
+def _rg_seed(seed):
+    if type(seed) is not random.Random:
+        raise NotImplementedError("rustnx replays random.Random generators only")
+
+
+def _rg_ints(*values):
+    """Raise ``NotImplementedError`` unless every value is a plain int in
+    ``0..2**31``."""
+    for value in values:
+        if type(value) is not int or not 0 <= value < _RG_MAX_NODES:
+            raise NotImplementedError("rustnx needs small non-negative int arguments")
+
+
+def _rg_floats(*values):
+    """Raise ``NotImplementedError`` unless every value is a plain int or
+    float (ints exactly representable); returns them as floats."""
+    out = []
+    for value in values:
+        if type(value) is float:
+            out.append(value)
+        elif type(value) is int and -(2**53) <= value <= 2**53:
+            out.append(float(value))
+        else:
+            raise NotImplementedError("rustnx needs int or float arguments")
+    return out
+
+
+def _rg_class(create_using, **checks):
+    """``check_create_using(create_using, **checks)`` (raising NetworkX's
+    errors), then the class to build: rustnx fills fresh graphs of the
+    four NetworkX classes only, not instances or subclasses."""
+    cls = _check_create_using(create_using, **checks)
+    if cls not in _RG_CLASSES:
+        raise NotImplementedError("rustnx builds plain NetworkX graph classes only")
+    return cls
+
+
+def _rg_digraph_class(create_using):
+    """The class ``empty_graph(1, create_using, default=nx.DiGraph)``
+    builds for ``gn_graph`` and friends, which must be directed."""
+    cls = nx.DiGraph if create_using is None else create_using
+    if cls not in _RG_CLASSES:
+        raise NotImplementedError("rustnx builds plain NetworkX graph classes only")
+    if not cls.is_directed(None):
+        raise nx.NetworkXError("create_using must indicate a Directed Graph")
+    return cls
+
+
+def _rg_run(seed, run):
+    """``run(state)`` on the generator's state list; puts the new state back
+    into ``seed``. ``None`` from Rust means NetworkX's own code must run."""
+    version, internal, gauss = seed.getstate()
+    found = run(list(internal))
+    if found is None:
+        raise NotImplementedError("rustnx can't follow NetworkX's draws here")
+    if isinstance(found, tuple):
+        result, internal = found
+    else:
+        result, internal = None, found
+    seed.setstate((version, tuple(internal), gauss))
+    return result
+
+
+def _rg_complete(cls, n):
+    G = cls()
+    _CoreGraph.rg_complete(n, G)
+    return G
+
+
+def _rg_empty(cls, n):
+    G = cls()
+    _CoreGraph.rg_empty(n, G)
+    return G
+
+
+def gnp_random_graph(n, p, seed=None, directed=False, *, create_using=None):
+    _rg_seed(seed)
+    _rg_ints(n)
+    (p,) = _rg_floats(p)
+    default = nx.DiGraph if directed else nx.Graph
+    cls = _rg_class(create_using, directed=directed, multigraph=False, default=default)
+    if p >= 1:
+        return _rg_complete(cls, n)
+    if p <= 0:
+        return _rg_empty(cls, n)
+    G = cls()
+    _rg_run(seed, lambda state: _CoreGraph.rg_gnp(n, p, False, state, G))
+    return G
+
+
+def fast_gnp_random_graph(n, p, seed=None, directed=False, *, create_using=None):
+    _rg_seed(seed)
+    _rg_ints(n)
+    (p,) = _rg_floats(p)
+    default = nx.DiGraph if directed else nx.Graph
+    cls = _rg_class(create_using, directed=directed, multigraph=False, default=default)
+    # NetworkX hands p <= 0 and p >= 1 to gnp_random_graph, which draws
+    # nothing for them.
+    if p >= 1:
+        return _rg_complete(cls, n)
+    if p <= 0:
+        return _rg_empty(cls, n)
+    G = cls()
+    _rg_run(seed, lambda state: _CoreGraph.rg_gnp(n, p, True, state, G))
+    return G
+
+
+def gnm_random_graph(n, m, seed=None, directed=False, *, create_using=None):
+    _rg_seed(seed)
+    _rg_ints(n)
+    if type(m) is not int or m >= _RG_MAX_NODES:
+        raise NotImplementedError("rustnx needs an int m")
+    default = nx.DiGraph if directed else nx.Graph
+    cls = _rg_class(create_using, directed=directed, multigraph=False, default=default)
+    if n == 1:
+        return _rg_empty(cls, n)
+    # NetworkX's own expression: a float for undirected graphs.
+    max_edges = n * (n - 1) if directed else n * (n - 1) / 2.0
+    if m >= max_edges:
+        return _rg_complete(cls, n)
+    G = cls()
+    _rg_run(seed, lambda state: _CoreGraph.rg_gnm(n, max(m, 0), False, state, G))
+    return G
+
+
+def dense_gnm_random_graph(n, m, seed=None, *, create_using=None):
+    _rg_seed(seed)
+    _rg_ints(n)
+    if type(m) is not int or m >= _RG_MAX_NODES:
+        raise NotImplementedError("rustnx needs an int m")
+    cls = _rg_class(create_using, directed=False, multigraph=False)
+    mmax = n * (n - 1) // 2
+    if m >= mmax:
+        return _rg_complete(cls, n)
+    if n == 1:
+        return _rg_empty(cls, n)
+    if m < 1:
+        # NetworkX's loop runs out of pairs and randrange raises.
+        raise NotImplementedError("NetworkX raises here")
+    G = cls()
+    _rg_run(seed, lambda state: _CoreGraph.rg_gnm(n, m, True, state, G))
+    return G
+
+
+def barabasi_albert_graph(n, m, seed=None, initial_graph=None, *, create_using=None):
+    _rg_seed(seed)
+    _rg_ints(n, m)
+    cls = _rg_class(create_using, directed=False, multigraph=False)
+    if m < 1 or m >= n:
+        raise nx.NetworkXError(
+            f"Barabási–Albert network must have m >= 1 and m < n, m = {m}, n = {n}"
+        )
+    if initial_graph is not None:
+        raise NotImplementedError("rustnx does not support initial_graph")
+    G = cls()
+    _rg_run(seed, lambda state: _CoreGraph.rg_barabasi_albert(n, m, 0, 0.0, state, G))
+    return G
+
+
+def dual_barabasi_albert_graph(
+    n, m1, m2, p, seed=None, initial_graph=None, *, create_using=None
+):
+    _rg_seed(seed)
+    _rg_ints(n, m1, m2)
+    (p,) = _rg_floats(p)
+    if initial_graph is not None:
+        raise NotImplementedError("rustnx does not support initial_graph")
+    cls = _rg_class(create_using, directed=False, multigraph=False)
+    if m1 < 1 or m1 >= n:
+        raise nx.NetworkXError(
+            f"Dual Barabási–Albert must have m1 >= 1 and m1 < n, m1 = {m1}, n = {n}"
+        )
+    if m2 < 1 or m2 >= n:
+        raise nx.NetworkXError(
+            f"Dual Barabási–Albert must have m2 >= 1 and m2 < n, m2 = {m2}, n = {n}"
+        )
+    if p < 0 or p > 1:
+        raise nx.NetworkXError(
+            f"Dual Barabási–Albert network must have 0 <= p <= 1, p = {p}"
+        )
+    # NetworkX runs barabasi_albert_graph for p == 0 or 1.
+    if p == 1:
+        m1, m2 = m1, 0
+    elif p == 0:
+        m1, m2 = m2, 0
+    G = cls()
+    _rg_run(seed, lambda state: _CoreGraph.rg_barabasi_albert(n, m1, m2, p, state, G))
+    return G
+
+
+def extended_barabasi_albert_graph(n, m, p, q, seed=None, *, create_using=None):
+    _rg_seed(seed)
+    _rg_ints(n, m)
+    p, q = _rg_floats(p, q)
+    cls = _rg_class(create_using, directed=False, multigraph=False)
+    if m < 1 or m >= n:
+        msg = f"Extended Barabasi-Albert network needs m>=1 and m<n, m={m}, n={n}"
+        raise nx.NetworkXError(msg)
+    if p + q >= 1:
+        msg = f"Extended Barabasi-Albert network needs p + q <= 1, p={p}, q={q}"
+        raise nx.NetworkXError(msg)
+    G = cls()
+    _rg_run(seed, lambda state: _CoreGraph.rg_extended_barabasi_albert(n, m, p, q, state, G))
+    return G
+
+
+def _rg_watts_strogatz(kind, n, k, p, tries, seed, create_using):
+    _rg_seed(seed)
+    _rg_ints(n)
+    if type(k) is not int or k >= _RG_MAX_NODES:
+        raise NotImplementedError("rustnx needs an int k")
+    (p,) = _rg_floats(p)
+    cls = _rg_class(create_using, directed=False, multigraph=False)
+    if k > n:
+        raise nx.NetworkXError(
+            "k>=n, choose smaller k or larger n" if kind == 1 else "k>n, choose smaller k or larger n"
+        )
+    if k == n:
+        return _rg_complete(cls, n)
+    G = cls()
+    found = _rg_run(
+        seed,
+        lambda state: _CoreGraph.rg_watts_strogatz(kind, n, max(k, 0), p, tries, state, G),
+    )
+    if not found:
+        raise nx.NetworkXError("Maximum number of tries exceeded")
+    return G
+
+
+def watts_strogatz_graph(n, k, p, seed=None, *, create_using=None):
+    return _rg_watts_strogatz(0, n, k, p, 1, seed, create_using)
+
+
+def newman_watts_strogatz_graph(n, k, p, seed=None, *, create_using=None):
+    return _rg_watts_strogatz(1, n, k, p, 1, seed, create_using)
+
+
+def connected_watts_strogatz_graph(n, k, p, tries=100, seed=None, *, create_using=None):
+    if type(tries) is not int:
+        raise NotImplementedError("rustnx needs an int tries")
+    if tries <= 0:
+        raise nx.NetworkXError("Maximum number of tries exceeded")
+    if type(n) is int and n == 0:
+        # NetworkX's is_connected raises for the null graph.
+        raise NotImplementedError("NetworkX raises here")
+    return _rg_watts_strogatz(2, n, k, p, tries, seed, create_using)
+
+
+def powerlaw_cluster_graph(n, m, p, seed=None, *, create_using=None):
+    _rg_seed(seed)
+    _rg_ints(n, m)
+    (p,) = _rg_floats(p)
+    cls = _rg_class(create_using, directed=False, multigraph=False)
+    if m < 1 or n < m:
+        raise nx.NetworkXError(f"NetworkXError must have m>1 and m<n, m={m},n={n}")
+    if p > 1 or p < 0:
+        raise nx.NetworkXError(f"NetworkXError p must be in [0,1], p={p}")
+    G = cls()
+    _rg_run(seed, lambda state: _CoreGraph.rg_powerlaw_cluster(n, m, p, state, G))
+    return G
+
+
+def random_regular_graph(d, n, seed=None, *, create_using=None):
+    _rg_seed(seed)
+    _rg_ints(d, n)
+    cls = _rg_class(create_using, directed=False, multigraph=False)
+    if (n * d) % 2 != 0:
+        raise nx.NetworkXError("n * d must be even")
+    if not 0 <= d < n:
+        raise nx.NetworkXError("the 0 <= d < n inequality must be satisfied")
+    if d == 0:
+        return _rg_empty(cls, n)
+    G = cls()
+    _rg_run(seed, lambda state: _CoreGraph.rg_random_regular(d, n, state, G))
+    return G
+
+
+@functools.cache
+def _rg_cumulative_cdf():
+    """Whether ``cumulative_distribution`` divides the running sum by the
+    total (NetworkX 3.6+) rather than summing ``d / total`` (3.4, 3.5).
+    ``None`` if unrecognized."""
+    try:
+        source = inspect.getsource(nx.utils.cumulative_distribution)
+    except (AttributeError, OSError, TypeError):
+        return None
+    if "cumulative += element" in source:
+        return True
+    if "cdf.append(cdf[i] + distribution[i] / psum)" in source:
+        return False
+    return None
+
+
+def _rg_growing(kind, n, p, create_using, seed):
+    _rg_seed(seed)
+    if type(n) is not int or n >= _RG_MAX_NODES:
+        raise NotImplementedError("rustnx needs an int n")
+    cls = _rg_digraph_class(create_using)
+    if n == 1 or (kind and n < 1):
+        return _rg_empty(cls, 1)
+    if n < 1:
+        # gn_graph still adds its first edge.
+        raise NotImplementedError("rustnx needs n >= 1")
+    cumulative = False
+    if kind == 0:
+        cumulative = _rg_cumulative_cdf()
+        if cumulative is None:
+            raise NotImplementedError("unrecognized NetworkX cumulative_distribution")
+    G = cls()
+    _rg_run(seed, lambda state: _CoreGraph.rg_growing_network(kind, n, p, cumulative, state, G))
+    return G
+
+
+def gn_graph(n, kernel=None, create_using=None, seed=None):
+    if kernel is not None:
+        raise NotImplementedError("rustnx does not support a kernel")
+    return _rg_growing(0, n, 0.0, create_using, seed)
+
+
+def gnr_graph(n, p, create_using=None, seed=None):
+    (p,) = _rg_floats(p)
+    return _rg_growing(1, n, p, create_using, seed)
+
+
+def gnc_graph(n, create_using=None, seed=None):
+    return _rg_growing(2, n, 0.0, create_using, seed)
+
+
+def random_uniform_k_out_graph(n, k, self_loops=True, with_replacement=True, seed=None):
+    _rg_seed(seed)
+    _rg_ints(n)
+    if type(k) is not int or k >= _RG_MAX_NODES:
+        raise NotImplementedError("rustnx needs an int k")
+    if with_replacement:
+        cls = nx.MultiDiGraph
+        k = max(k, 0)
+    else:
+        cls = nx.DiGraph
+        if k < 0:
+            raise NotImplementedError("NetworkX raises here")
+    G = cls()
+    _rg_run(
+        seed,
+        lambda state: _CoreGraph.rg_uniform_k_out(
+            n, k, bool(self_loops), bool(with_replacement), state, G
+        ),
+    )
+    return G
+
+
+def random_lobster_graph(n, p1, p2, seed=None, *, create_using=None):
+    _rg_seed(seed)
+    if type(n) is not int or not 0 <= n < 2**52:
+        raise NotImplementedError("rustnx needs a non-negative int n")
+    p1, p2 = _rg_floats(p1, p2)
+    cls = _rg_class(create_using, directed=False, multigraph=False)
+    p1, p2 = abs(p1), abs(p2)
+    if any(p >= 1 for p in [p1, p2]):
+        raise nx.NetworkXError("Probability values for `p1` and `p2` must both be < 1.")
+    G = cls()
+    _rg_run(seed, lambda state: _CoreGraph.rg_lobster(n, p1, p2, state, G))
+    return G
+
+
+@functools.cache
+def _rg_lobster_deprecated():
+    """Whether ``random_lobster`` is NetworkX 3.6's deprecated alias (which
+    warns, then calls ``random_lobster_graph``)."""
+    return "deprecated" in _source_text(getattr(nx, "random_lobster", None))
+
+
+def random_lobster(n, p1, p2, seed=None, *, create_using=None):
+    if _rg_lobster_deprecated():
+        raise NotImplementedError("NetworkX warns, then calls random_lobster_graph")
+    return random_lobster_graph(n, p1, p2, seed, create_using=create_using)
+
+
+def random_tournament(n, seed=None):
+    _rg_seed(seed)
+    _rg_ints(n)
+    G = nx.DiGraph()
+    _rg_run(seed, lambda state: _CoreGraph.rg_tournament(n, state, G))
+    return G
+
+
+@functools.cache
+def _rg_sbm_legacy():
+    """Whether ``stochastic_block_model`` first draws for every pair of a
+    diagonal block, then runs its sparse or dense loop on the spent
+    iterator (NetworkX 3.6 and older). ``None`` if unrecognized."""
+    count = _source_text(nx.stochastic_block_model).count("if seed.random() < p[i][j]:")
+    return {2: True, 1: False}.get(count)
+
+
+def _rg_sbm(sizes, p, nodelist, seed, directed, selfloops, sparse):
+    _rg_seed(seed)
+    if nodelist is not None:
+        raise NotImplementedError("rustnx does not support nodelist")
+    if type(sizes) not in (list, tuple) or type(p) not in (list, tuple):
+        raise NotImplementedError("rustnx needs lists of sizes and probabilities")
+    _rg_ints(*sizes)
+    for row in p:
+        if type(row) not in (list, tuple):
+            raise NotImplementedError("rustnx needs lists of probabilities")
+        _rg_floats(*row)
+    if sum(sizes) >= _RG_MAX_NODES:
+        raise NotImplementedError("too many nodes")
+    legacy = _rg_sbm_legacy()
+    if legacy is None:
+        raise NotImplementedError("unrecognized NetworkX stochastic_block_model")
+    # NetworkX's checks, in its order.
+    if len(sizes) != len(p):
+        raise nx.NetworkXException("'sizes' and 'p' do not match.")
+    for row in p:
+        if len(p) != len(row):
+            raise nx.NetworkXException("'p' must be a square matrix.")
+    if not directed:
+        p_transpose = [list(i) for i in zip(*p)]
+        for i in zip(p, p_transpose):
+            for j in zip(i[0], i[1]):
+                if abs(j[0] - j[1]) > 1e-08:
+                    raise nx.NetworkXException("'p' must be symmetric.")
+    for row in p:
+        for prob in row:
+            if prob < 0 or prob > 1:
+                raise nx.NetworkXException("Entries of 'p' not in [0,1].")
+    nodelist = range(sum(sizes))
+    size_cumsum = [sum(sizes[0:x]) for x in range(len(sizes) + 1)]
+    # The partition sets (and so the node order) as NetworkX builds them.
+    partition = [
+        set(nodelist[size_cumsum[x] : size_cumsum[x + 1]])
+        for x in range(len(size_cumsum) - 1)
+    ]
+    blocks = [0] * len(nodelist)
+    for x in range(len(sizes)):
+        blocks[size_cumsum[x] : size_cumsum[x + 1]] = [x] * sizes[x]
+    g = nx.DiGraph() if directed else nx.Graph()
+    probs = [[float(x) for x in row] for row in p]
+    _rg_run(
+        seed,
+        lambda state: _CoreGraph.rg_stochastic_block_model(
+            [list(s) for s in partition],
+            probs,
+            bool(directed),
+            bool(selfloops),
+            bool(sparse),
+            legacy,
+            state,
+            g,
+            "block",
+            blocks,
+        ),
+    )
+    g.graph["partition"] = partition
+    g.name = "stochastic_block_model"
+    return g
+
+
+def stochastic_block_model(
+    sizes, p, nodelist=None, seed=None, directed=False, selfloops=False, sparse=True
+):
+    return _rg_sbm(sizes, p, nodelist, seed, directed, selfloops, sparse)
+
+
+def random_partition_graph(sizes, p_in, p_out, seed=None, directed=False):
+    _rg_seed(seed)
+    _rg_floats(p_in, p_out)
+    if not 0.0 <= p_in <= 1.0:
+        raise nx.NetworkXError("p_in must be in [0,1]")
+    if not 0.0 <= p_out <= 1.0:
+        raise nx.NetworkXError("p_out must be in [0,1]")
+    if type(sizes) not in (list, tuple):
+        raise NotImplementedError("rustnx needs a list of sizes")
+    num_blocks = len(sizes)
+    p = [[p_out for s in range(num_blocks)] for r in range(num_blocks)]
+    for r in range(num_blocks):
+        p[r][r] = p_in
+    return _rg_sbm(sizes, p, None, seed, directed, False, True)
+
+
+def planted_partition_graph(l, k, p_in, p_out, seed=None, directed=False):
+    if type(l) is not int or type(k) is not int:
+        raise NotImplementedError("rustnx needs int l and k")
+    if l > 0 and k * l >= _RG_MAX_NODES:
+        raise NotImplementedError("too many nodes")
+    return random_partition_graph([k] * l, p_in, p_out, seed=seed, directed=directed)
+
+
+def random_geometric_graph(n, radius, dim=2, pos=None, p=2, seed=None, *, pos_name="pos"):
+    _rg_seed(seed)
+    if pos is not None:
+        raise NotImplementedError("rustnx draws the positions itself")
+    _rg_ints(n, dim)
+    radius, p = _rg_floats(radius, p)
+    if n == 0 or dim == 0 or not (0 <= radius < math.inf) or not (1 <= p < math.inf):
+        raise NotImplementedError("rustnx can't match NetworkX here")
+    G = nx.Graph()
+    _rg_run(seed, lambda state: _CoreGraph.rg_geometric(n, radius, dim, p, state, G, pos_name))
+    return G
+
+
+def waxman_graph(
+    n,
+    beta=0.4,
+    alpha=0.1,
+    L=None,
+    domain=(0, 0, 1, 1),
+    metric=None,
+    seed=None,
+    *,
+    pos_name="pos",
+):
+    _rg_seed(seed)
+    if metric is not None:
+        raise NotImplementedError("rustnx supports the default metric only")
+    _rg_ints(n)
+    if type(domain) not in (list, tuple) or len(domain) != 4:
+        raise NotImplementedError("rustnx needs a domain of four numbers")
+    xmin, ymin, xmax, ymax = domain
+    _rg_floats(xmin, ymin, xmax, ymax)
+    beta, alpha = _rg_floats(beta, alpha)
+    # `uniform(a, b)` is `a + (b - a) * random()`, with Python's arithmetic.
+    box = tuple(float(x) for x in (xmin, xmax - xmin, ymin, ymax - ymin))
+    if not all(math.isfinite(x) for x in (*box, beta, alpha)) or not alpha > 0:
+        raise NotImplementedError("rustnx needs finite numbers and alpha > 0")
+    if L is None:
+        if n < 2:
+            raise NotImplementedError("NetworkX raises here")
+    else:
+        # Python's `alpha * L` rounds an int product once, as f64 does.
+        (L,) = _rg_floats(L)
+        if not (0 < L < math.inf):
+            raise NotImplementedError("rustnx needs a positive finite L")
+    G = nx.Graph()
+    _rg_run(
+        seed,
+        lambda state: _CoreGraph.rg_waxman(n, beta, alpha, L, box, state, G, pos_name),
+    )
+    return G
+
+
+def _rg_bipartite_graph(n, m, directed):
+    """The empty graph NetworkX starts from, with the `bipartite` labels."""
+    G = nx.DiGraph() if directed else nx.Graph()
+    return G, [0] * n + [1] * m
+
+
+def random_graph(n, m, p, seed=None, directed=False):
+    _rg_seed(seed)
+    _rg_ints(n, m)
+    if n + m >= _RG_MAX_NODES:
+        raise NotImplementedError("too many nodes")
+    (pf,) = _rg_floats(p)
+    if pf >= 1 or pf != pf:
+        # complete_bipartite_graph, or NetworkX raises.
+        raise NotImplementedError("rustnx leaves this case to NetworkX")
+    G, labels = _rg_bipartite_graph(n, m, directed)
+    if pf <= 0:
+        _CoreGraph.rg_empty(n + m, G)
+        for v, label in zip(G._node.values(), labels):
+            v["bipartite"] = label
+    else:
+        _rg_run(
+            seed,
+            lambda state: _CoreGraph.rg_bipartite(
+                n, m, pf, 0, None, state, G, "bipartite", labels
+            ),
+        )
+    G.name = f"fast_gnp_random_graph({n},{m},{p})"
+    return G
+
+
+def gnmk_random_graph(n, m, k, seed=None, directed=False):
+    _rg_seed(seed)
+    _rg_ints(n, m)
+    if n + m >= _RG_MAX_NODES:
+        raise NotImplementedError("too many nodes")
+    if type(k) is not int or k >= _RG_MAX_NODES:
+        raise NotImplementedError("rustnx needs an int k")
+    G, labels = _rg_bipartite_graph(n, m, directed)
+    if n == 1 or m == 1 or (k <= 0 and k < n * m):
+        _CoreGraph.rg_empty(n + m, G)
+        for v, label in zip(G._node.values(), labels):
+            v["bipartite"] = label
+    elif k >= n * m:
+        raise NotImplementedError("rustnx leaves complete_bipartite_graph to NetworkX")
+    else:
+        # `list(set(G) - set(top))`, in that set's order.
+        bottom = list(set(range(n + m)) - set(range(n)))
+        _rg_run(
+            seed,
+            lambda state: _CoreGraph.rg_bipartite(
+                n, m, 0.0, k, bottom, state, G, "bipartite", labels
+            ),
+        )
+    G.name = f"bipartite_gnm_random_graph({n},{m},{k})"
+    return G
