@@ -1549,3 +1549,291 @@ def test_batch6_graph_changes_during_iteration():
             G.add_edge("x", "y")  # after: not seen
             results.append([first, *it])
         assert results[0] == results[1]
+
+
+# --- Batch 7: shortest paths, DAG and cycle leftovers -----------------------------
+
+
+from collections import defaultdict  # noqa: E402
+from itertools import islice  # noqa: E402
+
+
+
+def typed_dicts(func):
+    """Also compare dict types and defaultdict defaults (Floyd-Warshall's
+    ``dist`` rows are ``defaultdict(lambda: inf)``)."""
+
+    def convert(value):
+        if isinstance(value, dict):
+            default = value.default_factory() if isinstance(value, defaultdict) else None
+            return (type(value).__name__, default, [(k, convert(v)) for k, v in value.items()])
+        if isinstance(value, tuple):
+            return tuple(convert(v) for v in value)
+        return value
+
+    return lambda *a, **kw: convert(func(*a, **kw))
+
+
+def first(func, k=200):
+    """The first ``k`` items of a generator (simple paths can explode)."""
+    return lambda *a, **kw: list(islice(func(*a, **kw), k))
+
+
+def as_array(func):
+    def run(*a, **kw):
+        A = func(*a, **kw)
+        values = [[x if x == x else "nan" for x in row] for row in A.tolist()]
+        return (type(A).__name__, str(A.dtype), A.shape, values)
+
+    return run
+
+
+FW_TREE = getattr(nx, "floyd_warshall_tree", None)
+ANTICHAIN_WIDTH = getattr(nx.dag, "antichain_width", None)
+
+
+def _fw_calls(G, **kw):
+    exact_outcome(typed_dicts(nx.floyd_warshall_predecessor_and_distance), G, **kw)
+    exact_outcome(typed_dicts(nx.floyd_warshall), G, **kw)
+    if FW_TREE is not None:
+        exact_outcome(typed_dicts(FW_TREE), G, **kw)
+    exact_outcome(as_array(nx.floyd_warshall_numpy), G, **kw)
+
+
+def _signed_graph(seed, directed, cycles):
+    """Random weights in -3..5: negative edges, and negative cycles unless
+    ``cycles`` is False (then a DAG)."""
+    rng = random.Random(seed)
+    G = random_dag(seed, "none") if not cycles else graph_for(seed, directed)
+    if not directed:
+        G = G.to_undirected()
+    for u, v, d in G.edges(data=True):
+        d["weight"] = rng.randint(-3, 5) if rng.random() < 0.3 else rng.randint(0, 5)
+    return G
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float", "missing"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch7_dense_shortest_paths(seed, directed, weights):
+    G = graph_for(seed, directed, weights)
+    _fw_calls(G)
+    _fw_calls(G, weight=None)
+    nodes = list(G)
+    random.Random(seed).shuffle(nodes)
+    exact_outcome(as_array(nx.floyd_warshall_numpy), G, nodelist=nodes)
+    exact_outcome(nx.johnson, G)
+    exact_outcome(nx.johnson, G, weight=None)
+    for source in nodes[:3] + ["missing"]:
+        exact_outcome(nx.goldberg_radzik, G, source)
+        exact_outcome(nx.goldberg_radzik, G, source, weight=None)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch7_negative_weights(seed, directed):
+    for cycles in [False, True]:
+        G = _signed_graph(seed, directed, cycles)
+        _fw_calls(G)
+        exact_outcome(nx.johnson, G)
+        for source in list(G)[:4]:
+            exact_outcome(nx.goldberg_radzik, G, source)
+        if len(G) > 1:
+            s, t = list(G)[0], list(G)[-1]
+            exact_outcome(first(nx.shortest_simple_paths, 20), G, s, t, weight="weight")
+        if not directed and len(G) < 20:
+            exact_outcome(nx.minimum_cycle_basis, G, weight="weight")
+
+
+@pytest.mark.parametrize(
+    "edges",
+    [
+        [],
+        [(0, 0, 1)],
+        [(0, 0, -1)],
+        [(0, 0, 0.0)],
+        [(0, 1, 2), (1, 0, -3)],
+        [(0, 1, -2), (1, 2, 1), (2, 0, 1)],
+        [(0, 1, None), (1, 2, 1), (0, 2, 5)],
+        [(0, 1, 2**60), (1, 2, 2**60)],
+        [(0, 1, 1), (1, 2, 2.5)],
+        [(0, 1, float("inf")), (1, 2, 1)],
+        [(0, 1, -0.0), (1, 2, 1.0)],
+        [("a", "b", 1), ("b", "c", 2), ("a", "c", 3), ("c", "c", 1)],
+    ],
+    ids=str,
+)
+@pytest.mark.parametrize("directed", [False, True])
+def test_batch7_weight_edge_cases(edges, directed):
+    G = nx.DiGraph() if directed else nx.Graph()
+    G.add_node(0)
+    for u, v, w in edges:
+        G.add_edge(u, v, weight=w)
+    _fw_calls(G)
+    exact_outcome(nx.johnson, G)
+    nodes = list(G)
+    for source in nodes:
+        exact_outcome(nx.goldberg_radzik, G, source)
+        for target in nodes:
+            exact_outcome(first(nx.shortest_simple_paths, 20), G, source, target, weight="weight")
+    if not directed:
+        exact_outcome(nx.minimum_cycle_basis, G, weight="weight")
+    exact_outcome(nx.floyd_warshall_numpy, G, nodelist=nodes[:-1])  # too short
+    exact_outcome(nx.floyd_warshall_numpy, G, nodelist=nodes[:-1] + ["x"])  # not in G
+
+
+def test_batch7_empty_and_single_node():
+    for G in [nx.Graph(), nx.DiGraph(), nx.empty_graph(1), nx.DiGraph([(0, 0)])]:
+        _fw_calls(G)
+        exact_outcome(nx.johnson, G)
+        exact_outcome(nx.goldberg_radzik, G, 0)
+        exact_outcome(listed(nx.all_simple_paths), G, 0, 0)
+        exact_outcome(listed(nx.shortest_simple_paths), G, 0, 0)
+        exact_outcome(nx.is_simple_path, G, [0])
+        exact_outcome(nx.is_simple_path, G, [])
+        if G.is_directed():
+            exact_outcome(listed(nx.antichains), G)
+            if ANTICHAIN_WIDTH is not None:
+                exact_outcome(ANTICHAIN_WIDTH, G)
+        else:
+            exact_outcome(nx.minimum_cycle_basis, G)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch7_simple_paths(seed, directed):
+    G = graph_for(seed, directed)
+    nodes = list(G)
+    rng = random.Random(seed)
+    picks = rng.sample(nodes, min(3, len(nodes)))
+    # Unbounded cutoffs only on small graphs: with an unreachable target
+    # both backends walk every simple path.
+    unbounded = [None, float("inf")] if len(G) <= 10 else []
+    for source in picks + ["missing"]:
+        for target in picks[:2] + ["missing", picks, set(picks), ["missing"], [], [None] + picks[:1], 5]:
+            for cutoff in [0, 1, 2, 2.5, True, -1, float("nan"), *unbounded]:
+                exact_outcome(first(nx.all_simple_paths), G, source, target, cutoff=cutoff)
+            exact_outcome(first(nx.all_simple_edge_paths), G, source, target, cutoff=3)
+        for target in picks + ["missing"]:
+            exact_outcome(first(nx.shortest_simple_paths, 20), G, source, target)
+    for k in range(5):
+        path = rng.sample(nodes, min(len(nodes), k))
+        exact_outcome(nx.is_simple_path, G, path)
+        exact_outcome(nx.is_simple_path, G, path + path[:1])
+        exact_outcome(nx.is_simple_path, G, path + ["missing"])
+    walk = list(nx.dfs_preorder_nodes(G, nodes[0], backend="networkx"))[:6]
+    exact_outcome(nx.is_simple_path, G, walk)
+    exact_outcome(nx.is_simple_path, G, [[1], [2]])
+    exact_outcome(nx.is_simple_path, G, ([v] for v in nodes))  # no len()
+
+
+@pytest.mark.parametrize("weights", ["int", "float", "missing"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch7_shortest_simple_paths_weighted(seed, directed, weights):
+    G = graph_for(seed, directed, weights)
+    nodes = list(G)
+    for source in nodes[:3]:
+        for target in nodes[-3:]:
+            exact_outcome(first(nx.shortest_simple_paths, 40), G, source, target, weight="weight")
+    if weights == "float":
+        # Many equal-length paths: ties go by NetworkX's push order.
+        H = nx.grid_2d_graph(4, 4)
+        H = nx.relabel_nodes(H, {v: i for i, v in enumerate(H)})
+        if directed:
+            H = H.to_directed()
+        for u, v, d in H.edges(data=True):
+            d["weight"] = [0.5, 1.0, 1.5][(u + v) % 3]
+        exact_outcome(first(nx.shortest_simple_paths, 100), H, 0, 15, weight="weight")
+        exact_outcome(first(nx.shortest_simple_paths, 100), H, 0, 15)
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_batch7_antichains(seed):
+    D = random_dag(seed, "none")
+    exact_outcome(first(nx.antichains, 2000), D)
+    topo = list(nx.topological_sort(D, backend="networkx"))
+    lex = list(nx.lexicographical_topological_sort(D, key=str, backend="networkx"))
+    exact_outcome(first(nx.antichains, 2000), D, topo_order=topo)
+    exact_outcome(first(nx.antichains, 2000), D, topo_order=lex)
+    exact_outcome(first(nx.antichains, 2000), D, topo_order=topo[::-1])  # not a valid order
+    exact_outcome(first(nx.antichains, 2000), D, topo_order=topo[1:])
+    if ANTICHAIN_WIDTH is not None:
+        exact_outcome(ANTICHAIN_WIDTH, D)
+    C = graph_for(seed, True)  # usually cyclic
+    exact_outcome(first(nx.antichains, 500), C)
+    if ANTICHAIN_WIDTH is not None:
+        exact_outcome(ANTICHAIN_WIDTH, C)
+    exact_outcome(listed(nx.antichains), graph_for(seed, False))  # undirected
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float", "missing"])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch7_minimum_cycle_basis(seed, weights):
+    rng = random.Random(seed)
+    G = nx.gnm_random_graph(rng.randint(1, 18), rng.randint(0, 30), seed=seed)
+    G.add_edges_from((v + 100, w + 100) for v, w in nx.cycle_graph(rng.randint(3, 6)).edges)
+    if seed % 3 == 0:
+        G.add_edge(0, 0)
+        G = nx.relabel_nodes(G, {v: f"n{v}" for v in G})
+    for u, v, d in G.edges(data=True):
+        if weights == "int":
+            d["weight"] = rng.randint(1, 4)
+        elif weights == "float":
+            d["weight"] = rng.choice([0.5, 1.0, 1.5])
+        elif weights == "missing" and rng.random() < 0.5:
+            d["weight"] = 2
+    exact_outcome(nx.minimum_cycle_basis, G)
+    exact_outcome(nx.minimum_cycle_basis, G, weight="weight")
+    exact_outcome(nx.minimum_cycle_basis, nx.DiGraph(G))  # directed: rejected
+    T = nx.relabel_nodes(G, {v: (v, 0) for v in G})  # tuple nodes fall back
+    exact_outcome(nx.minimum_cycle_basis, T)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(15))
+def test_batch7_multigraphs(seed, directed, restore_config):
+    M = random_multigraph(seed, directed, "int" if seed % 2 else "float")
+    nodes = list(M)
+    exact_outcome(nx.johnson, M)
+    exact_outcome(nx.is_simple_path, M, nodes[:3])
+    # Parallel edges count separately in these: they fall back.
+    exact_outcome(typed_dicts(nx.floyd_warshall), M)
+    exact_outcome(nx.goldberg_radzik, M, nodes[0])
+    exact_outcome(first(nx.all_simple_paths), M, nodes[0], nodes[-1], cutoff=3)
+    exact_outcome(first(nx.shortest_simple_paths), M, nodes[0], nodes[-1])
+    if not directed:
+        exact_outcome(nx.minimum_cycle_basis, M)
+
+
+def test_batch7_graph_changes_during_iteration():
+    calls = [
+        lambda G, b: nx.all_simple_paths(G, 0, 5, backend=b),
+        lambda G, b: nx.all_simple_edge_paths(G, 0, 5, backend=b),
+        lambda G, b: nx.shortest_simple_paths(G, 0, 5, backend=b),
+    ]
+    for call in calls:
+        G = nx.complete_graph(7)
+        it = call(G, "rustnx")
+        next(it)
+        G.add_edge("x", "y")
+        with pytest.raises(RuntimeError):
+            list(it)
+        # A change before the first item: NetworkX runs on the changed graph.
+        results = []
+        for backend in ["rustnx", "networkx"]:
+            G = nx.complete_graph(7)
+            it = call(G, backend)
+            G.remove_edge(0, 5)
+            results.append(list(islice(it, 50)))
+        assert results[0] == results[1]
+    # antichains copies the graph when iteration starts.
+    results = []
+    for backend in ["rustnx", "networkx"]:
+        D = nx.DiGraph([(0, 1), (0, 2), (1, 3), (2, 3), (3, 4)])
+        it = nx.antichains(D, backend=backend)
+        D.remove_edge(0, 2)
+        first_item = next(it)
+        D.add_edge(4, 5)
+        results.append([first_item, *it])
+    assert results[0] == results[1]

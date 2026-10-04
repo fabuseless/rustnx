@@ -7,6 +7,7 @@ merged attributes for duplicate edges, and so the same algorithm results.
 
 import math
 import pickle
+from itertools import islice
 import random
 import warnings
 
@@ -232,11 +233,22 @@ def algorithm_calls(H, directed):
         calls["group_bc"] = lambda G, b: nx.group_betweenness_centrality(G, few, backend=b)
         calls["local_reaching"] = lambda G, b: nx.local_reaching_centrality(G, src, backend=b)
         calls["local_reaching_w"] = lambda G, b: nx.local_reaching_centrality(G, src, weight="weight", backend=b)
+        calls["goldberg_radzik"] = lambda G, b: nx.goldberg_radzik(G, src, backend=b)
+        calls["simple_paths"] = lambda G, b: list(islice(nx.all_simple_paths(G, src, dst, cutoff=4, backend=b), 100))
+        calls["shortest_simple"] = lambda G, b: list(
+            islice(nx.shortest_simple_paths(G, src, dst, weight="weight", backend=b), 20)
+        )
+        calls["is_simple_path"] = lambda G, b: nx.is_simple_path(G, nodes[:3], backend=b)
     calls["load"] = lambda G, b: list(nx.load_centrality(G, backend=b).items())
     calls["load_w"] = lambda G, b: list(nx.load_centrality(G, weight="weight", backend=b).items())
     calls["edge_load"] = lambda G, b: list(nx.edge_load_centrality(G, backend=b).items())
     calls["percolation"] = lambda G, b: list(nx.percolation_centrality(G, backend=b).items())
     calls["voterank"] = lambda G, b: nx.voterank(G, backend=b)
+    calls["floyd_warshall"] = lambda G, b: [
+        (k, list(v.items())) for k, v in nx.floyd_warshall(G, backend=b).items()
+    ]
+    calls["floyd_warshall_numpy"] = lambda G, b: nx.floyd_warshall_numpy(G, backend=b).tolist()
+    calls["johnson"] = lambda G, b: nx.johnson(G, backend=b)
     if directed:
         calls["scc"] = lambda G, b: list(nx.strongly_connected_components(G, backend=b))
         calls["wcc"] = lambda G, b: list(nx.weakly_connected_components(G, backend=b))
@@ -258,6 +270,7 @@ def algorithm_calls(H, directed):
         calls["edge_bfs_ignore"] = lambda G, b: list(nx.edge_bfs(G, orientation="ignore", backend=b))
         calls["edge_dfs_reverse"] = lambda G, b: list(nx.edge_dfs(G, orientation="reverse", backend=b))
         calls["is_arborescence"] = lambda G, b: nx.is_arborescence(G, backend=b)
+        calls["antichains"] = lambda G, b: list(islice(nx.antichains(G, backend=b), 200))
         if src is not None:
             calls["idom"] = lambda G, b: list(nx.immediate_dominators(G, src, backend=b).items())
             calls["frontiers"] = lambda G, b: [
@@ -277,6 +290,7 @@ def algorithm_calls(H, directed):
         calls["cycle_basis"] = lambda G, b: nx.cycle_basis(G, backend=b)
         calls["girth"] = lambda G, b: nx.girth(G, backend=b)
         calls["local_bridges"] = lambda G, b: list(nx.local_bridges(G, backend=b))
+        calls["minimum_cycle_basis"] = lambda G, b: nx.minimum_cycle_basis(G, weight="weight", backend=b)
         if src is not None:
             calls["node_cc"] = lambda G, b: nx.node_connected_component(G, src, backend=b)
     return calls
