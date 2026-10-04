@@ -738,6 +738,7 @@ def test_backend_function_list_matches_implementations():
         "barycenter",
         "centroid",
         "floyd_warshall_tree",
+        "is_perfect_graph",
         "tree_centroid",
     }
     for name in algorithms.__all__:

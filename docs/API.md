@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 209 NetworkX functions. Call them as usual (for
+rustnx implements 222 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -340,6 +340,29 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.lowest_common_ancestor` | `node1`, `node2`, `default` | no | rustnx | As `all_pairs_lowest_common_ancestor`. |
 | `nx.all_pairs_lowest_common_ancestor` | `pairs` | no | rustnx | Pairs with a unique lowest common ancestor are answered in Rust; for pairs with several, rustnx repeats NetworkX's set-based walk. |
 | `nx.tree_all_pairs_lowest_common_ancestor` | `root`, `pairs` | no | rustnx | `pairs` falls back (NetworkX keeps them in sets), and so does a `root` not in the graph. |
+
+### Planarity and graph classes
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.is_planar` | none | no | NetworkX |  |
+| `nx.check_planarity` | `counterexample` | no | NetworkX | Builds the same `PlanarEmbedding` (same half-edge calls) or counterexample. |
+| `nx.algorithms.planarity.check_planarity_recursive` | `counterexample` | no | NetworkX | Graphs deep enough that NetworkX might reach the recursion limit fall back. |
+| `nx.algorithms.planarity.get_counterexample` | none | no | rustnx |  |
+| `nx.algorithms.planarity.get_counterexample_recursive` | none | no | rustnx | Graphs deep enough that NetworkX might reach the recursion limit fall back. |
+| `nx.is_chordal` | none | no | NetworkX | Self-loops fall back (NetworkX's outcome then depends on set order). |
+| `nx.chordal_graph_treewidth` | none | no | NetworkX | Self-loops and the null graph (whose result differs by version) fall back. |
+| `nx.complete_to_chordal_graph` | none | no | rustnx | Self-loops fall back. Chords are added in NetworkX's (set iteration) order. |
+| `nx.is_at_free` | none | no | rustnx |  |
+| `nx.is_perfect_graph` | none | no | rustnx | NetworkX 3.7 and later. |
+
+### Tournaments
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.tournament.is_reachable` | `s`, `t` | no | rustnx | Unhashable nodes fall back. |
+| `nx.tournament.is_strongly_connected` | none | no | rustnx |  |
+| `nx.tournament.score_sequence` | none | no | NetworkX |  |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 

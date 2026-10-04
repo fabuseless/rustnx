@@ -2168,3 +2168,223 @@ def test_batch8_graph_changes_during_iteration():
     G.add_edge("x", "y")
     with pytest.raises(RuntimeError):
         list(it)
+
+
+# --- Batch 9: planarity, chordal graphs and graph classes -------------------------
+
+planarity = nx.algorithms.planarity
+tournament = nx.algorithms.tournament
+
+
+def _triangulation(seed, n):
+    """A random maximal planar graph: triangles split around a new node."""
+    rng = random.Random(seed)
+    G = nx.Graph([(0, 1), (1, 2), (2, 0)])
+    faces = [(0, 1, 2)]
+    for v in range(3, n):
+        a, b, c = faces.pop(rng.randrange(len(faces)))
+        G.add_edges_from([(v, a), (v, b), (v, c)])
+        faces += [(a, b, v), (b, c, v), (c, a, v)]
+    return G
+
+
+def _reordered(G, seed, directed=False, labels=False):
+    """G with shuffled node and edge order (and edge directions), some
+    reciprocal arcs if directed, and string labels if asked."""
+    rng = random.Random(seed)
+    H = nx.DiGraph() if directed else nx.Graph()
+    name = (lambda v: f"v{v}") if labels else (lambda v: v)
+    nodes = list(G)
+    rng.shuffle(nodes)
+    H.add_nodes_from(name(v) for v in nodes)
+    edges = list(G.edges)
+    rng.shuffle(edges)
+    for u, v in edges:
+        if rng.random() < 0.5:
+            u, v = v, u
+        H.add_edge(name(u), name(v))
+        if directed and rng.random() < 0.2:
+            H.add_edge(name(v), name(u))
+    return H
+
+
+def _planarity_graphs(seed, directed):
+    rng = random.Random(seed)
+    yield graph_for(seed, directed)
+    T = _triangulation(seed, rng.randint(3, 30))
+    yield _reordered(T, seed, directed, labels=seed % 2 == 1)
+    # Nearly planar: a triangulation with one edge replaced, or with a K5
+    # or K3,3 attached, or subdivided.
+    H = _reordered(T, seed + 1, directed)
+    edges = list(H.edges)
+    H.remove_edge(*edges[seed % len(edges)])
+    if seed % 3 == 0:
+        H.add_edge(*rng.sample(list(H), 2))
+    yield H
+    K = nx.complete_graph(5) if seed % 2 else nx.complete_bipartite_graph(3, 3)
+    K = nx.relabel_nodes(K, {v: 100 + v for v in K})
+    if seed % 4 < 2:
+        u, v = next(iter(K.edges))
+        K.remove_edge(u, v)
+        nx.add_path(K, [u, 200, v])
+    S = nx.union(nx.Graph(T), K)
+    S.add_edge(0, 100)
+    yield _reordered(S, seed + 2, directed)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch9_planarity(seed, directed):
+    for G in _planarity_graphs(seed, directed):
+        exact_outcome(nx.is_planar, G)
+        for counterexample in [False, True]:
+            exact_outcome(nx.check_planarity, G, counterexample)
+            exact_outcome(planarity.check_planarity_recursive, G, counterexample)
+        exact_outcome(planarity.get_counterexample, G)
+        exact_outcome(planarity.get_counterexample_recursive, G)
+
+
+def _chordal_graph(seed):
+    """A random chordal graph: each new node joins a clique of earlier
+    nodes (a random partial k-tree), relabeled and reordered."""
+    rng = random.Random(seed)
+    G = nx.Graph()
+    G.add_node(0)
+    for v in range(1, rng.randint(2, 30)):
+        anchor = rng.randrange(v)
+        clique = [anchor] + [u for u in G[anchor] if rng.random() < 0.6]
+        clique = [u for u in clique if all(G.has_edge(u, w) for w in clique if w != u)]
+        G.add_edges_from((v, u) for u in clique)
+    return _reordered(G, seed, labels=seed % 2 == 0)
+
+
+def _interval_graph(seed):
+    rng = random.Random(seed)
+    n = rng.randint(1, 30)
+    starts = [rng.randint(0, 50) for _ in range(n)]
+    return nx.interval_graph([(s, s + rng.randint(0, 10)) for s in starts])
+
+
+@pytest.mark.parametrize("seed", range(60))
+def test_batch9_chordal_and_at_free(seed):
+    G = graph_for(seed, False)
+    C = _chordal_graph(seed)
+    graphs = [G, C, _interval_graph(seed), nx.cycle_graph(4 + seed % 5), _reordered(_triangulation(seed, 12), seed)]
+    # A few chords missing from a chordal graph make it non-chordal.
+    D = C.copy()
+    edges = list(D.edges)
+    if edges:
+        D.remove_edges_from(edges[: 1 + seed % 3])
+    graphs.append(D)
+    for H in graphs:
+        exact_outcome(nx.is_chordal, H)
+        exact_outcome(nx.chordal_graph_treewidth, H)
+        exact_outcome(nx.complete_to_chordal_graph, H)
+        exact_outcome(nx.is_at_free, H)
+    # Directed graphs are rejected.
+    for func in [nx.is_chordal, nx.chordal_graph_treewidth, nx.complete_to_chordal_graph, nx.is_at_free]:
+        exact_outcome(func, graph_for(seed, True))
+
+
+@nx_has("is_perfect_graph")
+@pytest.mark.parametrize("seed", range(60))
+def test_batch9_perfect_graphs(seed):
+    rng = random.Random(seed)
+    # Small graphs: NetworkX enumerates every chordless cycle of G and of
+    # its complement for a perfect graph.
+    G = graph_for(seed, False)
+    G = G.subgraph(list(G)[:16]).copy()
+    C = _chordal_graph(seed)
+    C = C.subgraph(list(C)[:16]).copy()
+    graphs = [G, C, nx.cycle_graph(5 + seed % 4), nx.complement(nx.cycle_graph(5 + seed % 4)),
+              nx.grid_2d_graph(2 + seed % 3, 3), _interval_graph(seed).subgraph(range(0, 50, 3)).copy(),
+              nx.bipartite.random_graph(rng.randint(1, 8), rng.randint(1, 8), 0.4, seed=seed)]
+    # An odd hole through a node with a self-loop doesn't count in G.
+    L = nx.cycle_graph(7)
+    L.add_edge(0, 0)
+    graphs.append(L)
+    for H in graphs:
+        exact_outcome(nx.is_perfect_graph, H)
+    exact_outcome(nx.is_perfect_graph, graph_for(seed, True))
+
+
+@pytest.mark.parametrize("seed", range(30))
+def test_batch9_tournaments(seed):
+    rng = random.Random(seed)
+    T = tournament.random_tournament(rng.randint(0, 10), seed=seed)
+    # NetworkX 3.4 and 3.5 take time quintic in the number of nodes here.
+    D = graph_for(seed, True)
+    D = D.subgraph(list(D)[:10]).copy()
+    # A tournament with one arc reversed or removed, and the random digraph.
+    U = T.copy()
+    if U.number_of_edges():
+        u, v = list(U.edges)[seed % U.number_of_edges()]
+        U.remove_edge(u, v)
+        if seed % 2:
+            U.add_edge(v, u)
+    for G in [T, U, D, _reordered(T, seed, directed=True, labels=True)]:
+        nodes = list(G)
+        for s in nodes[:3] + ["missing", [1]]:
+            for t in nodes[-2:] + ["missing", [2]]:
+                exact_outcome(tournament.is_reachable, G, s, t)
+        exact_outcome(tournament.is_strongly_connected, G)
+        exact_outcome(tournament.score_sequence, G)
+    G = graph_for(seed, False)
+    exact_outcome(tournament.is_reachable, G, 0, 1)
+    exact_outcome(tournament.is_strongly_connected, G)
+    exact_outcome(tournament.score_sequence, G)
+
+
+@pytest.mark.parametrize(
+    "G",
+    [
+        nx.empty_graph(0),
+        nx.empty_graph(1),
+        nx.empty_graph(3),
+        nx.path_graph(3),
+        nx.complete_graph(4),
+        nx.complete_graph(5),
+        nx.complete_bipartite_graph(3, 3),
+        nx.petersen_graph(),
+        nx.Graph([(0, 0)]),
+        nx.Graph([(0, 0), (1, 2)]),
+        nx.Graph([(0, 0), (1, 2), (2, 3), (3, 4)]),
+        nx.Graph([(0, 1), (1, 2), (2, 3), (3, 0), (1, 1)]),
+        nx.DiGraph(),
+        nx.DiGraph([(0, 0)]),
+        nx.DiGraph([(0, 1), (1, 0)]),
+        nx.DiGraph(nx.complete_graph(5)),
+    ],
+    ids=lambda G: f"{type(G).__name__}{list(G.edges)}",
+)
+def test_batch9_small_cases(G):
+    funcs = [nx.is_planar, nx.check_planarity, planarity.check_planarity_recursive,
+             planarity.get_counterexample, planarity.get_counterexample_recursive,
+             nx.is_chordal, nx.chordal_graph_treewidth, nx.complete_to_chordal_graph,
+             nx.is_at_free, tournament.is_strongly_connected, tournament.score_sequence]
+    for func in funcs:
+        exact_outcome(func, G)
+    exact_outcome(nx.check_planarity, G, counterexample=True)
+    exact_outcome(tournament.is_reachable, G, 0, 1)
+
+
+def test_batch9_recursion_limit():
+    # The recursive variants recurse once per DFS level: rustnx leaves deep
+    # graphs to NetworkX, which may raise RecursionError.
+    G = nx.path_graph(5000)
+    exact_outcome(planarity.check_planarity_recursive, G)
+    exact_outcome(nx.check_planarity, G)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(10))
+def test_batch9_multigraphs(seed, directed, restore_config):
+    M = random_multigraph(seed, directed, "none")
+    # NetworkX merges parallel edges here; these fall back.
+    exact_outcome(nx.is_planar, M)
+    exact_outcome(nx.check_planarity, M, True)
+    if directed:
+        exact_outcome(tournament.score_sequence, M)
+    else:
+        exact_outcome(nx.complete_to_chordal_graph, M)
+        exact_outcome(nx.chordal_graph_treewidth, M)

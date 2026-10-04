@@ -5,6 +5,7 @@ pub mod cores_more;
 pub mod dag;
 pub mod directed;
 pub mod distance;
+pub mod graph_classes;
 pub mod leftovers;
 pub mod link_analysis;
 pub mod paths;
