@@ -587,8 +587,16 @@ def test_send_graph_to_another_process():
 
     G = nx.gnm_random_graph(50, 150, seed=1, directed=True)
     expected = nx.pagerank(G, backend="rustnx")  # caches a converted graph on G
-    with multiprocessing.get_context("spawn").Pool(1) as pool:
-        assert pool.apply(_pagerank_in_worker, (G,)) == expected
+    pool = multiprocessing.get_context("spawn").Pool(1)
+    try:
+        result = pool.apply(_pagerank_in_worker, (G,))
+    finally:
+        # close() and join() rather than the context manager's terminate():
+        # on free-threaded Windows, terminate() can race the pool's own
+        # handler threads ("concurrent send_bytes() calls").
+        pool.close()
+        pool.join()
+    assert result == expected
 
 
 def test_malformed_pickle_data_rejected():
