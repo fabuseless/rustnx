@@ -27,6 +27,7 @@ from . import _core
 
 __all__ = [
     "adamic_adar_index",
+    "adjacency_graph",
     "all_pairs_all_shortest_paths",
     "all_pairs_bellman_ford_path",
     "all_pairs_bellman_ford_path_length",
@@ -112,6 +113,7 @@ __all__ = [
     "could_be_isomorphic",
     "cut_size",
     "cycle_basis",
+    "cytoscape_graph",
     "dag_longest_path",
     "dag_longest_path_length",
     "dag_to_branching",
@@ -322,6 +324,7 @@ __all__ = [
     "node_degree_xy",
     "node_disjoint_paths",
     "node_expansion",
+    "node_link_graph",
     "node_redundancy",
     "normalized_cut_size",
     "number_attracting_components",
@@ -408,6 +411,7 @@ __all__ = [
     "transitivity",
     "tree_all_pairs_lowest_common_ancestor",
     "tree_centroid",
+    "tree_graph",
     "tree_isomorphism",
     "treewidth_decomp",
     "treewidth_min_fill_in",
@@ -10151,3 +10155,95 @@ def read_graph6(path):
 
 def read_sparse6(path):
     return _rw_read_graph6(path, True)
+
+
+# JSON graphs: the Rust side replays NetworkX's add_node / add_edge calls on
+# the same Python objects (nodes and keys must be str, int, float, bool or
+# tuples of those), into a new graph that is dropped if it gives up.
+
+_RW_UNSET = object()
+_RW_FLAG_TYPES = (bool, int, type(None))
+
+
+def _rw_json_graph(multigraph, directed):
+    if type(multigraph) not in _RW_FLAG_TYPES or type(directed) not in _RW_FLAG_TYPES:
+        raise NotImplementedError("rustnx needs bool flags")
+    if multigraph:
+        return nx.MultiDiGraph() if directed else nx.MultiGraph()
+    return nx.DiGraph() if directed else nx.Graph()
+
+
+@functools.cache
+def _node_link_default_edges():
+    """``"edges"`` from NetworkX 3.6; 3.4 and 3.5 warn and use ``"links"``
+    when ``edges`` isn't given (left to NetworkX, which warns)."""
+    try:
+        param = inspect.signature(_rw_networkx("node_link_graph")).parameters["edges"]
+    except (KeyError, TypeError, ValueError):
+        return None
+    return param.default
+
+
+def node_link_graph(data, directed=False, multigraph=True, *, source="source",
+                    target="target", name="id", key="key", edges=_RW_UNSET, nodes="nodes"):
+    if edges is _RW_UNSET:
+        edges = _node_link_default_edges()
+    if type(data) is not dict or any(
+        type(arg) is not str for arg in (source, target, name, key, edges, nodes)
+    ):
+        raise NotImplementedError("rustnx needs a dict and str names")
+    node_list, edge_list = data.get(nodes), data.get(edges)
+    if type(node_list) is not list or type(edge_list) is not list:
+        raise NotImplementedError("NetworkX raises for this input")
+    graph = _rw_json_graph(data.get("multigraph", multigraph), data.get("directed", directed))
+    if not _core.CoreGraph.rw_node_link(graph, node_list, edge_list, source, target, name, key):
+        raise NotImplementedError("NetworkX builds this graph")
+    graph.graph = data.get("graph", {})
+    return graph
+
+
+def adjacency_graph(data, directed=False, multigraph=True, attrs={"id": "id", "key": "key"}):  # noqa: B006
+    if type(data) is not dict or type(attrs) is not dict:
+        raise NotImplementedError("rustnx needs dicts")
+    graph = _rw_json_graph(data.get("multigraph", multigraph), data.get("directed", directed))
+    multigraph = graph.is_multigraph()
+    id_ = attrs.get("id", _RW_UNSET)
+    key = attrs.get("key", _RW_UNSET) if multigraph else None
+    if type(id_) not in (str, int) or multigraph and type(key) not in (str, int):
+        raise NotImplementedError("rustnx needs str or int attribute names")
+    try:
+        graph.graph = dict(data.get("graph", []))
+    except Exception:
+        raise NotImplementedError("NetworkX raises for this input") from None
+    if not _core.CoreGraph.rw_adjacency(
+        graph, data.get("nodes"), data.get("adjacency"), id_, key
+    ):
+        raise NotImplementedError("NetworkX builds this graph")
+    return graph
+
+
+def cytoscape_graph(data, name="name", ident="id"):
+    if type(data) is not dict or type(name) is not str or type(ident) is not str or name == ident:
+        raise NotImplementedError("rustnx needs a dict and two different str names")
+    elements = data.get("elements")
+    if type(elements) is not dict:
+        raise NotImplementedError("NetworkX raises for this input")
+    graph = _rw_json_graph(data.get("multigraph"), data.get("directed"))
+    try:
+        graph.graph = dict(data.get("data"))
+    except Exception:
+        raise NotImplementedError("NetworkX raises for this input") from None
+    if not _core.CoreGraph.rw_cytoscape(
+        graph, elements.get("nodes"), elements.get("edges"), name, ident
+    ):
+        raise NotImplementedError("NetworkX builds this graph")
+    return graph
+
+
+def tree_graph(data, ident="id", children="children"):
+    if type(ident) is not str or type(children) is not str:
+        raise NotImplementedError("rustnx needs str names")
+    graph = nx.DiGraph()
+    if not _core.CoreGraph.rw_tree(graph, data, ident, children):
+        raise NotImplementedError("NetworkX builds this graph")
+    return graph

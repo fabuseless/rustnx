@@ -5382,8 +5382,8 @@ def _b20_leda_text(G, rng):
     lines += ["#nodes", str(len(nodes))]
     lines += [rng.choice(["|{%s}|", "|{%s}|  ", "%s" if v else "|{%s}|"]) % v for v in nodes]
     lines += ["#edges", str(G.number_of_edges())]
-    lines += [f"{index[u]} {index[v]} 0 |{{{rng.choice(['', 'x', '12', 'long_label', '\u00e9t\u00e9'])}}}|"
-              for u, v in G.edges()]
+    labels = ["", "x", "12", "long_label", "\u00e9t\u00e9"]
+    lines += [f"{index[u]} {index[v]} 0 |{{{rng.choice(labels)}}}|" for u, v in G.edges()]
     return lines
 
 
@@ -5503,3 +5503,164 @@ def test_batch20_graph6_errors():
     for data in [b"", b":", b"A", b":A", b":A_", b":~", b":~~", b":@", b":A\x00", b">>sparse6<<",
                  b":Fa@x^", b":Fa@x^\n", ":A_", bytearray(b":A_")]:
         _b20_outcome(lambda backend: nx.from_sparse6_bytes(data, backend=backend))
+
+
+import json as _b20_json
+
+_b20_jg = nx.readwrite.json_graph
+
+
+def _b20_json_graph(seed, directed, multigraph):
+    """A random graph with tuple, int, float, bool and str nodes and assorted
+    attribute values (lists and dicts too)."""
+    rng = random.Random(seed)
+    G = _b20_attr_graph(seed, directed, multigraph)
+    labels = [0, 1, 2.5, -0.0, (1, 2), ("a", (3,)), "s", True, 10**20]
+    mapping = {v: rng.choice(labels) if rng.random() < 0.3 else v for v in G}
+    G = nx.relabel_nodes(G, mapping)
+    for v, d in G.nodes(data=True):
+        if rng.random() < 0.4:
+            d["label"] = rng.choice(["x", 1, [1, 2], {"k": 1}, None])
+    if multigraph:
+        for u, v, k, d in list(G.edges(keys=True, data=True))[:3]:
+            G.add_edge(u, v, key=rng.choice(["k", 7, (1, 2)]), **d)
+    G.graph.update(name=f"g{seed}", meta=[1, 2])
+    return G
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch20_json_graphs(seed, directed):
+    G = _b20_json_graph(seed, directed, multigraph=seed % 2 == 1)
+    multi = G.is_multigraph()
+    cases = []
+    for edges in ["links", "edges"]:
+        data = _b20_jg.node_link_data(G, edges=edges)
+        cases.append((_b20_jg.node_link_graph, data, {"edges": edges}))
+    cases.append((_b20_jg.adjacency_graph, _b20_jg.adjacency_data(G), {}))
+    if not any(isinstance(v, bool) or v is None for v in G):
+        cases.append((_b20_jg.cytoscape_graph, _b20_jg.cytoscape_data(G), {}))
+    for func, data, kwargs in cases:
+        # As built, and through JSON (tuples become lists, keys become str).
+        loaded = _b20_json.loads(_b20_json.dumps(data, default=str))
+        for d in [data, loaded]:
+            for flags in [{}, {"directed": not directed, "multigraph": not multi}]:
+                if func is _b20_jg.cytoscape_graph:
+                    if flags:
+                        continue
+                ran = _b20_outcome(lambda backend: func(d, **kwargs, **flags, backend=backend))
+                assert ran or d is loaded
+    # node_link_graph with renamed fields and missing ids (numbered by position).
+    data = _b20_jg.node_link_data(G, source="s", target="t", name="n", key="k", edges="e",
+                                  nodes="v")
+    for d in data["v"][::3]:
+        del d["n"]
+    _b20_outcome(lambda backend: _b20_jg.node_link_graph(
+        data, source="s", target="t", name="n", key="k", edges="e", nodes="v", backend=backend))
+    # tree_graph on a random tree (attributes on some nodes).
+    rng = random.Random(seed)
+    T = nx.bfs_tree(nx.random_labeled_tree(30, seed=seed) if hasattr(nx, "random_labeled_tree")
+                    else nx.balanced_tree(2, 4), 0)
+    for v in T:
+        if rng.random() < 0.5:
+            T.nodes[v]["w"] = rng.choice([1, "x", [2], None])
+    for ident, children in [("id", "children"), ("name", "kids")]:
+        data = _b20_jg.tree_data(T, 0, ident=ident, children=children)
+        assert _b20_outcome(lambda backend: _b20_jg.tree_graph(
+            data, ident=ident, children=children, backend=backend))
+
+
+def test_batch20_graph_dict_identity():
+    data = _b20_jg.node_link_data(nx.path_graph(3, create_using=nx.MultiGraph), edges="edges")
+    G = _b20_jg.node_link_graph(data, edges="edges", backend="rustnx")
+    assert G.graph is data["graph"]
+
+
+def test_batch20_json_edge_cases():
+    nl = _b20_jg.node_link_graph
+    cases = [
+        {"nodes": [{"id": 1}, {"id": 1, "a": 2}, {"id": True, "b": 3}, {"id": 1.0}], "edges": []},
+        {"nodes": [{"id": 0.0}, {"id": -0.0}], "edges": [{"source": -0.0, "target": 0.0},
+                                                       {"source": 1, "target": -0.0}]},
+        {"nodes": [{"id": [1, [2]]}], "edges": [{"source": [1, [2]], "target": 3}]},
+        {"nodes": [{"id": [1, 2]}], "edges": [{"source": [1, 2], "target": [1, 2], "key": 4}]},
+        {"nodes": [{"id": None}], "edges": []},
+        {"nodes": [], "edges": [{"source": None, "target": 1}]},
+        {"nodes": [], "edges": [{"source": 1}]},
+        {"nodes": [{"id": 1, "node_for_adding": 2}], "edges": []},
+        {"nodes": [{"id": 1, "self": 2}], "edges": []},
+        {"nodes": [], "edges": [{"source": 1, "target": 2, "u_of_edge": 3}]},
+        {"nodes": [], "edges": [{"source": 1, "target": 2, "key": None, "w": 1}]},
+        {"nodes": [], "edges": [{"source": 1, "target": 2, "key": [1]}]},
+        {"nodes": [{"id": {1: 2}}], "edges": []},
+        {"nodes": [{"id": 1, 5: "int key"}], "edges": []},
+        {"nodes": ({"id": 1},), "edges": []},
+        {"nodes": [], "edges": [], "graph": [("a", 1)], "multigraph": False, "directed": True},
+        {"nodes": [], "edges": [], "multigraph": "yes"},
+        {"edges": []}, {"nodes": []}, [], None,
+    ]
+    for data in cases:
+        for kwargs in [{"edges": "edges"}, {"edges": "edges", "multigraph": False},
+                       {"edges": "edges", "key": "w"}, {}]:
+            _b20_outcome(lambda backend: nl(data, **kwargs, backend=backend))
+    adj = _b20_jg.adjacency_graph
+    cases = [
+        {"nodes": [{"id": 1, "x": 1}, {"id": 2}], "adjacency": [[{"id": 2, "key": 0, "w": 1}], []]},
+        {"nodes": [{"id": 1}], "adjacency": [[{"id": 2}]]},  # no key in a multigraph
+        {"nodes": [{"id": 1}], "adjacency": [[{"id": 2, "key": None}]]},
+        {"nodes": [{"id": 1}], "adjacency": [[], [{"id": 2}]]},  # more rows than nodes
+        {"nodes": [{"x": 1}], "adjacency": [[]]},
+        {"nodes": [{"id": 1}], "adjacency": [[{"key": 1}]]},
+        {"nodes": [{"id": 1}]},
+        {"nodes": [{"id": 1}], "adjacency": [[{"id": 1, "key": "a", 3: "int key"}]],
+         "graph": {"name": "x"}, "multigraph": False},
+        {"nodes": [], "adjacency": [], "graph": 5},
+    ]
+    for data in cases:
+        for kwargs in [{}, {"multigraph": False}, {"attrs": {"id": "id", "key": "key"}},
+                       {"attrs": {"id": "x", "key": "id"}}, {"attrs": {"key": "key"}}]:
+            _b20_outcome(lambda backend: adj(data, **kwargs, backend=backend))
+
+    class Ambiguous:
+        def __bool__(self):
+            raise ValueError("ambiguous")
+
+    cy = _b20_jg.cytoscape_graph
+    base = {"data": [], "directed": False, "multigraph": False}
+    cases = [
+        {**base, "elements": {"nodes": [{"data": {"value": 1, "name": "a", "id": "1"}}],
+                              "edges": [{"data": {"source": 1, "target": 2, "w": 3}}]}},
+        {**base, "multigraph": True, "elements": {"nodes": [], "edges": [
+            {"data": {"source": 1, "target": 2}}, {"data": {"source": 1, "target": 2, "key": 0}},
+            {"data": {"source": 1, "target": 2, "key": None}}]}},
+        {**base, "elements": {"nodes": [{"data": {"value": 1, "name": Ambiguous()}}], "edges": []}},
+        {**base, "elements": {"nodes": [{"data": {"name": "a"}}], "edges": []}},
+        {**base, "elements": {"nodes": [{"value": 1}], "edges": []}},
+        {**base, "elements": {"nodes": []}},
+        {**base, "data": None, "elements": {"nodes": [], "edges": []}},
+        {**base, "data": {"a": 1}, "directed": True, "elements": {"nodes": [], "edges": [
+            {"data": {"source": (1, 2), "target": 2}}]}},
+    ]
+    for data in cases:
+        for kwargs in [{}, {"name": "id", "ident": "id"}, {"name": "label"}]:
+            _b20_outcome(lambda backend: cy(data, **kwargs, backend=backend))
+    tree = _b20_jg.tree_graph
+    deep = {"id": 0}
+    node = deep
+    for i in range(1, 400):
+        node["children"] = [{"id": i}]
+        node = node["children"][0]
+    cases = [
+        {"id": 1, "children": [{"id": 2, "a": 1}, {"id": 3, "children": [{"id": 2, "b": 2}]}]},
+        {"id": 1, "children": [{"id": 2, "children": []}, {"id": 3, "children": None}]},
+        {"id": 1, "children": ({"id": 2},)},
+        {"id": 1, "children": [{"x": 2}]},
+        {"id": 1, "self": 2},
+        {"id": None},
+        {"id": 1, "children": [{"id": 1}]},
+        {"children": []},
+        deep,
+        [],
+    ]
+    for data in cases:
+        _b20_outcome(lambda backend: tree(data, backend=backend))

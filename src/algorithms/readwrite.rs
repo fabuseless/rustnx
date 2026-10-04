@@ -1241,6 +1241,443 @@ pub fn split_lines<'a>(items: &'a [Bound<'_, PyString>], mode: u8) -> Option<Vec
     Some(out)
 }
 
+// --- JSON graphs: NetworkX's own `add_node` / `add_edge` on Python objects --------
+//
+// `node_link_graph`, `adjacency_graph`, `cytoscape_graph` and `tree_graph`
+// build graphs from already-parsed Python data, so these replay NetworkX's
+// code on the same objects (each dict operation is the one NetworkX does).
+// Any Python error, and anything NetworkX would raise for, gives `None`.
+
+use pyo3::types::{PyList, PyTuple};
+
+/// Whether `obj` is a str, int, float, bool or None, or a tuple of those:
+/// node and key types whose hashing and equality can't run Python code.
+fn simple(obj: &Bound<'_, PyAny>) -> bool {
+    if obj.is_none()
+        || obj.is_exact_instance_of::<PyString>()
+        || obj.is_exact_instance_of::<pyo3::types::PyInt>()
+        || obj.is_exact_instance_of::<PyFloat>()
+        || obj.is_exact_instance_of::<PyBool>()
+    {
+        return true;
+    }
+    match obj.cast_exact::<PyTuple>() {
+        Ok(t) => t.iter().all(|item| simple(&item)),
+        Err(_) => false,
+    }
+}
+
+fn exact_dict<'a, 'py>(obj: &'a Bound<'py, PyAny>) -> Option<&'a Bound<'py, PyDict>> {
+    obj.cast_exact::<PyDict>().ok()
+}
+
+fn exact_list<'a, 'py>(obj: &'a Bound<'py, PyAny>) -> Option<&'a Bound<'py, PyList>> {
+    obj.cast_exact::<PyList>().ok()
+}
+
+/// `d[key]`, `None` if missing.
+fn item<'py>(d: &Bound<'py, PyDict>, key: &Bound<'py, PyAny>) -> Option<Bound<'py, PyAny>> {
+    d.get_item(key).ok().flatten()
+}
+
+/// Keyword arguments `add_node` / `add_edge` would bind to a parameter.
+fn reserved_kwarg(key: &str, multigraph: bool, node: bool) -> bool {
+    match (node, multigraph) {
+        (true, _) => matches!(key, "self" | "node_for_adding"),
+        (false, false) => matches!(key, "self" | "u_of_edge" | "v_of_edge"),
+        (false, true) => reserved(key),
+    }
+}
+
+/// `{str(k): v for k, v in d.items() if k not in skip}` for `**` keyword
+/// arguments: str keys only, none that the method takes itself.
+fn kwargs<'py>(
+    d: &Bound<'py, PyDict>,
+    skip: &[&Bound<'py, PyAny>],
+    multigraph: bool,
+    node: bool,
+) -> Option<Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)>> {
+    let mut out = Vec::with_capacity(d.len());
+    for (k, v) in d.iter() {
+        let ks = k.cast_exact::<PyString>().ok()?;
+        let mut skipped = false;
+        for s in skip {
+            if k.eq(s).ok()? {
+                skipped = true;
+                break;
+            }
+        }
+        if skipped {
+            continue;
+        }
+        if reserved_kwarg(ks.to_str().ok()?, multigraph, node) {
+            return None;
+        }
+        out.push((k, v));
+    }
+    Some(out)
+}
+
+/// The dicts of a new NetworkX graph, with its `add_node` and `add_edge`.
+pub struct PyBuilder<'py> {
+    py: Python<'py>,
+    node: Bound<'py, PyDict>,
+    adj: Bound<'py, PyDict>,
+    pred: Option<Bound<'py, PyDict>>,
+    multigraph: bool,
+}
+
+type Pairs<'py> = [(Bound<'py, PyAny>, Bound<'py, PyAny>)];
+
+impl<'py> PyBuilder<'py> {
+    pub fn new(g: &Bound<'py, PyAny>) -> Option<PyBuilder<'py>> {
+        let directed = g.call_method0("is_directed").ok()?.is_truthy().ok()?;
+        Some(PyBuilder {
+            py: g.py(),
+            node: g.getattr("_node").ok()?.cast_into::<PyDict>().ok()?,
+            adj: g.getattr("_adj").ok()?.cast_into::<PyDict>().ok()?,
+            pred: if directed {
+                Some(g.getattr("_pred").ok()?.cast_into::<PyDict>().ok()?)
+            } else {
+                None
+            },
+            multigraph: g.call_method0("is_multigraph").ok()?.is_truthy().ok()?,
+        })
+    }
+
+    /// `if n not in self._node: ...` (None can't be a node).
+    fn ensure(&self, n: &Bound<'py, PyAny>) -> Option<Bound<'py, PyDict>> {
+        if let Some(attrs) = item(&self.node, n) {
+            return attrs.cast_into::<PyDict>().ok();
+        }
+        if n.is_none() || !simple(n) {
+            return None;
+        }
+        self.adj.set_item(n, PyDict::new(self.py)).ok()?;
+        if let Some(pred) = &self.pred {
+            pred.set_item(n, PyDict::new(self.py)).ok()?;
+        }
+        let attrs = PyDict::new(self.py);
+        self.node.set_item(n, &attrs).ok()?;
+        Some(attrs)
+    }
+
+    fn row(&self, d: &Bound<'py, PyDict>, n: &Bound<'py, PyAny>) -> Option<Bound<'py, PyDict>> {
+        item(d, n)?.cast_into::<PyDict>().ok()
+    }
+
+    /// `add_node(n, **attrs)`; returns the node's attribute dict.
+    pub fn add_node(
+        &self,
+        n: &Bound<'py, PyAny>,
+        attrs: &Pairs<'py>,
+    ) -> Option<Bound<'py, PyDict>> {
+        let d = self.ensure(n)?;
+        for (k, v) in attrs {
+            d.set_item(k, v).ok()?;
+        }
+        Some(d)
+    }
+
+    /// `add_edge(u, v, [key,] **attrs)`; returns the edge's data dict.
+    pub fn add_edge(
+        &self,
+        u: &Bound<'py, PyAny>,
+        v: &Bound<'py, PyAny>,
+        key: Option<&Bound<'py, PyAny>>,
+        attrs: &Pairs<'py>,
+    ) -> Option<Bound<'py, PyDict>> {
+        self.ensure(u)?;
+        self.ensure(v)?;
+        let succ = self.row(&self.adj, u)?;
+        let back = self.row(self.pred.as_ref().unwrap_or(&self.adj), v)?;
+        if !self.multigraph {
+            let datadict = match item(&succ, v) {
+                Some(d) => d.cast_into::<PyDict>().ok()?,
+                None => PyDict::new(self.py),
+            };
+            for (k, val) in attrs {
+                datadict.set_item(k, val).ok()?;
+            }
+            succ.set_item(v, &datadict).ok()?;
+            back.set_item(u, &datadict).ok()?;
+            return Some(datadict);
+        }
+        let existing = item(&succ, v);
+        let key = match key {
+            Some(k) if !k.is_none() => {
+                if !simple(k) {
+                    return None;
+                }
+                k.clone()
+            }
+            // new_edge_key(): len(keydict), then the next unused.
+            _ => {
+                let mut next = match &existing {
+                    Some(kd) => kd.cast::<PyDict>().ok()?.len(),
+                    None => 0,
+                };
+                if let Some(kd) = &existing {
+                    let kd = kd.cast::<PyDict>().ok()?;
+                    while kd.contains(next).ok()? {
+                        next += 1;
+                    }
+                }
+                next.into_pyobject(self.py).ok()?.into_any()
+            }
+        };
+        match existing {
+            Some(kd) => {
+                let kd = kd.cast_into::<PyDict>().ok()?;
+                let datadict = match item(&kd, &key) {
+                    Some(d) => d.cast_into::<PyDict>().ok()?,
+                    None => PyDict::new(self.py),
+                };
+                for (k, val) in attrs {
+                    datadict.set_item(k, val).ok()?;
+                }
+                kd.set_item(&key, &datadict).ok()?;
+                Some(datadict)
+            }
+            None => {
+                let datadict = PyDict::new(self.py);
+                for (k, val) in attrs {
+                    datadict.set_item(k, val).ok()?;
+                }
+                let kd = PyDict::new(self.py);
+                kd.set_item(&key, &datadict).ok()?;
+                succ.set_item(v, &kd).ok()?;
+                back.set_item(u, &kd).ok()?;
+                Some(datadict)
+            }
+        }
+    }
+}
+
+/// `_to_tuple`: lists and tuples become tuples, recursively.
+fn to_tuple<'py>(x: &Bound<'py, PyAny>) -> Option<Bound<'py, PyAny>> {
+    let items: Vec<Bound<'py, PyAny>> = if let Ok(l) = x.cast_exact::<PyList>() {
+        l.iter().collect()
+    } else if let Ok(t) = x.cast_exact::<PyTuple>() {
+        t.iter().collect()
+    } else if x.is_instance_of::<PyList>() || x.is_instance_of::<PyTuple>() {
+        return None;
+    } else {
+        return Some(x.clone());
+    };
+    let items = items.iter().map(to_tuple).collect::<Option<Vec<_>>>()?;
+    PyTuple::new(x.py(), items).ok().map(|t| t.into_any())
+}
+
+/// `tuple(x) if isinstance(x, list) else x`.
+fn list_to_tuple<'py>(x: Bound<'py, PyAny>) -> Option<Bound<'py, PyAny>> {
+    if let Ok(l) = x.cast_exact::<PyList>() {
+        return Some(l.to_tuple().into_any());
+    }
+    if x.is_instance_of::<PyList>() {
+        return None;
+    }
+    Some(x)
+}
+
+pub struct NodeLinkNames<'py> {
+    pub source: Bound<'py, PyAny>,
+    pub target: Bound<'py, PyAny>,
+    pub name: Bound<'py, PyAny>,
+    pub key: Bound<'py, PyAny>,
+}
+
+/// The node and edge loops of `node_link_graph`.
+pub fn node_link(
+    b: &PyBuilder<'_>,
+    nodes: &Bound<'_, PyAny>,
+    edges: &Bound<'_, PyAny>,
+    names: &NodeLinkNames<'_>,
+) -> Option<()> {
+    let py = b.py;
+    for (i, d) in exact_list(nodes)?.iter().enumerate() {
+        let d = exact_dict(&d)?;
+        let node = match item(d, &names.name) {
+            Some(n) => n,
+            None => i.into_pyobject(py).ok()?.into_any(),
+        };
+        let node = to_tuple(&node)?;
+        let attrs = kwargs(d, &[&names.name], false, true)?;
+        b.add_node(&node, &attrs)?;
+    }
+    for d in exact_list(edges)?.iter() {
+        let d = exact_dict(&d)?;
+        let src = list_to_tuple(item(d, &names.source)?)?;
+        let tgt = list_to_tuple(item(d, &names.target)?)?;
+        if !b.multigraph {
+            let attrs = kwargs(d, &[&names.source, &names.target], false, false)?;
+            b.add_edge(&src, &tgt, None, &attrs)?;
+        } else {
+            let ky = item(d, &names.key);
+            let skip = [&names.source, &names.target, &names.key];
+            let attrs = kwargs(d, &skip, true, false)?;
+            b.add_edge(&src, &tgt, ky.as_ref(), &attrs)?;
+        }
+    }
+    Some(())
+}
+
+fn dict_copy<'py>(d: &Bound<'py, PyDict>) -> Option<Bound<'py, PyDict>> {
+    d.copy().ok()
+}
+
+/// `d.pop(key)` (`default` None: KeyError) on a dict NetworkX copied.
+fn pop<'py>(d: &Bound<'py, PyDict>, key: &Bound<'py, PyAny>) -> Option<Bound<'py, PyAny>> {
+    let v = item(d, key)?;
+    d.del_item(key).ok()?;
+    Some(v)
+}
+
+fn update(d: &Bound<'_, PyDict>, from: &Bound<'_, PyDict>) -> Option<()> {
+    d.update(from.as_mapping()).ok()
+}
+
+/// The node and adjacency loops of `adjacency_graph`; `key` is None for
+/// graphs that aren't multigraphs.
+pub fn adjacency(
+    b: &PyBuilder<'_>,
+    nodes: &Bound<'_, PyAny>,
+    adjacency: &Bound<'_, PyAny>,
+    id: &Bound<'_, PyAny>,
+    key: &Bound<'_, PyAny>,
+) -> Option<()> {
+    let mut mapping = Vec::new();
+    for d in exact_list(nodes)?.iter() {
+        let node_data = dict_copy(exact_dict(&d)?)?;
+        let node = pop(&node_data, id)?;
+        let attrs = b.add_node(&node, &[])?;
+        mapping.push(node);
+        update(&attrs, &node_data)?;
+    }
+    for (i, d) in exact_list(adjacency)?.iter().enumerate() {
+        let source = mapping.get(i)?;
+        for tdata in exact_list(&d)?.iter() {
+            let target_data = dict_copy(exact_dict(&tdata)?)?;
+            let target = pop(&target_data, id)?;
+            let datadict = if !b.multigraph {
+                b.add_edge(source, &target, None, &[])?
+            } else {
+                let ky = item(&target_data, key);
+                if ky.is_some() {
+                    target_data.del_item(key).ok()?;
+                }
+                // add_edge(key=None) picks a new key, then graph[u][v][None]
+                // raises KeyError.
+                let ky = ky.filter(|k| !k.is_none())?;
+                b.add_edge(source, &target, Some(&ky), &[])?
+            };
+            update(&datadict, &target_data)?;
+        }
+    }
+    Some(())
+}
+
+/// The node and edge loops of `cytoscape_graph`.
+pub fn cytoscape(
+    b: &PyBuilder<'_>,
+    nodes: &Bound<'_, PyAny>,
+    edges: &Bound<'_, PyAny>,
+    name: &Bound<'_, PyAny>,
+    ident: &Bound<'_, PyAny>,
+) -> Option<()> {
+    let py = b.py;
+    let data_key = PyString::new(py, "data").into_any();
+    let value_key = PyString::new(py, "value").into_any();
+    for d in exact_list(nodes)?.iter() {
+        let data = item(exact_dict(&d)?, &data_key)?;
+        let data = exact_dict(&data)?;
+        let node_data = dict_copy(data)?;
+        let node = item(data, &value_key)?;
+        // `if d["data"].get(name): node_data[name] = ...` sets a key the copy
+        // already has to the same value; only the truth tests are left.
+        for k in [name, ident] {
+            if let Some(v) = item(data, k) {
+                v.is_truthy().ok()?;
+            }
+        }
+        let attrs = b.add_node(&node, &[])?;
+        update(&attrs, &node_data)?;
+    }
+    let source_key = PyString::new(py, "source").into_any();
+    let target_key = PyString::new(py, "target").into_any();
+    let key_key = PyString::new(py, "key").into_any();
+    for d in exact_list(edges)?.iter() {
+        let data = item(exact_dict(&d)?, &data_key)?;
+        let data = exact_dict(&data)?;
+        let edge_data = dict_copy(data)?;
+        let sour = item(data, &source_key)?;
+        let targ = item(data, &target_key)?;
+        let datadict = if b.multigraph {
+            let key = match item(data, &key_key) {
+                Some(k) => k,
+                None => 0i64.into_pyobject(py).ok()?.into_any(),
+            };
+            if key.is_none() {
+                return None; // graph.edges[u, v, None] raises KeyError
+            }
+            b.add_edge(&sour, &targ, Some(&key), &[])?
+        } else {
+            b.add_edge(&sour, &targ, None, &[])?
+        };
+        update(&datadict, &edge_data)?;
+    }
+    Some(())
+}
+
+/// Deeper trees fall back: NetworkX recurses once per level and would hit
+/// Python's recursion limit somewhere that depends on the caller's stack.
+const TREE_DEPTH_LIMIT: usize = 200;
+
+/// `tree_graph` into the empty DiGraph of `b`.
+pub fn tree(
+    b: &PyBuilder<'_>,
+    data: &Bound<'_, PyAny>,
+    ident: &Bound<'_, PyAny>,
+    children: &Bound<'_, PyAny>,
+) -> Option<()> {
+    let data = exact_dict(data)?;
+    let root = item(data, ident)?;
+    let kids = item(data, children);
+    let attrs = kwargs(data, &[ident, children], false, true)?;
+    b.add_node(&root, &attrs)?;
+    match kids {
+        None => Some(()),
+        Some(kids) => tree_children(b, &root, exact_list(&kids)?, ident, children, 1),
+    }
+}
+
+fn tree_children<'py>(
+    b: &PyBuilder<'py>,
+    parent: &Bound<'py, PyAny>,
+    kids: &Bound<'py, PyList>,
+    ident: &Bound<'py, PyAny>,
+    children: &Bound<'py, PyAny>,
+    depth: usize,
+) -> Option<()> {
+    if depth > TREE_DEPTH_LIMIT {
+        return None;
+    }
+    for data in kids.iter() {
+        let data = exact_dict(&data)?;
+        let child = item(data, ident)?;
+        b.add_edge(parent, &child, None, &[])?;
+        if let Some(grandchildren) = item(data, children) {
+            let grandchildren = exact_list(&grandchildren)?;
+            if !grandchildren.is_empty() {
+                tree_children(b, &child, grandchildren, ident, children, depth + 1)?;
+            }
+        }
+        let attrs = kwargs(data, &[ident, children], false, true)?;
+        b.add_node(&child, &attrs)?;
+    }
+    Some(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

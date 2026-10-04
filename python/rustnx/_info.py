@@ -6,6 +6,7 @@ reads it while it is still being imported.
 
 FUNCTIONS = {
     "adamic_adar_index": {},
+    "adjacency_graph": {},
     "all_pairs_all_shortest_paths": {},
     "all_pairs_bellman_ford_path": {},
     "all_pairs_bellman_ford_path_length": {},
@@ -91,6 +92,7 @@ FUNCTIONS = {
     "could_be_isomorphic": {},
     "cut_size": {},
     "cycle_basis": {},
+    "cytoscape_graph": {},
     "dag_longest_path": {},
     "dag_longest_path_length": {},
     "dag_to_branching": {},
@@ -301,6 +303,7 @@ FUNCTIONS = {
     "node_degree_xy": {},
     "node_disjoint_paths": {},
     "node_expansion": {},
+    "node_link_graph": {},
     "node_redundancy": {},
     "normalized_cut_size": {},
     "number_attracting_components": {},
@@ -387,6 +390,7 @@ FUNCTIONS = {
     "transitivity": {},
     "tree_all_pairs_lowest_common_ancestor": {},
     "tree_centroid": {},
+    "tree_graph": {},
     "tree_isomorphism": {},
     "treewidth_decomp": {},
     "treewidth_min_fill_in": {},

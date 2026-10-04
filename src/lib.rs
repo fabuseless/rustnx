@@ -4897,6 +4897,71 @@ impl CoreGraph {
         Ok(Some(graphs))
     }
 
+    /// The loops of `node_link_graph` into the new, empty graph `graph`.
+    /// False (leaving `graph` partly built) where NetworkX must run instead.
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    fn rw_node_link<'py>(
+        graph: &Bound<'py, PyAny>,
+        nodes: &Bound<'py, PyAny>,
+        edges: &Bound<'py, PyAny>,
+        source: Bound<'py, PyAny>,
+        target: Bound<'py, PyAny>,
+        name: Bound<'py, PyAny>,
+        key: Bound<'py, PyAny>,
+    ) -> bool {
+        let names = readwrite::NodeLinkNames {
+            source,
+            target,
+            name,
+            key,
+        };
+        readwrite::PyBuilder::new(graph)
+            .and_then(|b| readwrite::node_link(&b, nodes, edges, &names))
+            .is_some()
+    }
+
+    /// The loops of `adjacency_graph` (see `rw_node_link`).
+    #[staticmethod]
+    fn rw_adjacency<'py>(
+        graph: &Bound<'py, PyAny>,
+        nodes: &Bound<'py, PyAny>,
+        adjacency: &Bound<'py, PyAny>,
+        id: &Bound<'py, PyAny>,
+        key: &Bound<'py, PyAny>,
+    ) -> bool {
+        readwrite::PyBuilder::new(graph)
+            .and_then(|b| readwrite::adjacency(&b, nodes, adjacency, id, key))
+            .is_some()
+    }
+
+    /// The loops of `cytoscape_graph` (see `rw_node_link`).
+    #[staticmethod]
+    fn rw_cytoscape<'py>(
+        graph: &Bound<'py, PyAny>,
+        nodes: &Bound<'py, PyAny>,
+        edges: &Bound<'py, PyAny>,
+        name: &Bound<'py, PyAny>,
+        ident: &Bound<'py, PyAny>,
+    ) -> bool {
+        readwrite::PyBuilder::new(graph)
+            .and_then(|b| readwrite::cytoscape(&b, nodes, edges, name, ident))
+            .is_some()
+    }
+
+    /// `tree_graph` into the new, empty DiGraph `graph` (see `rw_node_link`).
+    #[staticmethod]
+    fn rw_tree<'py>(
+        graph: &Bound<'py, PyAny>,
+        data: &Bound<'py, PyAny>,
+        ident: &Bound<'py, PyAny>,
+        children: &Bound<'py, PyAny>,
+    ) -> bool {
+        readwrite::PyBuilder::new(graph)
+            .and_then(|b| readwrite::tree(&b, data, ident, children))
+            .is_some()
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();

@@ -231,6 +231,7 @@ SECTIONS = [
         "bipartite_read_edgelist", "parse_adjlist", "read_adjlist", "parse_multiline_adjlist",
         "read_multiline_adjlist", "parse_leda", "read_leda", "parse_pajek", "read_pajek",
         "from_graph6_bytes", "read_graph6", "from_sparse6_bytes", "read_sparse6",
+        "node_link_graph", "adjacency_graph", "cytoscape_graph", "tree_graph",
     ]),
 ]
 
@@ -689,6 +690,17 @@ NOTES.update({
     "read_graph6": READ.split(" decoded")[0] + "; one graph or a list, as in NetworkX.",
     "from_sparse6_bytes": "`bytes` input. Returns a `MultiGraph` when there are parallel edges, as NetworkX does.",
     "read_sparse6": READ.split(" decoded")[0] + "; one graph or a list, as in NetworkX.",
+})
+JSON = "Replays NetworkX's `add_node` / `add_edge` calls on the same objects. Nodes and keys must be `str`, `int`, `float`, `bool`, or tuples of those; plain `dict` and `list` input only; anything else falls back."
+NOTES.update({
+    "node_link_graph": JSON + " `G.graph` is `data[\"graph\"]` itself, as in NetworkX. In 3.4 and 3.5, leaving out `edges` (which warns there) falls back.",
+    "adjacency_graph": JSON,
+    "cytoscape_graph": JSON,
+    "tree_graph": JSON + " Trees deeper than 200 levels fall back (NetworkX recurses per level).",
+})
+SUBMODULE.update({
+    name: "nx.readwrite.json_graph"
+    for name in ["node_link_graph", "adjacency_graph", "cytoscape_graph", "tree_graph"]
 })
 QUALIFIED.update({
     "bipartite_parse_edgelist": "nx.bipartite.parse_edgelist",

@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 401 NetworkX functions. Call them as usual (for
+rustnx implements 405 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -642,6 +642,10 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.read_graph6` | `path` | no | rustnx | Reads a binary file or path (`.gz` and `.bz2` too); one graph or a list, as in NetworkX. |
 | `nx.from_sparse6_bytes` | `string` | no | rustnx | `bytes` input. Returns a `MultiGraph` when there are parallel edges, as NetworkX does. |
 | `nx.read_sparse6` | `path` | no | rustnx | Reads a binary file or path (`.gz` and `.bz2` too); one graph or a list, as in NetworkX. |
+| `nx.readwrite.json_graph.node_link_graph` | `data`, `directed`, `multigraph`, `source`, `target`, `name`, `key`, `edges`, `nodes` | no | rustnx | Replays NetworkX's `add_node` / `add_edge` calls on the same objects. Nodes and keys must be `str`, `int`, `float`, `bool`, or tuples of those; plain `dict` and `list` input only; anything else falls back. `G.graph` is `data["graph"]` itself, as in NetworkX. In 3.4 and 3.5, leaving out `edges` (which warns there) falls back. |
+| `nx.readwrite.json_graph.adjacency_graph` | `data`, `directed`, `multigraph`, `attrs` | no | rustnx | Replays NetworkX's `add_node` / `add_edge` calls on the same objects. Nodes and keys must be `str`, `int`, `float`, `bool`, or tuples of those; plain `dict` and `list` input only; anything else falls back. |
+| `nx.readwrite.json_graph.cytoscape_graph` | `data`, `name`, `ident` | no | rustnx | Replays NetworkX's `add_node` / `add_edge` calls on the same objects. Nodes and keys must be `str`, `int`, `float`, `bool`, or tuples of those; plain `dict` and `list` input only; anything else falls back. |
+| `nx.readwrite.json_graph.tree_graph` | `data`, `ident`, `children` | no | rustnx | Replays NetworkX's `add_node` / `add_edge` calls on the same objects. Nodes and keys must be `str`, `int`, `float`, `bool`, or tuples of those; plain `dict` and `list` input only; anything else falls back. Trees deeper than 200 levels fall back (NetworkX recurses per level). |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 
