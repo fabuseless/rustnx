@@ -288,6 +288,7 @@ impl OpView {
     /// then `R.add_edges_from(...)` would. `edges`: 0 none, 1 `G.edges(data=
     /// True)`, 2 every `G._adj` entry (`to_undirected`, `copy`). `reverse`
     /// adds `(v, u, d)` for each `(u, v, d)`; `deep` passes `deepcopy(d)`.
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (node, succ, pred, edges, reverse=false, deep=false))]
     fn add_to<'py>(
         &self,
@@ -437,7 +438,8 @@ fn same_key(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>) -> PyResult<bool> {
     if let (Ok(fa), Ok(fb)) = (a.cast::<PyFloat>(), b.cast::<PyFloat>()) {
         return Ok(fa.value().to_bits() == fb.value().to_bits());
     }
-    let simple = a.cast::<pyo3::types::PyInt>().is_ok() || a.cast::<pyo3::types::PyString>().is_ok();
+    let simple =
+        a.cast::<pyo3::types::PyInt>().is_ok() || a.cast::<pyo3::types::PyString>().is_ok();
     Ok(simple)
 }
 
@@ -455,7 +457,11 @@ type RowPair<'py> = (Bound<'py, PyDict>, Option<Bound<'py, PyDict>>);
 impl<'py> Out<'py> {
     /// `add_node` of a node known to be new: its rows (and attribute dict
     /// `data`, or a new empty one).
-    fn create(&self, key: &Bound<'py, PyAny>, data: Option<Bound<'py, PyDict>>) -> PyResult<RowPair<'py>> {
+    fn create(
+        &self,
+        key: &Bound<'py, PyAny>,
+        data: Option<Bound<'py, PyDict>>,
+    ) -> PyResult<RowPair<'py>> {
         let s = PyDict::new(self.py);
         self.succ.set_item(key, &s)?;
         let p = match &self.pred {
@@ -528,7 +534,11 @@ impl<'py> Out<'py> {
 /// NetworkX's `_dict_product(d1, d2)`: `{k: (d1.get(k), d2.get(k)) for k
 /// in set(d1) | set(d2)}`, built with Python's own sets (the key order is
 /// their iteration order). Two empty dicts give a new empty dict.
-fn dict_product<'py>(py: Python<'py>, d1: &Bound<'py, PyDict>, d2: &Bound<'py, PyDict>) -> PyResult<Bound<'py, PyDict>> {
+fn dict_product<'py>(
+    py: Python<'py>,
+    d1: &Bound<'py, PyDict>,
+    d2: &Bound<'py, PyDict>,
+) -> PyResult<Bound<'py, PyDict>> {
     let out = PyDict::new(py);
     if d1.is_empty() && d2.is_empty() {
         return Ok(out);
@@ -569,7 +579,12 @@ impl OpView {
         succ: Bound<'py, PyDict>,
         pred: Option<Bound<'py, PyDict>>,
     ) -> PyResult<()> {
-        let out = Out { py, node, succ, pred };
+        let out = Out {
+            py,
+            node,
+            succ,
+            pred,
+        };
         let n = self.n();
         let m = self.targets.len();
         if self.directed {
@@ -583,11 +598,16 @@ impl OpView {
                     source[e] = u as u32;
                 }
             }
-            let tuple_of = |e: usize, tuples: &mut Vec<Option<Bound<'py, PyTuple>>>| -> PyResult<Bound<'py, PyTuple>> {
+            let tuple_of = |e: usize,
+                            tuples: &mut Vec<Option<Bound<'py, PyTuple>>>|
+             -> PyResult<Bound<'py, PyTuple>> {
                 if tuples[e].is_none() {
                     let u = source[e] as usize;
                     let t = self.targets[e] as usize;
-                    tuples[e] = Some(PyTuple::new(py, [self.nodes[u].bind(py), self.nodes[t].bind(py)])?);
+                    tuples[e] = Some(PyTuple::new(
+                        py,
+                        [self.nodes[u].bind(py), self.nodes[t].bind(py)],
+                    )?);
                 }
                 Ok(tuples[e].clone().unwrap())
             };
@@ -638,7 +658,11 @@ impl OpView {
             ids.clear();
             for e in self.range(u) {
                 let t = self.targets[e];
-                let key = if (t as usize) < u { (t, u as u32) } else { (u as u32, t) };
+                let key = if (t as usize) < u {
+                    (t, u as u32)
+                } else {
+                    (u as u32, t)
+                };
                 ids.push(*id_of.get(&key).ok_or_else(changed)?);
             }
             if ids.len() == 1 {
@@ -647,22 +671,38 @@ impl OpView {
             for i in 0..ids.len() {
                 for j in i + 1..ids.len() {
                     let (a, b) = (ids[i], ids[j]);
-                    let (a, b) = if ends[a as usize] <= ends[b as usize] { (a, b) } else { (b, a) };
+                    let (a, b) = if ends[a as usize] <= ends[b as usize] {
+                        (a, b)
+                    } else {
+                        (b, a)
+                    };
                     if pairs.len() >= (u32::MAX - 2) as usize {
                         return Err(PyNotImplementedError::new_err("line graph too large"));
                     }
-                    pair_hashes.push(tuple_hash(&[edge_hashes[a as usize], edge_hashes[b as usize]]));
+                    pair_hashes.push(tuple_hash(&[
+                        edge_hashes[a as usize],
+                        edge_hashes[b as usize],
+                    ]));
                     set.add(pairs.len() as u32, &pair_hashes);
                     pairs.push((a, b));
                 }
             }
         }
-        let mut rows: Vec<Option<(Bound<'py, PyTuple>, RowPair<'py>)>> = (0..ends.len()).map(|_| None).collect();
-        let node_of = |id: u32, rows: &mut Vec<Option<(Bound<'py, PyTuple>, RowPair<'py>)>>| -> PyResult<()> {
+        let mut rows: Vec<Option<(Bound<'py, PyTuple>, RowPair<'py>)>> =
+            (0..ends.len()).map(|_| None).collect();
+        let node_of = |id: u32,
+                       rows: &mut Vec<Option<(Bound<'py, PyTuple>, RowPair<'py>)>>|
+         -> PyResult<()> {
             let id = id as usize;
             if rows[id].is_none() {
                 let (p, q) = ends[id];
-                let t = PyTuple::new(py, [self.nodes[p as usize].bind(py), self.nodes[q as usize].bind(py)])?;
+                let t = PyTuple::new(
+                    py,
+                    [
+                        self.nodes[p as usize].bind(py),
+                        self.nodes[q as usize].bind(py),
+                    ],
+                )?;
                 let r = out.create(t.as_any(), None)?;
                 rows[id] = Some((t, r));
             }
@@ -697,7 +737,12 @@ pub fn _op_product<'py>(
     succ: Bound<'py, PyDict>,
     pred: Option<Bound<'py, PyDict>>,
 ) -> PyResult<()> {
-    let out = Out { py, node, succ, pred };
+    let out = Out {
+        py,
+        node,
+        succ,
+        pred,
+    };
     let (ng, nh) = (g.n(), h.n());
     let directed = out.pred.is_some();
     // `_node_product`: (u, x) for u in G for x in H.
@@ -803,7 +848,12 @@ pub fn _op_rooted_product<'py>(
     node: Bound<'py, PyDict>,
     succ: Bound<'py, PyDict>,
 ) -> PyResult<()> {
-    let out = Out { py, node, succ, pred: None };
+    let out = Out {
+        py,
+        node,
+        succ,
+        pred: None,
+    };
     let (ng, nh) = (g.n(), h.n());
     if r >= nh {
         return Err(changed());
@@ -821,7 +871,12 @@ pub fn _op_rooted_product<'py>(
         let v = g.targets[e] as usize;
         let a = PyTuple::new(py, [g.nodes[u].bind(py), &root])?.into_any();
         let b = PyTuple::new(py, [g.nodes[v].bind(py), &root])?.into_any();
-        out.edge((&a, &rows[u * nh + r]), (&b, &rows[v * nh + r]), None, false)?;
+        out.edge(
+            (&a, &rows[u * nh + r]),
+            (&b, &rows[v * nh + r]),
+            None,
+            false,
+        )?;
     }
     let hedges = h.edge_entries();
     for x in 0..ng {
@@ -844,7 +899,12 @@ pub fn _op_corona_product<'py>(
     node: Bound<'py, PyDict>,
     succ: Bound<'py, PyDict>,
 ) -> PyResult<()> {
-    let out = Out { py, node, succ, pred: None };
+    let out = Out {
+        py,
+        node,
+        succ,
+        pred: None,
+    };
     let mut grows = Vec::with_capacity(g.n());
     for v in &g.nodes {
         grows.push(out.ensure(v.bind(py))?);
@@ -920,7 +980,10 @@ fn true_div(a: Val, b: Val) -> PyResult<Val> {
 /// Python's `x ** 2`: exact for ints, the C library's `pow` for floats.
 fn square(x: Val) -> PyResult<Val> {
     match x {
-        Val::I(a) => a.checked_mul(a).map(Val::I).ok_or_else(|| unsupported(Fail::Unsupported)),
+        Val::I(a) => a
+            .checked_mul(a)
+            .map(Val::I)
+            .ok_or_else(|| unsupported(Fail::Unsupported)),
         Val::F(f) => Ok(Val::F(unsafe { pow(f, std::hint::black_box(2.0)) })),
     }
 }
@@ -1014,7 +1077,11 @@ impl<'a, 'py> Holes<'a, 'py> {
             };
             set.add(id, &hashes);
         }
-        let order = std::rc::Rc::new(set.iter().map(|id| members[id as usize]).collect::<Vec<u32>>());
+        let order = std::rc::Rc::new(
+            set.iter()
+                .map(|id| members[id as usize])
+                .collect::<Vec<u32>>(),
+        );
         self.nbrs.insert(v, order.clone());
         Ok(order)
     }
@@ -1118,7 +1185,9 @@ impl<'a, 'py> Holes<'a, 'py> {
         for &n in nbrs.iter() {
             terms.push(self.local_constraint(v, n)?);
         }
-        flow::py_sum(terms, self.compensated).map(Some).map_err(unsupported)
+        flow::py_sum(terms, self.compensated)
+            .map(Some)
+            .map_err(unsupported)
     }
 
     /// Whether `effective_size` gives `v` NaN: `len(G[v]) == 0` (NetworkX
@@ -1150,13 +1219,20 @@ impl<'a, 'py> Holes<'a, 'py> {
             let r = flow::py_sum(parts, self.compensated).map_err(unsupported)?;
             terms.push(Val::I(1).sub(r).map_err(unsupported)?);
         }
-        flow::py_sum(terms, self.compensated).map(Some).map_err(unsupported)
+        flow::py_sum(terms, self.compensated)
+            .map(Some)
+            .map_err(unsupported)
     }
 
     /// `effective_size` of an undirected graph with `weight=None`: from
     /// `E = nx.ego_graph(G, v, center=False, undirected=True)`, `len(E) -
     /// 2 * E.size() / len(E)`.
-    pub fn ego_effective_size(&self, v: u32, by_len: bool, mark: &mut [bool]) -> PyResult<Option<Val>> {
+    pub fn ego_effective_size(
+        &self,
+        v: u32,
+        by_len: bool,
+        mark: &mut [bool],
+    ) -> PyResult<Option<Val>> {
         if self.isolated(v, by_len) {
             return Ok(None);
         }
@@ -1208,7 +1284,12 @@ pub fn subgraph_copy<'py>(
     if nodes.len() != g.n || members.iter().any(|&p| p as usize >= g.n) {
         return Err(changed());
     }
-    let out = Out { py, node: out_node, succ, pred };
+    let out = Out {
+        py,
+        node: out_node,
+        succ,
+        pred,
+    };
     let mut slot: HashMap<u32, usize> = HashMap::with_capacity(members.len());
     let mut objs = Vec::with_capacity(members.len());
     let mut rows = Vec::with_capacity(members.len());
@@ -1230,7 +1311,9 @@ pub fn subgraph_copy<'py>(
         for ((key, data), &t) in row.iter().zip(targets) {
             let Some(&j) = slot.get(&t) else { continue };
             if !same_key(&key, &objs[j])? {
-                return Err(PyNotImplementedError::new_err("adjacency keys differ from the nodes"));
+                return Err(PyNotImplementedError::new_err(
+                    "adjacency keys differ from the nodes",
+                ));
             }
             let data = data.cast_into::<PyDict>().map_err(|_| changed())?;
             out.edge((&objs[i], &rows[i]), (&key, &rows[j]), Some(&data), false)?;
@@ -1252,7 +1335,10 @@ fn max_broadcast(adj: &crate::graph::Csr, in_u: &[bool], values: &[i64], v: usiz
         .map(|&u| values[u as usize])
         .collect();
     vals.sort_unstable_by(|a, b| b.cmp(a));
-    vals.iter().enumerate().map(|(i, &x)| x + i as i64 + 1).max()
+    vals.iter()
+        .enumerate()
+        .map(|(i, &x)| x + i as i64 + 1)
+        .max()
 }
 
 /// `tree_broadcast_center(G)` for a tree with at least 3 nodes, given each
@@ -1265,10 +1351,18 @@ pub fn tree_broadcast_center(g: &CoreGraph, hashes: &[i64]) -> Option<(i64, Vec<
     let adj = &g.succ;
     let deg: Vec<usize> = (0..n).map(|v| adj.neighbors(v).len()).collect();
     let mut in_u: Vec<bool> = deg.iter().map(|&d| d == 1).collect();
-    let mut values: Vec<Option<i64>> = in_u.iter().map(|&u| if u { Some(0) } else { None }).collect();
+    let mut values: Vec<Option<i64>> = in_u
+        .iter()
+        .map(|&u| if u { Some(0) } else { None })
+        .collect();
     let mut alive: Vec<bool> = in_u.iter().map(|&u| !u).collect();
     let mut tdeg: Vec<usize> = (0..n)
-        .map(|v| adj.neighbors(v).iter().filter(|&&u| alive[u as usize]).count())
+        .map(|v| {
+            adj.neighbors(v)
+                .iter()
+                .filter(|&&u| alive[u as usize])
+                .count()
+        })
         .collect();
     let mut t_len = alive.iter().filter(|&&a| a).count();
     let mut w_set = SetReplica::default();
@@ -1278,7 +1372,8 @@ pub fn tree_broadcast_center(g: &CoreGraph, hashes: &[i64]) -> Option<(i64, Vec<
             values[v] = Some(deg[v] as i64 - 1);
         }
     }
-    let plain = |values: &[Option<i64>]| -> Vec<i64> { values.iter().map(|x| x.unwrap_or(0)).collect() };
+    let plain =
+        |values: &[Option<i64>]| -> Vec<i64> { values.iter().map(|x| x.unwrap_or(0)).collect() };
     while t_len >= 2 {
         let mut best: Option<(u32, i64)> = None;
         for w in w_set.iter() {
@@ -1367,7 +1462,9 @@ pub fn bipartite_degree_centrality<'py>(
     };
     for (set, s) in [(top, s_top), (bottom, s_bottom)] {
         for n in set.iter() {
-            let Some(i) = index.get_item(&n)? else { continue };
+            let Some(i) = index.get_item(&n)? else {
+                continue;
+            };
             let i: usize = i.extract()?;
             if i >= g.n {
                 return Err(changed());
@@ -1403,7 +1500,12 @@ pub fn _op_projection<'py>(
     if members.iter().any(|&p| p as usize >= n) {
         return Err(changed());
     }
-    let out = Out { py, node, succ, pred };
+    let out = Out {
+        py,
+        node,
+        succ,
+        pred,
+    };
     let mut rows: Vec<Option<RowPair<'py>>> = (0..n).map(|_| None).collect();
     // `G.add_nodes_from((n, B.nodes[n]) for n in nodes)`.
     for &p in &members {
@@ -1412,7 +1514,11 @@ pub fn _op_projection<'py>(
         let data = view.ndata[p].bind(py);
         match &rows[p] {
             Some(_) => {
-                let d = out.node.get_item(key)?.ok_or_else(changed)?.cast_into::<PyDict>()?;
+                let d = out
+                    .node
+                    .get_item(key)?
+                    .ok_or_else(changed)?
+                    .cast_into::<PyDict>()?;
                 update_from(&d, data, None)?;
             }
             None => {
@@ -1527,7 +1633,10 @@ impl EdgeIds<'_> {
             return id;
         }
         let id = self.hashes.len() as u32;
-        self.hashes.push(tuple_hash(&[node_hashes[a as usize], node_hashes[b as usize]]));
+        self.hashes.push(tuple_hash(&[
+            node_hashes[a as usize],
+            node_hashes[b as usize],
+        ]));
         self.ends.push((a, b));
         self.ids.insert((a, b), id);
         id
@@ -1583,7 +1692,9 @@ pub fn _op_intersection<'py>(
                 Some(i) => {
                     let i: usize = i.extract()?;
                     if i >= n0 || !same_key(v, first.nodes[i].bind(py))? {
-                        return Err(PyNotImplementedError::new_err("equal nodes differ between graphs"));
+                        return Err(PyNotImplementedError::new_err(
+                            "equal nodes differ between graphs",
+                        ));
                     }
                     i as u32
                 }
@@ -1626,7 +1737,12 @@ pub fn _op_intersection<'py>(
             Some(acc) => intersect(&acc, &edge_set, &edge_hashes),
         });
     }
-    let out = Out { py, node, succ, pred };
+    let out = Out {
+        py,
+        node,
+        succ,
+        pred,
+    };
     let mut rows: Vec<Option<RowPair<'py>>> = (0..n0).map(|_| None).collect();
     for id in nodes_acc.unwrap_or_default().iter() {
         let id = id as usize;
@@ -1644,7 +1760,12 @@ pub fn _op_intersection<'py>(
         let (Some(ra), Some(rb)) = (&rows[a], &rows[b]) else {
             return Err(changed());
         };
-        out.edge((first.nodes[a].bind(py), ra), (first.nodes[b].bind(py), rb), None, false)?;
+        out.edge(
+            (first.nodes[a].bind(py), ra),
+            (first.nodes[b].bind(py), rb),
+            None,
+            false,
+        )?;
     }
     Ok(())
 }

@@ -5447,3 +5447,37 @@ def test_batch21_dispatch_through_priority(restore_config, monkeypatch):
     finally:
         if old_generators is not None:
             nx.config.backend_priority.generators = old_generators
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(6))
+def test_batch21_fall_backs(seed, directed, restore_config):
+    # Multigraphs, subclasses and graph views run in NetworkX.
+    M = random_multigraph(seed, directed, "int")
+    G = graph_for(seed, directed)
+
+    class MyGraph(G.__class__):
+        pass
+
+    sub = MyGraph(G)
+    view = G.subgraph(list(G)[: len(G) // 2])
+    for A in [M, sub, view]:
+        exact_outcome(_b21_graphs(nx.union), A, nx.relabel_nodes(A, lambda v: ("r", v)))
+        exact_outcome(_b21_graphs(nx.compose), A, A)
+        exact_outcome(_b21_graphs(nx.disjoint_union), A, A)
+        exact_outcome(_b21_graphs(nx.intersection), A, A)
+        exact_outcome(_b21_graphs(nx.line_graph), A)
+        exact_outcome(_b21_graphs(nx.cartesian_product), A, nx.path_graph(2, create_using=A.__class__))
+        exact_outcome(_b21_graphs(nx.ego_graph), A, next(iter(A), 0))
+        exact_outcome(_b21_nan_marked(nx.constraint), A, list(A)[:3])
+        if directed:
+            exact_outcome(_b21_graphs(nx.reverse), A)
+            exact_outcome(_b21_graphs(nx.moral_graph), A)
+    # A graph changed behind NetworkX's back after its conversion was cached.
+    H = _b21_decorate(graph_for(seed, directed), seed)
+    nx.union(H, nx.relabel_nodes(H, lambda v: ("s", v)), backend="rustnx")
+    u = next(iter(H), None)
+    if u is not None:
+        H._node[u]["late"] = 1  # attribute dicts aren't part of the snapshot
+        H._adj[u][("new", u)] = {}  # nor is a row changed directly
+        exact_outcome(_b21_graphs(nx.union), H, nx.path_graph([("p", 0), ("p", 1)]))

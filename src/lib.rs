@@ -4743,7 +4743,9 @@ impl CoreGraph {
                 1 => holes.effective_size(v, by_len)?,
                 2 => holes.ego_effective_size(v, by_len, &mut mark)?,
                 _ => {
-                    let o = *others.get(i).ok_or_else(|| PyIndexError::new_err("missing pair"))?;
+                    let o = *others
+                        .get(i)
+                        .ok_or_else(|| PyIndexError::new_err("missing pair"))?;
                     Some(holes.local_constraint(v, o)?)
                 }
             };
@@ -4774,9 +4776,15 @@ impl CoreGraph {
     /// `tree_broadcast_center` on a tree of 3 or more nodes (see
     /// `operators::tree_broadcast_center`), with `hashes` each node's
     /// `hash()`; `None` where NetworkX raises.
-    fn tree_broadcast_center(&self, py: Python<'_>, hashes: Vec<i64>) -> PyResult<Option<(i64, Vec<u32>)>> {
+    fn tree_broadcast_center(
+        &self,
+        py: Python<'_>,
+        hashes: Vec<i64>,
+    ) -> PyResult<Option<(i64, Vec<u32>)>> {
         if hashes.len() != self.n || self.directed {
-            return Err(PyValueError::new_err("one hash per node of an undirected graph"));
+            return Err(PyValueError::new_err(
+                "one hash per node of an undirected graph",
+            ));
         }
         Ok(py.detach(|| operators::tree_broadcast_center(self, &hashes)))
     }
