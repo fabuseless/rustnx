@@ -163,6 +163,18 @@ SECTIONS = [
         "color", "sets", "is_bipartite_node_set", "hopcroft_karp_matching", "to_vertex_cover",
         "bipartite_closeness_centrality", "node_redundancy", "butterflies",
     ]),
+    ("Connectivity and cuts", [
+        "node_connectivity", "edge_connectivity", "local_node_connectivity",
+        "local_edge_connectivity", "average_node_connectivity", "all_pairs_node_connectivity",
+        "minimum_node_cut", "minimum_edge_cut", "minimum_st_node_cut", "minimum_st_edge_cut",
+        "node_disjoint_paths", "edge_disjoint_paths", "stoer_wagner",
+    ]),
+    ("Edge components and augmentation", [
+        "bridge_components", "k_edge_components", "k_edge_subgraphs", "is_k_edge_connected",
+        "is_locally_k_edge_connected", "k_edge_augmentation", "one_edge_augmentation",
+        "unconstrained_one_edge_augmentation", "bridge_augmentation",
+        "unconstrained_bridge_augmentation", "complement_edges",
+    ]),
 ]
 
 LENGTHS = "Falls back when weights mix ints and floats (NetworkX's length types then depend on the path)."
@@ -418,6 +430,50 @@ SUBMODULE = {
     "boruvka_mst_edges": "nx.tree.mst",
     "is_tournament": "nx.tournament",
 }
+
+
+# Batch 13: connectivity, disjoint paths and augmentation.
+FLOW = "Edmonds-Karp (NetworkX's default `flow_func`) in Rust on NetworkX's auxiliary digraph, with arcs in NetworkX's order; `flow_func`, `auxiliary` and `residual` fall back."
+CUT = " The set is built with NetworkX's own set operations, so it iterates in the same order."
+NOTES.update({
+    "node_connectivity": FLOW + " Pairs run in parallel; follows the installed NetworkX's search (3.7 changed it).",
+    "edge_connectivity": FLOW + " Pairs run in parallel. Undirected graphs with self-loops fall back (NetworkX's dominating-set shortcut can then give a set-order-dependent answer).",
+    "local_node_connectivity": FLOW,
+    "local_edge_connectivity": FLOW,
+    "average_node_connectivity": FLOW + " Pairs run in parallel.",
+    "all_pairs_node_connectivity": FLOW + " Pairs run in parallel.",
+    "minimum_node_cut": FLOW + " Follows the installed NetworkX's search, including the residual network reordering of 3.4 to 3.6." + CUT,
+    "minimum_edge_cut": FLOW + " Replays NetworkX's dominating set (set operations and all) for undirected graphs." + CUT,
+    "minimum_st_node_cut": FLOW + " Adjacent nodes give the installed version's empty result (`{}` in 3.4)." + CUT,
+    "minimum_st_edge_cut": FLOW + CUT,
+    "node_disjoint_paths": FLOW + " Generator; same paths in the same order. A non-numeric `cutoff` falls back.",
+    "edge_disjoint_paths": FLOW + " Generator; same paths in the same order. A non-numeric `cutoff` falls back.",
+    "stoer_wagner": "Replays NetworkX's heap (ties by insertion order) and contractions; the partition lists follow NetworkX's set order. `heap`, `None` weights, weights mixing ints and floats, infinite weights and int weights summing past 2**52 fall back.",
+    "bridge_components": "Sets iterate in NetworkX's order (it searches a copy of G, whose rows are reordered).",
+    "k_edge_components": "`k` = 1 and 2 (undirected) and `k` = 1 (directed); others fall back (NetworkX's auxiliary graph picks cuts by set order with preflow-push).",
+    "k_edge_subgraphs": "As `k_edge_components`; larger `k` falls back (NetworkX pops subgraphs from a set of graphs).",
+    "is_k_edge_connected": "`k` >= 3 uses `edge_connectivity` (self-loops fall back).",
+    "is_locally_k_edge_connected": "Nodes not in the graph fall back.",
+    "k_edge_augmentation": "`k` = 1 and 2 without `avail`; `avail` and larger `k` (a seeded greedy search) fall back.",
+    "one_edge_augmentation": "Without `avail`; `avail` falls back.",
+    "bridge_augmentation": "Without `avail`; `avail` falls back.",
+    "unconstrained_bridge_augmentation": "Bridge components in Rust; the small tree of components is augmented with NetworkX's code.",
+    "complement_edges": "Generator, computed in batches.",
+})
+SUBMODULE.update({
+    name: "nx.connectivity"
+    for name in [
+        "local_node_connectivity", "local_edge_connectivity", "minimum_st_node_cut",
+        "minimum_st_edge_cut", "bridge_components", "is_locally_k_edge_connected",
+    ]
+})
+SUBMODULE.update({
+    name: "nx.algorithms.connectivity.edge_augmentation"
+    for name in [
+        "one_edge_augmentation", "unconstrained_one_edge_augmentation", "bridge_augmentation",
+        "unconstrained_bridge_augmentation", "complement_edges",
+    ]
+})
 
 
 def location(name):

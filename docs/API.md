@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 267 NetworkX functions. Call them as usual (for
+rustnx implements 291 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -443,6 +443,40 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `As `nx.bipartite.closeness_centrality`. Bit-for-bit identical; parallel searches.` | `nodes`, `normalized` | yes | rustnx |  |
 | `A one-shot iterator of nodes, and nodes not in the graph, fall back.` | `nodes` | yes | rustnx |  |
 | `NetworkX 3.7+.` | `nodes` | no | rustnx |  |
+
+### Connectivity and cuts
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.node_connectivity` | `s`, `t` | no | rustnx | Edmonds-Karp (NetworkX's default `flow_func`) in Rust on NetworkX's auxiliary digraph, with arcs in NetworkX's order; `flow_func`, `auxiliary` and `residual` fall back. Pairs run in parallel; follows the installed NetworkX's search (3.7 changed it). |
+| `nx.edge_connectivity` | `s`, `t`, `cutoff` | no | rustnx | Edmonds-Karp (NetworkX's default `flow_func`) in Rust on NetworkX's auxiliary digraph, with arcs in NetworkX's order; `flow_func`, `auxiliary` and `residual` fall back. Pairs run in parallel. Undirected graphs with self-loops fall back (NetworkX's dominating-set shortcut can then give a set-order-dependent answer). |
+| `nx.connectivity.local_node_connectivity` | `s`, `t`, `cutoff` | no | rustnx | Edmonds-Karp (NetworkX's default `flow_func`) in Rust on NetworkX's auxiliary digraph, with arcs in NetworkX's order; `flow_func`, `auxiliary` and `residual` fall back. |
+| `nx.connectivity.local_edge_connectivity` | `s`, `t`, `cutoff` | no | rustnx | Edmonds-Karp (NetworkX's default `flow_func`) in Rust on NetworkX's auxiliary digraph, with arcs in NetworkX's order; `flow_func`, `auxiliary` and `residual` fall back. |
+| `nx.average_node_connectivity` | none | no | rustnx | Edmonds-Karp (NetworkX's default `flow_func`) in Rust on NetworkX's auxiliary digraph, with arcs in NetworkX's order; `flow_func`, `auxiliary` and `residual` fall back. Pairs run in parallel. |
+| `nx.all_pairs_node_connectivity` | `nbunch` | no | rustnx | Edmonds-Karp (NetworkX's default `flow_func`) in Rust on NetworkX's auxiliary digraph, with arcs in NetworkX's order; `flow_func`, `auxiliary` and `residual` fall back. Pairs run in parallel. |
+| `nx.minimum_node_cut` | `s`, `t` | no | rustnx | Edmonds-Karp (NetworkX's default `flow_func`) in Rust on NetworkX's auxiliary digraph, with arcs in NetworkX's order; `flow_func`, `auxiliary` and `residual` fall back. Follows the installed NetworkX's search, including the residual network reordering of 3.4 to 3.6. The set is built with NetworkX's own set operations, so it iterates in the same order. |
+| `nx.minimum_edge_cut` | `s`, `t` | no | rustnx | Edmonds-Karp (NetworkX's default `flow_func`) in Rust on NetworkX's auxiliary digraph, with arcs in NetworkX's order; `flow_func`, `auxiliary` and `residual` fall back. Replays NetworkX's dominating set (set operations and all) for undirected graphs. The set is built with NetworkX's own set operations, so it iterates in the same order. |
+| `nx.connectivity.minimum_st_node_cut` | `s`, `t` | no | rustnx | Edmonds-Karp (NetworkX's default `flow_func`) in Rust on NetworkX's auxiliary digraph, with arcs in NetworkX's order; `flow_func`, `auxiliary` and `residual` fall back. Adjacent nodes give the installed version's empty result (`{}` in 3.4). The set is built with NetworkX's own set operations, so it iterates in the same order. |
+| `nx.connectivity.minimum_st_edge_cut` | `s`, `t` | no | rustnx | Edmonds-Karp (NetworkX's default `flow_func`) in Rust on NetworkX's auxiliary digraph, with arcs in NetworkX's order; `flow_func`, `auxiliary` and `residual` fall back. The set is built with NetworkX's own set operations, so it iterates in the same order. |
+| `nx.node_disjoint_paths` | `s`, `t`, `cutoff` | no | rustnx | Edmonds-Karp (NetworkX's default `flow_func`) in Rust on NetworkX's auxiliary digraph, with arcs in NetworkX's order; `flow_func`, `auxiliary` and `residual` fall back. Generator; same paths in the same order. A non-numeric `cutoff` falls back. |
+| `nx.edge_disjoint_paths` | `s`, `t`, `cutoff` | no | rustnx | Edmonds-Karp (NetworkX's default `flow_func`) in Rust on NetworkX's auxiliary digraph, with arcs in NetworkX's order; `flow_func`, `auxiliary` and `residual` fall back. Generator; same paths in the same order. A non-numeric `cutoff` falls back. |
+| `nx.stoer_wagner` | `weight` | no | rustnx | Replays NetworkX's heap (ties by insertion order) and contractions; the partition lists follow NetworkX's set order. `heap`, `None` weights, weights mixing ints and floats, infinite weights and int weights summing past 2**52 fall back. |
+
+### Edge components and augmentation
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.connectivity.bridge_components` | none | no | NetworkX | Sets iterate in NetworkX's order (it searches a copy of G, whose rows are reordered). |
+| `nx.k_edge_components` | `k` | no | NetworkX | `k` = 1 and 2 (undirected) and `k` = 1 (directed); others fall back (NetworkX's auxiliary graph picks cuts by set order with preflow-push). |
+| `nx.k_edge_subgraphs` | `k` | no | NetworkX | As `k_edge_components`; larger `k` falls back (NetworkX pops subgraphs from a set of graphs). |
+| `nx.is_k_edge_connected` | `k` | no | NetworkX | `k` >= 3 uses `edge_connectivity` (self-loops fall back). |
+| `nx.connectivity.is_locally_k_edge_connected` | `s`, `t`, `k` | no | rustnx | Nodes not in the graph fall back. |
+| `nx.k_edge_augmentation` | `k`, `avail`, `weight`, `partial` | no | NetworkX | `k` = 1 and 2 without `avail`; `avail` and larger `k` (a seeded greedy search) fall back. |
+| `nx.algorithms.connectivity.edge_augmentation.one_edge_augmentation` | `avail`, `weight`, `partial` | no | NetworkX | Without `avail`; `avail` falls back. |
+| `nx.algorithms.connectivity.edge_augmentation.unconstrained_one_edge_augmentation` | none | no | NetworkX |  |
+| `nx.algorithms.connectivity.edge_augmentation.bridge_augmentation` | `avail`, `weight` | no | NetworkX | Without `avail`; `avail` falls back. |
+| `nx.algorithms.connectivity.edge_augmentation.unconstrained_bridge_augmentation` | none | no | NetworkX | Bridge components in Rust; the small tree of components is augmented with NetworkX's code. |
+| `nx.algorithms.connectivity.edge_augmentation.complement_edges` | none | no | rustnx | Generator, computed in batches. |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 
