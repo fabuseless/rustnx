@@ -3964,3 +3964,266 @@ def test_batch13_runs_in_rust():
         list(_b13_conn.node_disjoint_paths(H, s, t, backend="rustnx"))
     nx.stoer_wagner(G, backend="rustnx")
     list(_b13_conn.k_edge_augmentation(G, 2, backend="rustnx"))
+
+
+# --- Batch 14: assortativity, link prediction and reciprocity ----------------------
+
+
+def _b14_with_communities(G, seed, coverage=0.85):
+    rng = random.Random(seed)
+    for v in G:
+        if rng.random() < coverage:
+            G.nodes[v]["community"] = rng.choice([0, 1, 2, 1.0, "a"])
+    return G
+
+
+def _b14_ebunch(G, seed, k=40):
+    rng = random.Random(seed)
+    nodes = list(G)
+    if not nodes:
+        return []
+    pairs = [(rng.choice(nodes), rng.choice(nodes)) for _ in range(k)]
+    return pairs + [(nodes[0], nodes[0])]
+
+
+def _b14_repr(func):
+    """Compare float results through ``repr`` (NaN compares unequal)."""
+    def run(*args, **kwargs):
+        return repr(func(*args, **kwargs))
+    return run
+
+
+def _b14_array(func):
+    def run(*args, **kwargs):
+        a = func(*args, **kwargs)
+        return (a.dtype.str, a.shape, a.tobytes())
+    return run
+
+
+_B14_LINK = [
+    nx.jaccard_coefficient,
+    nx.adamic_adar_index,
+    nx.resource_allocation_index,
+    nx.preferential_attachment,
+    nx.cn_soundarajan_hopcroft,
+    nx.ra_index_soundarajan_hopcroft,
+    nx.within_inter_cluster,
+    nx.common_neighbor_centrality,
+]
+
+
+def test_batch14_set_order_replay_matches():
+    from rustnx import algorithms
+
+    assert algorithms._b14_set_order_matches()
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_batch14_link_prediction(seed):
+    G = _b14_with_communities(graph_for(seed, False), seed)
+    ebunch = _b14_ebunch(G, seed)
+    for func in _B14_LINK:
+        exact_outcome(listed(func), G, ebunch)
+        exact_outcome(listed(func), G)
+    for alpha in [0.8, 1, 0, 0.5]:
+        exact_outcome(listed(nx.common_neighbor_centrality), G, ebunch[:-1], alpha=alpha)
+    for delta in [0.001, 2, 0, -1]:
+        exact_outcome(listed(nx.within_inter_cluster), G, ebunch[:-1], delta=delta)
+    exact_outcome(listed(nx.cn_soundarajan_hopcroft), G, ebunch, community="nope")
+    exact_outcome(listed(nx.jaccard_coefficient), graph_for(seed, True), ebunch)
+
+
+@pytest.mark.parametrize("seed", range(12))
+def test_batch14_link_prediction_set_order(seed):
+    # Dense graphs with string or mixed labels: float sums over common
+    # neighbors follow the order of NetworkX's set, which rustnx replays.
+    rng = random.Random(seed)
+    n = rng.choice([50, 120])
+    base = nx.gnp_random_graph(n, rng.choice([0.1, 0.3, 0.6]), seed=seed)
+    labels = {v: f"s{v}" if seed % 3 == 0 or (seed % 3 == 2 and v % 2) else v * 7919 - 300 for v in base}
+    G = _b14_with_communities(nx.relabel_nodes(base, labels), seed, 0.97)
+    ebunch = _b14_ebunch(G, seed, 600)
+    for func in [nx.resource_allocation_index, nx.adamic_adar_index, nx.ra_index_soundarajan_hopcroft,
+                 nx.cn_soundarajan_hopcroft, nx.within_inter_cluster]:
+        exact_outcome(listed(func), G, ebunch)
+    exact_outcome(listed(nx.resource_allocation_index), G)
+
+
+def test_batch14_link_prediction_edge_cases():
+    G = _b14_with_communities(nx.Graph([(0, 1), (1, 2), (2, 0), (2, 3), (3, 3)]), 1, 1.0)
+    G.add_node(4)
+    for func in _B14_LINK:
+        exact_outcome(listed(func), G, iter([(0, 3), (1, 3)]))  # consumed by the check
+        exact_outcome(listed(func), G, [(0, 3, 1)])
+        exact_outcome(listed(func), G, [(0, "missing")])
+        exact_outcome(listed(func), G, [([0], 1)])
+        exact_outcome(listed(func), G, [(0, 3), (4, 4), (2, 2), (3, 3)])
+        exact_outcome(listed(func), G, [(1.0, 3), (True, 2)])
+        exact_outcome(listed(func), nx.Graph())
+        exact_outcome(listed(func), nx.DiGraph([(0, 1)]))
+        exact_outcome(listed(func), nx.MultiGraph([(0, 1), (1, 2)]))
+    # A neighbor of degree 1 makes Adamic-Adar divide by zero.
+    exact_outcome(listed(nx.adamic_adar_index), nx.path_graph(3), [(0, 2), (1, 1), (0, 2)])
+    H = nx.complete_graph(6)
+    H.nodes[0]["community"] = H.nodes[1]["community"] = 0
+    H.nodes[2]["community"] = 0
+    for func in [nx.cn_soundarajan_hopcroft, nx.ra_index_soundarajan_hopcroft, nx.within_inter_cluster]:
+        exact_outcome(listed(func), H, [(0, 1), (0, 2), (1, 5), (5, 1)])
+    H.nodes[3]["community"] = [1]  # unhashable: rustnx hands it to NetworkX
+    exact_outcome(listed(nx.cn_soundarajan_hopcroft), H, [(0, 1)])
+
+
+def test_batch14_link_prediction_runs_in_rust():
+    G = _b14_with_communities(nx.relabel_nodes(nx.gnp_random_graph(30, 0.3, seed=1), str), 1, 1.0)
+    for func in _B14_LINK:
+        assert len(list(func(G, backend="rustnx"))) == 30 * 29 // 2 - G.number_of_edges()
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch14_degree_mixing(seed, directed):
+    for weights in ["none", "int", "float"]:
+        G = graph_for(seed, directed, weights)
+        weight = None if weights == "none" else "weight"
+        nodes = list(G)
+        some = nodes[: len(nodes) // 2] + ["missing"]
+        kinds = [("out", "in"), ("in", "out"), ("out", "out"), ("in", "in")] if directed else [("out", "in")]
+        for x, y in kinds:
+            for nbunch in [None, some]:
+                kw = {"x": x, "y": y, "weight": weight, "nodes": nbunch}
+                exact_outcome(listed(nx.node_degree_xy), G, **kw)
+                exact_outcome(nx.degree_mixing_dict, G, **kw)
+                exact_outcome(nx.degree_mixing_dict, G, normalized=True, **kw)
+                exact_outcome(_b14_array(nx.degree_mixing_matrix), G, **kw)
+                exact_outcome(_b14_array(nx.degree_mixing_matrix), G, normalized=False, **kw)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", RuntimeWarning)
+                    exact_outcome(_b14_repr(nx.degree_assortativity_coefficient), G, **kw)
+                    exact_outcome(_b14_repr(nx.degree_pearson_correlation_coefficient), G, **kw)
+        exact_outcome(nx.degree_mixing_dict, G, x="bad", y="in")
+        if nodes:
+            exact_outcome(_b14_repr(nx.degree_assortativity_coefficient), G, nodes=nodes[0])
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch14_attribute_mixing(seed, directed):
+    G = graph_for(seed, directed)
+    rng = random.Random(seed)
+    for v in G:
+        if rng.random() < 0.8:
+            G.nodes[v]["color"] = rng.choice([0, 1, 2, "a", None, 1.0, True])
+        G.nodes[v]["size"] = rng.choice([0, 1, 2.5, 4])
+    nodes = list(G)
+    some = nodes[: len(nodes) // 2]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        for nbunch in [None, some, some + ["missing"]]:
+            exact_outcome(listed(nx.node_attribute_xy), G, "color", nodes=nbunch)
+            exact_outcome(nx.attribute_mixing_dict, G, "color", nodes=nbunch)
+            exact_outcome(nx.attribute_mixing_dict, G, "color", nodes=nbunch, normalized=True)
+            exact_outcome(_b14_array(nx.attribute_mixing_matrix), G, "color", nodes=nbunch)
+            exact_outcome(_b14_repr(nx.attribute_assortativity_coefficient), G, "color", nodes=nbunch)
+            exact_outcome(_b14_repr(nx.numeric_assortativity_coefficient), G, "size", nodes=nbunch)
+            exact_outcome(_b14_repr(nx.numeric_assortativity_coefficient), G, "color", nodes=nbunch)
+        mapping = {0: 0, 1: 1, 2: 2, "a": 3, None: 4}
+        exact_outcome(_b14_array(nx.attribute_mixing_matrix), G, "color", mapping=mapping)
+        exact_outcome(listed(nx.node_attribute_xy), G, "nope")
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch14_neighbor_degree(seed, directed):
+    for weights in ["none", "int", "float"]:
+        G = graph_for(seed, directed, weights)
+        weight = None if weights == "none" else "weight"
+        nodes = list(G)
+        options = ["in", "out", "in+out", "bad"] if directed else ["out", "in+out", "in"]
+        for nbunch in [None, nodes[::3] + nodes[:2] + ["missing"], nodes[0] if nodes else None, 3.5]:
+            for source in options:
+                for target in options:
+                    kw = {"source": source, "target": target, "nodes": nbunch, "weight": weight}
+                    exact_outcome(nx.average_neighbor_degree, G, **kw)
+                    exact_outcome(nx.average_degree_connectivity, G, **kw)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch14_reciprocity_rich_club_walks(seed, directed):
+    G = graph_for(seed, directed)
+    nodes = list(G)
+    exact_outcome(nx.reciprocity, G)
+    exact_outcome(nx.overall_reciprocity, G)
+    exact_outcome(nx.reciprocity, G, nodes[::2] + ["missing"])
+    if nodes:
+        exact_outcome(nx.reciprocity, G, nodes[0])
+    exact_outcome(nx.s_metric, G)
+    exact_outcome(nx.rich_club_coefficient, G, normalized=False)
+    H = G.copy()
+    H.remove_edges_from(list(nx.selfloop_edges(H)))
+    exact_outcome(nx.rich_club_coefficient, H, normalized=False)
+    for k in [0, 1, 2, 3, 6, -1, 2.0]:
+        exact_outcome(nx.number_of_walks, G, k)
+    for E in [nx.empty_graph(3, create_using=G.__class__), G.__class__()]:
+        exact_outcome(nx.overall_reciprocity, E)
+        exact_outcome(nx.s_metric, E)
+        exact_outcome(nx.number_of_walks, E, 2)
+        if not directed:
+            exact_outcome(nx.rich_club_coefficient, E, normalized=False)
+
+
+def test_batch14_walks_wrap_like_int64():
+    exact_outcome(nx.number_of_walks, nx.complete_graph(5), 40)
+
+
+def test_batch14_runs_in_rust():
+    G = graph_for(3, False, "int")
+    D = graph_for(3, True, "int")
+    for v in G:
+        G.nodes[v]["c"] = hash(v) % 3
+    calls = [
+        lambda: list(nx.node_degree_xy(D, weight="weight", backend="rustnx")),
+        lambda: nx.degree_mixing_dict(G, backend="rustnx"),
+        lambda: nx.degree_mixing_matrix(D, backend="rustnx"),
+        lambda: nx.degree_assortativity_coefficient(G, backend="rustnx"),
+        lambda: nx.degree_pearson_correlation_coefficient(D, backend="rustnx"),
+        lambda: list(nx.node_attribute_xy(G, "c", backend="rustnx")),
+        lambda: nx.attribute_mixing_dict(G, "c", backend="rustnx"),
+        lambda: nx.attribute_mixing_matrix(G, "c", backend="rustnx"),
+        lambda: nx.attribute_assortativity_coefficient(G, "c", backend="rustnx"),
+        lambda: nx.numeric_assortativity_coefficient(G, "c", backend="rustnx"),
+        lambda: nx.average_neighbor_degree(D, source="in", weight="weight", backend="rustnx"),
+        lambda: nx.average_degree_connectivity(D, backend="rustnx"),
+        lambda: nx.reciprocity(D, list(D), backend="rustnx"),
+        lambda: nx.overall_reciprocity(D, backend="rustnx"),
+        lambda: nx.s_metric(G, backend="rustnx"),
+        lambda: nx.rich_club_coefficient(nx.path_graph(6), normalized=False, backend="rustnx"),
+        lambda: nx.number_of_walks(D, 3, backend="rustnx"),
+    ]
+    for call in calls:
+        call()
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_batch14_multigraphs_fall_back(seed, restore_config):
+    M = random_multigraph(seed, seed % 2 == 0, "none")
+    for v in M:
+        M.nodes[v]["c"] = 1
+    exact_outcome(nx.degree_mixing_dict, M)
+    exact_outcome(nx.attribute_mixing_dict, M, "c")
+    exact_outcome(nx.average_neighbor_degree, M)
+    exact_outcome(nx.average_degree_connectivity, M)
+    exact_outcome(nx.s_metric, M)
+    exact_outcome(nx.number_of_walks, M, 2)
+    exact_outcome(nx.overall_reciprocity, M)
+    if not M.is_directed():
+        exact_outcome(listed(nx.jaccard_coefficient), M)
+
+
+def test_batch14_link_prediction_notices_changes():
+    G = nx.gnp_random_graph(30, 0.3, seed=2)
+    it = nx.jaccard_coefficient(G, list(nx.non_edges(G)), backend="rustnx")
+    next(it)
+    G.add_edge(0, 29)
+    with pytest.raises(RuntimeError):
+        list(it)
