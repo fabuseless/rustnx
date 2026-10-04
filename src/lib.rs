@@ -3236,16 +3236,29 @@ impl CoreGraph {
         self.conn_flows(py, node_split, ss.into_iter().zip(ts).collect(), None)
     }
 
-    /// `node_connectivity(G)` (no source and target given).
-    fn conn_node_connectivity(&self, py: Python<'_>) -> PyResult<i64> {
+    /// `node_connectivity(G)` (no source and target given); `isolating`
+    /// is NetworkX 3.7's version (see `connectivity::node_connectivity`).
+    fn conn_node_connectivity(&self, py: Python<'_>, isolating: bool) -> PyResult<i64> {
         let degree = self.degrees();
+        let pred = self.adj(true);
         py.detach(|| {
+            let (v, k) = if isolating {
+                let (v, k, _) =
+                    connectivity::isolating_cut(&self.succ, pred, self.n, self.directed);
+                (v, k)
+            } else {
+                // min(G.degree(), key=itemgetter(1)): the first minimum.
+                let v = (0..self.n).min_by_key(|&u| degree[u]).unwrap_or(0);
+                (v, degree[v])
+            };
             connectivity::node_connectivity(
                 &self.succ,
-                self.adj(true),
+                pred,
                 self.n,
                 self.directed,
-                &degree,
+                v,
+                k as i64,
+                isolating,
             )
         })
         .map_err(|_| unbounded())
@@ -3394,31 +3407,10 @@ impl CoreGraph {
 
     /// `minimum_node_cut` (3.7+): the first node with the smallest
     /// isolating cut, and whether that cut is its predecessors (directed).
-    fn conn_isolating_cut(&self) -> (u32, bool) {
-        let distinct_without = |row: &[u32], v: usize| {
-            let mut row: Vec<u32> = row.iter().copied().filter(|&w| w as usize != v).collect();
-            row.sort_unstable();
-            row.dedup();
-            row.len()
-        };
-        let mut best = (usize::MAX, 0u32, false);
-        for v in 0..self.n {
-            let succ = distinct_without(self.succ.neighbors(v), v);
-            let (len, use_pred) = if self.directed {
-                let pred = distinct_without(self.adj(true).neighbors(v), v);
-                if pred <= succ {
-                    (pred, true)
-                } else {
-                    (succ, false)
-                }
-            } else {
-                (succ, false)
-            };
-            if len < best.0 {
-                best = (len, v as u32, use_pred);
-            }
-        }
-        (best.1, best.2)
+    fn conn_isolating_cut(&self) -> (usize, bool) {
+        let (v, _, use_pred) =
+            connectivity::isolating_cut(&self.succ, self.adj(true), self.n, self.directed);
+        (v, use_pred)
     }
 
     /// Predecessors of `v` in NetworkX's `G.pred[v]` order (call
@@ -3430,18 +3422,44 @@ impl CoreGraph {
     }
 
     /// `stoer_wagner` on a connected graph with two or more nodes:
-    /// `(cut value, nodes in the rebuilt graph's order, reachable side in
-    /// breadth-first order)`.
+    /// `(status, cut value, nodes in the rebuilt graph's order, reachable
+    /// side in breadth-first order)`. Status 1: a negative weight (outside
+    /// self-loops); 2: an infinite weight, or int weights too large to sum
+    /// exactly in f64; both skip the computation.
+    #[allow(clippy::type_complexity)]
     #[pyo3(signature = (weight=None))]
     fn conn_stoer_wagner(
         &self,
         py: Python<'_>,
         weight: Option<&str>,
-    ) -> PyResult<(f64, Vec<u32>, Vec<u32>)> {
+    ) -> PyResult<(u8, f64, Vec<u32>, Vec<u32>)> {
         let w = self.weight_slice(weight, false)?;
+        let (all_int, _) = self.weights_info(weight);
+        if let Some(ws) = w {
+            let mut total = 0.0f64;
+            let mut status = 0;
+            for u in 0..self.n {
+                for e in self.succ.range(u) {
+                    if self.succ.targets[e] as usize == u {
+                        continue;
+                    }
+                    let x = ws[e];
+                    if x < 0.0 {
+                        return Ok((1, 0.0, Vec::new(), Vec::new()));
+                    }
+                    if !x.is_finite() {
+                        status = 2;
+                    }
+                    total += x;
+                }
+            }
+            if status == 2 || (all_int && total > (1u64 << 52) as f64) {
+                return Ok((2, 0.0, Vec::new(), Vec::new()));
+            }
+        }
         Ok(py.detach(|| {
             let r = connectivity::stoer_wagner(&self.succ, self.n, w);
-            (r.cut_value, r.node_order, r.reachable)
+            (0, r.cut_value, r.node_order, r.reachable)
         }))
     }
 

@@ -30,6 +30,7 @@ __all__ = [
     "all_pairs_dijkstra_path",
     "all_pairs_dijkstra_path_length",
     "all_pairs_lowest_common_ancestor",
+    "all_pairs_node_connectivity",
     "all_pairs_shortest_path",
     "all_pairs_shortest_path_length",
     "all_shortest_paths",
@@ -45,6 +46,7 @@ __all__ = [
     "astar_path_length",
     "attracting_components",
     "average_clustering",
+    "average_node_connectivity",
     "average_shortest_path_length",
     "barycenter",
     "bellman_ford_path",
@@ -65,6 +67,8 @@ __all__ = [
     "bipartite_closeness_centrality",
     "boruvka_mst_edges",
     "branching_weight",
+    "bridge_augmentation",
+    "bridge_components",
     "bridges",
     "butterflies",
     "center",
@@ -76,6 +80,7 @@ __all__ = [
     "closeness_centrality",
     "clustering",
     "color",
+    "complement_edges",
     "complete_to_chordal_graph",
     "condensation",
     "connected_components",
@@ -107,7 +112,9 @@ __all__ = [
     "edge_betweenness_centrality_subset",
     "edge_bfs",
     "edge_boundary",
+    "edge_connectivity",
     "edge_dfs",
+    "edge_disjoint_paths",
     "edge_load_centrality",
     "eigenvector_centrality",
     "enumerate_all_cliques",
@@ -170,7 +177,9 @@ __all__ = [
     "is_forest",
     "is_graphical",
     "is_isomorphic",
+    "is_k_edge_connected",
     "is_k_regular",
+    "is_locally_k_edge_connected",
     "is_matching",
     "is_maximal_matching",
     "is_minimal_d_separator",
@@ -196,6 +205,9 @@ __all__ = [
     "k_core",
     "k_corona",
     "k_crust",
+    "k_edge_augmentation",
+    "k_edge_components",
+    "k_edge_subgraphs",
     "k_shell",
     "k_truss",
     "katz_centrality",
@@ -204,6 +216,8 @@ __all__ = [
     "label_propagation_communities",
     "lexicographical_topological_sort",
     "local_bridges",
+    "local_edge_connectivity",
+    "local_node_connectivity",
     "local_reaching_centrality",
     "lowest_common_ancestor",
     "max_weight_clique",
@@ -218,9 +232,13 @@ __all__ = [
     "minimal_branching",
     "minimum_branching",
     "minimum_cycle_basis",
+    "minimum_edge_cut",
+    "minimum_node_cut",
     "minimum_spanning_arborescence",
     "minimum_spanning_edges",
     "minimum_spanning_tree",
+    "minimum_st_edge_cut",
+    "minimum_st_node_cut",
     "multi_source_dijkstra",
     "multi_source_dijkstra_path",
     "multi_source_dijkstra_path_length",
@@ -229,12 +247,15 @@ __all__ = [
     "node_boundary",
     "node_clique_number",
     "node_connected_component",
+    "node_connectivity",
+    "node_disjoint_paths",
     "node_redundancy",
     "number_attracting_components",
     "number_connected_components",
     "number_of_isolates",
     "number_strongly_connected_components",
     "number_weakly_connected_components",
+    "one_edge_augmentation",
     "onion_layers",
     "out_degree_centrality",
     "pagerank",
@@ -265,6 +286,7 @@ __all__ = [
     "single_target_shortest_path",
     "single_target_shortest_path_length",
     "square_clustering",
+    "stoer_wagner",
     "strongly_connected_components",
     "to_nested_tuple",
     "to_prufer_sequence",
@@ -281,6 +303,8 @@ __all__ = [
     "tree_isomorphism",
     "triadic_census",
     "triangles",
+    "unconstrained_bridge_augmentation",
+    "unconstrained_one_edge_augmentation",
     "v_structures",
     "vf2pp_is_isomorphic",
     "vf2pp_is_monomorphic",
@@ -6608,3 +6632,739 @@ def butterflies(G, nodes=None):
         raise NotImplementedError("nodes is not a node or a container of nodes") from None
     index = G._index
     return {v: counts[index[v]] for v in picked}
+
+
+# --- Batch 13: connectivity, disjoint paths and augmentation -----------------------
+#
+# NetworkX runs Edmonds-Karp on auxiliary digraphs (node-split for node
+# connectivity) and their residual networks; the Rust core replays those
+# networks in NetworkX's insertion order, so flows, disjoint paths and cuts
+# come out the same. Python rebuilds the returned sets with NetworkX's own
+# sequence of set operations, so their iteration order matches too.
+
+import itertools  # noqa: E402
+
+
+def _b13_positions(G, *nodes):
+    """Positions of nodes NetworkX looks up in a dict (None if missing).
+    Declines unhashable nodes: NetworkX's errors for those vary."""
+    index = G._index
+    out = []
+    for node in nodes:
+        try:
+            hash(node)
+        except TypeError:
+            raise NotImplementedError("rustnx needs hashable nodes here") from None
+        out.append(index.get(node))
+    return out
+
+
+def _b13_cutoff(cutoff):
+    if cutoff is None:
+        return None
+    if not isinstance(cutoff, (int, float)):
+        raise NotImplementedError("rustnx needs an int or float cutoff")
+    return float(cutoff)
+
+
+def _b13_source(func):
+    try:
+        return inspect.getsource(func.orig_func)
+    except (AttributeError, OSError, TypeError):
+        return ""
+
+
+@functools.cache
+def _b13_cut_style():
+    """How the installed NetworkX's ``minimum_cut`` builds the sink side:
+    ``(requeues, incremental)``, or None if unrecognized. 3.4 to 3.6 remove
+    the saturated arcs and add them back, which moves them to the end of a
+    shared residual network's rows, and build the set from a dict; 3.7
+    adds the nodes to a set one at a time."""
+    from networkx.algorithms.flow import maxflow
+
+    source = _b13_source(maxflow.minimum_cut)
+    requeues = "R.remove_edges_from(cutset)" in source and "R.add_edges_from(cutset)" in source
+    if "non_reachable = {_t}" in source and not requeues:
+        return False, True
+    if requeues and "shortest_path_length(R, target=_t)" in source:
+        return True, False
+    return None
+
+
+@functools.cache
+def _b13_node_cut_style():
+    """``minimum_st_node_cut``'s answer for adjacent nodes: ``(checks both
+    directions, returns {} rather than set())``. 3.7 checks only s -> t;
+    3.4 returns a dict."""
+    source = _b13_source(nx.algorithms.connectivity.minimum_st_node_cut)
+    return "G.has_edge(t, s)" in source, "return {}" in source
+
+
+@functools.cache
+def _b13_node_cut_search():
+    """``minimum_node_cut``'s search: "isolating" (3.7: start from the
+    smallest isolating cut, try both directions) or "degree" (before)."""
+    source = _b13_source(nx.algorithms.connectivity.minimum_node_cut)
+    if "isolating_cut" in source and "ordered_pairs" in source:
+        return "isolating"
+    if "min_cut = set(G[v])" in source:
+        return "degree"
+    return None
+
+
+@functools.cache
+def _b13_isolating_connectivity():
+    """Whether ``node_connectivity`` starts from the smallest isolating cut
+    (3.7) rather than the smallest degree (before)."""
+    source = _b13_source(nx.algorithms.connectivity.node_connectivity)
+    if "def degree(v)" in source and "ordered_pairs" in source:
+        return True
+    if "min(G.degree(), key=itemgetter(1))" in source:
+        return False
+    return None
+
+
+@functools.lru_cache(maxsize=4)
+def _b13_split_names(n):
+    """Node names of the node-split auxiliary digraph (``iA``, ``iB``), and
+    each name's position."""
+    names = [f"{i}{side}" for i in range(n) for side in "AB"]
+    return names, {name: i for i, name in enumerate(names)}
+
+
+def _b13_cutset(names, sink, us, offsets, vs):
+    """``minimum_st_edge_cut``'s set: ``minimum_cut``'s partition, then the
+    edges from each reachable node (in set order) to the sink side."""
+    style = _b13_cut_style()
+    if style is None:
+        raise NotImplementedError("unrecognized NetworkX minimum_cut")
+    sink_nodes = [names[i] for i in sink]
+    if style[1]:
+        non_reachable = set(sink_nodes)  # {_t}, then one add per node
+    else:
+        non_reachable = set(dict.fromkeys(sink_nodes))
+    reachable = set(names) - non_reachable
+    targets = {
+        names[u]: [names[v] for v in vs[offsets[k] : offsets[k + 1]]]
+        for k, u in enumerate(us)
+    }
+    cutset = set()
+    for u in reachable:
+        out = targets.get(u)
+        if out:
+            cutset.update([(u, v) for v in out])
+    return cutset
+
+
+def _b13_node_cut(G, cut, s, t):
+    """``minimum_st_node_cut``'s result from a node-split cut."""
+    names, position = _b13_split_names(len(G))
+    edge_cut = _b13_cutset(names, *cut)
+    nodes = G._nodes
+    node_cut = {nodes[position[node] // 2] for edge in edge_cut for node in edge}
+    return node_cut - {s, t}
+
+
+def _b13_connected(G):
+    if G.is_directed():
+        return is_weakly_connected(G)
+    return is_connected(G)
+
+
+def local_node_connectivity(G, s, t, cutoff=None):
+    si, ti = _b13_positions(G, s, t)
+    # f'{mapping[s]}B': a KeyError for a node not in G.
+    if si is None:
+        raise KeyError(s)
+    if ti is None:
+        raise KeyError(t)
+    return G._core.conn_local_flow(True, si, ti, _b13_cutoff(cutoff))
+
+
+def local_edge_connectivity(G, s, t, cutoff=None):
+    si, ti = _b13_positions(G, s, t)
+    cutoff = _b13_cutoff(cutoff)
+    if si is None:
+        raise nx.NetworkXError(f"node {str(s)} not in graph")
+    if ti is None:
+        raise nx.NetworkXError(f"node {str(t)} not in graph")
+    if si == ti:
+        raise nx.NetworkXError("source and sink are the same node")
+    return G._core.conn_local_flow(False, si, ti, cutoff)
+
+
+def _b13_both_or_neither(s, t):
+    if (s is not None and t is None) or (s is None and t is not None):
+        raise nx.NetworkXError("Both source and target must be specified.")
+
+
+def _b13_given_pair(G, s, t):
+    si, ti = _b13_positions(G, s, t)
+    if si is None:
+        raise nx.NetworkXError(f"node {s} not in graph")
+    if ti is None:
+        raise nx.NetworkXError(f"node {t} not in graph")
+    return si, ti
+
+
+def node_connectivity(G, s=None, t=None):
+    _b13_both_or_neither(s, t)
+    if s is not None and t is not None:
+        si, ti = _b13_given_pair(G, s, t)
+        return G._core.conn_local_flow(True, si, ti)
+    isolating = _b13_isolating_connectivity()
+    if isolating is None:
+        raise NotImplementedError("unrecognized NetworkX node_connectivity")
+    if not _b13_connected(G):
+        return 0
+    return G._core.conn_node_connectivity(isolating)
+
+
+def _b13_edge_connectivity(G, cutoff):
+    """``edge_connectivity(G, cutoff=cutoff)`` without source and target."""
+    if not _b13_connected(G):
+        return 0
+    L = min(G._core.degrees())
+    if cutoff is not None:
+        L = min(cutoff, L)
+    if not G.is_directed() and G._core.has_self_loops():
+        # Self-loops inflate the degrees NetworkX's dominating-set shortcut
+        # relies on, so its answer can depend on the set it picks.
+        raise NotImplementedError("rustnx declines self-loops here")
+    if G.is_directed() and len(G) == 1:
+        # The cycle through the nodes asks for a flow from the node to itself.
+        raise nx.NetworkXError("source and sink are the same node")
+    if not isinstance(L, (int, float)):
+        raise NotImplementedError("rustnx needs an int or float cutoff")
+    # Each local run either finishes below the current minimum (its exact
+    # value) or reaches it, so the result is the minimum found if that is
+    # smaller than L, and L itself (as given) otherwise.
+    found = G._core.conn_edge_connectivity(float(L))
+    if found is not None and found < L:
+        return found
+    return L
+
+
+def edge_connectivity(G, s=None, t=None, cutoff=None):
+    _b13_both_or_neither(s, t)
+    if s is not None and t is not None:
+        _b13_given_pair(G, s, t)
+        return local_edge_connectivity(G, s, t, cutoff=cutoff)
+    return _b13_edge_connectivity(G, cutoff)
+
+
+def _b13_pairs(items, directed):
+    return list(itertools.permutations(items, 2) if directed else itertools.combinations(items, 2))
+
+
+def average_node_connectivity(G):
+    pairs = _b13_pairs(range(len(G)), G.is_directed())
+    if not pairs:
+        return 0
+    values = G._core.conn_pair_flows(True, [u for u, _ in pairs], [v for _, v in pairs])
+    return sum(values) / len(pairs)
+
+
+def all_pairs_node_connectivity(G, nbunch=None):
+    if nbunch is None:
+        nbunch = G._nodes
+    else:
+        nbunch = set(nbunch)
+    directed = G.is_directed()
+    all_pairs = {n: {} for n in nbunch}
+    order = list(nbunch)
+    index = G._index
+    positions = [index.get(n) for n in order]
+    if len(order) >= 2 and None in positions:
+        # local_node_connectivity's f'{mapping[s]}B' fails at the first pair
+        # with a missing node: (order[0], order[m]) for the first missing m.
+        m = positions.index(None)
+        raise KeyError(order[m])
+    pairs = _b13_pairs(range(len(order)), directed)
+    values = G._core.conn_pair_flows(
+        True, [positions[i] for i, _ in pairs], [positions[j] for _, j in pairs]
+    )
+    for (i, j), K in zip(pairs, values):
+        u, v = order[i], order[j]
+        all_pairs[u][v] = K
+        if not directed:
+            all_pairs[v][u] = K
+    return all_pairs
+
+
+def minimum_st_edge_cut(G, s, t):
+    si, ti = _b13_positions(G, s, t)
+    if _b13_cut_style() is None:
+        raise NotImplementedError("unrecognized NetworkX minimum_cut")
+    if si is None:
+        raise nx.NetworkXError(f"node {str(s)} not in graph")
+    if ti is None:
+        raise nx.NetworkXError(f"node {str(t)} not in graph")
+    if si == ti:
+        raise nx.NetworkXError("source and sink are the same node")
+    _, *cut = G._core.conn_st_cut(False, si, ti, True)
+    return _b13_cutset(G._nodes, *cut)
+
+
+def minimum_st_node_cut(G, s, t):
+    if _b13_cut_style() is None:
+        raise NotImplementedError("unrecognized NetworkX minimum_cut")
+    both, empty_dict = _b13_node_cut_style()
+    si, ti = _b13_positions(G, s, t)
+    core = G._core
+    if si is not None and ti is not None:
+        if core.has_edge(si, ti) or (both and core.has_edge(ti, si)):
+            return {} if empty_dict else set()
+    if si is None:
+        raise KeyError(s)
+    if ti is None:
+        raise KeyError(t)
+    _, *cut = core.conn_st_cut(True, si, ti, False)
+    return _b13_node_cut(G, cut, s, t)
+
+
+def _b13_neighbors(G, v):
+    """``neighbors(v)`` of the cut searches: predecessors (in ``G.pred``
+    order) then successors for directed graphs, as positions."""
+    core = G._core
+    if G.is_directed():
+        return core.conn_exact_predecessors(v) + core.neighbors(v)
+    return core.neighbors(v)
+
+
+def minimum_node_cut(G, s=None, t=None):
+    _b13_both_or_neither(s, t)
+    if s is not None and t is not None:
+        _b13_given_pair(G, s, t)
+        return minimum_st_node_cut(G, s, t)
+    style = _b13_cut_style()
+    search = _b13_node_cut_search()
+    if style is None or search is None:
+        raise NotImplementedError("unrecognized NetworkX minimum_node_cut")
+    directed = G.is_directed()
+    if not _b13_connected(G):
+        raise nx.NetworkXError("Input graph is not connected")
+    if directed:
+        G._ensure_exact_pred()
+    core = G._core
+    nodes = G._nodes
+    index = G._index
+    both, empty_dict = _b13_node_cut_style()
+    ss, ts, skips = [], [], []
+
+    def add(x, y, skip):
+        ss.append(x)
+        ts.append(y)
+        skips.append(skip)
+
+    if search == "degree":
+        degrees = core.degrees()
+        v = min(range(len(nodes)), key=degrees.__getitem__)
+        vnode = nodes[v]
+        min_cut = set(nodes[w] for w in core.neighbors(v))
+        nbrs = _b13_neighbors(G, v)
+        for w in set(nodes) - set(nodes[x] for x in nbrs) - {vnode}:
+            add(v, index[w], False)
+        for x, y in _b13_pairs(nbrs, directed):
+            add(x, y, True)
+    else:
+        v, _ = core.conn_isolating_cut()
+        vnode = nodes[v]
+        succ = [nodes[w] for w in core.neighbors(v)]
+        if directed:
+            pred = [nodes[w] for w in core.conn_exact_predecessors(v)]
+            # G.pred[v].keys() - {v}: a KeysView difference, built one
+            # element at a time.
+            min_cut = min(
+                set(w for w in pred if w not in {vnode}),
+                set(w for w in succ if w not in {vnode}),
+                key=len,
+            )
+        else:
+            min_cut = set(w for w in succ if w not in {vnode})
+        v_nbrs = set(nodes[x] for x in _b13_neighbors(G, v)) - {vnode}
+        for w in set(nodes) - v_nbrs - {vnode}:
+            add(v, index[w], False)
+            if directed:
+                add(index[w], v, False)
+        for x, y in _b13_pairs([index[w] for w in v_nbrs], directed):
+            add(x, y, True)
+    chosen = core.conn_search_cuts(True, ss, ts, skips, len(min_cut), both, style[0])
+    if chosen is None:
+        return min_cut
+    i, cut = chosen
+    if cut is None:
+        return {} if empty_dict else set()
+    return _b13_node_cut(G, cut, nodes[ss[i]], nodes[ts[i]])
+
+
+def _b13_dominating_set(G, start):
+    """``nx.dominating_set(G, start_with=nodes[start])``, set operations and
+    all (the order it pops nodes in follows set order)."""
+    nodes = G._nodes
+    core = G._core
+    index = G._index
+    all_nodes = set(nodes)
+    dominating_set = {nodes[start]}
+    dominated_nodes = set(nodes[w] for w in core.neighbors(start))
+    remaining_nodes = all_nodes - dominated_nodes - dominating_set
+    while remaining_nodes:
+        v = remaining_nodes.pop()
+        undominated_nbrs = set(nodes[w] for w in core.neighbors(index[v])) - dominating_set
+        dominating_set.add(v)
+        dominated_nodes |= undominated_nbrs
+        remaining_nodes -= undominated_nbrs
+    return dominating_set
+
+
+def minimum_edge_cut(G, s=None, t=None):
+    _b13_both_or_neither(s, t)
+    style = _b13_cut_style()
+    if style is None:
+        raise NotImplementedError("unrecognized NetworkX minimum_cut")
+    core = G._core
+    nodes = G._nodes
+    if s is not None and t is not None:
+        si, ti = _b13_given_pair(G, s, t)
+        if si == ti:
+            raise nx.NetworkXError("source and sink are the same node")
+        _, *cut = core.conn_st_cut(False, si, ti, False)
+        return _b13_cutset(nodes, *cut)
+    if not _b13_connected(G):
+        raise nx.NetworkXError("Input graph is not connected")
+    degrees = core.degrees()
+    node = min(range(len(nodes)), key=degrees.__getitem__)
+    min_cut = set((nodes[node], nodes[w]) for w in core.neighbors(node))
+    n = len(nodes)
+    if G.is_directed():
+        if n == 1:
+            raise nx.NetworkXError("source and sink are the same node")
+        ss = list(range(n))
+        ts = [(i + 1) % n for i in range(n)]
+    else:
+        index = G._index
+        for start in range(n):
+            if sum(1 for w in core.neighbors(start) if w != start) < n - 1:
+                break
+        else:
+            return min_cut
+        D = _b13_dominating_set(G, start)
+        v = index[D.pop()]
+        ts = [index[w] for w in D]
+        ss = [v] * len(ts)
+    chosen = core.conn_search_cuts(False, ss, ts, [False] * len(ss), len(min_cut), False, style[0])
+    if chosen is None:
+        return min_cut
+    return _b13_cutset(nodes, *chosen[1])
+
+
+def _b13_disjoint_paths(G, s, t, cutoff, node_split, fallback):
+    _b13_positions(G, s, t)
+    cutoff = _b13_cutoff(cutoff)
+
+    def compute():
+        si, ti = _b13_given_pair(G, s, t)
+        status, paths = G._core.conn_disjoint_paths(node_split, si, ti, cutoff)
+        if status == 1:
+            raise nx.NetworkXNoPath
+        if status == 2:
+            raise nx.NetworkXError("source and sink are the same node")
+        nodes = G._nodes
+        for path in paths:
+            out = [nodes[i] for i in path]
+            if not node_split:
+                # edge_disjoint_paths starts each path with s as given, and
+                # ends it with t as given unless t was s's direct successor.
+                out[0] = s
+                if len(out) > 2:
+                    out[-1] = t
+            yield out
+
+    return _computed_on_first_next(G, compute, fallback)
+
+
+def edge_disjoint_paths(G, s, t, cutoff=None):
+    return _b13_disjoint_paths(
+        G, s, t, cutoff, False,
+        lambda H: nx.algorithms.connectivity.edge_disjoint_paths(
+            H, s, t, cutoff=cutoff, backend="networkx"
+        ),
+    )
+
+
+def node_disjoint_paths(G, s, t, cutoff=None):
+    return _b13_disjoint_paths(
+        G, s, t, cutoff, True,
+        lambda H: nx.algorithms.connectivity.node_disjoint_paths(
+            H, s, t, cutoff=cutoff, backend="networkx"
+        ),
+    )
+
+
+def stoer_wagner(G, weight="weight"):
+    _undirected_only(G)
+    n = len(G)
+    if n < 2:
+        raise nx.NetworkXError("graph has less than two nodes.")
+    if not is_connected(G):
+        raise nx.NetworkXError("graph is not connected.")
+    weight, all_int, has_hidden = _check_weight(G, weight)
+    if weight is not None and (has_hidden or G._core.weight_mixed(weight)):
+        raise NotImplementedError("rustnx needs all-int or all-float weights here")
+    status, cut_value, order, reachable = G._core.conn_stoer_wagner(weight)
+    if status == 1:
+        raise nx.NetworkXError("graph has a negative-weighted edge.")
+    if status == 2:
+        raise NotImplementedError("infinite or very large weights")
+    nodes = G._nodes
+    if all_int:
+        cut_value = int(cut_value)
+    # nodes = set(G) of the rebuilt graph; reachable = set(dict of a BFS).
+    node_set = set(nodes[i] for i in order)
+    reachable = set(dict.fromkeys(nodes[i] for i in reachable))
+    return cut_value, (list(reachable), list(node_set - reachable))
+
+
+def bridge_components(G):
+    _undirected_only(G)
+
+    def compute():
+        nodes = G._nodes
+        for comp in G._core.conn_bridge_components():
+            yield {nodes[i] for i in comp}
+
+    return _computed_on_first_next(
+        G, compute, lambda H: nx.algorithms.connectivity.bridge_components(H, backend="networkx")
+    )
+
+
+def k_edge_components(G, k):
+    if k < 1:
+        raise ValueError("k cannot be less than 1")
+    if G.is_directed():
+        if k == 1:
+            return strongly_connected_components(G)
+    elif k == 1:
+        return connected_components(G)
+    elif k == 2:
+        return bridge_components(G)
+    # The auxiliary graph picks its cuts with set order and preflow-push.
+    raise NotImplementedError("rustnx only does k = 1 and 2 (undirected) here")
+
+
+def k_edge_subgraphs(G, k):
+    if k < 1:
+        raise ValueError("k cannot be less than 1")
+    if k <= (1 if G.is_directed() else 2):
+        return k_edge_components(G, k)
+    # general_k_edge_subgraphs pops graphs from a set (address order).
+    raise NotImplementedError("rustnx only does k = 1 and 2 (undirected) here")
+
+
+def is_k_edge_connected(G, k):
+    _undirected_only(G)
+    if k < 1:
+        raise ValueError(f"k must be positive, not {k}")
+    if len(G) < k + 1:
+        return False
+    elif any(d < k for d in G._core.degrees()):
+        return False
+    elif k == 1:
+        return is_connected(G)
+    elif k == 2:
+        return is_connected(G) and not has_bridges(G)
+    else:
+        return _b13_edge_connectivity(G, k) >= k
+
+
+def is_locally_k_edge_connected(G, s, t, k):
+    _undirected_only(G)
+    if k < 1:
+        raise ValueError(f"k must be positive, not {k}")
+    si, ti = _b13_positions(G, s, t)
+    if si is None or ti is None:
+        # G.degree(missing) is a degree view, not a number.
+        raise NotImplementedError("rustnx needs nodes of the graph here")
+    core = G._core
+    if core.degree_of(si) < k or core.degree_of(ti) < k:
+        return False
+    elif k == 1:
+        return has_path(G, s, t)
+    else:
+        return local_edge_connectivity(G, s, t, cutoff=k) >= k
+
+
+# Node rows per Rust call in complement_edges.
+_B13_COMPLEMENT_BATCH = 1 << 20
+
+
+def complement_edges(G):
+    guard = _MutationGuard(G)
+
+    def generate():
+        try:
+            if guard.changed():
+                yield from nx.algorithms.connectivity.complement_edges(
+                    guard.graph, backend="networkx"
+                )
+                return
+            nodes = G._nodes
+            get = nodes.__getitem__
+            n = len(nodes)
+            step = max(1, _B13_COMPLEMENT_BATCH // max(n, 1))
+            for start in range(0, n, step):
+                flat = G._core.conn_complement_edges(start, start + step)
+                for pair in zip(map(get, flat[0::2]), map(get, flat[1::2])):
+                    if guard.changed():
+                        # NetworkX reads the live adjacency between yields.
+                        raise RuntimeError("Graph changed during iteration")
+                    yield pair
+        finally:
+            guard.release()
+
+    return generate()
+
+
+def unconstrained_one_edge_augmentation(G):
+    def compute():
+        if G.is_directed():
+            raise nx.NetworkXNotImplemented("not implemented for directed type")
+        nodes = G._nodes
+        # collapse() maps each component's nodes in the order of set(cc).
+        firsts = [
+            next(iter(set({nodes[i] for i in comp})))
+            for comp in G._core.connected_components()
+        ]
+        yield from zip(firsts, firsts[1:])
+
+    return _computed_on_first_next(
+        G,
+        compute,
+        lambda H: nx.algorithms.connectivity.edge_augmentation.unconstrained_one_edge_augmentation(
+            H, backend="networkx"
+        ),
+    )
+
+
+def one_edge_augmentation(G, avail=None, weight=None, partial=False):
+    _undirected_only(G)
+    if avail is not None:
+        raise NotImplementedError("rustnx does not support avail here")
+    return unconstrained_one_edge_augmentation(G)
+
+
+def unconstrained_bridge_augmentation(G):
+    def compute():
+        if G.is_directed():
+            raise nx.NetworkXNotImplemented("not implemented for directed type")
+        nodes = G._nodes
+        core = G._core
+        index = G._index
+        comps = core.conn_bridge_components()
+        comp_of = [0] * len(nodes)
+        for c, comp in enumerate(comps):
+            for i in comp:
+                comp_of[i] = c
+        # collapse(G, bridge_ccs): one meta node per component (one even
+        # without nodes), and the bridges between them in G.edges order.
+        C = nx.Graph()
+        C.add_nodes_from(range(max(len(comps), 1)))
+        us, vs = core.bridges()
+        C.add_edges_from((comp_of[u], comp_of[v]) for u, v in zip(us, vs))
+        # From networkx.algorithms.connectivity.edge_augmentation.
+        vset1 = [
+            tuple(cc) * 2 if len(cc) == 1 else sorted(cc, key=C.degree)[0:2]
+            for cc in nx.connected_components(C, backend="networkx")
+        ]
+        if len(vset1) > 1:
+            nodes1 = [vs[0] for vs in vset1]
+            nodes2 = [vs[1] for vs in vset1]
+            A1 = list(zip(nodes1[1:], nodes2))
+        else:
+            A1 = []
+        T = C.copy()
+        T.add_edges_from(A1)
+        leafs = [n for n, d in T.degree() if d == 1]
+        if len(leafs) == 1:
+            A2 = []
+        if len(leafs) == 2:
+            A2 = [tuple(leafs)]
+        else:
+            try:
+                root = next(n for n, d in T.degree() if d > 1)
+            except StopIteration:
+                return
+            v2 = [
+                n for n in nx.dfs_preorder_nodes(T, root, backend="networkx")
+                if T.degree(n) == 1
+            ]
+            half = math.ceil(len(v2) / 2)
+            A2 = list(zip(v2[:half], v2[-half:]))
+        aug_tree_edges = A1 + A2
+        degrees = core.degrees()
+        # inverse[mu]: list(set(bridge_ccs[mu])), sorted by (degree, node).
+        inverse = {
+            mu: sorted(set({nodes[i] for i in comp}), key=lambda u: (degrees[index[u]], u))
+            for mu, comp in enumerate(comps)
+        }
+        added = set()  # edges G2 gained
+        for mu, mv in aug_tree_edges:
+            for u, v in itertools.product(inverse[mu], inverse[mv]):
+                if not ((u, v) in added or core.has_edge(index[u], index[v])):
+                    added.add((u, v))
+                    added.add((v, u))
+                    yield (u, v)
+                    break
+
+    return _computed_on_first_next(
+        G,
+        compute,
+        lambda H: nx.algorithms.connectivity.edge_augmentation.unconstrained_bridge_augmentation(
+            H, backend="networkx"
+        ),
+    )
+
+
+def bridge_augmentation(G, avail=None, weight=None):
+    _undirected_only(G)
+    if len(G) < 3:
+        raise nx.NetworkXUnfeasible("impossible to bridge connect less than 3 nodes")
+    if avail is not None:
+        raise NotImplementedError("rustnx does not support avail here")
+    return unconstrained_bridge_augmentation(G)
+
+
+def k_edge_augmentation(G, k, avail=None, weight=None, partial=False):
+    _undirected_only(G)
+    if avail is not None:
+        raise NotImplementedError("rustnx does not support avail here")
+    if type(k) is not int or k >= 3:
+        # k >= 3 is a greedy search with a seeded shuffle.
+        raise NotImplementedError("rustnx only does k = 1 and 2 here")
+
+    def compute():
+        try:
+            if k <= 0:
+                raise ValueError(f"k must be a positive integer, not {k}")
+            elif len(G) < k + 1:
+                msg = f"impossible to {k} connect in graph with less than {k + 1} nodes"
+                raise nx.NetworkXUnfeasible(msg)
+            elif k == 1:
+                aug_edges = one_edge_augmentation(G)
+            else:
+                aug_edges = bridge_augmentation(G)
+            yield from list(aug_edges)
+        except nx.NetworkXUnfeasible:
+            if partial:
+                yield from complement_edges(G)
+            else:
+                raise
+
+    return _computed_on_first_next(
+        G,
+        compute,
+        lambda H: nx.algorithms.connectivity.k_edge_augmentation(
+            H, k, avail=avail, weight=weight, partial=partial, backend="networkx"
+        ),
+    )

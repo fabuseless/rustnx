@@ -520,37 +520,85 @@ pub fn pair_flows(h: &Aux, pairs: &[(u32, u32)], cutoff: f64) -> Result<Vec<i64>
         .collect()
 }
 
-/// `node_connectivity(G)`: the minimum degree, lowered by the local
-/// connectivity of each pair NetworkX tries. The minimum doesn't depend on
-/// the order NetworkX tries them in (each run's cutoff only caps values
-/// that are already no smaller than the minimum so far).
+/// The first node with the smallest isolating cut, as NetworkX 3.7's
+/// `node_connectivity` and `minimum_node_cut` pick it: `(node, cut size,
+/// whether the cut is its predecessors)`. The cut is the node's distinct
+/// neighbors other than itself (directed: the smaller of predecessors and
+/// successors, predecessors on ties).
+pub fn isolating_cut(adj: &Csr, pred: &Csr, n: usize, directed: bool) -> (usize, usize, bool) {
+    let mut mark = vec![NONE; n];
+    let mut distinct_without = |row: &[u32], v: usize, stamp: u32| {
+        let mut count = 0;
+        for &w in row {
+            if w as usize != v && mark[w as usize] != stamp {
+                mark[w as usize] = stamp;
+                count += 1;
+            }
+        }
+        count
+    };
+    let mut best = (0, usize::MAX, false);
+    for v in 0..n {
+        let succ = distinct_without(adj.neighbors(v), v, 2 * v as u32);
+        let (len, use_pred) = if directed {
+            let p = distinct_without(pred.neighbors(v), v, 2 * v as u32 + 1);
+            if p <= succ {
+                (p, true)
+            } else {
+                (succ, false)
+            }
+        } else {
+            (succ, false)
+        };
+        if len < best.1 {
+            best = (v, len, use_pred);
+        }
+    }
+    best
+}
+
+/// `node_connectivity(G)`: the starting bound `k` at node `v`, lowered by
+/// the local connectivity of each pair NetworkX tries. The minimum doesn't
+/// depend on the order NetworkX tries them in (each run's cutoff only caps
+/// values that are already no smaller than the minimum so far).
+/// `isolating`: NetworkX 3.7's version, which leaves `v` out of its
+/// neighbors and tries both directions from `v` in directed graphs.
+#[allow(clippy::too_many_arguments)]
 pub fn node_connectivity(
     adj: &Csr,
     pred: &Csr,
     n: usize,
     directed: bool,
-    degree: &[usize],
+    v: usize,
+    k: i64,
+    isolating: bool,
 ) -> Result<i64, Unbounded> {
-    let mut v = 0;
-    for u in 0..n {
-        if degree[u] < degree[v] {
-            v = u;
-        }
-    }
-    let k = degree[v] as i64;
     let mut nbrs: Vec<u32> = Vec::new();
     if directed {
         nbrs.extend_from_slice(pred.neighbors(v));
     }
     nbrs.extend_from_slice(adj.neighbors(v));
     let mut is_nbr = vec![false; n];
+    if isolating {
+        // set(neighbors(v)) - {v}
+        nbrs.retain(|&w| {
+            let fresh = w as usize != v && !is_nbr[w as usize];
+            is_nbr[w as usize] = true;
+            fresh
+        });
+    }
     for &w in &nbrs {
         is_nbr[w as usize] = true;
     }
-    let mut pairs: Vec<(u32, u32)> = (0..n)
-        .filter(|&w| w != v && !is_nbr[w])
-        .map(|w| (2 * v as u32 + 1, 2 * w as u32))
-        .collect();
+    let mut pairs: Vec<(u32, u32)> = Vec::new();
+    for w in 0..n as u32 {
+        if w as usize != v && !is_nbr[w as usize] {
+            pairs.push((v as u32, w));
+            if isolating && directed {
+                pairs.push((w, v as u32));
+            }
+        }
+    }
     let has_edge = |x: u32, y: u32| adj.neighbors(x as usize).contains(&y);
     for i in 0..nbrs.len() {
         let others: Box<dyn Iterator<Item = usize>> = if directed {
@@ -561,13 +609,14 @@ pub fn node_connectivity(
         for j in others {
             let (x, y) = (nbrs[i], nbrs[j]);
             if !has_edge(x, y) {
-                pairs.push((2 * x + 1, 2 * y));
+                pairs.push((x, y));
             }
         }
     }
     if pairs.is_empty() {
         return Ok(k);
     }
+    let pairs: Vec<(u32, u32)> = pairs.into_iter().map(|(x, y)| (2 * x + 1, 2 * y)).collect();
     let h = node_aux(adj, n, directed);
     // With cutoff k a run returns its value or something >= k; the minimum
     // is the same.
