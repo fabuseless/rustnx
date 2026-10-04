@@ -6816,7 +6816,9 @@ def build_residual_network(G, capacity):
 
 
 def build_flow_dict(G, R):
-    R_adj = _networkx_graph(R)._adj
+    # R is read as it is now, as NetworkX reads it (residual networks have
+    # caching disabled, so R was converted just for this call anyway).
+    R_adj = (R.to_networkx() if R._core.is_native() else R._source)._adj
     try:
         rows = [R_adj[u] for u in G._nodes]
     except (KeyError, TypeError):

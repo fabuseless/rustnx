@@ -3469,6 +3469,7 @@ def test_batch12_flow_errors(restore_config):
         getattr(nx_flow, name)(D, s, t, backend="rustnx")
         nx.minimum_cut(D, s, t, flow_func=getattr(nx_flow, name), backend="rustnx")
     nx.maximum_flow(D, s, t, flow_func=nx_flow.dinitz, cutoff=2, backend="rustnx")
+    nx_flow.build_flow_dict(D, nx_flow.dinitz(D, s, t), backend="rustnx")
     U = _b12_network(3, False, "float")
     for _, _, d in U.edges(data=True):
         d.setdefault("capacity", 1)
@@ -3672,3 +3673,49 @@ def test_batch12_set_replica():
     _, got = _core._replay_sets(hashes, 2, ops)
     assert got == [[position[k] for k in big], [position[k] for k in small]]
 
+
+
+def test_batch12_runs_in_rust(restore_config):
+    # Each function on ordinary inputs, with no fallback to NetworkX.
+    nx.config.fallback_to_nx = False
+    D = nx.DiGraph()
+    rng = random.Random(1)
+    for i in range(40):
+        for _ in range(3):
+            j = rng.randrange(40)
+            if i != j:
+                D.add_edge(i, j, capacity=rng.randint(1, 9), weight=rng.choice([1, 2, 0.5]))
+    U = D.to_undirected()
+    s, t = 0, 1
+    value = nx.maximum_flow_value(D, s, t, backend="networkx")
+    C = D.copy()
+    C.nodes[s]["demand"], C.nodes[t]["demand"] = -value, value
+    S, T = list(range(0, 40, 2)), list(range(1, 40, 2))
+    calls = [lambda b, f=getattr(nx_flow, name): f(D, s, t, backend=b) for name in _B12_FLOW_FUNCS]
+    calls += [
+        lambda b: nx_flow.build_residual_network(D, "capacity", backend=b),
+        lambda b: nx_flow.build_flow_dict(D, nx_flow.dinitz(D, s, t), backend=b),
+        lambda b: nx.maximum_flow(D, s, t, backend=b),
+        lambda b: nx.maximum_flow(D, s, t, flow_func=nx_flow.shortest_augmenting_path, two_phase=True, backend=b),
+        lambda b: nx.maximum_flow_value(D, s, t, backend=b),
+        lambda b: nx.minimum_cut(D, s, t, backend=b),
+        lambda b: nx.minimum_cut_value(D, s, t, flow_func=nx_flow.edmonds_karp, cutoff=3, backend=b),
+        lambda b: nx.gomory_hu_tree(U, backend=b),
+        lambda b: nx.network_simplex(C, backend=b),
+        lambda b: nx.min_cost_flow(C, backend=b),
+        lambda b: nx.min_cost_flow_cost(C, backend=b),
+        lambda b: nx.max_flow_min_cost(D, s, t, backend=b),
+        lambda b: nx.max_flow_min_cost(U, s, t, backend=b),
+        lambda b: nx.cost_of_flow(C, nx.min_cost_flow(C, backend="networkx"), backend=b),
+        lambda b: nx.cut_size(U, S, weight="weight", backend=b),
+        lambda b: nx.cut_size(D, S, T, weight="weight", backend=b),
+        lambda b: nx.volume(U, S, weight="weight", backend=b),
+        lambda b: nx.normalized_cut_size(U, S, weight="weight", backend=b),
+        lambda b: nx.conductance(U, S, weight="weight", backend=b),
+        lambda b: nx.edge_expansion(U, S, backend=b),
+        lambda b: nx.mixing_expansion(U, S, backend=b),
+        lambda b: nx.node_expansion(D, S, backend=b),
+        lambda b: nx.boundary_expansion(D, S, backend=b),
+    ]
+    for call in calls:
+        assert _b12_norm(call("rustnx")) == _b12_norm(call("networkx"))
