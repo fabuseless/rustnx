@@ -97,6 +97,7 @@ pub fn build_rx(
                 all_int: false,
                 has_hidden: false,
                 any_int: false,
+                plain: false,
             },
         );
     }

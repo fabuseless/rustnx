@@ -434,6 +434,19 @@ def algorithm_calls(H, directed):
         calls["edge_betweenness_partition"] = lambda G, b: [
             list(c) for c in nx.community.edge_betweenness_partition(G, 2, backend=b)
         ] if len(nodes) >= 2 else None
+    # Batch 19: matrices and conversion.
+    calls["to_dict_of_lists"] = lambda G, b: nx.to_dict_of_lists(G, backend=b)
+    calls["is_negatively_weighted"] = lambda G, b: nx.is_negatively_weighted(G, backend=b)
+    calls["to_numpy_array"] = lambda G, b: nx.to_numpy_array(G, backend=b).tolist()
+    calls["adjacency_csr"] = lambda G, b: (lambda A: (A.indptr.tolist(), A.indices.tolist(), A.data.tolist()))(
+        nx.to_scipy_sparse_array(G, backend=b)
+    ) if nodes else None
+    calls["incidence_csc"] = lambda G, b: (lambda A: (A.indptr.tolist(), A.indices.tolist(), A.data.tolist()))(
+        nx.incidence_matrix(G, weight="weight", oriented=True, backend=b)
+    )
+    calls["relabel_nodes"] = lambda G, b: (lambda R: (list(R.nodes), list(R.edges(data=True))))(
+        nx.relabel_nodes(G, {v: ("r", v) for v in nodes[::2]}, backend=b)
+    )
     return calls
 
 

@@ -237,6 +237,8 @@ pub fn from_bytes(data: &[u8]) -> PyResult<CoreGraph> {
                 all_int,
                 has_hidden,
                 any_int,
+                // Not stored: assume NumPy might infer another dtype.
+                plain: false,
             },
         );
     }

@@ -226,6 +226,14 @@ SECTIONS = [
         "complement", "power", "difference", "symmetric_difference", "is_kl_connected",
         "kl_connected_subgraph",
     ]),
+    ("Matrices and conversion", [
+        "to_scipy_sparse_array", "adjacency_matrix", "laplacian_matrix", "incidence_matrix",
+        "to_numpy_array", "biadjacency_matrix", "to_dict_of_lists", "number_of_selfloops",
+        "is_weighted", "is_negatively_weighted", "get_node_attributes",
+        "get_edge_attributes", "relabel_nodes", "convert_node_labels_to_integers",
+        "from_dict_of_lists", "from_dict_of_dicts", "from_edgelist", "from_numpy_array",
+        "from_scipy_sparse_array", "from_biadjacency_matrix",
+    ]),
 ]
 
 FLOWNOTE = "Capacities (and the flow values) can be ints or floats, mixed or missing (infinite): every value, its type and the order of every float addition are NetworkX's."
@@ -658,6 +666,35 @@ SUBMODULE.update({
         "unconstrained_bridge_augmentation",
     ]
 })
+
+
+# Batch 19: matrices and conversion.
+SPARSE = "Rust builds the COO coordinates in NetworkX's edge order; SciPy assembles the array exactly as for NetworkX (same dtype, format and index arrays)."
+NODELIST = " A `nodelist` that isn't a list, or names missing or repeated nodes, falls back."
+BUILDER = " Runs with `backend=\"rustnx\"` or when rustnx is listed in `nx.config.backend_priority.generators`. `create_using` other than `None`, `nx.Graph` or `nx.DiGraph` falls back."
+NOTES.update({
+    "to_scipy_sparse_array": SPARSE + NODELIST + " Weights other than plain ints and floats, `dtype`s that NumPy would convert differently from a list (narrower ints), and a `nodelist` under half the nodes with a format other than CSR or CSC (NetworkX's subgraph then iterates in set order) fall back.",
+    "adjacency_matrix": "As `to_scipy_sparse_array`.",
+    "laplacian_matrix": "The adjacency matrix as `to_scipy_sparse_array`, then NetworkX's own SciPy arithmetic for the installed version (3.6 changed how the degree matrix is built).",
+    "incidence_matrix": "Builds the CSR arrays of NetworkX's LIL matrix in Rust (zero weights stay unstored). `edgelist`, `dtype` other than float64, and endpoints missing from `nodelist` fall back.",
+    "to_numpy_array": "Entries from Rust, assigned with NumPy as NetworkX does." + NODELIST + " Structured dtypes, `None` weights, and result dtypes other than float64 (or int64 with int weights) fall back.",
+    "biadjacency_matrix": SPARSE + " A `row_order` that isn't a list or tuple falls back.",
+    "to_dict_of_lists": "Neighbor objects come from the graph's own adjacency dicts. A `nodelist` that isn't a list, tuple, set or dict, or names missing nodes, falls back.",
+    "number_of_selfloops": "Dispatchable from NetworkX 3.5 on.",
+    "is_weighted": "Reads the original graph's edge data in Rust. Dispatchable from NetworkX 3.5 on; native graphs fall back.",
+    "is_negatively_weighted": "`None` weights and `weight=None` fall back.",
+    "get_node_attributes": "Reads the original graph's node data in Rust. Dispatchable from NetworkX 3.5 on.",
+    "get_edge_attributes": "Reads the original graph's edge data in Rust (values of any type). Dispatchable from NetworkX 3.5 on; native graphs fall back.",
+    "relabel_nodes": "Fills the new graph's dicts from Rust, row by row in the order NetworkX's `add_edges_from` does. `copy=False` (it changes the input), labels that collide, `None` or unhashable labels, mappings that are neither dicts nor callables, multigraphs and graph subclasses fall back.",
+    "convert_node_labels_to_integers": "Through `relabel_nodes`.",
+    "from_dict_of_lists": "Fills the new graph's dicts from Rust as `add_edges_from` does." + BUILDER,
+    "from_dict_of_dicts": "As `from_dict_of_lists`; `multigraph_input` and non-dict data fall back." + BUILDER,
+    "from_edgelist": "As `from_dict_of_lists`; one-shot iterators and edges other than 2-tuples and 3-tuples with a dict fall back." + BUILDER,
+    "from_numpy_array": "Edge positions and values from NumPy, the graph filled from Rust. Long double, string and structured dtypes fall back." + BUILDER,
+    "from_scipy_sparse_array": "Edges in NetworkX's order for each format; DOK arrays fall back." + BUILDER,
+    "from_biadjacency_matrix": "As `from_scipy_sparse_array`; `row_order` and `column_order` (NetworkX 3.7) fall back." + BUILDER,
+})
+SUBMODULE.update({"biadjacency_matrix": "nx.bipartite", "from_biadjacency_matrix": "nx.bipartite"})
 
 
 def location(name):
