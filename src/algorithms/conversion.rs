@@ -358,3 +358,206 @@ pub fn relabel_copy<'py>(
     }
     Ok(())
 }
+
+/// `to_dict_of_lists`: `{key: [neighbors of key's node kept by `keep`]}` for
+/// each `(key, position)`. Neighbors are the keys of the source graph's
+/// adjacency rows (`adj`, `G._adj`, which can hold objects equal to but
+/// distinct from the node keys, as `G.neighbors` yields them), or `nodes`
+/// for native graphs.
+pub fn dict_of_lists<'py>(
+    nodes: &Bound<'py, PyList>,
+    adj: Option<&Bound<'py, PyDict>>,
+    succ: &Csr,
+    keys: &[(Bound<'py, PyAny>, u32)],
+    keep: Option<&[bool]>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let py = nodes.py();
+    let out = PyDict::new(py);
+    let rows: Option<Vec<Bound<'py, PyDict>>> = match adj {
+        Some(adj) => {
+            check_order(nodes, adj)?;
+            Some(
+                adj.values()
+                    .iter()
+                    .map(|row| plain_dict(&row).cloned())
+                    .collect::<PyResult<_>>()?,
+            )
+        }
+        None => None,
+    };
+    for (key, u) in keys {
+        let u = *u as usize;
+        let row = succ.neighbors(u);
+        let list = PyList::empty(py);
+        match &rows {
+            Some(rows) => {
+                let d = &rows[u];
+                if d.len() != row.len() {
+                    return Err(PyNotImplementedError::new_err(
+                        "the graph changed since it was converted",
+                    ));
+                }
+                for (&v, nbr) in row.iter().zip(d.keys().iter()) {
+                    if keep.is_none_or(|k| k[v as usize]) {
+                        list.append(nbr)?;
+                    }
+                }
+            }
+            None => {
+                for &v in row {
+                    if keep.is_none_or(|k| k[v as usize]) {
+                        list.append(nodes.get_item(v as usize)?)?;
+                    }
+                }
+            }
+        }
+        out.set_item(key, list)?;
+    }
+    Ok(out)
+}
+
+/// A new NetworkX `Graph` or `DiGraph` being filled through its dicts
+/// (`_node`, `_adj`, and `_pred` for directed graphs), exactly as
+/// `add_nodes_from` and `add_edges_from` fill them.
+pub struct NxBuilder<'py> {
+    pub node: Bound<'py, PyDict>,
+    pub adj: Bound<'py, PyDict>,
+    pub pred: Option<Bound<'py, PyDict>>,
+}
+
+fn none_node() -> PyErr {
+    pyo3::exceptions::PyValueError::new_err("None cannot be a node")
+}
+
+/// A node that isn't hashable makes NetworkX take other paths (e.g.
+/// `add_nodes_from` reads it as a `(node, attrdict)` pair): fall back.
+fn hashable(err: PyErr, py: Python<'_>) -> PyErr {
+    if err.is_instance_of::<pyo3::exceptions::PyTypeError>(py) {
+        PyNotImplementedError::new_err("unhashable node")
+    } else {
+        err
+    }
+}
+
+impl<'py> NxBuilder<'py> {
+    /// Create node `n` if it is new: `_adj[n]`, `_pred[n]` and `_node[n]`
+    /// get empty dicts, in that order. Returns whether it was new.
+    fn ensure(&self, n: &Bound<'py, PyAny>) -> PyResult<bool> {
+        let py = self.node.py();
+        if self.node.contains(n).map_err(|e| hashable(e, py))? {
+            return Ok(false);
+        }
+        if n.is_none() {
+            return Err(none_node());
+        }
+        self.adj.set_item(n, PyDict::new(py))?;
+        if let Some(pred) = &self.pred {
+            pred.set_item(n, PyDict::new(py))?;
+        }
+        self.node.set_item(n, PyDict::new(py))?;
+        Ok(true)
+    }
+
+    /// `add_nodes_from(nodes, **attr)` (`attr`: `None` for no attributes).
+    pub fn add_nodes(
+        &self,
+        nodes: &Bound<'py, PyAny>,
+        attr: Option<&Bound<'py, PyDict>>,
+    ) -> PyResult<()> {
+        for n in nodes.try_iter()? {
+            let n = n?;
+            self.ensure(&n)?;
+            if let Some(attr) = attr {
+                let d = self.node.get_item(&n)?.expect("just ensured");
+                d.cast::<PyDict>()?.update(attr.as_mapping())?;
+            }
+        }
+        Ok(())
+    }
+
+    /// One edge of `add_edges_from`: the existing data dict of `(u, v)` or a
+    /// new one, updated by `fill`, then stored in both directions.
+    pub fn add_edge(
+        &self,
+        u: &Bound<'py, PyAny>,
+        v: &Bound<'py, PyAny>,
+        fill: impl FnOnce(&Bound<'py, PyDict>) -> PyResult<()>,
+    ) -> PyResult<()> {
+        let py = self.node.py();
+        self.ensure(u)?;
+        self.ensure(v)?;
+        let row = self.adj.get_item(u)?.expect("just ensured");
+        let row = row.cast::<PyDict>()?;
+        let data = match row.get_item(v)? {
+            Some(d) => d.cast_into::<PyDict>()?,
+            None => PyDict::new(py),
+        };
+        fill(&data)?;
+        row.set_item(v, &data)?;
+        match &self.pred {
+            Some(pred) => pred
+                .get_item(v)?
+                .expect("just ensured")
+                .cast::<PyDict>()?
+                .set_item(u, &data)?,
+            None => self
+                .adj
+                .get_item(v)?
+                .expect("just ensured")
+                .cast::<PyDict>()?
+                .set_item(u, &data)?,
+        }
+        Ok(())
+    }
+
+    /// `add_edges_from(edges)` for 2-tuples and 3-tuples with a dict; any
+    /// other item falls back (NetworkX unpacks arbitrary sequences).
+    pub fn add_edges(&self, edges: &Bound<'py, PyAny>) -> PyResult<()> {
+        for e in edges.try_iter()? {
+            let e = e?;
+            let t = e
+                .cast::<PyTuple>()
+                .map_err(|_| PyNotImplementedError::new_err("edges must be tuples"))?;
+            match t.len() {
+                2 => self.add_edge(&t.get_item(0)?, &t.get_item(1)?, |_| Ok(()))?,
+                3 => {
+                    let dd = t.get_item(2)?;
+                    let dd = plain_dict(&dd)?;
+                    self.add_edge(&t.get_item(0)?, &t.get_item(1)?, |d| {
+                        d.update(dd.as_mapping())
+                    })?
+                }
+                _ => {
+                    return Err(PyNotImplementedError::new_err(
+                        "edges must be 2-tuples or 3-tuples",
+                    ))
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `from_dict_of_lists` into a simple graph: the nodes of `d`, then an edge
+/// per `(node, nbr)`.
+pub fn from_dict_of_lists<'py>(b: &NxBuilder<'py>, d: &Bound<'py, PyDict>) -> PyResult<()> {
+    b.add_nodes(d.as_any(), None)?;
+    for (u, nbrs) in d.iter() {
+        for v in nbrs.try_iter()? {
+            b.add_edge(&u, &v?, |_| Ok(()))?;
+        }
+    }
+    Ok(())
+}
+
+/// `from_dict_of_dicts` (no `multigraph_input`) into a simple graph.
+pub fn from_dict_of_dicts<'py>(b: &NxBuilder<'py>, d: &Bound<'py, PyDict>) -> PyResult<()> {
+    b.add_nodes(d.as_any(), None)?;
+    for (u, nbrs) in d.iter() {
+        for (v, data) in plain_dict(&nbrs)?.iter() {
+            let data = plain_dict(&data)?;
+            b.add_edge(&u, &v, |dd| dd.update(data.as_mapping()))?;
+        }
+    }
+    Ok(())
+}

@@ -4901,6 +4901,93 @@ impl CoreGraph {
         )
     }
 
+    /// `to_dict_of_lists`: `keys` holds `(key, position)` in output order;
+    /// `keep[v]` whether node `v` is in `nodelist` (`None`: all). `adj` is the
+    /// source graph's `_adj` (`None` for native graphs).
+    #[pyo3(signature = (nodes, adj, keys, keep=None))]
+    fn dict_of_lists<'py>(
+        &self,
+        nodes: &Bound<'py, PyList>,
+        adj: Option<&Bound<'py, PyAny>>,
+        keys: Vec<(Bound<'py, PyAny>, u32)>,
+        keep: Option<Vec<bool>>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        if nodes.len() != self.n
+            || keep.as_ref().is_some_and(|k| k.len() != self.n)
+            || keys.iter().any(|&(_, u)| u as usize >= self.n)
+        {
+            return Err(PyValueError::new_err("arguments do not match this graph"));
+        }
+        let adj = adj.map(conversion::plain_dict).transpose()?;
+        conversion::dict_of_lists(nodes, adj, &self.succ, &keys, keep.as_deref())
+    }
+
+    /// Fill a new NetworkX graph's dicts (`node`, `adj`, and `pred` for a
+    /// `DiGraph`) as NetworkX's builders do. `kind` picks the input:
+    /// `"nodes"` (`add_nodes_from(data, **attr)`), `"edges"`
+    /// (`add_edges_from(data)`), `"lists"` (`from_dict_of_lists`) or
+    /// `"dicts"` (`from_dict_of_dicts`).
+    #[staticmethod]
+    #[pyo3(signature = (node, adj, pred, kind, data, attr=None))]
+    fn build_into<'py>(
+        node: Bound<'py, PyDict>,
+        adj: Bound<'py, PyDict>,
+        pred: Option<Bound<'py, PyDict>>,
+        kind: &str,
+        data: &Bound<'py, PyAny>,
+        attr: Option<&Bound<'py, PyDict>>,
+    ) -> PyResult<()> {
+        let b = conversion::NxBuilder { node, adj, pred };
+        match kind {
+            "nodes" => b.add_nodes(data, attr),
+            "edges" => b.add_edges(data),
+            "lists" => conversion::from_dict_of_lists(&b, conversion::plain_dict(data)?),
+            "dicts" => conversion::from_dict_of_dicts(&b, conversion::plain_dict(data)?),
+            _ => Err(PyValueError::new_err("unknown kind")),
+        }
+    }
+
+    /// `add_weighted_edges_from` on a new NetworkX graph's dicts: edge `i`
+    /// joins `labels[us[i]]` and `labels[vs[i]]` (the ints themselves if
+    /// `labels` is `None`), with data `{attr: values[i]}`, or `{}` if
+    /// `values` is `None`.
+    #[staticmethod]
+    #[pyo3(signature = (node, adj, pred, us, vs, labels=None, attr=None, values=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn build_weighted_into<'py>(
+        py: Python<'py>,
+        node: Bound<'py, PyDict>,
+        adj: Bound<'py, PyDict>,
+        pred: Option<Bound<'py, PyDict>>,
+        us: Vec<i64>,
+        vs: Vec<i64>,
+        labels: Option<Vec<Bound<'py, PyAny>>>,
+        attr: Option<Bound<'py, PyAny>>,
+        values: Option<Bound<'py, PyList>>,
+    ) -> PyResult<()> {
+        if us.len() != vs.len() || values.as_ref().is_some_and(|v| v.len() != us.len()) {
+            return Err(PyValueError::new_err("edge arrays must agree"));
+        }
+        let label = |i: i64| -> PyResult<Bound<'py, PyAny>> {
+            match &labels {
+                Some(l) => usize::try_from(i)
+                    .ok()
+                    .and_then(|i| l.get(i).cloned())
+                    .ok_or_else(|| PyValueError::new_err("label index out of range")),
+                None => Ok(PyInt::new(py, i).into_any()),
+            }
+        };
+        let b = conversion::NxBuilder { node, adj, pred };
+        for (i, (&u, &v)) in us.iter().zip(&vs).enumerate() {
+            let (u, v) = (label(u)?, label(v)?);
+            b.add_edge(&u, &v, |d| match &values {
+                Some(vals) => d.set_item(&attr, vals.get_item(i)?),
+                None => Ok(()),
+            })?;
+        }
+        Ok(())
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
