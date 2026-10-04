@@ -11,14 +11,14 @@ mod serialize;
 
 use pyo3::exceptions::{PyIndexError, PyNotImplementedError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
+use pyo3::types::{PyByteArray, PyBytes, PyDict, PyList, PyTuple};
 
 use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
-    centrality, centrality_more, cluster, cores_more, dag, directed, distance, paths, spectral,
-    structure, structure_more,
+    centrality, centrality_more, cluster, cores_more, dag, directed, distance, leftovers, paths,
+    spectral, structure, structure_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -1941,6 +1941,307 @@ impl CoreGraph {
         Ok(py.detach(|| structure_more::prufer(&self.succ, self.n, &pos, &degree)))
     }
 
+    // --- Batch 7: shortest paths, DAG and cycle leftovers ---
+
+    /// `(finite, int sums exact, has -0.0)` for edge attribute `weight`.
+    #[pyo3(signature = (weight=None))]
+    fn weight_flags(&self, weight: Option<&str>) -> PyResult<(bool, bool, bool)> {
+        let w = self.weight_slice(weight, false)?;
+        Ok((
+            leftovers::weights_finite(w),
+            leftovers::int_sums_exact(w),
+            leftovers::has_negative_zero(w),
+        ))
+    }
+
+    /// `floyd_warshall_predecessor_and_distance` (`tree`: 3.7's
+    /// `floyd_warshall_tree`) as NetworkX's dicts `(pred, dist)`; `dist`'s
+    /// rows come from `make_row()`. `old`: NetworkX 3.4/3.5's version.
+    /// `None` where NetworkX raises `NetworkXUnbounded`.
+    #[pyo3(signature = (nodes, make_row, weight, int_weights, old, tree, want_pred))]
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    fn floyd_warshall<'py>(
+        &self,
+        py: Python<'py>,
+        nodes: &Bound<'py, PyList>,
+        make_row: &Bound<'py, PyAny>,
+        weight: Option<&str>,
+        int_weights: bool,
+        old: bool,
+        tree: bool,
+        want_pred: bool,
+    ) -> PyResult<Option<(Bound<'py, PyDict>, Bound<'py, PyDict>)>> {
+        if nodes.len() != self.n {
+            return Err(PyValueError::new_err("nodes must list every node"));
+        }
+        let w = self.weight_slice(weight, false)?;
+        let found = py.detach(|| {
+            if tree {
+                leftovers::floyd_warshall_tree(&self.succ, self.n, w, int_weights)
+            } else {
+                leftovers::floyd_warshall(&self.succ, self.n, w, int_weights, self.directed, old)
+            }
+        });
+        let fw = match found {
+            Ok(fw) => fw,
+            Err(leftovers::FwError::Negative) => return Ok(None),
+            Err(leftovers::FwError::Unsupported) => {
+                return Err(PyNotImplementedError::new_err(
+                    "rustnx can't reproduce this Floyd-Warshall case",
+                ))
+            }
+        };
+        let node = |i: u32| nodes.get_item(i as usize);
+        let pred = PyDict::new(py);
+        if want_pred {
+            for &u in &fw.pred_rows {
+                let row = PyDict::new(py);
+                for &v in &fw.pred_order[u as usize] {
+                    row.set_item(node(v)?, node(fw.pred[u as usize * self.n + v as usize])?)?;
+                }
+                pred.set_item(node(u)?, row)?;
+            }
+        }
+        let dist = PyDict::new(py);
+        for u in 0..self.n {
+            let row = make_row.call0()?;
+            let row_dict = row.cast::<PyDict>()?;
+            for &v in &fw.dist_order[u] {
+                let (x, int) = fw.value(u, v as usize);
+                if int {
+                    row_dict.set_item(node(v)?, x as i64)?;
+                } else {
+                    row_dict.set_item(node(v)?, x)?;
+                }
+            }
+            dist.set_item(node(u as u32)?, row)?;
+        }
+        Ok(Some((pred, dist)))
+    }
+
+    /// `floyd_warshall_numpy`'s result as row-major f64 bytes, with node `i`
+    /// at row `order[i]`; `None` where NetworkX raises `NetworkXUnbounded`.
+    #[pyo3(signature = (order, weight, check_negative))]
+    fn floyd_warshall_dense<'py>(
+        &self,
+        py: Python<'py>,
+        order: Vec<u32>,
+        weight: Option<&str>,
+        check_negative: bool,
+    ) -> PyResult<Option<Bound<'py, PyByteArray>>> {
+        let n = self.n;
+        let mut seen = vec![false; n];
+        if order.len() != n
+            || order
+                .iter()
+                .any(|&i| i as usize >= n || std::mem::replace(&mut seen[i as usize], true))
+        {
+            return Err(PyValueError::new_err("order must be a permutation"));
+        }
+        let w = self.weight_slice(weight, false)?;
+        let found = py.detach(|| {
+            let mut a = vec![f64::INFINITY; n * n];
+            for u in 0..n {
+                for e in self.succ.range(u) {
+                    let v = self.succ.targets[e] as usize;
+                    a[order[u] as usize * n + order[v] as usize] = w.map_or(1.0, |w| w[e]);
+                }
+            }
+            leftovers::floyd_warshall_dense(&mut a, n, check_negative).map(|_| a)
+        });
+        Ok(found.ok().map(|a| {
+            let bytes: Vec<u8> = a.iter().flat_map(|x| x.to_ne_bytes()).collect();
+            PyByteArray::new(py, &bytes)
+        }))
+    }
+
+    /// `johnson`'s Bellman-Ford potentials, or `None` on a negative cycle.
+    #[pyo3(signature = (weight=None))]
+    fn johnson_potentials(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+    ) -> PyResult<Option<Vec<f64>>> {
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| leftovers::bellman_ford_all(&self.succ, self.n, w)))
+    }
+
+    /// `johnson`'s Dijkstra from each of `sources` on the reweighted graph,
+    /// in parallel: `(pop order, parents in pop order, first-push order)`,
+    /// or `None` where Dijkstra finds contradictory paths.
+    #[pyo3(signature = (sources, h, weight=None))]
+    #[allow(clippy::type_complexity)]
+    fn johnson_trees(
+        &self,
+        py: Python<'_>,
+        sources: Vec<u32>,
+        h: Vec<f64>,
+        weight: Option<&str>,
+    ) -> PyResult<Vec<Option<(Vec<u32>, Vec<u32>, Vec<u32>)>>> {
+        let sources = self.sources_or_all(Some(sources))?;
+        if h.len() != self.n {
+            return Err(PyValueError::new_err("one potential per node"));
+        }
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| {
+            let rw = leftovers::reweight(&self.succ, self.n, w, &h);
+            sources
+                .par_iter()
+                .map(|&s| {
+                    paths::dijkstra_tree(&self.succ, self.n, Some(&rw), s as usize, None, None)
+                        .ok()
+                        .map(|t| {
+                            let parents = t.order.iter().map(|&v| t.parent[v as usize]).collect();
+                            (t.order, parents, t.seen_order)
+                        })
+                })
+                .collect()
+        }))
+    }
+
+    /// `goldberg_radzik`'s state from `source`; Python runs the rounds.
+    #[pyo3(signature = (source, int_weights, weight=None))]
+    fn goldberg_radzik(
+        &self,
+        source: usize,
+        int_weights: bool,
+        weight: Option<&str>,
+    ) -> PyResult<GoldbergRadzikState> {
+        self.check_index(source)?;
+        let w = self.weight_slice(weight, false)?;
+        Ok(GoldbergRadzikState(leftovers::GoldbergRadzik::new(
+            &self.succ,
+            self.n,
+            w,
+            int_weights,
+            source,
+        )))
+    }
+
+    /// `nx.antichains` for topological order `topo` (positions), one batch
+    /// at a time; `None` if `topo` isn't a topological order of G.
+    fn antichains(&self, py: Python<'_>, topo: Vec<u32>) -> PyResult<Option<AntichainIter>> {
+        let topo = self.sources_or_all(Some(topo))?;
+        Ok(py.detach(|| {
+            if !leftovers::is_topological_order(&self.succ, self.n, &topo) {
+                return None;
+            }
+            let reach = leftovers::Reach::new(&self.succ, self.n, &topo);
+            Some(AntichainIter(leftovers::Antichains::new(reach, &topo)))
+        }))
+    }
+
+    /// `antichain_width` (NetworkX 3.7): `None` if G has a cycle.
+    fn antichain_width(&self, py: Python<'_>) -> Option<usize> {
+        py.detach(|| {
+            let (generations, cycle) =
+                directed::topological_generations(&self.succ, self.adj(true), self.n);
+            if cycle {
+                return None;
+            }
+            let topo: Vec<u32> = generations.into_iter().flatten().collect();
+            let reach = leftovers::Reach::new(&self.succ, self.n, &topo);
+            Some(self.n - leftovers::reach_matching_size(&reach, self.n))
+        })
+    }
+
+    /// `_all_simple_edge_paths` from `source` to `targets` (positions;
+    /// `extra`: the target set also holds objects that aren't nodes), with
+    /// at most `limit` nodes on a path that is still extended.
+    fn simple_paths(
+        &self,
+        source: usize,
+        targets: Vec<u32>,
+        extra: bool,
+        limit: usize,
+    ) -> PyResult<SimplePathIter> {
+        self.check_index(source)?;
+        let targets = self.sources_or_all(Some(targets))?;
+        Ok(SimplePathIter(leftovers::SimplePaths::new(
+            &self.succ,
+            self.n,
+            source as u32,
+            &targets,
+            extra,
+            limit,
+        )))
+    }
+
+    /// `shortest_simple_paths` from `source` to `target`, lazily.
+    #[pyo3(signature = (source, target, compensated, weight=None))]
+    fn shortest_simple_paths(
+        &self,
+        source: usize,
+        target: usize,
+        compensated: bool,
+        weight: Option<&str>,
+    ) -> PyResult<YenIter> {
+        self.check_index(source)?;
+        self.check_index(target)?;
+        let (pred, w_pred) = self.reverse_exact_order(weight)?;
+        let w_succ = self.weight_slice(weight, false)?;
+        let weights = match (w_succ, w_pred) {
+            (Some(a), Some(b)) => Some((a, b)),
+            _ => None,
+        };
+        Ok(YenIter(leftovers::SimpleShortestPaths::new(
+            &self.succ,
+            pred,
+            self.n,
+            self.directed,
+            weights,
+            compensated,
+            source as u32,
+            target as u32,
+        )))
+    }
+
+    /// Whether each consecutive pair of `path` is an edge.
+    fn is_path(&self, path: Vec<u32>) -> PyResult<bool> {
+        let path = self.sources_or_all(Some(path))?;
+        Ok(path
+            .windows(2)
+            .all(|p| self.succ.neighbors(p[0] as usize).contains(&p[1])))
+    }
+
+    /// `_min_cycle_basis` of one component (see
+    /// `leftovers::min_cycle_basis`): `(0, cycles)`, or `(1, None)` /
+    /// `(2, None)` where `_dijkstra` / `bidirectional_dijkstra` find
+    /// contradictory paths.
+    #[pyo3(signature = (nodes, edges, chords, weight=None))]
+    fn min_cycle_basis(
+        &self,
+        py: Python<'_>,
+        nodes: Vec<u32>,
+        edges: Vec<(u32, u32)>,
+        chords: Vec<(u32, u32)>,
+        weight: Option<&str>,
+    ) -> PyResult<(u8, Option<Vec<Vec<u32>>>)> {
+        let nodes = self.sources_or_all(Some(nodes))?;
+        let w = self.weight_slice(weight, false)?;
+        let mut weighted = Vec::with_capacity(edges.len());
+        for &(u, v) in edges.iter().chain(&chords) {
+            self.check_index(u as usize)?;
+            self.check_index(v as usize)?;
+        }
+        for &(u, v) in &edges {
+            let e = self
+                .succ
+                .range(u as usize)
+                .find(|&e| self.succ.targets[e] == v)
+                .ok_or_else(|| PyValueError::new_err("not an edge"))?;
+            weighted.push((u, v, w.map_or(1.0, |w| w[e])));
+        }
+        match py.detach(|| leftovers::min_cycle_basis(self.n, &nodes, &weighted, &chords)) {
+            Ok(cb) => Ok((0, Some(cb))),
+            Err(leftovers::McbError::Contradictory) => Ok((1, None)),
+            Err(leftovers::McbError::ContradictoryBidirectional) => Ok((2, None)),
+            Err(leftovers::McbError::Unsupported) => Err(PyNotImplementedError::new_err(
+                "rustnx can't reproduce this minimum cycle basis case",
+            )),
+        }
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -2443,6 +2744,105 @@ impl RootLeafPaths {
     }
 }
 
+// --- Batch 7: lazy iterators and state ---
+
+/// `goldberg_radzik`'s state between the rounds Python drives.
+#[pyclass(module = "rustnx._core")]
+pub struct GoldbergRadzikState(leftovers::GoldbergRadzik);
+
+#[pymethods]
+impl GoldbergRadzikState {
+    /// One `topo_sort` over `order`; `False` where NetworkX finds a
+    /// negative cycle.
+    fn topo_sort(&mut self, order: Vec<u32>, skip_counted: bool) -> PyResult<bool> {
+        let n = self.0.d.len();
+        if order.iter().any(|&v| v as usize >= n) {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        match self.0.topo_sort(&order, skip_counted) {
+            Ok(()) => Ok(true),
+            Err(leftovers::GrError::Negative) => Ok(false),
+            Err(leftovers::GrError::Unsupported) => Err(gr_unsupported()),
+        }
+    }
+
+    /// One `relax`: the nodes added to `relabeled`, in order.
+    fn relax(&mut self) -> PyResult<Vec<u32>> {
+        self.0.relax().map_err(|_| gr_unsupported())
+    }
+
+    /// `(pred keys, pred values, distances, distance is int)` in key order
+    /// (`u32::MAX` for the source's `None`).
+    #[allow(clippy::type_complexity)]
+    fn result(&self) -> (Vec<u32>, Vec<u32>, Vec<f64>, Vec<bool>) {
+        let keys = self.0.pred_order.clone();
+        let preds = keys.iter().map(|&v| self.0.pred[v as usize]).collect();
+        let d = keys.iter().map(|&v| self.0.d[v as usize]).collect();
+        let ints = keys.iter().map(|&v| self.0.d_int[v as usize]).collect();
+        (keys, preds, d, ints)
+    }
+}
+
+fn gr_unsupported() -> PyErr {
+    PyNotImplementedError::new_err("integer distances too large for exact sums")
+}
+
+/// Flattens up to `limit` items of a lazy search: `(flat, ends)`.
+fn batch_of(limit: usize, mut next: impl FnMut() -> Option<Vec<u32>>) -> (Vec<u32>, Vec<u32>) {
+    let (mut flat, mut ends) = (Vec::new(), Vec::new());
+    while ends.len() < limit {
+        let Some(item) = next() else { break };
+        flat.extend_from_slice(&item);
+        ends.push(flat.len() as u32);
+        if flat.len() > (1 << 20) {
+            break;
+        }
+    }
+    (flat, ends)
+}
+
+/// Lazy iterator over `nx.antichains` results (node positions).
+#[pyclass(module = "rustnx._core")]
+pub struct AntichainIter(leftovers::Antichains);
+
+#[pymethods]
+impl AntichainIter {
+    /// Up to `limit` antichains, flattened: `(flat, ends)`.
+    fn next_batch(&mut self, py: Python<'_>, limit: usize) -> (Vec<u32>, Vec<u32>) {
+        py.detach(|| batch_of(limit, || self.0.next_antichain()))
+    }
+}
+
+/// Lazy iterator over `_all_simple_edge_paths` results (node positions).
+#[pyclass(module = "rustnx._core")]
+pub struct SimplePathIter(leftovers::SimplePaths);
+
+#[pymethods]
+impl SimplePathIter {
+    /// Up to `limit` paths, flattened: `(flat, ends)`.
+    fn next_batch(&mut self, py: Python<'_>, limit: usize) -> (Vec<u32>, Vec<u32>) {
+        py.detach(|| batch_of(limit, || self.0.next_path()))
+    }
+}
+
+/// Lazy iterator over `shortest_simple_paths` results (node positions).
+#[pyclass(module = "rustnx._core")]
+pub struct YenIter(leftovers::SimpleShortestPaths);
+
+#[pymethods]
+impl YenIter {
+    /// `(0, path)` (`None` once all are out), `(1, None)` where NetworkX
+    /// raises `NetworkXNoPath`, `(2, None)` for its contradictory paths
+    /// `ValueError`.
+    fn next_path(&mut self, py: Python<'_>) -> (u8, Option<Vec<u32>>) {
+        py.detach(|| match self.0.next_path() {
+            Ok(p) => (0, p),
+            Err(leftovers::YenError::NoPath) => (1, None),
+            Err(leftovers::YenError::Contradictory) => (2, None),
+        })
+    }
+}
+
 fn unzip3(items: Vec<(u32, u32, u8)>) -> (Vec<u32>, Vec<u32>, Vec<u8>) {
     let mut us = Vec::with_capacity(items.len());
     let mut vs = Vec::with_capacity(items.len());
@@ -2470,6 +2870,10 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ClosureDag>()?;
     m.add_class::<RootLeafPaths>()?;
     m.add_class::<GroupPre>()?;
+    m.add_class::<GoldbergRadzikState>()?;
+    m.add_class::<AntichainIter>()?;
+    m.add_class::<SimplePathIter>()?;
+    m.add_class::<YenIter>()?;
     m.add_function(wrap_pyfunction!(graph::build_graph, m)?)?;
     m.add_function(wrap_pyfunction!(serialize::_core_graph_from_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(native::build_native, m)?)?;
