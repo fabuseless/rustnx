@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 247 NetworkX functions. Call them as usual (for
+rustnx implements 267 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -413,6 +413,36 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `Computed in batches when iteration starts, as NetworkX does.` | none | no | rustnx |  |
 | ``nodes=None` (the dict follows `find_cliques`' set order) and `cliques` fall back, as do directed graphs and nodes not in G.` | `nodes`, `cliques`, `separate_nodes` | no | rustnx |  |
 | `Node weights are read from the NetworkX graph; native graphs support `weight=None` only.` | `weight` | no | rustnx |  |
+
+### Isomorphism and graph hashing
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `Takes two graphs. Follows the installed NetworkX's checks (3.5+ stops at the first property that differs, which decides whether directed graphs raise). Multigraphs fall back.` | `G1`, `G2`, `properties` | no | rustnx |  |
+| `Takes two graphs. As `could_be_isomorphic` (3.7+ stops at the first property that differs).` | `G1`, `G2` | no | rustnx |  |
+| `Takes two graphs.` | `G1`, `G2` | no | NetworkX |  |
+| `Takes two graphs. A yes/no answer, so an exact matcher in Rust (with color refinement) gives NetworkX's result without running VF2. `node_match`, `edge_match` and multigraphs fall back.` | `G1`, `G2` | no | rustnx |  |
+| `Takes two graphs. Node labels are read from the NetworkX graphs. Empty graphs give `False`, as in NetworkX. A directed and an undirected graph fall back before NetworkX 3.7.` | `FG`, `SG`, `node_label`, `default_label` | no | rustnx |  |
+| `NetworkX 3.7+. Takes two graphs (the second is the smaller). Node labels are read from the NetworkX graphs.` | `FG`, `SG`, `node_label`, `default_label` | no | rustnx |  |
+| `NetworkX 3.7+. Takes two graphs (the second is the smaller). Node labels are read from the NetworkX graphs.` | `FG`, `SG`, `node_label`, `default_label` | no | rustnx |  |
+| `Takes two trees. Follows the installed NetworkX's child order and errors (3.4 asserts; its recursive walk means very deep trees fall back there). A directed `t2` falls back.` | `t1`, `t2` | no | rustnx |  |
+| `As `tree_isomorphism`. Directed trees and roots not in the trees fall back.` | `t1`, `root1`, `t2`, `root2` | no | rustnx |  |
+| `Builds the combined tree in NetworkX from Rust searches. Roots not in the graphs fall back.` | `t1`, `root1`, `t2`, `root2` | no | NetworkX |  |
+| `BLAKE2b in Rust, parallel; same hashes as NetworkX's `hashlib`, for the installed version (3.5 changed them), with the same warnings. Node and edge attribute labels are read from the NetworkX graph; non-ASCII labels, non-str attribute names and an unusual `digest_size` fall back.` | `edge_attr`, `node_attr`, `iterations`, `digest_size` | no | rustnx |  |
+| `As `weisfeiler_lehman_graph_hash`.` | `edge_attr`, `node_attr`, `iterations`, `digest_size`, `include_initial_labels` | no | rustnx |  |
+
+### Bipartite graphs
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `Directed graphs visit predecessors in NetworkX's order.` | none | yes | NetworkX |  |
+| `Sets are filled in NetworkX's order, so they iterate the same way.` | `top_nodes` | yes | NetworkX |  |
+| `Directed graphs raise as in NetworkX.` | `nodes` | yes | NetworkX |  |
+| `Also `nx.bipartite.maximum_matching`. Follows NetworkX's search order (its `left` set's iteration order), so it finds the same matching. Directed graphs, `top_nodes` not in the graph or with neighbors among themselves, and augmenting paths deep enough to approach Python's recursion limit fall back.` | `top_nodes` | yes | rustnx |  |
+| `Parallel. Builds the cover with NetworkX's set operations. Directed graphs, multigraphs and `top_nodes` not in the graph fall back.` | `matching`, `top_nodes` | no | rustnx |  |
+| `As `nx.bipartite.closeness_centrality`. Bit-for-bit identical; parallel searches.` | `nodes`, `normalized` | yes | rustnx |  |
+| `A one-shot iterator of nodes, and nodes not in the graph, fall back.` | `nodes` | yes | rustnx |  |
+| `NetworkX 3.7+.` | `nodes` | no | rustnx |  |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 

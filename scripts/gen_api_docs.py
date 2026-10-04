@@ -153,6 +153,16 @@ SECTIONS = [
         "is_maximal_matching", "is_perfect_matching", "min_edge_cover",
     ]),
     ("Cliques", ["enumerate_all_cliques", "node_clique_number", "max_weight_clique"]),
+    ("Isomorphism and graph hashing", [
+        "could_be_isomorphic", "fast_could_be_isomorphic", "faster_could_be_isomorphic",
+        "is_isomorphic", "vf2pp_is_isomorphic", "vf2pp_subgraph_is_isomorphic",
+        "vf2pp_is_monomorphic", "tree_isomorphism", "rooted_tree_isomorphism", "root_trees",
+        "weisfeiler_lehman_graph_hash", "weisfeiler_lehman_subgraph_hashes",
+    ]),
+    ("Bipartite graphs", [
+        "color", "sets", "is_bipartite_node_set", "hopcroft_karp_matching", "to_vertex_cover",
+        "bipartite_closeness_centrality", "node_redundancy", "butterflies",
+    ]),
 ]
 
 LENGTHS = "Falls back when weights mix ints and floats (NetworkX's length types then depend on the path)."
@@ -354,6 +364,41 @@ QUALIFIED = {
     "enumerate_all_cliques": "Computed in batches when iteration starts, as NetworkX does.",
     "node_clique_number": "`nodes=None` (the dict follows `find_cliques`' set order) and `cliques` fall back, as do directed graphs and nodes not in G.",
     "max_weight_clique": "Node weights are read from the NetworkX graph; native graphs support `weight=None` only.",
+    "could_be_isomorphic": "Takes two graphs. Follows the installed NetworkX's checks (3.5+ stops at the first property that differs, which decides whether directed graphs raise). Multigraphs fall back.",
+    "fast_could_be_isomorphic": "Takes two graphs. As `could_be_isomorphic` (3.7+ stops at the first property that differs).",
+    "faster_could_be_isomorphic": "Takes two graphs.",
+    "is_isomorphic": "Takes two graphs. A yes/no answer, so an exact matcher in Rust (with color refinement) gives NetworkX's result without running VF2. `node_match`, `edge_match` and multigraphs fall back.",
+    "vf2pp_is_isomorphic": "Takes two graphs. Node labels are read from the NetworkX graphs. Empty graphs give `False`, as in NetworkX. A directed and an undirected graph fall back before NetworkX 3.7.",
+    "vf2pp_subgraph_is_isomorphic": "NetworkX 3.7+. Takes two graphs (the second is the smaller). Node labels are read from the NetworkX graphs.",
+    "vf2pp_is_monomorphic": "NetworkX 3.7+. Takes two graphs (the second is the smaller). Node labels are read from the NetworkX graphs.",
+    "tree_isomorphism": "Takes two trees. Follows the installed NetworkX's child order and errors (3.4 asserts; its recursive walk means very deep trees fall back there). A directed `t2` falls back.",
+    "rooted_tree_isomorphism": "As `tree_isomorphism`. Directed trees and roots not in the trees fall back.",
+    "root_trees": "Builds the combined tree in NetworkX from Rust searches. Roots not in the graphs fall back.",
+    "weisfeiler_lehman_graph_hash": "BLAKE2b in Rust, parallel; same hashes as NetworkX's `hashlib`, for the installed version (3.5 changed them), with the same warnings. Node and edge attribute labels are read from the NetworkX graph; non-ASCII labels, non-str attribute names and an unusual `digest_size` fall back.",
+    "weisfeiler_lehman_subgraph_hashes": "As `weisfeiler_lehman_graph_hash`.",
+    "color": "Directed graphs visit predecessors in NetworkX's order.",
+    "sets": "Sets are filled in NetworkX's order, so they iterate the same way.",
+    "is_bipartite_node_set": "Directed graphs raise as in NetworkX.",
+    "hopcroft_karp_matching": "Also `nx.bipartite.maximum_matching`. Follows NetworkX's search order (its `left` set's iteration order), so it finds the same matching. Directed graphs, `top_nodes` not in the graph or with neighbors among themselves, and augmenting paths deep enough to approach Python's recursion limit fall back.",
+    "to_vertex_cover": "Parallel. Builds the cover with NetworkX's set operations. Directed graphs, multigraphs and `top_nodes` not in the graph fall back.",
+    "bipartite_closeness_centrality": "As `nx.bipartite.closeness_centrality`. Bit-for-bit identical; parallel searches.",
+    "node_redundancy": "A one-shot iterator of nodes, and nodes not in the graph, fall back.",
+    "butterflies": "NetworkX 3.7+.",
+}
+
+# Functions NetworkX only exposes under `nx.isomorphism` or `nx.bipartite`
+# (or their modules).
+ISOMORPHISM_ONLY = {
+    "tree_isomorphism": "nx.isomorphism",
+    "rooted_tree_isomorphism": "nx.isomorphism",
+    "root_trees": "networkx.algorithms.isomorphism.tree_isomorphism",
+    "color": "nx.bipartite",
+    "sets": "nx.bipartite",
+    "is_bipartite_node_set": "nx.bipartite",
+    "hopcroft_karp_matching": "nx.bipartite",
+    "to_vertex_cover": "nx.bipartite",
+    "node_redundancy": "nx.bipartite",
+    "butterflies": "nx.bipartite",
 }
 
 # Functions NetworkX only exposes under `nx.dag`.
@@ -363,6 +408,8 @@ DAG_ONLY = {"v_structures", "root_to_leaf_paths", "has_cycle", "antichain_width"
 def location(name):
     if name in DAG_ONLY:
         return "nx.dag"
+    if name in ISOMORPHISM_ONLY:
+        return ISOMORPHISM_ONLY[name]
     if name in ("is_coloring", "is_equitable"):
         return "nx.algorithms.coloring.equitable_coloring"
     if name in ("branching_weight", "greedy_branching", "minimal_branching"):

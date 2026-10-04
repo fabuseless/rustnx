@@ -2778,3 +2778,510 @@ def test_batch10_runs_in_rust():
     ]
     for call in calls:
         call()
+
+
+# --- Batch 11: isomorphism and graph hashing ---------------------------------------
+
+from networkx.algorithms.isomorphism.tree_isomorphism import root_trees  # noqa: E402
+
+
+def _shuffled_copy(G, seed, labels=True):
+    """An isomorphic copy with new node names and a new insertion order."""
+    rng = random.Random(seed)
+    nodes = list(G)
+    names = nodes[:]
+    rng.shuffle(names)
+    rename = {v: (f"c{w}" if labels else w) for v, w in zip(nodes, names)}
+    H = G.__class__()
+    order = nodes[:]
+    rng.shuffle(order)
+    H.add_nodes_from((rename[v], G.nodes[v]) for v in order)
+    edges = list(G.edges(data=True))
+    rng.shuffle(edges)
+    H.add_edges_from((rename[u], rename[v], d) for u, v, d in edges)
+    return H
+
+
+def _swapped(G, seed):
+    """Same degrees (usually), different edges: hard cases for the checks."""
+    H = G.copy()
+    try:
+        if H.is_directed():
+            nx.directed_edge_swap(H, nswap=2, max_tries=200, seed=seed)
+        else:
+            nx.double_edge_swap(H, nswap=2, max_tries=200, seed=seed)
+    except (nx.NetworkXError, nx.NetworkXAlgorithmError):
+        pass
+    return H
+
+
+def _batch11_pairs(seed, directed):
+    G = graph_for(seed, directed)
+    H = _shuffled_copy(G, seed)
+    K = _swapped(G, seed)
+    other = graph_for(seed + 1000, directed)
+    return G, [(G, H), (G, K), (H, K), (G, G), (G, other), (K, _shuffled_copy(K, seed + 1))]
+
+
+def _could_be_calls():
+    calls = [nx.could_be_isomorphic, nx.fast_could_be_isomorphic, nx.faster_could_be_isomorphic]
+    if "properties" in inspect.signature(nx.could_be_isomorphic).parameters:
+        for props in ["d", "t", "c", "dt", "tc", "cd", "", "xyz", ["d", "c"]]:
+            calls.append(lambda A, B, props=props, **kw: nx.could_be_isomorphic(A, B, properties=props, **kw))
+    return calls
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(60))
+def test_batch11_isomorphism(seed, directed):
+    G, pairs = _batch11_pairs(seed, directed)
+    for A, B in pairs:
+        exact_outcome(nx.is_isomorphic, A, B)
+        exact_outcome(nx.vf2pp_is_isomorphic, A, B)
+        for func in _could_be_calls():
+            exact_outcome(func, A, B)
+    # Mixed directedness, and a graph against an empty one.
+    U = graph_for(seed, not directed)
+    for func in [nx.is_isomorphic, nx.vf2pp_is_isomorphic, *_could_be_calls()]:
+        exact_outcome(func, G, U)
+        exact_outcome(func, U, G)
+        exact_outcome(func, G, G.__class__())
+        exact_outcome(func, G.__class__(), G.__class__())
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch11_vf2pp_labels(seed, directed):
+    rng = random.Random(seed)
+    G = graph_for(seed, directed)
+    colors = ["red", "blue", 1, 1.0, True, None, (1, 2)]
+    for v in G:
+        if rng.random() < 0.8:
+            G.nodes[v]["color"] = rng.choice(colors[: rng.randint(1, len(colors))])
+    H = _shuffled_copy(G, seed)
+    K = H.copy()
+    if len(K):
+        K.nodes[rng.choice(list(K))]["color"] = "green"
+    for A, B in [(G, H), (G, K), (H, G)]:
+        for label, default in [("color", None), ("color", "red"), ("shape", None), (None, None), (None, 5)]:
+            exact_outcome(nx.vf2pp_is_isomorphic, A, B, node_label=label, default_label=default)
+            exact_outcome(nx.vf2pp_is_isomorphic, A, B, label, default)
+            if hasattr(nx, "vf2pp_is_monomorphic"):
+                exact_outcome(nx.vf2pp_is_monomorphic, A, B, node_label=label, default_label=default)
+                exact_outcome(nx.vf2pp_subgraph_is_isomorphic, A, B, node_label=label, default_label=default)
+    G.nodes[next(iter(G))]["color"] = ["unhashable"]
+    exact_outcome(nx.vf2pp_is_isomorphic, G, H, node_label="color")
+
+
+def _random_subgraph(G, seed, induced):
+    rng = random.Random(seed)
+    nodes = [v for v in G if rng.random() < 0.6] or list(G)[:1]
+    S = G.subgraph(nodes).copy()
+    if not induced:
+        edges = list(S.edges)
+        S.remove_edges_from(rng.sample(edges, len(edges) // 4))
+    return _shuffled_copy(S, seed)
+
+
+@nx_has("vf2pp_is_monomorphic")
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(60))
+def test_batch11_vf2pp_subgraphs(seed, directed):
+    # At most 12 nodes: subgraph searches on larger random graphs can take
+    # NetworkX minutes.
+    G = graph_for(seed, directed)
+    G = G.subgraph(list(G)[:12]).copy()
+    small = [
+        _random_subgraph(G, seed, True),
+        _random_subgraph(G, seed + 1, False),
+        nx.gnp_random_graph(4 + seed % 5, 0.4, seed=seed, directed=directed),  # small: no hard searches
+        nx.path_graph(3, create_using=G.__class__),
+        nx.cycle_graph(4, create_using=G.__class__),
+        nx.complete_graph(3, create_using=G.__class__),
+        G.__class__([(0, 0), (0, 1)]),
+        G.__class__([(0, 1)]),
+    ]
+    for S in small:
+        for func in [nx.vf2pp_is_monomorphic, nx.vf2pp_subgraph_is_isomorphic]:
+            exact_outcome(func, G, S)
+            exact_outcome(func, S, G)
+            exact_outcome(func, S, S)
+    for func in [nx.vf2pp_is_monomorphic, nx.vf2pp_subgraph_is_isomorphic]:
+        exact_outcome(func, G, G.__class__())
+        exact_outcome(func, G, graph_for(seed, not directed))
+
+
+def test_batch11_known_isomorphism_cases():
+    # Regular graphs and other cases where degrees say nothing.
+    cases = [
+        (nx.petersen_graph(), nx.circulant_graph(10, [1, 3])),
+        (nx.cycle_graph(6), nx.Graph([(0, 1), (1, 2), (2, 0), (3, 4), (4, 5), (5, 3)])),
+        (nx.circular_ladder_graph(5), nx.cycle_graph(10)),
+        (nx.hypercube_graph(3), nx.circulant_graph(8, [1, 4])),
+        (nx.complete_bipartite_graph(3, 3), nx.circulant_graph(6, [1, 3])),
+        (nx.Graph([(0, 0), (1, 1)]), nx.Graph([(5, 5), (6, 6)])),
+        (nx.Graph([(0, 0), (0, 1)]), nx.Graph([(0, 1), (1, 1)])),
+        (nx.DiGraph([(0, 1), (1, 2), (2, 0)]), nx.DiGraph([(0, 2), (2, 1), (1, 0)])),
+        (nx.DiGraph([(0, 1), (1, 0)]), nx.DiGraph([(0, 1)])),
+        (nx.empty_graph(3), nx.empty_graph(3)),
+    ]
+    for A, B in cases:
+        for func in [nx.is_isomorphic, nx.vf2pp_is_isomorphic, *_could_be_calls()]:
+            exact_outcome(func, A, B)
+        if hasattr(nx, "vf2pp_is_monomorphic"):
+            exact_outcome(nx.vf2pp_is_monomorphic, A, B)
+            exact_outcome(nx.vf2pp_subgraph_is_isomorphic, A, B)
+
+
+def test_batch11_runs_in_rust():
+    G = nx.gnm_random_graph(80, 200, seed=3)
+    H = _shuffled_copy(G, 3)
+    T = nx.Graph([(i, (i - 1) // 2) for i in range(1, 50)])
+    calls = [
+        lambda: nx.is_isomorphic(G, H, backend="rustnx"),
+        lambda: nx.vf2pp_is_isomorphic(G, H, backend="rustnx"),
+        lambda: nx.vf2pp_is_isomorphic(G, H, node_label="color", backend="rustnx"),
+        lambda: nx.could_be_isomorphic(G, H, backend="rustnx"),
+        lambda: nx.fast_could_be_isomorphic(G, H, backend="rustnx"),
+        lambda: nx.faster_could_be_isomorphic(G, H, backend="rustnx"),
+        lambda: nx.isomorphism.tree_isomorphism(T, T, backend="rustnx"),
+        lambda: nx.isomorphism.rooted_tree_isomorphism(T, 0, T, 0, backend="rustnx"),
+        lambda: root_trees(T, 0, T, 1, backend="rustnx"),
+        lambda: nx.weisfeiler_lehman_graph_hash(G, backend="rustnx"),
+        lambda: nx.weisfeiler_lehman_subgraph_hashes(G, backend="rustnx"),
+    ]
+    if hasattr(nx, "vf2pp_is_monomorphic"):
+        P = nx.path_graph(4)
+        calls.append(lambda: nx.vf2pp_is_monomorphic(G, P, backend="rustnx"))
+        calls.append(lambda: nx.vf2pp_subgraph_is_isomorphic(G, P, backend="rustnx"))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        for call in calls:
+            call()  # NotImplementedError here would mean a fallback
+
+
+def _shuffled_tree(n, seed, labels=False):
+    rng = random.Random(seed)
+    edges = [(i, rng.randrange(i)) for i in range(1, n)]
+    rng.shuffle(edges)
+    T = nx.Graph()
+    order = list(range(n))
+    rng.shuffle(order)
+    T.add_nodes_from(order)
+    T.add_edges_from((u, v) if rng.random() < 0.5 else (v, u) for u, v in edges)
+    if labels:
+        T = nx.relabel_nodes(T, {v: f"t{v}" for v in T})
+    return T
+
+
+@pytest.mark.parametrize("seed", range(80))
+def test_batch11_trees(seed):
+    rng = random.Random(seed)
+    n = rng.randint(1, 40)
+    T = _shuffled_tree(n, seed)
+    U = _shuffled_copy(T, seed)
+    V = _shuffled_tree(n, seed + 1, labels=True)
+    W = _shuffled_tree(rng.randint(1, 40), seed + 2)
+    for A, B in [(T, U), (U, T), (T, V), (T, W), (T, T)]:
+        exact_outcome(nx.isomorphism.tree_isomorphism, A, B)
+        for _ in range(3):
+            r1, r2 = rng.choice(list(A)), rng.choice(list(B))
+            exact_outcome(nx.isomorphism.rooted_tree_isomorphism, A, r1, B, r2)
+            exact_outcome(root_trees, A, r1, B, r2)
+    # Not trees, empty graphs, missing roots, directed trees.
+    C = T.copy()
+    C.add_edge("x", "y")
+    G = graph_for(seed, False)
+    D = nx.DiGraph(T)
+    for A, B in [(C, T), (T, C), (G, G), (T, nx.Graph()), (nx.Graph(), T), (T, D), (D, D)]:
+        exact_outcome(nx.isomorphism.tree_isomorphism, A, B)
+        a = next(iter(A), 0)
+        b = next(iter(B), 0)
+        exact_outcome(nx.isomorphism.rooted_tree_isomorphism, A, a, B, b)
+        exact_outcome(root_trees, A, a, B, b)
+    exact_outcome(nx.isomorphism.rooted_tree_isomorphism, T, "missing", T, next(iter(T)))
+    exact_outcome(root_trees, T, "missing", T, next(iter(T)))
+    exact_outcome(root_trees, G, next(iter(G)), D, next(iter(D)))
+
+
+def test_batch11_deep_trees():
+    # NetworkX 3.4 walks the result recursively; rustnx leaves deep trees
+    # to it there (it may hit the recursion limit).
+    P = nx.path_graph(1200)
+    Q = _shuffled_copy(P, 1)
+    exact_outcome(nx.isomorphism.tree_isomorphism, P, Q)
+    exact_outcome(nx.isomorphism.rooted_tree_isomorphism, P, 0, Q, "c0")
+    exact_outcome(nx.isomorphism.rooted_tree_isomorphism, P, 0, P, 0)
+
+
+def _labelled_graph(seed, directed, weights):
+    rng = random.Random(seed)
+    G = graph_for(seed, directed, weights)
+    for v in G:
+        G.nodes[v]["label"] = rng.choice(["A", "B", 3, 2.5, None])
+    return G
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch11_weisfeiler_lehman(seed, directed, weights):
+    G = _labelled_graph(seed, directed, weights)
+    edge_attrs = [None] if weights == "none" else [None, "weight"]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        for edge_attr in edge_attrs:
+            for node_attr in [None, "label"]:
+                for iterations in [1, 2, 3]:
+                    for digest_size in [16, 5]:
+                        kw = dict(edge_attr=edge_attr, node_attr=node_attr, iterations=iterations, digest_size=digest_size)
+                        exact_outcome(nx.weisfeiler_lehman_graph_hash, G, **kw)
+                        exact_outcome(nx.weisfeiler_lehman_subgraph_hashes, G, **kw)
+                        exact_outcome(nx.weisfeiler_lehman_subgraph_hashes, G, include_initial_labels=True, **kw)
+
+
+def test_batch11_weisfeiler_lehman_edge_cases():
+    G = nx.Graph([(0, 1, {"w": 1}), (1, 2, {"w": 2.5}), (2, 2, {"w": True})])
+    G.nodes[0]["label"] = "x"
+    cases = [
+        (nx.Graph(), {}),
+        (nx.DiGraph(), {}),
+        (G, {"edge_attr": "w"}),
+        (G, {"edge_attr": "missing"}),
+        (G, {"node_attr": "label"}),  # missing on most nodes: KeyError
+        (G, {"iterations": 0}),
+        (G, {"iterations": -1, "edge_attr": "w"}),
+        (G, {"digest_size": 64}),
+        (G, {"digest_size": 1}),
+        (nx.Graph([("é", "a")]), {}),
+        (nx.Graph([(0, 1, {"w": "é"})]), {"edge_attr": "w"}),
+        (nx.Graph([(0, 1, {"w": "red"})]), {"edge_attr": "w"}),
+    ]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        for H, kw in cases:
+            exact_outcome(nx.weisfeiler_lehman_graph_hash, H, **kw)
+            exact_outcome(nx.weisfeiler_lehman_subgraph_hashes, H, **kw)
+    H = nx.Graph([(0, 1)])
+    nx.set_node_attributes(H, {0: "é", 1: "a"}, "label")
+    exact_outcome(nx.weisfeiler_lehman_graph_hash, H, node_attr="label")
+    # Long inputs span several BLAKE2b blocks.
+    exact_outcome(nx.weisfeiler_lehman_graph_hash, nx.star_graph(200))
+    exact_outcome(nx.weisfeiler_lehman_subgraph_hashes, nx.complete_graph(30), digest_size=64)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+def test_batch11_weisfeiler_lehman_warns_like_networkx(directed):
+    G = nx.gnm_random_graph(30, 60, seed=1, directed=directed)
+
+    def run(backend, func, **kw):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            try:
+                result = ("ok", func(G, backend=backend, **kw))
+            except Exception as exc:
+                result = (type(exc), exc.args)
+        return result, [(w.category, str(w.message)) for w in caught]
+
+    for func in [nx.weisfeiler_lehman_graph_hash, nx.weisfeiler_lehman_subgraph_hashes]:
+        for kw in [{}, {"node_attr": "x"}, {"iterations": 0}]:
+            assert run("rustnx", func, **kw) == run("networkx", func, **kw)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(10))
+def test_batch11_multigraphs(seed, directed, restore_config):
+    M = random_multigraph(seed, directed, "none")
+    M2 = _shuffled_copy(M, seed)
+    for func in [nx.is_isomorphic, nx.vf2pp_is_isomorphic, *_could_be_calls()]:
+        exact_outcome(func, M, M2)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        exact_outcome(nx.weisfeiler_lehman_graph_hash, M)
+    if not directed:
+        T = nx.MultiGraph(_shuffled_tree(10, seed).edges)
+        exact_outcome(nx.isomorphism.tree_isomorphism, T, T)
+        exact_outcome(nx.isomorphism.rooted_tree_isomorphism, T, 0, T, 0)
+
+
+def test_batch11_callables_fall_back():
+    G = nx.cycle_graph(5)
+    nx.set_node_attributes(G, "a", "color")
+    H = _shuffled_copy(G, 2)
+    nm = nx.algorithms.isomorphism.categorical_node_match("color", None)
+    em = nx.algorithms.isomorphism.categorical_edge_match("w", 1)
+    exact_outcome(nx.is_isomorphic, G, H, node_match=nm)
+    exact_outcome(nx.is_isomorphic, G, H, edge_match=em)
+    with pytest.raises(NotImplementedError):
+        nx.is_isomorphic(G, H, node_match=nm, backend="rustnx")
+
+
+# Bipartite graphs (todo item 37), added in batch 11.
+
+bipartite = nx.algorithms.bipartite
+
+
+def _bipartite_graph(seed, directed=False, connected=False):
+    rng = random.Random(seed)
+    n1, n2 = rng.randint(1, 15), rng.randint(1, 15)
+    B = bipartite.random_graph(n1, n2, rng.choice([0.1, 0.25, 0.5]), seed=seed)
+    if connected:
+        top = [v for v in B if v < n1]
+        bottom = [v for v in B if v >= n1]
+        for a, b in zip(top, bottom):
+            B.add_edge(a, b)
+        for v in top[len(bottom):]:
+            B.add_edge(v, bottom[0])
+        for v in bottom[len(top):]:
+            B.add_edge(top[0], v)
+    if rng.random() < 0.5:
+        B = nx.relabel_nodes(B, {v: f"b{v}" for v in B})
+    if directed:
+        D = nx.DiGraph()
+        D.add_nodes_from(B)
+        D.add_edges_from((u, v) if rng.random() < 0.5 else (v, u) for u, v in B.edges)
+        B = D
+    return _shuffled_copy(B, seed, labels=False)
+
+
+def _top_side(B):
+    return [v for v in B if B.nodes[v].get("bipartite") == 0]
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(60))
+def test_batch11_bipartite_basic(seed, directed):
+    rng = random.Random(seed)
+    B = _bipartite_graph(seed, directed)
+    C = _bipartite_graph(seed, directed, connected=True)
+    G = graph_for(seed, directed)
+    for H in [B, C, G, H_empty := B.__class__()]:
+        exact_outcome(bipartite.color, H)
+        exact_outcome(with_set_order(bipartite.sets), H)
+        top = _top_side(H)
+        exact_outcome(with_set_order(bipartite.sets), H, top)
+        exact_outcome(with_set_order(bipartite.sets), H, top + ["missing"])
+        for nodes in [top, [v for v in H if v not in top], top[:1], top + top[:1], list(H)[:3]]:
+            exact_outcome(bipartite.is_bipartite_node_set, H, nodes)
+    assert H_empty is not None
+    exact_outcome(bipartite.is_bipartite_node_set, B, [[1]])  # unhashable
+    exact_outcome(bipartite.is_bipartite_node_set, B, iter(list(B)))  # no len
+    # A self-loop, an isolated node.
+    H = C.copy()
+    H.add_node("isolated")
+    exact_outcome(bipartite.color, H)
+    H.add_edge(rng.choice(list(C)), "isolated")
+    exact_outcome(bipartite.color, H)
+    exact_outcome(with_set_order(bipartite.sets), H)
+    H.add_edge("isolated", "isolated")
+    exact_outcome(bipartite.color, H)
+    exact_outcome(bipartite.is_bipartite_node_set, H, _top_side(C))
+
+
+@pytest.mark.parametrize("seed", range(60))
+def test_batch11_bipartite_matching(seed):
+    rng = random.Random(seed)
+    B = _bipartite_graph(seed)
+    C = _bipartite_graph(seed, connected=True)
+    for H in [B, C]:
+        top = _top_side(H)
+        exact_outcome(bipartite.hopcroft_karp_matching, H)
+        exact_outcome(bipartite.hopcroft_karp_matching, H, top)
+        exact_outcome(bipartite.maximum_matching, H, top)
+        exact_outcome(bipartite.hopcroft_karp_matching, H, [v for v in H if v not in top])
+        exact_outcome(bipartite.hopcroft_karp_matching, H, list(H)[:4])  # maybe not a side
+        exact_outcome(bipartite.hopcroft_karp_matching, H, top + ["missing"])
+        matching = bipartite.hopcroft_karp_matching(H, top, backend="networkx")
+        partial = dict(list(matching.items())[: len(matching) // 2])
+        for M in [matching, partial, {}]:
+            exact_outcome(with_set_order(bipartite.to_vertex_cover), H, M, top)
+            exact_outcome(with_set_order(bipartite.to_vertex_cover), H, M)
+        # An invalid "matching": arbitrary pairs, self pairs, unknown nodes.
+        nodes = list(H)
+        odd = {rng.choice(nodes): rng.choice(nodes) for _ in range(3)}
+        odd["unknown"] = nodes[0]
+        exact_outcome(with_set_order(bipartite.to_vertex_cover), H, odd, top)
+    G = graph_for(seed, False)
+    exact_outcome(bipartite.hopcroft_karp_matching, G)
+    exact_outcome(bipartite.hopcroft_karp_matching, G, list(G)[::2])
+    exact_outcome(bipartite.hopcroft_karp_matching, _bipartite_graph(seed, True, True))
+    exact_outcome(with_set_order(bipartite.to_vertex_cover), G, {}, list(G)[::2])
+
+
+def test_batch11_bipartite_long_augmenting_paths():
+    # Matching a long path pairs nodes along it; with this top order the
+    # augmenting paths get long.
+    for n in [50, 1500]:
+        P = nx.path_graph(n)
+        top = list(range(0, n, 2))[::-1]
+        exact_outcome(bipartite.hopcroft_karp_matching, P, top)
+        exact_outcome(bipartite.hopcroft_karp_matching, P)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch11_bipartite_measures(seed, directed):
+    rng = random.Random(seed)
+    for H in [_bipartite_graph(seed, directed), _bipartite_graph(seed, directed, True), graph_for(seed, directed)]:
+        top = _top_side(H) or list(H)[:2]
+        for normalized in [True, False]:
+            exact_outcome(bipartite.closeness_centrality, H, top, normalized=normalized)
+        exact_outcome(bipartite.closeness_centrality, H, list(H)[:3])
+        exact_outcome(bipartite.closeness_centrality, H, list(H))
+        exact_outcome(bipartite.closeness_centrality, H, top + ["missing"])
+        exact_outcome(bipartite.closeness_centrality, H, [])
+        rich = [v for v in H if len(H[v]) >= 2]
+        for nodes in [None, rich, rich[:3] + rich[:1], set(rich[:4]), list(H)[:5], ["missing"]]:
+            exact_outcome(bipartite.node_redundancy, H, nodes)
+        R = H.subgraph(rich).copy()
+        exact_outcome(bipartite.node_redundancy, R)
+        if hasattr(bipartite, "butterflies") and not directed:
+            for nodes in [None, rich[:3], list(H)[0] if len(H) else None, ["missing"], 7]:
+                exact_outcome(bipartite.butterflies, H, nodes)
+    if hasattr(bipartite, "butterflies"):
+        for H in [nx.complete_bipartite_graph(4, 5), nx.complete_graph(6), nx.Graph([(0, 0), (0, 1), (1, 2), (2, 3), (3, 0)]), nx.empty_graph(3)]:
+            exact_outcome(bipartite.butterflies, H)
+            exact_outcome(bipartite.robins_alexander_clustering, H)
+    assert rng is not None
+
+
+def test_batch11_bipartite_runs_in_rust():
+    C = _bipartite_graph(5, connected=True)
+    top = _top_side(C)
+    D = _bipartite_graph(5, True, True)
+    calls = [
+        lambda: bipartite.color(C, backend="rustnx"),
+        lambda: bipartite.color(D, backend="rustnx"),
+        lambda: bipartite.sets(C, backend="rustnx"),
+        lambda: bipartite.is_bipartite_node_set(C, top, backend="rustnx"),
+        lambda: bipartite.hopcroft_karp_matching(C, backend="rustnx"),
+        lambda: bipartite.to_vertex_cover(C, {}, backend="rustnx"),
+        lambda: bipartite.closeness_centrality(C, top, backend="rustnx"),
+        lambda: bipartite.node_redundancy(nx.complete_bipartite_graph(3, 3), backend="rustnx"),
+    ]
+    if hasattr(bipartite, "butterflies"):
+        calls.append(lambda: bipartite.butterflies(C, backend="rustnx"))
+    for call in calls:
+        call()
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(10))
+def test_batch11_bipartite_multigraphs(seed, directed, restore_config):
+    base = _bipartite_graph(seed, directed, connected=True)
+    M = nx.MultiDiGraph() if directed else nx.MultiGraph()
+    M.add_nodes_from(base)
+    for u, v in base.edges:
+        for _ in range(random.Random(seed).choice([1, 2])):
+            M.add_edge(u, v)
+    top = _top_side(base)
+    exact_outcome(bipartite.color, M)
+    exact_outcome(with_set_order(bipartite.sets), M)
+    exact_outcome(bipartite.is_bipartite_node_set, M, top)
+    exact_outcome(bipartite.closeness_centrality, M, top)
+    exact_outcome(bipartite.node_redundancy, M, [v for v in M if len(M[v]) >= 2])
+    if not directed:
+        exact_outcome(bipartite.hopcroft_karp_matching, M, top)
+        exact_outcome(with_set_order(bipartite.to_vertex_cover), M, {}, top)
+        if hasattr(bipartite, "butterflies"):
+            exact_outcome(bipartite.butterflies, M)

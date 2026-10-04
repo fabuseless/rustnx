@@ -736,12 +736,15 @@ def test_backend_function_list_matches_implementations():
         "all_triangles",
         "antichain_width",
         "barycenter",
+        "butterflies",
         "centroid",
         "connected_dominating_set",
         "floyd_warshall_tree",
         "is_connected_dominating_set",
         "is_perfect_graph",
         "tree_centroid",
+        "vf2pp_is_monomorphic",
+        "vf2pp_subgraph_is_isomorphic",
     }
     for name in algorithms.__all__:
         assert hasattr(interface, name), name

@@ -1,3 +1,4 @@
+pub mod bipartite;
 pub mod centrality;
 pub mod centrality_more;
 pub mod cluster;
@@ -6,6 +7,7 @@ pub mod dag;
 pub mod directed;
 pub mod distance;
 pub mod graph_classes;
+pub mod isomorphism;
 pub mod leftovers;
 pub mod link_analysis;
 pub mod matching;

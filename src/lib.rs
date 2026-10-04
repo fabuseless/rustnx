@@ -17,8 +17,9 @@ use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
-    centrality, centrality_more, cluster, cores_more, dag, directed, distance, graph_classes,
-    leftovers, matching, paths, spectral, structure, structure_more, trees_more,
+    bipartite, centrality, centrality_more, cluster, cores_more, dag, directed, distance,
+    graph_classes, isomorphism, leftovers, matching, paths, spectral, structure, structure_more,
+    trees_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -2863,6 +2864,329 @@ impl CoreGraph {
         }
         let degree = self.degrees();
         Ok(py.detach(|| matching::MaxWeightClique::run(&self.succ, self.n, &weights, &degree)))
+    }
+
+    // --- Batch 11: isomorphism and graph hashing ---
+
+    /// Weisfeiler-Lehman steps from the initial `labels`: the graph hash,
+    /// or with `per_node` each node's hashed labels (after
+    /// `initial_hashes` copies of its hashed initial label). `edge_text`
+    /// holds `str(G[u][v][edge_attr])` per `succ` entry; `split` is
+    /// NetworkX 3.5+'s directed aggregation (successors then predecessors,
+    /// prefixed `s_`/`p_` without edge text).
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (labels, edge_text, split, steps, digest_size, initial_hashes=0, per_node=false))]
+    fn wl_hashes(
+        &self,
+        py: Python<'_>,
+        labels: Vec<String>,
+        edge_text: Option<Vec<String>>,
+        split: bool,
+        steps: usize,
+        digest_size: usize,
+        initial_hashes: usize,
+        per_node: bool,
+    ) -> PyResult<(String, Vec<Vec<String>>)> {
+        if labels.len() != self.n || !(1..=64).contains(&digest_size) {
+            return Err(PyValueError::new_err("bad labels or digest size"));
+        }
+        if edge_text
+            .as_ref()
+            .is_some_and(|t| t.len() != self.succ.targets.len())
+        {
+            return Err(PyValueError::new_err("edge text doesn't match the edges"));
+        }
+        Ok(py.detach(|| {
+            use isomorphism::{WlGroup, WlPrefix};
+            let n = self.n;
+            let text = edge_text.as_deref();
+            let prefix = |same: &'static str| match text {
+                Some(t) => WlPrefix::PerEdge(t),
+                None => WlPrefix::Same(same),
+            };
+            let mut groups = Vec::new();
+            if split {
+                groups.push(WlGroup {
+                    rows: isomorphism::rows_with_ids(&self.succ, n),
+                    prefix: prefix("s_"),
+                });
+                groups.push(WlGroup {
+                    rows: isomorphism::pred_rows_with_ids(&self.succ, n),
+                    prefix: prefix("p_"),
+                });
+            } else {
+                groups.push(WlGroup {
+                    rows: isomorphism::rows_with_ids(&self.succ, n),
+                    prefix: prefix(""),
+                });
+            }
+            let mut history: Vec<Vec<String>> = Vec::new();
+            if initial_hashes > 0 {
+                let first: Vec<String> = labels
+                    .par_iter()
+                    .map(|l| isomorphism::blake2b_hex(l.as_bytes(), digest_size))
+                    .collect();
+                for _ in 1..initial_hashes {
+                    history.push(first.clone());
+                }
+                history.push(first);
+            }
+            let start = history.len();
+            for i in 0..steps {
+                let previous = if i == 0 {
+                    &labels
+                } else {
+                    &history[history.len() - 1]
+                };
+                let next = isomorphism::wl_step(previous, &groups, digest_size);
+                history.push(next);
+            }
+            if !per_node {
+                let text = isomorphism::wl_counts_text(&history[start..]);
+                let graph_hash = isomorphism::blake2b_hex(text.as_bytes(), digest_size);
+                return (graph_hash, Vec::new());
+            }
+            // Per node, its labels across steps.
+            let per_node: Vec<Vec<String>> = (0..n)
+                .into_par_iter()
+                .map(|v| history.iter().map(|step| step[v].clone()).collect())
+                .collect();
+            (String::new(), per_node)
+        }))
+    }
+
+    /// Whether the sorted per-node property rows of the two graphs agree,
+    /// as `could_be_isomorphic` builds them: degree, triangles (undirected
+    /// graphs only) and the number of maximal cliques, for the columns
+    /// asked for.
+    fn iso_tables_match(
+        &self,
+        py: Python<'_>,
+        other: &Bound<'_, CoreGraph>,
+        degree: bool,
+        triangles: bool,
+        cliques: bool,
+    ) -> bool {
+        let other = other.get();
+        let deg_a = degree.then(|| self.degrees());
+        let deg_b = degree.then(|| other.degrees());
+        py.detach(|| {
+            let table = |g: &CoreGraph, deg: Option<Vec<usize>>| {
+                let n = g.n;
+                let tri =
+                    triangles.then(|| cluster::triangle_counts(&g.succ, None, n, &all_nodes(n)));
+                let clq = cliques.then(|| isomorphism::maximal_clique_counts(&g.succ, n));
+                let mut rows: Vec<[u64; 3]> = (0..n)
+                    .map(|v| {
+                        [
+                            deg.as_ref().map_or(0, |d| d[v] as u64),
+                            tri.as_ref().map_or(0, |t| t[v].0 / 2),
+                            clq.as_ref().map_or(0, |c| c[v]),
+                        ]
+                    })
+                    .collect();
+                rows.par_sort_unstable();
+                rows
+            };
+            table(self, deg_a) == table(other, deg_b)
+        })
+    }
+
+    /// Whether `small` maps into this graph: `problem` 0 isomorphism,
+    /// 1 induced subgraph isomorphism, 2 monomorphism. Labels are integer
+    /// classes (equal labels, equal classes); `None` means all equal.
+    fn has_morphism(
+        &self,
+        py: Python<'_>,
+        small: &Bound<'_, CoreGraph>,
+        labels: Option<Vec<u32>>,
+        small_labels: Option<Vec<u32>>,
+        problem: u8,
+    ) -> PyResult<bool> {
+        let small = small.get();
+        if small.directed != self.directed {
+            return Err(PyValueError::new_err("graphs differ in directedness"));
+        }
+        let labels = labels.unwrap_or_else(|| vec![0; self.n]);
+        let small_labels = small_labels.unwrap_or_else(|| vec![0; small.n]);
+        if labels.len() != self.n || small_labels.len() != small.n {
+            return Err(PyValueError::new_err("wrong number of labels"));
+        }
+        let problem = match problem {
+            0 => isomorphism::Problem::Iso,
+            1 => isomorphism::Problem::Induced,
+            _ => isomorphism::Problem::Mono,
+        };
+        let directed = self.directed;
+        Ok(py.detach(|| {
+            let big = isomorphism::Side {
+                succ: &self.succ,
+                pred: directed.then(|| self.adj(true)),
+                n: self.n,
+                labels: &labels,
+            };
+            let sm = isomorphism::Side {
+                succ: &small.succ,
+                pred: directed.then(|| small.adj(true)),
+                n: small.n,
+                labels: &small_labels,
+            };
+            isomorphism::has_morphism(&sm, &big, directed, problem)
+        }))
+    }
+
+    /// Centers of a tree (undirected, connected, n - 1 edges), in order.
+    fn tree_centers(&self, py: Python<'_>) -> PyResult<Vec<u32>> {
+        if self.n == 0 {
+            return Err(PyValueError::new_err("empty graph"));
+        }
+        Ok(py.detach(|| isomorphism::tree_centers(&self.succ, self.n)))
+    }
+
+    /// Height of the tree below `root`.
+    fn tree_height(&self, py: Python<'_>, root: usize) -> PyResult<u32> {
+        self.check_index(root)?;
+        Ok(py.detach(|| isomorphism::tree_height(&self.succ, self.n, root)))
+    }
+
+    /// `rooted_tree_isomorphism` of this tree from `root` and `other` from
+    /// `other_root`: position pairs in NetworkX's output order.
+    fn rooted_tree_isomorphism(
+        &self,
+        py: Python<'_>,
+        root: usize,
+        other: &Bound<'_, CoreGraph>,
+        other_root: usize,
+        descending: bool,
+    ) -> PyResult<Vec<(u32, u32)>> {
+        let other = other.get();
+        self.check_index(root)?;
+        other.check_index(other_root)?;
+        Ok(py.detach(|| {
+            isomorphism::rooted_tree_isomorphism(
+                &self.succ,
+                self.n,
+                root,
+                &other.succ,
+                other.n,
+                other_root,
+                descending,
+            )
+        }))
+    }
+
+    // Bipartite graphs (todo item 37), in the same batch.
+
+    /// `nx.bipartite.color`: nodes in dict order and their colors, or
+    /// `None` if the graph isn't bipartite. Directed graphs need exact
+    /// in-edge order loaded.
+    #[allow(clippy::type_complexity)]
+    fn bipartite_color(&self, py: Python<'_>) -> PyResult<Option<(Vec<u32>, Vec<u8>)>> {
+        let pred = if self.directed {
+            Some(self.reverse_exact_order(None)?.0)
+        } else {
+            None
+        };
+        let degree = self.degrees();
+        Ok(py.detach(|| bipartite::color(&self.succ, pred, self.n, &degree).ok()))
+    }
+
+    /// `is_bipartite_node_set` for an undirected graph, given which nodes
+    /// are in the set: `None` if a component isn't bipartite.
+    fn is_bipartite_node_set(&self, py: Python<'_>, in_set: Vec<bool>) -> PyResult<Option<bool>> {
+        if in_set.len() != self.n {
+            return Err(PyValueError::new_err("wrong number of flags"));
+        }
+        Ok(py.detach(|| {
+            let components = traversal::connected_components(&self.succ, self.n);
+            bipartite::is_node_set(&self.succ, self.n, &components, &in_set).ok()
+        }))
+    }
+
+    /// `hopcroft_karp_matching` with `left` in NetworkX's set order: each
+    /// node's match (`None` if unmatched) and the recursion depth NetworkX
+    /// would reach, or `None` if a left node has a neighbor on its side.
+    #[allow(clippy::type_complexity)]
+    fn hopcroft_karp(
+        &self,
+        py: Python<'_>,
+        left: Vec<u32>,
+    ) -> PyResult<Option<(Vec<Option<u32>>, usize)>> {
+        let left = self.sources_or_all(Some(left))?;
+        let mut is_left = vec![false; self.n];
+        for &v in &left {
+            is_left[v as usize] = true;
+        }
+        if left.iter().any(|&v| {
+            self.succ
+                .neighbors(v as usize)
+                .iter()
+                .any(|&w| is_left[w as usize])
+        }) {
+            return Ok(None);
+        }
+        Ok(py.detach(|| {
+            let (mate, depth) = bipartite::hopcroft_karp(&self.succ, self.n, &left);
+            let mate = mate
+                .into_iter()
+                .map(|m| (m != u32::MAX).then_some(m))
+                .collect();
+            Some((mate, depth))
+        }))
+    }
+
+    /// For `to_vertex_cover`: which nodes are targets or reach one by an
+    /// alternating path. `pairs` are the matching's items as positions.
+    fn alternating_reach(
+        &self,
+        py: Python<'_>,
+        targets: Vec<bool>,
+        pairs: Vec<(u32, u32)>,
+    ) -> PyResult<Vec<bool>> {
+        if targets.len() != self.n {
+            return Err(PyValueError::new_err("wrong number of flags"));
+        }
+        for &(u, v) in &pairs {
+            self.check_index(u as usize)?;
+            self.check_index(v as usize)?;
+        }
+        Ok(py.detach(|| {
+            let n = self.n;
+            let mut pair_set: std::collections::HashSet<(u32, u32)> =
+                std::collections::HashSet::new();
+            for &(u, v) in &pairs {
+                pair_set.insert((u.min(v), u.max(v)));
+            }
+            let m = self.succ.targets.len();
+            let mut matched = vec![false; m];
+            let mut unmatched = vec![false; m];
+            for u in 0..n {
+                for e in self.succ.range(u) {
+                    let v = self.succ.targets[e];
+                    let key = ((u as u32).min(v), (u as u32).max(v));
+                    let in_matching = pair_set.contains(&key);
+                    // A matching item (a, a) becomes the 1-tuple `(a,)` in
+                    // NetworkX's matched edges, so self-loops never count
+                    // as matched; the loop edge still leaves the unmatched
+                    // edges.
+                    matched[e] = in_matching && v as usize != u;
+                    unmatched[e] = !in_matching;
+                }
+            }
+            bipartite::alternating_reach(&self.succ, n, &targets, &matched, &unmatched)
+        }))
+    }
+
+    /// `(neighbors, overlap count)` of `_node_redundancy` for `nodes`.
+    fn redundancy_overlaps(&self, py: Python<'_>, nodes: Vec<u32>) -> PyResult<Vec<(u64, u64)>> {
+        let nodes = self.sources_or_all(Some(nodes))?;
+        Ok(py.detach(|| bipartite::redundancy_overlaps(&self.succ, self.n, &nodes)))
+    }
+
+    /// Per-node butterfly counts, as NetworkX 3.7's `butterflies`.
+    fn butterflies(&self, py: Python<'_>) -> Vec<u64> {
+        let degree = self.degrees();
+        py.detach(|| bipartite::butterflies(&self.succ, self.n, &degree))
     }
 
     /// `greedy_color` (largest_first): processing order and each node's color.

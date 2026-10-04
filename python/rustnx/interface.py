@@ -40,6 +40,7 @@ _LINEAR_TIME = {
     "check_planarity",
     "check_planarity_recursive",
     "chordal_graph_treewidth",
+    "color",
     "condensation",
     "connected_components",
     "connected_dominating_set",
@@ -66,6 +67,7 @@ _LINEAR_TIME = {
     "edge_dfs",
     "eulerian_circuit",
     "eulerian_path",
+    "faster_could_be_isomorphic",
     "find_cycle",
     "generic_bfs_edges",
     "greedy_color",
@@ -85,6 +87,7 @@ _LINEAR_TIME = {
     "is_attracting_component",
     "is_biconnected",
     "is_bipartite",
+    "is_bipartite_node_set",
     "is_branching",
     "is_chordal",
     "is_coloring",
@@ -140,7 +143,9 @@ _LINEAR_TIME = {
     "onion_layers",
     "out_degree_centrality",
     "predecessor",
+    "root_trees",
     "score_sequence",
+    "sets",
     "shortest_path",
     "single_source_dijkstra",
     "single_source_dijkstra_path",
@@ -195,8 +200,10 @@ MULTIGRAPH_FUNCTIONS = {
     "biconnected_components",
     "bidirectional_dijkstra",
     "bidirectional_shortest_path",
+    "bipartite_closeness_centrality",
     "center",
     "closeness_centrality",
+    "color",
     "condensation",
     "connected_components",
     "descendants",
@@ -219,10 +226,12 @@ MULTIGRAPH_FUNCTIONS = {
     "harmonic_centrality",
     "harmonic_diameter",
     "has_path",
+    "hopcroft_karp_matching",
     "immediate_dominators",
     "is_attracting_component",
     "is_biconnected",
     "is_bipartite",
+    "is_bipartite_node_set",
     "is_connected",
     "is_dominating_set",
     "is_matching",
@@ -241,6 +250,7 @@ MULTIGRAPH_FUNCTIONS = {
     "newman_betweenness_centrality",
     "node_boundary",
     "node_connected_component",
+    "node_redundancy",
     "number_attracting_components",
     "number_connected_components",
     "number_of_isolates",
@@ -249,6 +259,7 @@ MULTIGRAPH_FUNCTIONS = {
     "periphery",
     "predecessor",
     "radius",
+    "sets",
     "shortest_path",
     "shortest_path_length",
     "single_source_all_shortest_paths",
@@ -353,6 +364,12 @@ def _nx_signature(name):
     return inspect.signature(_nx_function(name))
 
 
+# Parameters NetworkX renamed between releases: {function: {old: ours}}.
+_RENAMED_PARAMS = {
+    "vf2pp_is_isomorphic": {"G1": "FG", "G2": "SG"},  # renamed in 3.7
+}
+
+
 def _bind(name, args, kwargs):
     """Bind a call to the installed NetworkX function's signature.
 
@@ -365,6 +382,7 @@ def _bind(name, args, kwargs):
     nx_sig = _nx_signature(name)
     bound = nx_sig.bind(*args, **kwargs)
     ours = _OUR_PARAMS[name]
+    renamed = _RENAMED_PARAMS.get(name, {})
     arguments = {}
     unsupported = []
     for key, value in bound.arguments.items():
@@ -373,8 +391,8 @@ def _bind(name, args, kwargs):
             continue
         if param.kind is param.VAR_KEYWORD:
             unsupported.extend(value)  # backend-specific keywords
-        elif key in ours:
-            arguments[key] = value
+        elif renamed.get(key, key) in ours:
+            arguments[renamed.get(key, key)] = value
         elif not _is_default(value, param):
             unsupported.append(key)
     return arguments, unsupported
