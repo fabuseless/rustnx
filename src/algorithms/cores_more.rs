@@ -162,7 +162,8 @@ fn common(a: &[(u32, u32)], b: &[(u32, u32)], mut visit: impl FnMut(u32, u32)) {
 /// triangles of the current graph. That reaches the same fixed point as
 /// peeling edges one at a time (an edge's support only goes down), so the
 /// usual queue-based peeling gives the same graph.
-pub fn k_truss(adj: &Csr, n: usize, need: u64) -> (Vec<(u32, u32)>, Vec<bool>) {
+#[allow(clippy::type_complexity)]
+pub fn k_truss(adj: &Csr, n: usize, need: u64) -> (Vec<(u32, u32)>, Vec<bool>, Vec<bool>) {
     let (rows, edges) = sorted_edges(adj, n);
     let mut support: Vec<u64> = edges
         .par_iter()
@@ -205,7 +206,16 @@ pub fn k_truss(adj: &Csr, n: usize, need: u64) -> (Vec<(u32, u32)>, Vec<bool>) {
             dropped.push((u, v));
         }
     }
-    (dropped, keep)
+    // Whether each arc of `adj` (in CSR order) survives.
+    let arcs = (0..n)
+        .flat_map(|u| adj.neighbors(u).iter().map(move |&v| (u, v)))
+        .map(|(u, v)| {
+            let row = &rows[u];
+            row.binary_search_by_key(&v, |&(w, _)| w)
+                .is_ok_and(|j| alive[row[j].1 as usize])
+        })
+        .collect();
+    (dropped, keep, arcs)
 }
 
 /// Nodes of `nx.k_corona`: core number `k`, and exactly `k` neighbors
@@ -486,14 +496,15 @@ pub enum Intersection {
 /// selects NetworkX 3.7's version: it checks connectivity first, visits only
 /// pairs `u <= v` and gives up once the diameter passes `bound`; older
 /// releases visit every ordered pair.
-pub fn intersection_array(
-    adj: &Csr,
-    n: usize,
-    degree: &[usize],
-    pairs_once: bool,
-    bound: f64,
-) -> Intersection {
-    if degree.iter().any(|&d| d != degree[0]) {
+pub fn intersection_array(adj: &Csr, n: usize, pairs_once: bool, bound: f64) -> Intersection {
+    // NetworkX degrees: a self-loop counts twice. Stop at the first
+    // mismatch, as NetworkX does.
+    let degree = |v: usize| {
+        let row = adj.neighbors(v);
+        row.len() + row.iter().filter(|&&w| w as usize == v).count()
+    };
+    let first = degree(0);
+    if (1..n).any(|v| degree(v) != first) {
         return Intersection::NotRegular;
     }
     if pairs_once && bfs_lengths(adj, n, 0, f64::INFINITY).0.len() != n {

@@ -740,17 +740,22 @@ impl CoreGraph {
         })
     }
 
-    /// `nx.k_truss`: edges to drop as `(us, vs)` and whether each node is
-    /// kept, or `None` if the graph has self-loops.
+    /// `nx.k_truss`: edges to drop as `(us, vs)`, whether each node is
+    /// kept and whether each arc (CSR order) is, or `None` if the graph has
+    /// self-loops.
     #[allow(clippy::type_complexity)]
-    fn k_truss(&self, py: Python<'_>, need: u64) -> Option<(Vec<u32>, Vec<u32>, Vec<bool>)> {
+    fn k_truss(
+        &self,
+        py: Python<'_>,
+        need: u64,
+    ) -> Option<(Vec<u32>, Vec<u32>, Vec<bool>, Vec<bool>)> {
         py.detach(|| {
             if structure::has_self_loops(&self.succ, self.n) {
                 return None;
             }
-            let (dropped, keep) = cores_more::k_truss(&self.succ, self.n, need);
+            let (dropped, keep, arcs) = cores_more::k_truss(&self.succ, self.n, need);
             let (us, vs) = dropped.into_iter().unzip();
-            Some((us, vs, keep))
+            Some((us, vs, keep, arcs))
         })
     }
 
@@ -820,10 +825,7 @@ impl CoreGraph {
         pairs_once: bool,
         bound: f64,
     ) -> (u8, Vec<u32>, Vec<u32>) {
-        let degree = self.degrees();
-        match py.detach(|| {
-            cores_more::intersection_array(&self.succ, self.n, &degree, pairs_once, bound)
-        }) {
+        match py.detach(|| cores_more::intersection_array(&self.succ, self.n, pairs_once, bound)) {
             cores_more::Intersection::Ok(b, c) => (0, b, c),
             cores_more::Intersection::NotRegular => (1, vec![], vec![]),
             cores_more::Intersection::Inconsistent => (2, vec![], vec![]),

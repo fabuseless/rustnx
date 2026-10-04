@@ -1902,10 +1902,22 @@ def k_truss(G, k):
     if result is None:
         raise nx.NetworkXNotImplemented(_SELF_LOOPS_MESSAGE)
     base = _networkx_graph(G)
-    us, vs, keep = result
+    us, vs, keep, arcs = result
     nodes = G._nodes
-    # NetworkX removes edges and isolated nodes from `G.copy()`; removing
-    # the final ones leaves the copy's dicts in the same order.
+    if type(base) is nx.Graph and type(base._adj) is dict:
+        # NetworkX removes edges and isolated nodes from `G.copy()`. Taking
+        # `copy`'s own steps for only what survives gives the same dicts in
+        # the same order, without the copy and removals.
+        H = nx.Graph()
+        H.graph.update(base.graph)
+        H.add_nodes_from((n, d.copy()) for (n, d), kept in zip(base._node.items(), keep) if kept)
+        alive = iter(arcs)
+        H.add_edges_from(
+            (u, v, d.copy()) for u, nbrs in base._adj.items() for v, d in nbrs.items() if next(alive)
+        )
+        return H
+    # Otherwise remove the dropped edges and nodes from a copy: removals
+    # leave the copy's dicts in order.
     H = base.copy()
     H.remove_edges_from(zip([nodes[u] for u in us], [nodes[v] for v in vs]))
     H.remove_nodes_from([v for v, kept in zip(nodes, keep) if not kept])
@@ -2081,7 +2093,13 @@ def _intersection_pairs_once():
     """Whether the installed NetworkX (3.7+) checks connectivity first,
     visits each unordered pair once and gives up when the diameter passes
     ``8 log2(n) / 3``. That rejects long cycles, which 3.4 and 3.5 accept."""
-    return not nx.is_distance_regular(nx.cycle_graph(40), backend="networkx")
+    # NetworkX's own code, not a dispatched call: `is_distance_regular`
+    # would dispatch `intersection_array` back here while probing.
+    try:
+        nx.intersection_array.orig_func(nx.cycle_graph(40))
+    except nx.NetworkXError:
+        return True
+    return False
 
 
 def intersection_array(G):
