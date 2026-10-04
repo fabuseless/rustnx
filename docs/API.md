@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 179 NetworkX functions. Call them as usual (for
+rustnx implements 192 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -115,6 +115,26 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.astar_path` | `source`, `target`, `heuristic`, `weight`, `cutoff` | yes | NetworkX | Only without a `heuristic`; graphs with negative weights fall back. |
 | `nx.astar_path_length` | `source`, `target`, `heuristic`, `weight`, `cutoff` | yes | NetworkX | Only without a `heuristic`; graphs with negative weights fall back. Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). |
 
+### Shortest paths: Floyd-Warshall, Johnson and Goldberg-Radzik
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.floyd_warshall` | `weight` | no | rustnx | Parallel. Follows the installed NetworkX's version (3.4/3.5 count missing weights as 1.0 and don't check for negative cycles). Dict and row key orders match. Mixed int and float weights fall back, as do `None` weights before 3.6. |
+| `nx.floyd_warshall_predecessor_and_distance` | `weight` | no | rustnx | As `floyd_warshall`; the predecessor dicts match too. |
+| `nx.floyd_warshall_tree` | `weight` | no | rustnx | NetworkX 3.7+. Mixed int and float weights fall back. |
+| `nx.floyd_warshall_numpy` | `nodelist`, `weight` | no | rustnx | Parallel; the same float operations as NetworkX's NumPy loop. `None` and `-0.0` weights, and a `nodelist` holding nodes not in the graph, fall back. |
+| `nx.johnson` | `weight` | yes | rustnx | Parallel. The paths dicts follow the installed NetworkX's order. `None` and infinite weights fall back. |
+| `nx.goldberg_radzik` | `source`, `weight` | no | rustnx | Follows the installed NetworkX's version (3.7 changed the scan order). Rebuilds NetworkX's `relabeled` sets in Python, since they are visited in set order. Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). `None` and infinite weights fall back. |
+
+### Simple paths
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.all_simple_paths` | `source`, `target`, `cutoff` | no | rustnx | Paths are generated lazily in Rust, in NetworkX's order. Raises RuntimeError if the graph changes during iteration. |
+| `nx.all_simple_edge_paths` | `source`, `target`, `cutoff` | no | rustnx | Paths are generated lazily in Rust, in NetworkX's order. Raises RuntimeError if the graph changes during iteration. |
+| `nx.shortest_simple_paths` | `source`, `target`, `weight` | no | rustnx | Yen's algorithm with NetworkX's bidirectional searches and tie-breaking, one path per step. Mixed int and float, and infinite, weights fall back. |
+| `nx.is_simple_path` | `nodes` | yes | NetworkX |  |
+
 ### Reachability
 
 | Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
@@ -179,6 +199,8 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.dag.v_structures` | none | no | NetworkX | Generator. |
 | `nx.dag.root_to_leaf_paths` | none | no | rustnx | Paths are generated lazily. Undirected graphs fall back. |
 | `nx.dag_to_branching` | none | no | rustnx |  |
+| `nx.antichains` | `topo_order` | no | rustnx | Generator; the closure is computed when iteration starts, as NetworkX does. A `topo_order` that isn't a topological order of the graph falls back. |
+| `nx.dag.antichain_width` | none | no | rustnx | NetworkX 3.7+. Counts a maximum matching of the closure in Rust. |
 
 ### Clustering
 
@@ -290,6 +312,7 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.cycle_basis` | `root` | no | NetworkX | A `root` not in the graph falls back. |
 | `nx.find_cycle` | `source`, `orientation` | no | NetworkX | A `source` that isn't one node of the graph, and invalid orientations on directed graphs, fall back. |
 | `nx.girth` | none | no | rustnx |  |
+| `nx.minimum_cycle_basis` | `weight` | no | rustnx | Parallel lifted-graph searches. Builds the subgraph views and chord sets in Python, as NetworkX does (their order can depend on set layout). `None` and infinite weights, and tuple node labels, fall back. |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 

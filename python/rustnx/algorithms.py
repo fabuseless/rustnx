@@ -28,9 +28,13 @@ __all__ = [
     "all_pairs_shortest_path",
     "all_pairs_shortest_path_length",
     "all_shortest_paths",
+    "all_simple_edge_paths",
+    "all_simple_paths",
     "all_topological_sorts",
     "all_triangles",
     "ancestors",
+    "antichain_width",
+    "antichains",
     "articulation_points",
     "astar_path",
     "astar_path_length",
@@ -93,10 +97,15 @@ __all__ = [
     "eulerian_path",
     "find_cycle",
     "find_negative_cycle",
+    "floyd_warshall",
+    "floyd_warshall_numpy",
+    "floyd_warshall_predecessor_and_distance",
+    "floyd_warshall_tree",
     "generalized_degree",
     "generic_bfs_edges",
     "girth",
     "global_reaching_centrality",
+    "goldberg_radzik",
     "greedy_color",
     "group_betweenness_centrality",
     "group_closeness_centrality",
@@ -129,12 +138,14 @@ __all__ = [
     "is_regular",
     "is_semiconnected",
     "is_semieulerian",
+    "is_simple_path",
     "is_strongly_connected",
     "is_strongly_regular",
     "is_tournament",
     "is_tree",
     "is_weakly_connected",
     "isolates",
+    "johnson",
     "k_core",
     "k_corona",
     "k_crust",
@@ -149,6 +160,7 @@ __all__ = [
     "local_reaching_centrality",
     "maximum_spanning_edges",
     "maximum_spanning_tree",
+    "minimum_cycle_basis",
     "minimum_spanning_edges",
     "minimum_spanning_tree",
     "multi_source_dijkstra",
@@ -173,6 +185,7 @@ __all__ = [
     "root_to_leaf_paths",
     "shortest_path",
     "shortest_path_length",
+    "shortest_simple_paths",
     "single_source_all_shortest_paths",
     "single_source_bellman_ford",
     "single_source_bellman_ford_path",
@@ -4321,3 +4334,455 @@ def kruskal_mst_edges(G, minimum, weight="weight", keys=True, data=True, ignore_
             guard.release()
 
     return generate()
+
+
+# --- Batch 7: shortest paths, DAG and cycle leftovers ------------------------------
+
+
+def _weight_flags(G, weight, all_int):
+    """Decline weights rustnx's f64 arithmetic can't reproduce: infinite
+    ones, and ints whose path sums could leave f64's exact range."""
+    finite, exact, _ = G._core.weight_flags(weight)
+    if not finite:
+        raise NotImplementedError("rustnx does not support infinite weights here")
+    if not exact and (all_int or G._core.weight_mixed(weight)):
+        raise NotImplementedError("integer weights too large for exact sums")
+
+
+# Floyd-Warshall
+
+
+@functools.cache
+def _floyd_warshall_inline():
+    """Whether the installed NetworkX's Floyd-Warshall is 3.4/3.5's version
+    (``min(e_weight, ...)`` over ``G.edges(data=True)`` with missing weights
+    1.0, no negative cycle check) rather than 3.6+'s ``_init_pred_dist``
+    (rows of ``G._adj``, missing weights 1, hidden edges skipped)."""
+    return "_init_pred_dist" not in _source_text(nx.floyd_warshall_predecessor_and_distance)
+
+
+def _inf():
+    return float("inf")
+
+
+# NetworkX's `dist` rows: `defaultdict(lambda: float("inf"))`.
+_DIST_ROW = functools.partial(defaultdict, _inf)
+
+
+def _core_with_default(G, weight, default):
+    """A core converted with ``default`` for edges lacking ``weight``,
+    kept on G (which NetworkX caches while the graph is unchanged)."""
+    cores = G.__dict__.setdefault("_rustnx_default_cores", {})
+    key = (weight, type(default), default)
+    if key not in cores:
+        from .graph import from_networkx
+
+        cores[key] = from_networkx(_networkx_graph(G), {weight: default})._core
+    return cores[key]
+
+
+def _floyd_warshall(G, weight, tree=False, want_pred=True):
+    old = not tree and _floyd_warshall_inline()
+    if callable(weight):
+        raise NotImplementedError("rustnx does not support callable weights")
+    core = G._core
+    if weight is None:
+        # `d.get(None, 1.0)` before 3.6, `_weight_function`'s 1 after.
+        int_weights = not old
+    else:
+        if old:
+            if G._core.is_native():
+                raise NotImplementedError("rustnx can't tell missing weights apart here")
+            if not isinstance(weight, str):
+                raise NotImplementedError("rustnx only supports string edge attribute names")
+            core = _core_with_default(G, weight, 1.0)
+        else:
+            _check_weight(G, weight)
+            core = G._core
+        int_weights, has_hidden = core.weight_info(weight)
+        if core.weight_mixed(weight):
+            raise NotImplementedError("edge weights mix ints and floats")
+        if has_hidden and old:
+            # NetworkX 3.4/3.5 compare None with a number and raise TypeError.
+            raise NotImplementedError("rustnx does not support None edge weights here")
+    nodes = G._nodes
+    found = core.floyd_warshall(
+        nodes if type(nodes) is list else list(nodes),
+        _DIST_ROW,
+        weight,
+        int_weights,
+        old,
+        tree,
+        want_pred,
+    )
+    if found is None:
+        raise nx.NetworkXUnbounded("Negative cycle detected.")
+    return found
+
+
+def floyd_warshall_predecessor_and_distance(G, weight="weight"):
+    return _floyd_warshall(G, weight)
+
+
+def floyd_warshall(G, weight="weight"):
+    return _floyd_warshall(G, weight, want_pred=False)[1]
+
+
+def floyd_warshall_tree(G, weight="weight"):
+    return _floyd_warshall(G, weight, tree=True)
+
+
+@functools.cache
+def _floyd_warshall_numpy_checks():
+    """Whether ``floyd_warshall_numpy`` checks the diagonal for negative
+    cycles (NetworkX 3.6+)."""
+    return "np.diag(A) < 0" in _source_text(nx.floyd_warshall_numpy)
+
+
+def floyd_warshall_numpy(G, nodelist=None, weight="weight"):
+    import numpy as np
+
+    n = len(G)
+    if nodelist is not None:
+        if not len(nodelist) == len(G) == len(set(nodelist)):
+            raise nx.NetworkXError(
+                "nodelist must contain every node in G with no repeats."
+                "If you wanted a subgraph of G use G.subgraph(nodelist)"
+            )
+        order = [0] * n
+        for k, v in enumerate(nodelist):
+            i = G._index.get(v)
+            if i is None:
+                # NetworkX's error message lists a set of nodes.
+                raise NotImplementedError("nodelist holds nodes not in G")
+            order[i] = k
+    else:
+        order = list(range(n))
+    weight, _, has_hidden = _check_weight(G, weight)
+    if has_hidden:
+        raise NotImplementedError("rustnx does not support None edge weights here")
+    if G._core.weight_flags(weight)[2]:
+        raise NotImplementedError("NumPy may order -0.0 and 0.0 either way")
+    if n == 0:
+        return np.full((0, 0), np.inf)
+    found = G._core.floyd_warshall_dense(order, weight, _floyd_warshall_numpy_checks())
+    if found is None:
+        raise nx.NetworkXUnbounded("Negative cycle detected.")
+    return np.frombuffer(found, dtype=np.float64).reshape(n, n)
+
+
+# Johnson and Goldberg-Radzik
+
+
+def johnson(G, weight="weight"):
+    weight, all_int, has_hidden = _check_weight(G, weight)
+    if has_hidden:
+        # NetworkX's reweighting adds the None and raises TypeError.
+        raise NotImplementedError("rustnx does not support None edge weights here")
+    _weight_flags(G, weight, all_int)
+    h = G._core.johnson_potentials(weight)
+    if h is None:
+        raise nx.NetworkXUnbounded(_BELLMAN_FORD_UNBOUNDED)
+    pop_order = _dijkstra_paths_in_pop_order()
+    nodes = G._nodes
+    result = {}
+    for start in range(0, len(nodes), _ALL_PAIRS_BATCH):
+        batch = list(range(start, min(start + _ALL_PAIRS_BATCH, len(nodes))))
+        for s, tree in zip(batch, G._core.johnson_trees(batch, h, weight)):
+            if tree is None:
+                raise ValueError(*_NEGATIVE_CYCLE)
+            order, parents, seen = tree
+            result[nodes[s]] = _tree_paths(G, order, parents, order if pop_order else seen)
+    return result
+
+
+@functools.cache
+def _goldberg_radzik_skips_counted():
+    """Whether ``goldberg_radzik``'s ``topo_sort`` skips relabeled nodes
+    already counted (3.4/3.5) rather than iterating a copy of the set made
+    before any were (3.6+)."""
+    return "relabeled - neg_count.keys()" not in _source_text(nx.goldberg_radzik)
+
+
+def goldberg_radzik(G, source, weight="weight"):
+    if source not in G:
+        raise nx.NodeNotFound(f"Node {source} is not found in the graph")
+    s = G._index[source]
+    _same_node_type(G, source, s)
+    weight, all_int, has_hidden = _check_weight(G, weight, distances=True)
+    if has_hidden:
+        raise NotImplementedError("rustnx does not support None edge weights here")
+    if G._core.negative_selfloop(weight):
+        raise nx.NetworkXUnbounded(_BELLMAN_FORD_UNBOUNDED)
+    if len(G) == 1:
+        return {source: None}, {source: 0}
+    _weight_flags(G, weight, all_int)
+    state = G._core.goldberg_radzik(s, all_int, weight)
+    skip_counted = _goldberg_radzik_skips_counted()
+    nodes = G._nodes
+    index = G._index
+    no_counts = {}.keys()
+    # `relabeled` is a set: each round visits it in Python's set order, so
+    # it is built here exactly as NetworkX builds it.
+    relabeled = {source}
+    while relabeled:
+        visit = relabeled if skip_counted else relabeled - no_counts
+        if not state.topo_sort([index[u] for u in visit], skip_counted):
+            raise nx.NetworkXUnbounded(_BELLMAN_FORD_UNBOUNDED)
+        relabeled = set(map(nodes.__getitem__, state.relax()))
+    keys, preds, dists, ints = state.result()
+    pred = {nodes[v]: None if p == _NO_PARENT else nodes[p] for v, p in zip(keys, preds)}
+    d = {nodes[v]: int(x) if i else x for v, x, i in zip(keys, dists, ints)}
+    return pred, d
+
+
+# DAGs
+
+
+def _flat_batches(G, it, limit=1024):
+    """Lists of nodes from a Rust iterator's ``(flat, ends)`` batches."""
+    nodes = G._nodes
+    while True:
+        flat, ends = it.next_batch(limit)
+        if not ends:
+            return
+        begin = 0
+        for end in ends:
+            yield [nodes[i] for i in flat[begin:end]]
+            begin = end
+
+
+def antichains(G, topo_order=None):
+    _directed_only(G)
+    given = None
+    if topo_order is not None:
+        if iter(topo_order) is topo_order:
+            raise NotImplementedError("rustnx needs a reusable container of nodes")
+        # NetworkX trusts the order it is given; rustnx takes only true
+        # topological orders, for which the closure is plain reachability.
+        given = G._core.antichains([_node_arg(G, v) for v in topo_order])
+        if given is None:
+            raise NotImplementedError("topo_order is not a topological order of G")
+
+    def compute():
+        # NetworkX sorts and copies the graph when iteration starts.
+        it = given
+        if it is None:
+            it = G._core.antichains(_topological_order_or_raise(G))
+        yield from _flat_batches(G, it)
+
+    return _computed_on_first_next(
+        G, compute, lambda H: nx.antichains(H, topo_order=topo_order, backend="networkx")
+    )
+
+
+def antichain_width(G):
+    _directed_only(G)
+    width = G._core.antichain_width()
+    if width is None:
+        raise nx.NetworkXUnfeasible(
+            "Graph contains a cycle or graph changed during iteration"
+        )
+    return width
+
+
+# Simple paths
+
+
+def _live_paths(G, start, fallback):
+    """A generator over ``start()`` that, like NetworkX's, reads the graph
+    as it goes: a change before iteration runs NetworkX on the changed
+    graph, a change during it stops with a RuntimeError."""
+    guard = _MutationGuard(G)
+
+    def generate():
+        try:
+            if guard.changed():
+                guard.release()
+                yield from fallback(guard.graph)
+                return
+            cache, key = guard._cache, guard._key
+            for item in start():
+                if key is not None and key not in cache:
+                    raise RuntimeError("Graph changed during iteration")
+                yield item
+        finally:
+            guard.release()
+
+    return generate()
+
+
+def _path_limit(cutoff, n):
+    """``len(current_path) - 1 < cutoff`` as ``nodes on path < limit``,
+    or ``None`` when NetworkX yields nothing (``cutoff >= 0`` fails)."""
+    if type(cutoff) not in (int, float, bool):
+        raise NotImplementedError("rustnx needs an int or float cutoff")
+    if not cutoff >= 0:
+        return None
+    if cutoff >= n + 1:
+        return n + 1
+    return math.ceil(cutoff)
+
+
+def _simple_paths(G, source, target, cutoff, edges):
+    try:
+        s = G._index.get(source)
+    except TypeError:
+        s = None
+    if s is not None:
+        _same_node_type(G, source, s)
+    error = None
+    targets, extra = [], False
+    if target in G:
+        targets = [G._index[target]]
+    else:
+        try:
+            target_set = set(target)
+        except TypeError as err:
+            error = nx.NodeNotFound(f"target node {target} not in graph")
+            error.__cause__ = err
+        else:
+            for x in target_set:
+                i = G._index.get(x)
+                if i is not None:
+                    targets.append(i)
+                elif x is not None:  # None is always a key of current_path
+                    extra = True
+    limit = _path_limit(len(G) - 1 if cutoff is None else cutoff, len(G))
+    nodes = G._nodes
+
+    def start():
+        if s is None:
+            raise nx.NodeNotFound(f"source node {source} not in graph")
+        if error is not None:
+            raise error
+        if limit is None or not (targets or extra):
+            return
+        it = G._core.simple_paths(s, targets, extra, limit)
+        for path in _flat_batches(G, it):
+            if edges:
+                yield list(zip(path, path[1:]))
+            else:
+                yield path
+
+    func = nx.all_simple_edge_paths if edges else nx.all_simple_paths
+    return _live_paths(
+        G, start, lambda H: func(H, source, target, cutoff=cutoff, backend="networkx")
+    )
+
+
+def all_simple_paths(G, source, target, cutoff=None):
+    return _simple_paths(G, source, target, cutoff, edges=False)
+
+
+def all_simple_edge_paths(G, source, target, cutoff=None):
+    return _simple_paths(G, source, target, cutoff, edges=True)
+
+
+def shortest_simple_paths(G, source, target, weight=None):
+    s = _position(G, source)
+    t = _position(G, target)
+    if weight is not None:
+        weight, all_int, _ = _check_weight(G, weight, distances=True)
+        _weight_flags(G, weight, all_int)
+    if G.is_directed():
+        G._ensure_exact_pred()  # the reverse searches follow G.pred
+
+    def start():
+        if s is None:
+            raise nx.NodeNotFound(f"source node {source} not in graph")
+        if t is None:
+            raise nx.NodeNotFound(f"target node {target} not in graph")
+        it = G._core.shortest_simple_paths(s, t, _COMPENSATED_SUM, weight)
+        nodes = G._nodes
+        while True:
+            code, path = it.next_path()
+            if code == 1:
+                raise nx.NetworkXNoPath(f"No path between {source} and {target}.")
+            if code == 2:
+                raise ValueError("Contradictory paths found: negative weights?")
+            if path is None:
+                return
+            yield [nodes[i] for i in path]
+
+    return _live_paths(
+        G, start, lambda H: nx.shortest_simple_paths(H, source, target, weight=weight, backend="networkx")
+    )
+
+
+def is_simple_path(G, nodes):
+    if len(nodes) == 0:
+        return False
+    if len(nodes) == 1:
+        return nodes[0] in G
+    index = G._index
+    try:
+        path = [index[v] for v in nodes]
+    except (KeyError, TypeError):
+        return False
+    if len(set(path)) != len(path):
+        return False
+    return G._core.is_path(path)
+
+
+# Minimum cycle basis
+
+
+def _spanning_forest_edges(index, edges):
+    """``minimum_spanning_edges(G, weight=None)``: with equal weights,
+    Kruskal keeps each edge (in ``G.edges`` order) joining two trees."""
+    parent = {}
+
+    def find(x):
+        root = x
+        while parent.get(root, root) != root:
+            root = parent[root]
+        while parent.get(x, x) != root:
+            parent[x], x = root, parent[x]
+        return root
+
+    tree = []
+    for u, v in edges:
+        a, b = find(index[u]), find(index[v])
+        if a != b:
+            parent[a] = b
+            tree.append((u, v))
+    return tree
+
+
+def minimum_cycle_basis(G, weight=None):
+    _undirected_only(G)
+    if weight is not None:
+        weight, all_int, has_hidden = _check_weight(G, weight)
+        if has_hidden:
+            raise NotImplementedError("rustnx does not support None edge weights here")
+        _weight_flags(G, weight, all_int)
+    nodes = G._nodes
+    if any(isinstance(v, tuple) for v in nodes):
+        # NetworkX's lifted graph names copies `(v, 1)`, which a tuple node
+        # could equal.
+        raise NotImplementedError("rustnx does not support tuple nodes here")
+    base = _networkx_graph(G)
+    index = G._index
+    cb = []
+    for c in connected_components(G):
+        # The subgraph view (and the chord set) iterate in an order that can
+        # depend on Python's set layout, so they are built as NetworkX does.
+        sub = base.subgraph(c)
+        edges = list(sub.edges)
+        tree_edges = _spanning_forest_edges(index, edges)
+        chords = sub.edges - tree_edges - {(v, u) for u, v in tree_edges}
+        if not chords:
+            continue
+        code, found = G._core.min_cycle_basis(
+            [index[v] for v in sub],
+            [(index[u], index[v]) for u, v in edges],
+            [(index[u], index[v]) for u, v in chords],
+            weight,
+        )
+        if code == 1:
+            raise ValueError(*_NEGATIVE_CYCLE)  # from `_dijkstra`
+        if code == 2:
+            raise ValueError("Contradictory paths found: negative weights?")
+        cb.extend([nodes[i] for i in cycle] for cycle in found)
+    return cb

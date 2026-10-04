@@ -2205,7 +2205,8 @@ impl CoreGraph {
     }
 
     /// `_min_cycle_basis` of one component (see
-    /// `leftovers::min_cycle_basis`); `None` where Dijkstra finds
+    /// `leftovers::min_cycle_basis`): `(0, cycles)`, or `(1, None)` /
+    /// `(2, None)` where `_dijkstra` / `bidirectional_dijkstra` find
     /// contradictory paths.
     #[pyo3(signature = (nodes, edges, chords, weight=None))]
     fn min_cycle_basis(
@@ -2215,7 +2216,7 @@ impl CoreGraph {
         edges: Vec<(u32, u32)>,
         chords: Vec<(u32, u32)>,
         weight: Option<&str>,
-    ) -> PyResult<Option<Vec<Vec<u32>>>> {
+    ) -> PyResult<(u8, Option<Vec<Vec<u32>>>)> {
         let nodes = self.sources_or_all(Some(nodes))?;
         let w = self.weight_slice(weight, false)?;
         let mut weighted = Vec::with_capacity(edges.len());
@@ -2232,8 +2233,9 @@ impl CoreGraph {
             weighted.push((u, v, w.map_or(1.0, |w| w[e])));
         }
         match py.detach(|| leftovers::min_cycle_basis(self.n, &nodes, &weighted, &chords)) {
-            Ok(cb) => Ok(Some(cb)),
-            Err(leftovers::McbError::Contradictory) => Ok(None),
+            Ok(cb) => Ok((0, Some(cb))),
+            Err(leftovers::McbError::Contradictory) => Ok((1, None)),
+            Err(leftovers::McbError::ContradictoryBidirectional) => Ok((2, None)),
             Err(leftovers::McbError::Unsupported) => Err(PyNotImplementedError::new_err(
                 "rustnx can't reproduce this minimum cycle basis case",
             )),

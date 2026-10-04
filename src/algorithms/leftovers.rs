@@ -8,7 +8,7 @@ use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 
 use rayon::prelude::*;
 
-use super::paths::NO_PARENT;
+use super::paths::{bidirectional_dijkstra, BidirectionalError, NO_PARENT};
 use super::shortest_paths_more::dijkstra_forest;
 use super::spectral::py_sum;
 use super::traversal::NegativeCycle;
@@ -1301,7 +1301,10 @@ fn bidirectional_dijkstra_filtered(
 // --- Minimum cycle basis ------------------------------------------------------------
 
 pub enum McbError {
+    /// `_dijkstra`'s `ValueError` (two arguments).
     Contradictory,
+    /// `bidirectional_dijkstra`'s `ValueError` (one argument).
+    ContradictoryBidirectional,
     Unsupported,
 }
 
@@ -1423,23 +1426,19 @@ fn min_cycle(
             best = l;
         }
     }
+    // `nx.shortest_path(Gi, start, (start, 1), weight)` runs
+    // `nx.bidirectional_dijkstra`.
     let end = lift(start as u32) as usize;
-    let tree = dijkstra_forest(
-        &gi,
+    let path_i = match bidirectional_dijkstra(
+        [(&gi, Some(&weights)), (&gi, Some(&weights))],
         2 * ns,
-        Some(&weights),
-        &[start as u32],
-        None,
-        Some(end),
-    )
-    .map_err(|_| McbError::Contradictory)?;
-    let mut path_i = vec![end as u32];
-    let mut cur = tree.parent[end];
-    while cur != NO_PARENT {
-        path_i.push(cur);
-        cur = tree.parent[cur as usize];
-    }
-    path_i.reverse();
+        start,
+        end,
+    ) {
+        Ok((_, path)) => path,
+        Err(BidirectionalError::Contradictory) => return Err(McbError::ContradictoryBidirectional),
+        Err(BidirectionalError::NoPath) => return Err(McbError::Unsupported),
+    };
     // Back to positions in G (lifted copies map to their node).
     let real: Vec<u32> = local.iter().enumerate().filter(|(_, &k)| k != NONE).fold(
         vec![0u32; ns],

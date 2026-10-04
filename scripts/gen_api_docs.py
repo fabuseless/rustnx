@@ -57,6 +57,13 @@ SECTIONS = [
         "negative_edge_cycle", "find_negative_cycle",
     ]),
     ("Shortest paths: A*", ["astar_path", "astar_path_length"]),
+    ("Shortest paths: Floyd-Warshall, Johnson and Goldberg-Radzik", [
+        "floyd_warshall", "floyd_warshall_predecessor_and_distance", "floyd_warshall_tree",
+        "floyd_warshall_numpy", "johnson", "goldberg_radzik",
+    ]),
+    ("Simple paths", [
+        "all_simple_paths", "all_simple_edge_paths", "shortest_simple_paths", "is_simple_path",
+    ]),
     ("Reachability", ["has_path", "descendants", "ancestors"]),
     ("Distance measures", [
         "eccentricity", "diameter", "radius", "center", "periphery",
@@ -77,7 +84,8 @@ SECTIONS = [
         "has_cycle", "lexicographical_topological_sort", "all_topological_sorts",
         "dag_longest_path", "dag_longest_path_length", "transitive_closure",
         "transitive_closure_dag", "transitive_reduction", "is_aperiodic",
-        "v_structures", "root_to_leaf_paths", "dag_to_branching",
+        "v_structures", "root_to_leaf_paths", "dag_to_branching", "antichains",
+        "antichain_width",
     ]),
     ("Clustering", [
         "triangles", "clustering", "average_clustering", "transitivity",
@@ -110,7 +118,7 @@ SECTIONS = [
     ]),
     ("Cycles and Euler tours", [
         "is_eulerian", "has_eulerian_path", "is_semieulerian", "eulerian_circuit",
-        "eulerian_path", "cycle_basis", "find_cycle", "girth",
+        "eulerian_path", "cycle_basis", "find_cycle", "girth", "minimum_cycle_basis",
     ]),
 ]
 
@@ -245,10 +253,22 @@ NOTES = {
     "has_eulerian_path": "A `source` not in the graph falls back.",
     "cycle_basis": "A `root` not in the graph falls back.",
     "find_cycle": "A `source` that isn't one node of the graph, and invalid orientations on directed graphs, fall back.",
+    "floyd_warshall": "Parallel. Follows the installed NetworkX's version (3.4/3.5 count missing weights as 1.0 and don't check for negative cycles). Dict and row key orders match. Mixed int and float weights fall back, as do `None` weights before 3.6.",
+    "floyd_warshall_predecessor_and_distance": "As `floyd_warshall`; the predecessor dicts match too.",
+    "floyd_warshall_tree": "NetworkX 3.7+. Mixed int and float weights fall back.",
+    "floyd_warshall_numpy": "Parallel; the same float operations as NetworkX's NumPy loop. `None` and `-0.0` weights, and a `nodelist` holding nodes not in the graph, fall back.",
+    "johnson": "Parallel. The paths dicts follow the installed NetworkX's order. `None` and infinite weights fall back.",
+    "goldberg_radzik": "Follows the installed NetworkX's version (3.7 changed the scan order). Rebuilds NetworkX's `relabeled` sets in Python, since they are visited in set order. " + LENGTHS + " `None` and infinite weights fall back.",
+    "antichains": "Generator; the closure is computed when iteration starts, as NetworkX does. A `topo_order` that isn't a topological order of the graph falls back.",
+    "antichain_width": "NetworkX 3.7+. Counts a maximum matching of the closure in Rust.",
+    "all_simple_paths": "Paths are generated lazily in Rust, in NetworkX's order. Raises RuntimeError if the graph changes during iteration.",
+    "all_simple_edge_paths": "Paths are generated lazily in Rust, in NetworkX's order. Raises RuntimeError if the graph changes during iteration.",
+    "shortest_simple_paths": "Yen's algorithm with NetworkX's bidirectional searches and tie-breaking, one path per step. Mixed int and float, and infinite, weights fall back.",
+    "minimum_cycle_basis": "Parallel lifted-graph searches. Builds the subgraph views and chord sets in Python, as NetworkX does (their order can depend on set layout). `None` and infinite weights, and tuple node labels, fall back.",
 }
 
 # Functions NetworkX only exposes under `nx.dag`.
-DAG_ONLY = {"v_structures", "root_to_leaf_paths", "has_cycle"}
+DAG_ONLY = {"v_structures", "root_to_leaf_paths", "has_cycle", "antichain_width"}
 
 
 def location(name):
