@@ -112,6 +112,16 @@ SECTIONS = [
         "is_eulerian", "has_eulerian_path", "is_semieulerian", "eulerian_circuit",
         "eulerian_path", "cycle_basis", "find_cycle", "girth",
     ]),
+    ("Branchings, arborescences and more trees", [
+        "maximum_branching", "minimum_branching", "minimal_branching",
+        "maximum_spanning_arborescence", "minimum_spanning_arborescence",
+        "greedy_branching", "branching_weight", "prim_mst_edges", "partition_spanning_tree",
+        "from_prufer_sequence", "from_nested_tuple", "to_nested_tuple", "tree_centroid",
+    ]),
+    ("Lowest common ancestors", [
+        "lowest_common_ancestor", "all_pairs_lowest_common_ancestor",
+        "tree_all_pairs_lowest_common_ancestor",
+    ]),
 ]
 
 LENGTHS = "Falls back when weights mix ints and floats (NetworkX's length types then depend on the path)."
@@ -245,6 +255,22 @@ NOTES = {
     "has_eulerian_path": "A `source` not in the graph falls back.",
     "cycle_basis": "A `root` not in the graph falls back.",
     "find_cycle": "A `source` that isn't one node of the graph, and invalid orientations on directed graphs, fall back.",
+    "maximum_branching": "Edmonds' algorithm as NetworkX runs it, in Rust; the result's edges come in NetworkX's (set iteration) order. Weights must be Python ints or floats, and `partition` values `EdgePartition` members or `None`.",
+    "minimum_branching": "Edmonds' algorithm as NetworkX runs it, in Rust; the result's edges come in NetworkX's (set iteration) order. Weights must be Python ints or floats, and `partition` values `EdgePartition` members or `None`. Changes G's weights exactly as NetworkX does (edges without `attr` gain it).",
+    "minimal_branching": "Edmonds' algorithm as NetworkX runs it, in Rust; the result's edges come in NetworkX's (set iteration) order. Weights must be Python ints or floats, and `partition` values `EdgePartition` members or `None`. Changes G's weights exactly as NetworkX does (edges without `attr` gain it).",
+    "maximum_spanning_arborescence": "Edmonds' algorithm as NetworkX runs it, in Rust; the result's edges come in NetworkX's (set iteration) order. Weights must be Python ints or floats, and `partition` values `EdgePartition` members or `None`. Changes G's weights exactly as NetworkX does (edges without `attr` gain it).",
+    "minimum_spanning_arborescence": "Edmonds' algorithm as NetworkX runs it, in Rust; the result's edges come in NetworkX's (set iteration) order. Weights must be Python ints or floats, and `partition` values `EdgePartition` members or `None`. Changes G's weights exactly as NetworkX does (edges without `attr` gain it).",
+    "greedy_branching": "Only int or str node labels (NetworkX sorts edges by weight, then nodes); others fall back. `attr=None` uses the random state as NetworkX does.",
+    "branching_weight": "Weights mixing ints and floats fall back.",
+    "prim_mst_edges": "Undirected graphs; directed ones fall back. Trees start from the nodes NetworkX pops from `set(G)` (rustnx replays the same set operations). Yields the graph's own edge data dicts.",
+    "partition_spanning_tree": "Kruskal with the partition in Rust. `partition` values must be `EdgePartition` members or `None`.",
+    "from_prufer_sequence": "Takes no graph: runs in rustnx with `backend='rustnx'` or `nx.config.backend_priority.generators`. Sequences of non-ints fall back.",
+    "from_nested_tuple": "Takes no graph (see `from_prufer_sequence`). Nesting deeper than 100 levels falls back.",
+    "to_nested_tuple": "`canonical_form=True` only (otherwise children follow set order). Trees deeper than 100 levels fall back.",
+    "tree_centroid": "NetworkX 3.7+, as `nx.tree.centroid`.",
+    "lowest_common_ancestor": "As `all_pairs_lowest_common_ancestor`.",
+    "all_pairs_lowest_common_ancestor": "Pairs with a unique lowest common ancestor are answered in Rust; for pairs with several, rustnx repeats NetworkX's set-based walk.",
+    "tree_all_pairs_lowest_common_ancestor": "`pairs` falls back (NetworkX keeps them in sets), and so does a `root` not in the graph.",
 }
 
 # Functions NetworkX only exposes under `nx.dag`.
@@ -256,6 +282,10 @@ def location(name):
         return "nx.dag"
     if name in ("is_coloring", "is_equitable"):
         return "nx.algorithms.coloring.equitable_coloring"
+    if name in ("branching_weight", "greedy_branching", "minimal_branching"):
+        return "nx.tree"
+    if name == "prim_mst_edges":
+        return "nx.tree.mst"
     return "nx.community" if name == "label_propagation_communities" else "nx"
     return {
         "label_propagation_communities": "nx.community",
@@ -265,7 +295,9 @@ def location(name):
 
 
 def parameters(name):
-    params = list(inspect.signature(getattr(algorithms, name)).parameters)[1:]  # drop G
+    params = list(inspect.signature(getattr(algorithms, name)).parameters)
+    if params and params[0] in ("G", "T"):
+        params = params[1:]  # drop the graph
     params = [p for p in params if not p.startswith("_")]  # internal keywords
     return ", ".join(f"`{p}`" for p in params) or "none"
 

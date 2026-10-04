@@ -713,27 +713,28 @@ fn join_trees(trees: Vec<Tree>) -> (Tree, Vec<(u32, u32)>) {
 pub fn nested_tuple_tree(shape: &Shape, sensible: bool) -> (Vec<u32>, Vec<(u32, u32)>) {
     // Build subtrees bottom-up (children have larger ids than parents).
     let n = shape.children.len();
-    let mut built: Vec<Option<(Tree, Vec<(u32, u32)>)>> = (0..n).map(|_| None).collect();
+    let mut built: Vec<Option<Tree>> = (0..n).map(|_| None).collect();
+    let mut added = Vec::new(); // the last join's edges: the root's
     for x in (0..n).rev() {
         let kids = &shape.children[x];
-        let result = if kids.is_empty() {
-            (
-                Tree {
-                    order: vec![0],
-                    adj: vec![Vec::new()],
-                },
-                Vec::new(),
-            )
+        let tree = if kids.is_empty() {
+            added = Vec::new();
+            Tree {
+                order: vec![0],
+                adj: vec![Vec::new()],
+            }
         } else {
             let trees = kids
                 .iter()
-                .map(|&c| built[c as usize].take().expect("child built").0)
+                .map(|&c| built[c as usize].take().expect("child built"))
                 .collect();
-            join_trees(trees)
+            let (tree, edges) = join_trees(trees);
+            added = edges;
+            tree
         };
-        built[x] = Some(result);
+        built[x] = Some(tree);
     }
-    let (tree, added) = built[0].take().expect("root built");
+    let tree = built[0].take().expect("root built");
     if !sensible {
         return (tree.order, added);
     }
