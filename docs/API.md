@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 65 NetworkX functions. Call them as usual (for
+rustnx implements 179 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -21,6 +21,9 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 
 | Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
 |---|---|---|---|---|
+| `nx.degree_centrality` | none | no | NetworkX |  |
+| `nx.in_degree_centrality` | none | no | NetworkX |  |
+| `nx.out_degree_centrality` | none | no | NetworkX |  |
 | `nx.betweenness_centrality` | `k`, `normalized`, `weight`, `endpoints`, `seed` | yes | rustnx | Parallel. Matches NetworkX to about 1e-15 (sums in a different order). `k` picks the same nodes as NetworkX for a given `seed`. `None` weights fall back. |
 | `nx.edge_betweenness_centrality` | `k`, `normalized`, `weight`, `seed` | no | rustnx | Parallel. Matches NetworkX to about 1e-15. `None` weights fall back. |
 | `nx.closeness_centrality` | `u`, `distance`, `wf_improved` | yes | rustnx | Bit-for-bit identical. |
@@ -28,6 +31,26 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.eigenvector_centrality` | `max_iter`, `tol`, `nstart`, `weight` | no | rustnx | Bit-for-bit identical. `nstart` must give a value for every node. |
 | `nx.katz_centrality` | `alpha`, `beta`, `max_iter`, `tol`, `nstart`, `normalized`, `weight` | no | rustnx | Bit-for-bit identical. `nstart` and a per-node `beta` fall back. |
 | `nx.pagerank` | `alpha`, `personalization`, `max_iter`, `tol`, `nstart`, `weight`, `dangling` | no | rustnx | Parallel on large graphs. `None` weights fall back. |
+
+### Centrality: subsets, groups and more
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.betweenness_centrality_subset` | `sources`, `targets`, `normalized`, `weight` | yes | rustnx | Parallel. Bit-for-bit identical (per-source sums are added in source order). Missing sources and `None` weights fall back. |
+| `nx.edge_betweenness_centrality_subset` | `sources`, `targets`, `normalized`, `weight` | no | rustnx | Parallel. Bit-for-bit identical. Missing sources, tuple node labels and `None` weights fall back. |
+| `nx.newman_betweenness_centrality` | `v`, `cutoff`, `normalized`, `weight` | yes | rustnx | Also reachable as `nx.load_centrality`. Parallel. Bit-for-bit identical. Only int or str node labels (NetworkX sorts nodes on ties); others fall back. |
+| `nx.edge_load_centrality` | `cutoff` | no | rustnx | Parallel. Bit-for-bit identical. |
+| `nx.percolation_centrality` | `attribute`, `states`, `weight` | no | rustnx | Parallel. Bit-for-bit identical. Non-numeric states, 2-node graphs and states that would divide by zero fall back. |
+| `nx.group_betweenness_centrality` | `C`, `normalized`, `weight`, `endpoints` | no | rustnx | Bit-for-bit identical, following the installed NetworkX's algorithm (3.7 changed it). Cases where NetworkX raises `KeyError` (directed graphs before 3.7) fall back, as does the null graph. |
+| `nx.group_closeness_centrality` | `S`, `weight` | no | NetworkX | Negative weights fall back. |
+| `nx.group_degree_centrality` | `S` | no | NetworkX | Missing nodes and one-shot iterators fall back. |
+| `nx.group_in_degree_centrality` | `S` | no | NetworkX | Missing nodes and one-shot iterators fall back. |
+| `nx.group_out_degree_centrality` | `S` | no | NetworkX | Missing nodes and one-shot iterators fall back. |
+| `nx.prominent_group` | `k`, `weight`, `C`, `endpoints`, `normalized`, `greedy` | no | rustnx | Bit-for-bit identical search. `C`, `k` outside 0 to n, non-int/str node labels, and cases where NetworkX raises fall back. Needs pandas installed, like NetworkX. |
+| `nx.local_reaching_centrality` | `v`, `paths`, `weight`, `normalized` | no | NetworkX | `paths` falls back. Weighted: all edges need an int or float weight (not mixed, not zero), else it falls back. |
+| `nx.global_reaching_centrality` | `weight`, `normalized` | no | rustnx | Weighted: as `local_reaching_centrality`. Gives the installed NetworkX's warnings (3.4). |
+| `nx.voterank` | `number_of_nodes` | no | rustnx | Bit-for-bit identical. |
+| `nx.dispersion` | `u`, `v`, `normalized`, `alpha`, `b`, `c` | no | rustnx | Undirected graphs without self-loops; others fall back (NetworkX's count then depends on set order). |
 
 ### Shortest paths: lengths
 
@@ -39,6 +62,8 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.all_pairs_dijkstra_path_length` | `cutoff`, `weight` | yes | rustnx | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). Generator. |
 | `nx.dijkstra_path_length` | `source`, `target`, `weight` | yes | NetworkX | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). |
 | `nx.shortest_path_length` | `source`, `target`, `weight`, `method` | yes | rustnx | `method='bellman-ford'` with a weight falls back. Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). |
+| `nx.single_target_shortest_path_length` | `target`, `cutoff` | yes | NetworkX | Returns an iterator, with NetworkX's FutureWarning, where the installed NetworkX does (3.4); a dict otherwise. |
+| `nx.multi_source_dijkstra_path_length` | `sources`, `cutoff`, `weight` | yes | NetworkX | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). An iterator of sources falls back. |
 
 ### Shortest paths: paths
 
@@ -48,7 +73,7 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.single_source_shortest_path` | `source`, `cutoff` | yes | NetworkX |  |
 | `nx.single_target_shortest_path` | `target`, `cutoff` | yes | NetworkX |  |
 | `nx.bidirectional_shortest_path` | `source`, `target` | yes | NetworkX |  |
-| `nx.single_source_dijkstra` | `source`, `target`, `cutoff`, `weight`, `_lengths` | yes | NetworkX | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). The paths dict follows the installed NetworkX's order. |
+| `nx.single_source_dijkstra` | `source`, `target`, `cutoff`, `weight` | yes | NetworkX | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). The paths dict follows the installed NetworkX's order. |
 | `nx.single_source_dijkstra_path` | `source`, `cutoff`, `weight` | yes | NetworkX | The paths dict follows the installed NetworkX's order. |
 | `nx.dijkstra_path` | `source`, `target`, `weight` | yes | NetworkX |  |
 | `nx.bidirectional_dijkstra` | `source`, `target`, `weight` | yes | NetworkX | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). |
@@ -56,6 +81,39 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.all_pairs_dijkstra_path` | `cutoff`, `weight` | yes | rustnx | Generator. |
 | `nx.all_pairs_dijkstra` | `cutoff`, `weight` | yes | rustnx | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). Generator. |
 | `nx.all_shortest_paths` | `source`, `target`, `weight`, `method` | yes | NetworkX | Paths are generated lazily. `method='bellman-ford'` falls back. |
+| `nx.multi_source_dijkstra` | `sources`, `target`, `cutoff`, `weight` | yes | NetworkX | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). The paths dict follows the installed NetworkX's order; on NetworkX 3.6+, negative weights that pop a node before all sources fall back. An iterator of sources falls back. |
+| `nx.multi_source_dijkstra_path` | `sources`, `cutoff`, `weight` | yes | NetworkX | The paths dict follows the installed NetworkX's order; on NetworkX 3.6+, negative weights that pop a node before all sources fall back. An iterator of sources falls back. |
+| `nx.single_source_all_shortest_paths` | `source`, `weight`, `method` | yes | rustnx | Generator. All three methods, including `bellman-ford`. Paths come in the installed NetworkX's order. |
+| `nx.all_pairs_all_shortest_paths` | `weight`, `method` | yes | rustnx | Generator. All three methods, including `bellman-ford`. |
+
+### Shortest paths: predecessors
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.predecessor` | `source`, `target`, `cutoff`, `return_seen` | yes | NetworkX | A `cutoff` that isn't an int or float falls back. |
+| `nx.dijkstra_predecessor_and_distance` | `source`, `cutoff`, `weight` | yes | NetworkX | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). |
+| `nx.bellman_ford_predecessor_and_distance` | `source`, `target`, `weight`, `heuristic` | yes | rustnx | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). `None` weights fall back. Uses NetworkX's queue order and negative cycle checks. |
+
+### Shortest paths: Bellman-Ford and negative cycles
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.bellman_ford_path` | `source`, `target`, `weight` | yes | rustnx | `None` weights fall back. |
+| `nx.bellman_ford_path_length` | `source`, `target`, `weight` | yes | rustnx | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). `None` weights fall back. |
+| `nx.single_source_bellman_ford` | `source`, `target`, `weight` | yes | rustnx | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). `None` weights fall back. |
+| `nx.single_source_bellman_ford_path` | `source`, `weight` | yes | rustnx | `None` weights fall back. |
+| `nx.single_source_bellman_ford_path_length` | `source`, `weight` | yes | rustnx | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). `None` weights fall back. |
+| `nx.all_pairs_bellman_ford_path` | `weight` | yes | rustnx | Generator; parallel. `None` weights fall back. |
+| `nx.all_pairs_bellman_ford_path_length` | `weight` | yes | rustnx | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). Generator; parallel. `None` weights fall back. |
+| `nx.negative_edge_cycle` | `weight`, `heuristic` | yes | rustnx | Doesn't add (and remove) a temporary node in the graph, as NetworkX does. `None` weights fall back. |
+| `nx.find_negative_cycle` | `source`, `weight` | yes | rustnx | `None` weights fall back. |
+
+### Shortest paths: A*
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.astar_path` | `source`, `target`, `heuristic`, `weight`, `cutoff` | yes | NetworkX | Only without a `heuristic`; graphs with negative weights fall back. |
+| `nx.astar_path_length` | `source`, `target`, `heuristic`, `weight`, `cutoff` | yes | NetworkX | Only without a `heuristic`; graphs with negative weights fall back. Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). |
 
 ### Reachability
 
@@ -84,12 +142,23 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.connected_components` | none | yes | NetworkX |  |
 | `nx.number_connected_components` | none | yes | NetworkX |  |
 | `nx.is_connected` | none | yes | NetworkX |  |
+| `nx.node_connected_component` | `n` | yes | NetworkX |  |
+| `nx.articulation_points` | none | yes | NetworkX |  |
+| `nx.biconnected_components` | none | yes | NetworkX |  |
+| `nx.biconnected_component_edges` | none | yes | NetworkX |  |
+| `nx.is_biconnected` | none | yes | NetworkX |  |
 | `nx.strongly_connected_components` | none | yes | NetworkX |  |
 | `nx.number_strongly_connected_components` | none | yes | NetworkX |  |
 | `nx.is_strongly_connected` | none | yes | NetworkX |  |
 | `nx.weakly_connected_components` | none | yes | NetworkX |  |
 | `nx.number_weakly_connected_components` | none | yes | NetworkX |  |
 | `nx.is_weakly_connected` | none | yes | NetworkX |  |
+| `nx.attracting_components` | none | yes | NetworkX |  |
+| `nx.number_attracting_components` | none | yes | NetworkX |  |
+| `nx.is_attracting_component` | none | yes | NetworkX |  |
+| `nx.kosaraju_strongly_connected_components` | `source` | yes | NetworkX | Component sets are filled in the installed NetworkX's order. |
+| `nx.condensation` | none | yes | NetworkX | `scc` falls back. Member sets follow `strongly_connected_components`' order. |
+| `nx.is_semiconnected` | none | yes | NetworkX |  |
 
 ### Directed acyclic graphs
 
@@ -98,6 +167,18 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.topological_sort` | none | no | NetworkX | Raises NetworkX's errors if the graph changes during iteration. |
 | `nx.topological_generations` | none | no | NetworkX | Raises NetworkX's errors if the graph changes during iteration. |
 | `nx.is_directed_acyclic_graph` | none | no | NetworkX |  |
+| `nx.dag.has_cycle` | none | no | NetworkX |  |
+| `nx.lexicographical_topological_sort` | none | no | NetworkX | `key` falls back, and so do nodes that aren't all ints and floats (no NaN) or all strings. |
+| `nx.all_topological_sorts` | none | no | rustnx | Sorts are generated lazily. |
+| `nx.dag_longest_path` | `weight`, `default_weight` | no | NetworkX | `topo_order` falls back, and so do `None` weights and a `default_weight` other than the one the graph was converted with. |
+| `nx.dag_longest_path_length` | `weight`, `default_weight` | no | NetworkX | As `dag_longest_path`. Lengths are summed in Python from the edge data, as in NetworkX. |
+| `nx.transitive_closure` | `reflexive` | no | rustnx | Builds the closure in NetworkX from Rust searches; edges are added in NetworkX's order (including set iteration order). |
+| `nx.transitive_closure_dag` | none | no | rustnx | `topo_order` falls back. Builds the closure in NetworkX, adding edges in NetworkX's order (including set iteration order). |
+| `nx.transitive_reduction` | none | yes | rustnx | Kept edges are added in NetworkX's (set iteration) order. |
+| `nx.is_aperiodic` | none | no | NetworkX | On NetworkX 3.4, graphs not reachable from their first node fall back (NetworkX recurses in set order). |
+| `nx.dag.v_structures` | none | no | NetworkX | Generator. |
+| `nx.dag.root_to_leaf_paths` | none | no | rustnx | Paths are generated lazily. Undirected graphs fall back. |
+| `nx.dag_to_branching` | none | no | rustnx |  |
 
 ### Clustering
 
@@ -107,6 +188,9 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.clustering` | `nodes`, `weight` | no | rustnx | Unweighted; `weight` falls back. Bit-for-bit identical. |
 | `nx.average_clustering` | `nodes`, `weight`, `count_zeros` | no | rustnx | Unweighted; `weight` falls back. Bit-for-bit identical. |
 | `nx.transitivity` | none | no | rustnx | Bit-for-bit identical. |
+| `nx.square_clustering` | `nodes` | yes | rustnx | Bit-for-bit identical. Follows the installed NetworkX's formula (3.4 differs from 3.5+ on self-loops and directed graphs). |
+| `nx.generalized_degree` | `nodes` | no | rustnx | Builds each neighbor set in Python, as NetworkX does, so the `Counter` keys come in the same order. |
+| `nx.all_triangles` | `nbunch` | yes | rustnx | NetworkX 3.7+. Generator. Rebuilds Python's intersection sets where several triangles share an edge, for NetworkX's yield order. Graph views fall back. |
 
 ### Cores, coloring and communities
 
@@ -114,9 +198,27 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 |---|---|---|---|---|
 | `nx.core_number` | none | no | NetworkX |  |
 | `nx.k_core` | `k`, `core_number` | no | NetworkX | Builds the subgraph in NetworkX, so only the core numbers get faster. |
+| `nx.k_shell` | `k`, `core_number` | no | NetworkX | Builds the subgraph in NetworkX, so only the core numbers get faster. |
+| `nx.k_crust` | `k`, `core_number` | no | NetworkX | Builds the subgraph in NetworkX, so only the core numbers get faster. |
+| `nx.k_corona` | `k`, `core_number` | no | NetworkX | Builds the subgraph in NetworkX. A non-integer `k` falls back. |
+| `nx.k_truss` | `k` | no | rustnx | Peels edges in Rust; the result is NetworkX's `G.copy()` with the dropped edges and nodes removed. |
+| `nx.onion_layers` | none | no | NetworkX |  |
 | `nx.is_bipartite` | none | yes | NetworkX |  |
-| `nx.greedy_color` | `strategy`, `interchange` | no | NetworkX | Only the default `largest_first` strategy without `interchange`; others fall back. |
+| `nx.greedy_color` | `strategy`, `interchange` | no | NetworkX | Strategies `largest_first`, `saturation_largest_first` (`DSATUR`), `random_sequential` (draws from the global `random` state, as NetworkX does) and `connected_sequential` (`_bfs`, `_dfs`). `smallest_last`, `independent_set`, callables and `interchange` fall back. |
+| `nx.algorithms.coloring.equitable_coloring.is_coloring` | `coloring` | no | NetworkX | A coloring that isn't a `dict` of int, str or float colors falls back. |
+| `nx.algorithms.coloring.equitable_coloring.is_equitable` | `coloring`, `num_colors` | no | NetworkX | A coloring that isn't a `dict` of int, str or float colors falls back. |
 | `nx.community.label_propagation_communities` | none | no | NetworkX |  |
+
+### Distance-regular graphs and other distance measures
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.centroid` | `weight` | no | rustnx | NetworkX 3.7+ (`barycenter` before). Weighted sums are added in NetworkX's order; unweighted trees take NetworkX's tree path. `attr` and `sp` fall back. |
+| `nx.barycenter` | `weight` | no | rustnx | NetworkX 3.4 and 3.5 (`centroid` from 3.7). Weighted sums are added in NetworkX's order. `attr` and `sp` fall back. |
+| `nx.harmonic_diameter` | `weight` | yes | rustnx | Inverse distances are added in NetworkX's order. `sp` falls back; `weight` needs NetworkX 3.5+. |
+| `nx.is_distance_regular` | none | no | NetworkX | Follows the installed NetworkX's checks. |
+| `nx.intersection_array` | none | no | NetworkX | Follows the installed NetworkX's checks (3.7+ rejects long cycles early) and error messages. |
+| `nx.is_strongly_regular` | none | no | NetworkX | Follows the installed NetworkX's checks. |
 
 ### Traversal
 
@@ -124,9 +226,31 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 |---|---|---|---|---|
 | `nx.bfs_edges` | `source`, `reverse`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. |
 | `nx.bfs_tree` | `source`, `reverse`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. |
+| `nx.bfs_predecessors` | `source`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. Gives the installed NetworkX's deprecation warning (3.7+). |
+| `nx.bfs_successors` | `source`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. |
+| `nx.bfs_layers` | `sources` | yes | NetworkX | The first layer follows the installed NetworkX's order. |
+| `nx.descendants_at_distance` | `source`, `distance` | yes | NetworkX |  |
 | `nx.dfs_edges` | `source`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. |
 | `nx.dfs_tree` | `source`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. |
 | `nx.dfs_preorder_nodes` | `source`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. |
+| `nx.dfs_postorder_nodes` | `source`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. |
+| `nx.dfs_predecessors` | `source`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. |
+| `nx.dfs_successors` | `source`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. |
+| `nx.generic_bfs_edges` | `source`, `depth_limit` | yes | NetworkX | `neighbors` falls back. |
+| `nx.bfs_labeled_edges` | `sources` | yes | NetworkX |  |
+| `nx.dfs_labeled_edges` | `source`, `depth_limit` | yes | NetworkX | `sort_neighbors` falls back. |
+| `nx.edge_bfs` | `source`, `orientation` | no | NetworkX | A `source` that is neither a node nor a list, tuple, set or dict of hashable nodes falls back. |
+| `nx.edge_dfs` | `source`, `orientation` | no | NetworkX | A `source` that is neither a node nor a list, tuple, set or dict of hashable nodes falls back. |
+
+### Trees
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.is_tree` | none | no | NetworkX |  |
+| `nx.is_forest` | none | no | NetworkX |  |
+| `nx.is_arborescence` | none | no | NetworkX |  |
+| `nx.is_branching` | none | no | NetworkX |  |
+| `nx.to_prufer_sequence` | none | no | NetworkX | Bit-for-bit identical. |
 
 ### Spanning trees
 
@@ -136,6 +260,36 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.maximum_spanning_edges` | `algorithm`, `weight`, `keys`, `data`, `ignore_nan` | no | NetworkX | Kruskal; Prim and Borůvka fall back. Yields the graph's own edge data dicts. |
 | `nx.minimum_spanning_tree` | `weight`, `algorithm`, `ignore_nan` | no | NetworkX | Kruskal; Prim and Borůvka fall back. |
 | `nx.maximum_spanning_tree` | `weight`, `algorithm`, `ignore_nan` | no | NetworkX | Kruskal; Prim and Borůvka fall back. |
+| `nx.kruskal_mst_edges` | `minimum`, `weight`, `keys`, `data`, `ignore_nan`, `partition` | no | NetworkX | `partition` falls back. Yields the graph's own edge data dicts. |
+
+### Structural tests
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.bridges` | `root` | no | NetworkX | `root` falls back (NetworkX then lists a subgraph copy's edges, in set order). |
+| `nx.has_bridges` | `root` | no | NetworkX |  |
+| `nx.local_bridges` | `with_span`, `weight` | no | NetworkX | Spans with float, mixed or negative weights fall back. |
+| `nx.chain_decomposition` | `root` | no | NetworkX | Computed when iteration starts, as NetworkX does. |
+| `nx.isolates` | none | yes | NetworkX |  |
+| `nx.number_of_isolates` | none | yes | NetworkX |  |
+| `nx.is_regular` | none | no | NetworkX |  |
+| `nx.is_k_regular` | `k` | no | NetworkX | A non-integer `k` falls back. |
+| `nx.is_tournament` | none | no | NetworkX |  |
+| `nx.immediate_dominators` | `start` | yes | NetworkX | Follows the installed NetworkX on whether `start` is included (3.7 leaves it out). |
+| `nx.dominance_frontiers` | `start` | yes | NetworkX | Follows the installed NetworkX's version (3.7 adds `start` last). Sets iterate in NetworkX's order. |
+
+### Cycles and Euler tours
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.is_eulerian` | none | no | NetworkX |  |
+| `nx.has_eulerian_path` | `source` | no | NetworkX | A `source` not in the graph falls back. |
+| `nx.is_semieulerian` | none | no | NetworkX |  |
+| `nx.eulerian_circuit` | `source`, `keys` | no | NetworkX | Computed when iteration starts, as NetworkX does. A `source` not in the graph falls back. |
+| `nx.eulerian_path` | `source`, `keys` | no | NetworkX | Computed when iteration starts, as NetworkX does. A `source` not in the graph falls back. |
+| `nx.cycle_basis` | `root` | no | NetworkX | A `root` not in the graph falls back. |
+| `nx.find_cycle` | `source`, `orientation` | no | NetworkX | A `source` that isn't one node of the graph, and invalid orientations on directed graphs, fall back. |
+| `nx.girth` | none | no | rustnx |  |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 

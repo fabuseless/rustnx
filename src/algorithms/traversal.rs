@@ -252,3 +252,78 @@ pub fn dfs_forward(adj: &Csr, n: usize, starts: &[u32], depth_limit: i64) -> Vec
     }
     out
 }
+
+/// `nx.bfs_layers` after the first layer (`starts`, which may repeat
+/// nodes): every later node in yield order, and where each layer ends.
+/// `visited` is NetworkX's initial visited set, usually `starts`.
+pub fn bfs_layers(adj: &Csr, n: usize, starts: &[u32], visited: &[u32]) -> (Vec<u32>, Vec<u32>) {
+    let mut seen = vec![false; n];
+    for &s in visited {
+        seen[s as usize] = true;
+    }
+    let mut visited = seen;
+    let mut order = Vec::new();
+    let mut ends = Vec::new();
+    let mut current = starts.to_vec();
+    loop {
+        let begin = order.len();
+        for &node in &current {
+            for &child in adj.neighbors(node as usize) {
+                if !visited[child as usize] {
+                    visited[child as usize] = true;
+                    order.push(child);
+                }
+            }
+        }
+        if order.len() == begin {
+            break;
+        }
+        ends.push(order.len() as u32);
+        current = order[begin..].to_vec();
+    }
+    (order, ends)
+}
+
+/// `nx.dfs_postorder_nodes`: the nodes `nx.dfs_labeled_edges` reports with
+/// a "reverse" edge, in order. Nodes reached at the depth limit are never
+/// descended into, so they get "reverse-depth_limit" and are left out.
+pub fn dfs_postorder(adj: &Csr, n: usize, starts: &[u32], depth_limit: i64) -> Vec<u32> {
+    let mut visited = vec![false; n];
+    let mut out = Vec::new();
+    let mut stack: Vec<(u32, usize)> = Vec::new();
+    for &start in starts {
+        if visited[start as usize] {
+            continue;
+        }
+        visited[start as usize] = true;
+        stack.push((start, adj.range(start as usize).start));
+        let mut depth_now = 1i64;
+        while let Some(&mut (parent, ref mut pos)) = stack.last_mut() {
+            let end = adj.range(parent as usize).end;
+            let mut descended = None;
+            while *pos < end {
+                let child = adj.targets[*pos];
+                *pos += 1;
+                if !visited[child as usize] {
+                    visited[child as usize] = true;
+                    if depth_now < depth_limit {
+                        descended = Some(child);
+                        break;
+                    }
+                }
+            }
+            match descended {
+                Some(child) => {
+                    stack.push((child, adj.range(child as usize).start));
+                    depth_now += 1;
+                }
+                None => {
+                    stack.pop();
+                    depth_now -= 1;
+                    out.push(parent);
+                }
+            }
+        }
+    }
+    out
+}

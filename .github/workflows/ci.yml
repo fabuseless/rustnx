@@ -49,6 +49,9 @@ jobs:
           else
             pip install maturin "networkx==${{ matrix.networkx }}" pytest numpy scipy rustworkx
           fi
+          # Optional: prominent_group's tests need pandas, as NetworkX does.
+          # Binary wheels only, so a platform without one just skips them.
+          pip install --only-binary=:all: pandas || echo "no pandas wheel; prominent_group tests will skip"
           python -c "import networkx; print('NetworkX', networkx.__version__)"
           maturin develop --release
       - name: Compare against NetworkX

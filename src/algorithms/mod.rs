@@ -1,9 +1,14 @@
 pub mod centrality;
+pub mod centrality_more;
 pub mod cluster;
+pub mod cores_more;
+pub mod dag;
 pub mod directed;
 pub mod distance;
 pub mod link_analysis;
 pub mod paths;
+pub mod shortest_paths_more;
 pub mod spectral;
 pub mod structure;
+pub mod structure_more;
 pub mod traversal;

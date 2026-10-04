@@ -8,8 +8,10 @@ merged attributes for duplicate edges, and so the same algorithm results.
 import math
 import pickle
 import random
+import warnings
 
 import networkx as nx
+from networkx.algorithms.coloring.equitable_coloring import is_coloring
 import pytest
 
 import rustnx
@@ -118,6 +120,13 @@ def test_structure_matches_networkx(seed, directed):
         assert list(back.adj[v]) == list(H.adj[v])
 
 
+def target_lengths(G, target, backend):
+    # NetworkX 3.4 returns an iterator, with a FutureWarning.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        return dict(nx.single_target_shortest_path_length(G, target, backend=backend))
+
+
 def algorithm_calls(H, directed):
     nodes = list(H)
     src = nodes[0] if nodes else None
@@ -149,6 +158,30 @@ def algorithm_calls(H, directed):
         "avg_clustering": lambda G, b: nx.average_clustering(G, backend=b),
         "transitivity": lambda G, b: nx.transitivity(G, backend=b),
         "avg_spl_w": lambda G, b: nx.average_shortest_path_length(G, weight="weight", backend=b),
+        "degree_centrality": lambda G, b: list(nx.degree_centrality(G, backend=b).items()),
+        "is_tree": lambda G, b: nx.is_tree(G, backend=b),
+        "is_forest": lambda G, b: nx.is_forest(G, backend=b),
+        "dfs_postorder": lambda G, b: list(nx.dfs_postorder_nodes(G, backend=b)),
+        "dfs_successors": lambda G, b: list(nx.dfs_successors(G, backend=b).items()),
+        "k_shell": lambda G, b: sorted(map(str, nx.k_shell(G, backend=b).edges)),
+        "k_truss": lambda G, b: list(nx.k_truss(G, 3, backend=b).edges),
+        "onion_layers": lambda G, b: list(nx.onion_layers(G, backend=b).items()),
+        "square_clustering": lambda G, b: list(nx.square_clustering(G, backend=b).items()),
+        "generalized_degree": lambda G, b: [
+            (k, list(v.items())) for k, v in nx.generalized_degree(G, backend=b).items()
+        ],
+        "harmonic_diameter": lambda G, b: nx.harmonic_diameter(G, backend=b),
+        "barycenter": lambda G, b: nx.barycenter(G, backend=b),
+        "is_distance_regular": lambda G, b: nx.is_distance_regular(G, backend=b),
+        "dsatur": lambda G, b: list(nx.greedy_color(G, "DSATUR", backend=b).items()),
+        "is_coloring": lambda G, b: is_coloring(G, {v: i % 2 for i, v in enumerate(G)}, backend=b),
+        "isolates": lambda G, b: list(nx.isolates(G, backend=b)),
+        "is_regular": lambda G, b: nx.is_regular(G, backend=b),
+        "is_eulerian": lambda G, b: nx.is_eulerian(G, backend=b),
+        "find_cycle": lambda G, b: nx.find_cycle(G, orientation="ignore", backend=b),
+        "kruskal_mst_edges": lambda G, b: list(
+            nx.algorithms.tree.mst.kruskal_mst_edges(G, True, data=False, backend=b)
+        ),
     }
     if src is not None:
         calls["bfs"] = lambda G, b: nx.single_source_shortest_path_length(G, src, backend=b)
@@ -172,16 +205,80 @@ def algorithm_calls(H, directed):
         calls["all_sp"] = lambda G, b: list(nx.all_shortest_paths(G, src, dst, backend=b))
         calls["all_sp_w"] = lambda G, b: list(nx.all_shortest_paths(G, src, dst, weight="weight", backend=b))
         calls["ancestors"] = lambda G, b: nx.ancestors(G, src, backend=b)
+        calls["bfs_layers"] = lambda G, b: list(nx.bfs_layers(G, src, backend=b))
+        calls["bfs_successors"] = lambda G, b: list(nx.bfs_successors(G, src, backend=b))
+        calls["at_distance"] = lambda G, b: nx.descendants_at_distance(G, src, 2, backend=b)
+        calls["multi_source"] = lambda G, b: nx.multi_source_dijkstra(G, [src, dst], backend=b)
+        calls["dijkstra_pred"] = lambda G, b: nx.dijkstra_predecessor_and_distance(G, src, backend=b)
+        calls["predecessor"] = lambda G, b: nx.predecessor(G, src, backend=b)
+        calls["ss_all_sp"] = lambda G, b: list(nx.single_source_all_shortest_paths(G, src, weight="weight", backend=b))
+        calls["bellman_ford"] = lambda G, b: nx.single_source_bellman_ford(G, src, backend=b)
+        calls["bf_pred"] = lambda G, b: nx.bellman_ford_predecessor_and_distance(G, src, backend=b)
+        calls["neg_cycle"] = lambda G, b: nx.negative_edge_cycle(G, backend=b)
+        calls["astar"] = lambda G, b: nx.astar_path_length(G, src, dst, backend=b)
+        calls["target_length"] = lambda G, b: target_lengths(G, src, b)
+        calls["bfs_labeled"] = lambda G, b: list(nx.bfs_labeled_edges(G, src, backend=b))
+        calls["dfs_labeled"] = lambda G, b: list(nx.dfs_labeled_edges(G, src, backend=b))
+        calls["generic_bfs"] = lambda G, b: list(nx.generic_bfs_edges(G, src, backend=b))
+        calls["edge_bfs"] = lambda G, b: list(nx.edge_bfs(G, src, backend=b))
+        calls["edge_dfs"] = lambda G, b: list(nx.edge_dfs(G, src, backend=b))
+        few = nodes[:3]
+        calls["subset_bc"] = lambda G, b: nx.betweenness_centrality_subset(G, few, nodes, weight="weight", backend=b)
+        calls["subset_ebc"] = lambda G, b: list(
+            nx.edge_betweenness_centrality_subset(G, nodes, few, backend=b).items()
+        )
+        calls["group_closeness"] = lambda G, b: nx.group_closeness_centrality(G, few, weight="weight", backend=b)
+        calls["group_degree"] = lambda G, b: nx.group_degree_centrality(G, few, backend=b)
+        calls["group_bc"] = lambda G, b: nx.group_betweenness_centrality(G, few, backend=b)
+        calls["local_reaching"] = lambda G, b: nx.local_reaching_centrality(G, src, backend=b)
+        calls["local_reaching_w"] = lambda G, b: nx.local_reaching_centrality(G, src, weight="weight", backend=b)
+    calls["load"] = lambda G, b: list(nx.load_centrality(G, backend=b).items())
+    calls["load_w"] = lambda G, b: list(nx.load_centrality(G, weight="weight", backend=b).items())
+    calls["edge_load"] = lambda G, b: list(nx.edge_load_centrality(G, backend=b).items())
+    calls["percolation"] = lambda G, b: list(nx.percolation_centrality(G, backend=b).items())
+    calls["voterank"] = lambda G, b: nx.voterank(G, backend=b)
     if directed:
         calls["scc"] = lambda G, b: list(nx.strongly_connected_components(G, backend=b))
         calls["wcc"] = lambda G, b: list(nx.weakly_connected_components(G, backend=b))
         calls["topo"] = lambda G, b: list(nx.topological_sort(G, backend=b))
         calls["dag"] = lambda G, b: nx.is_directed_acyclic_graph(G, backend=b)
+        calls["attracting"] = lambda G, b: list(nx.attracting_components(G, backend=b))
+        calls["in_degree_centrality"] = lambda G, b: list(nx.in_degree_centrality(G, backend=b).items())
+        calls["kosaraju"] = lambda G, b: list(nx.kosaraju_strongly_connected_components(G, backend=b))
+        calls["condensation"] = lambda G, b: (
+            lambda C: (list(C.nodes(data=True)), list(C.edges), C.graph)
+        )(nx.condensation(G, backend=b))
+        calls["semiconnected"] = lambda G, b: nx.is_semiconnected(G, backend=b)
+        calls["has_cycle"] = lambda G, b: nx.dag.has_cycle(G, backend=b)
+        calls["v_structures"] = lambda G, b: list(nx.dag.v_structures(G, backend=b))
+        calls["longest_path"] = lambda G, b: nx.dag_longest_path(G, backend=b)
+        calls["longest_path_length"] = lambda G, b: nx.dag_longest_path_length(G, backend=b)
+        calls["reduction"] = lambda G, b: list(nx.transitive_reduction(G, backend=b).edges)
+        calls["closure"] = lambda G, b: list(nx.transitive_closure(G, backend=b).edges(data=True))
+        calls["edge_bfs_ignore"] = lambda G, b: list(nx.edge_bfs(G, orientation="ignore", backend=b))
+        calls["edge_dfs_reverse"] = lambda G, b: list(nx.edge_dfs(G, orientation="reverse", backend=b))
+        calls["is_arborescence"] = lambda G, b: nx.is_arborescence(G, backend=b)
+        if src is not None:
+            calls["idom"] = lambda G, b: list(nx.immediate_dominators(G, src, backend=b).items())
+            calls["frontiers"] = lambda G, b: [
+                (k, list(v)) for k, v in nx.dominance_frontiers(G, src, backend=b).items()
+            ]
     else:
         calls["cc"] = lambda G, b: list(nx.connected_components(G, backend=b))
         calls["mst"] = lambda G, b: [(u, v) for u, v in nx.minimum_spanning_edges(G, data=False, backend=b)]
         calls["label_prop"] = lambda G, b: [sorted(map(str, c)) for c in nx.community.label_propagation_communities(G, backend=b)]
         calls["triangles"] = lambda G, b: list(nx.triangles(G, backend=b).items())
+        calls["articulation"] = lambda G, b: list(nx.articulation_points(G, backend=b))
+        calls["biconnected"] = lambda G, b: list(nx.biconnected_component_edges(G, backend=b))
+        calls["is_biconnected"] = lambda G, b: nx.is_biconnected(G, backend=b)
+        calls["dispersion"] = lambda G, b: list(nx.dispersion(G, backend=b).items())
+        calls["bridges"] = lambda G, b: list(nx.bridges(G, backend=b))
+        calls["chains"] = lambda G, b: list(nx.chain_decomposition(G, backend=b))
+        calls["cycle_basis"] = lambda G, b: nx.cycle_basis(G, backend=b)
+        calls["girth"] = lambda G, b: nx.girth(G, backend=b)
+        calls["local_bridges"] = lambda G, b: list(nx.local_bridges(G, backend=b))
+        if src is not None:
+            calls["node_cc"] = lambda G, b: nx.node_connected_component(G, src, backend=b)
     return calls
 
 
@@ -263,16 +360,16 @@ def test_invalid_input():
 
 
 def test_unimplemented_functions_fall_back_with_enable():
-    G = rustnx.Graph([(0, 1), (1, 2)])
+    G = rustnx.DiGraph([(0, 1), (1, 2)])
     old = nx.config.backend_priority.algos, nx.config.fallback_to_nx
     try:
         nx.config.backend_priority.algos = []
         nx.config.fallback_to_nx = False
         with pytest.raises(NotImplementedError):
-            nx.is_tree(G)
+            nx.flow_hierarchy(G)
         rustnx.enable()
         assert nx.config.backend_priority.algos[0] == "rustnx"
-        assert nx.is_tree(G) is True
+        assert nx.flow_hierarchy(G) == 1.0
     finally:
         nx.config.backend_priority.algos, nx.config.fallback_to_nx = old
 

@@ -18,6 +18,8 @@ errors) on NetworkX 3.4, 3.5 and 3.7; anything rustnx can't match raises
   `algorithms.__all__` and `_info.FUNCTIONS` (a test checks they match).
   Then add them to `scripts/gen_api_docs.py` and regenerate `docs/API.md`
   (a test checks it is up to date). See `CONTRIBUTING.md` for the full steps.
+- Coverage list: after adding functions, regenerate `docs/COVERAGE.md` with
+  `python scripts/gen_coverage.py`, run with the newest NetworkX.
 - Speed guard: `python benchmarks/guard.py` (also the `speed-guard` CI job)
   checks speedup floors and that calls really run in Rust.
 
@@ -73,5 +75,35 @@ errors) on NetworkX 3.4, 3.5 and 3.7; anything rustnx can't match raises
 | 25 | Enable Dependabot for CI actions | Done | Release quality | Claude | `.github/dependabot.yml`: weekly grouped PRs for GitHub Actions and Rust crates |
 | 26 | Release `0.1.0` (drop the alpha label) after feedback | To do | Release quality | Owner + Claude | |
 | 27 | Turn on private vulnerability reporting | Done | Release quality | Owner | `SECURITY.md` points to it |
+| 28 | Shortest paths: the rest (Floyd-Warshall family, Johnson, Goldberg-Radzik, `reconstruct_path`) | Partly done | NetworkX coverage | Claude | 7 left; each area's function list is in `docs/COVERAGE.md`. Done: batch 2 (multi-source Dijkstra, predecessors, Bellman-Ford family, negative cycles, A* without a heuristic) |
+| 29 | Centrality: the rest (current flow, subgraph and Estrada, trophic, Laplacian, second order, communicability, NumPy variants) | Partly done | NetworkX coverage | Claude | 19 left. Done: degree (batch 1); subset, load, percolation, group, reaching, VoteRank, dispersion (batch 4). Most of the rest use LAPACK/SciPy, so can't match bit for bit; `incremental_closeness_centrality` mutates its input |
+| 30 | Components | Done | NetworkX coverage | Claude | Batches 1 and 3 |
+| 31 | Directed acyclic graphs: the rest (`antichains`, `antichain_width`, `colliders`) | Partly done | NetworkX coverage | Claude | 3 left. Done in batch 3. `antichains` needs a full reachability matrix; `colliders` was slower than NetworkX, so it falls back |
+| 32 | Traversal: the rest (`bfs_beam_edges`) | Partly done | NetworkX coverage | Claude | 1 left: it calls a Python callable per neighbor, so little to gain. Done in batches 1 and 3 |
+| 33 | Distance measures: the rest (resistance distance, effective graph resistance, Kemeny constant) | Partly done | NetworkX coverage | Claude | 3 left, all NumPy/LAPACK, so can't match bit for bit. Done in batch 5: centroid/barycenter, harmonic diameter, distance-regular tests |
+| 34 | Clustering and cores | Done | NetworkX coverage | Claude | Batch 5; weighted clustering is item 16 |
+| 35 | Trees, branchings and arborescences: the rest (branchings and arborescences, Prim and Boruvka edges, nested tuples, junction tree, spanning tree counts) | Partly done | NetworkX coverage | Claude | 18 left. Done: `is_tree`, `is_forest` (batch 1); arborescence and branching tests, `to_prufer_sequence`, `kruskal_mst_edges` (batch 6). Prim and nested tuples depend on set order |
+| 36 | Link analysis: `google_matrix` | Blocked | NetworkX coverage | Claude | Returns a NumPy matrix built with NumPy arithmetic; `hits` is item 8 |
+| 37 | Bipartite graphs (projections, matching, centrality, clustering, generators) | To do | NetworkX coverage | Claude | 39 left |
+| 38 | Connectivity, flows and cuts (max flow, min cut, node and edge connectivity, Gomory-Hu, cut sizes) | To do | NetworkX coverage | Claude | 61 left |
+| 39 | Approximation algorithms (TSP, Steiner tree, treewidth, max clique, dominating set, ...) | To do | NetworkX coverage | Claude | 31 left |
+| 40 | Communities: the rest (modularity, greedy modularity, Girvan-Newman, k-clique, asynchronous label propagation, ...) | To do | NetworkX coverage | Claude | 22 left; Louvain is item 15 |
+| 41 | Coloring: the rest (`equitable_color`, `pad_graph`) | Partly done | NetworkX coverage | Claude | 2 left. Done in batch 5: `is_coloring`, `is_equitable`, and the DSATUR, connected-sequential and random-sequential `greedy_color` strategies. `equitable_color` depends on set order |
+| 42 | Isomorphism and graph hashing (VF2, tree isomorphism, Weisfeiler-Lehman hashes) | To do | NetworkX coverage | Claude | 18 left |
+| 43 | Matching, cliques, covers and independent sets | To do | NetworkX coverage | Claude | 20 left |
+| 44 | Cycles, Euler tours and simple paths: the rest (simple paths, chordless cycles, minimum cycle basis, `eulerize`) | Partly done | NetworkX coverage | Claude | 8 left; `simple_cycles` is item 14. Done in batch 6: Euler tests, circuits and paths, `cycle_basis`, `find_cycle`, `girth`, `chain_decomposition` |
+| 45 | Structural tests and graph classes: the rest (planarity, chordal, lowest common ancestors, d-separation, triads, graphical sequences, boundaries, ...) | Partly done | NetworkX coverage | Claude | 42 left. Done in batch 6: bridges, local bridges, isolates, regular and tournament tests, dominators. `is_isolate` is faster in NetworkX; boundaries depend on set order |
+| 46 | Graph measures (assortativity, link prediction, similarity, efficiency, small world, rich club, ...) | To do | NetworkX coverage | Claude | 60 left |
+| 47 | Graph operations and transforms (operators, minors, swaps, sparsifiers, summarization) | To do | NetworkX coverage | Claude | 34 left |
+| 48 | Linear algebra (Laplacian, adjacency and incidence matrices, spectra) | To do | NetworkX coverage | Claude | 22 left; returns SciPy/NumPy objects, so little to gain |
+| 49 | Graph generators | To do | NetworkX coverage | Claude | 147 left; they build NetworkX graphs, so little to gain |
+| 50 | Reading, writing, conversion and drawing | To do | NetworkX coverage | Claude | 58 left; they move graphs in and out of NetworkX, so little to gain |
 
-Suggested order: a `0.1.0a3` pre-release of the unreleased work, then 3 (announcement), then 17 (remaining multigraph functions), then 26.
+Items 28 to 50 cover every NetworkX function rustnx doesn't implement yet,
+grouped by area; `docs/COVERAGE.md` (generated by `scripts/gen_coverage.py`)
+lists each function and its status. They are worked through in batches of
+20 functions, easiest and most useful first. Batches 1 to 6 are done (113
+functions; rustnx now covers 178 of NetworkX 3.7's 797).
+
+Suggested order: 3 (announcement), then more item 28 to 47 batches (37, 38, 40, 42, 43 and 46 are untouched), then 17
+(remaining multigraph functions), then 26.

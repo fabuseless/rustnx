@@ -587,8 +587,16 @@ def test_send_graph_to_another_process():
 
     G = nx.gnm_random_graph(50, 150, seed=1, directed=True)
     expected = nx.pagerank(G, backend="rustnx")  # caches a converted graph on G
-    with multiprocessing.get_context("spawn").Pool(1) as pool:
-        assert pool.apply(_pagerank_in_worker, (G,)) == expected
+    pool = multiprocessing.get_context("spawn").Pool(1)
+    try:
+        result = pool.apply(_pagerank_in_worker, (G,))
+    finally:
+        # close() and join() rather than the context manager's terminate():
+        # on free-threaded Windows, terminate() can race the pool's own
+        # handler threads ("concurrent send_bytes() calls").
+        pool.close()
+        pool.join()
+    assert result == expected
 
 
 def test_malformed_pickle_data_rejected():
@@ -723,9 +731,14 @@ def test_backend_function_list_matches_implementations():
     from rustnx import _info, algorithms, interface
 
     assert sorted(_info.FUNCTIONS) == sorted(algorithms.__all__)
+    # Functions only some supported NetworkX releases have.
+    version_specific = {"all_triangles", "centroid", "barycenter"}
     for name in algorithms.__all__:
         assert hasattr(interface, name), name
-        assert interface._nx_function(name) is not None, name
+        try:
+            assert interface._nx_function(name) is not None, name
+        except AttributeError:
+            assert name in version_specific, name
 
 
 # --- Shortest paths that return the paths ---------------------------------------
