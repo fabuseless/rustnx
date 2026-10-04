@@ -9,7 +9,7 @@ import functools
 from collections import Counter, defaultdict
 from collections.abc import Set
 import inspect
-from itertools import chain
+from itertools import chain, islice
 import math
 import operator
 import random
@@ -64,8 +64,11 @@ __all__ = [
     "bidirectional_shortest_path",
     "bipartite_closeness_centrality",
     "boruvka_mst_edges",
+    "boundary_expansion",
+    "boykov_kolmogorov",
     "branching_weight",
     "bridges",
+    "build_residual_network",
     "butterflies",
     "center",
     "centroid",
@@ -78,10 +81,13 @@ __all__ = [
     "color",
     "complete_to_chordal_graph",
     "condensation",
+    "conductance",
     "connected_components",
     "connected_dominating_set",
     "core_number",
+    "cost_of_flow",
     "could_be_isomorphic",
+    "cut_size",
     "cycle_basis",
     "dag_longest_path",
     "dag_longest_path_length",
@@ -100,6 +106,7 @@ __all__ = [
     "dijkstra_path",
     "dijkstra_path_length",
     "dijkstra_predecessor_and_distance",
+    "dinitz",
     "dispersion",
     "dominance_frontiers",
     "eccentricity",
@@ -108,7 +115,9 @@ __all__ = [
     "edge_bfs",
     "edge_boundary",
     "edge_dfs",
+    "edge_expansion",
     "edge_load_centrality",
+    "edmonds_karp",
     "eigenvector_centrality",
     "enumerate_all_cliques",
     "eulerian_circuit",
@@ -131,6 +140,7 @@ __all__ = [
     "girth",
     "global_reaching_centrality",
     "goldberg_radzik",
+    "gomory_hu_tree",
     "greedy_branching",
     "greedy_color",
     "group_betweenness_centrality",
@@ -206,30 +216,41 @@ __all__ = [
     "local_bridges",
     "local_reaching_centrality",
     "lowest_common_ancestor",
+    "max_flow_min_cost",
     "max_weight_clique",
     "max_weight_matching",
     "maximal_matching",
     "maximum_branching",
+    "maximum_flow",
+    "maximum_flow_value",
     "maximum_spanning_arborescence",
     "maximum_spanning_edges",
     "maximum_spanning_tree",
+    "min_cost_flow",
+    "min_cost_flow_cost",
     "min_edge_cover",
     "min_weight_matching",
     "minimal_branching",
     "minimum_branching",
+    "minimum_cut",
+    "minimum_cut_value",
     "minimum_cycle_basis",
     "minimum_spanning_arborescence",
     "minimum_spanning_edges",
     "minimum_spanning_tree",
+    "mixing_expansion",
     "multi_source_dijkstra",
     "multi_source_dijkstra_path",
     "multi_source_dijkstra_path_length",
     "negative_edge_cycle",
+    "network_simplex",
     "newman_betweenness_centrality",
     "node_boundary",
     "node_clique_number",
     "node_connected_component",
+    "node_expansion",
     "node_redundancy",
+    "normalized_cut_size",
     "number_attracting_components",
     "number_connected_components",
     "number_of_isolates",
@@ -242,6 +263,7 @@ __all__ = [
     "percolation_centrality",
     "periphery",
     "predecessor",
+    "preflow_push",
     "prim_mst_edges",
     "prominent_group",
     "radius",
@@ -250,6 +272,7 @@ __all__ = [
     "rooted_tree_isomorphism",
     "score_sequence",
     "sets",
+    "shortest_augmenting_path",
     "shortest_path",
     "shortest_path_length",
     "shortest_simple_paths",
@@ -285,6 +308,7 @@ __all__ = [
     "vf2pp_is_isomorphic",
     "vf2pp_is_monomorphic",
     "vf2pp_subgraph_is_isomorphic",
+    "volume",
     "voterank",
     "weakly_connected_components",
     "weisfeiler_lehman_graph_hash",
@@ -6608,3 +6632,457 @@ def butterflies(G, nodes=None):
         raise NotImplementedError("nodes is not a node or a container of nodes") from None
     index = G._index
     return {v: counts[index[v]] for v in picked}
+
+
+# --- Batch 12: flows and cut measures ------------------------------------------------
+
+
+# NetworkX's maximum flow functions rustnx runs, and the keyword arguments
+# each takes through `maximum_flow` and friends.
+_FLOW_KWARGS = {
+    "edmonds_karp": {"cutoff"},
+    "shortest_augmenting_path": {"two_phase", "cutoff"},
+    "dinitz": {"cutoff"},
+    "boykov_kolmogorov": {"cutoff"},
+    "preflow_push": {"global_relabel_freq"},
+}
+
+
+def _flow_func_name(flow_func):
+    """Which of NetworkX's flow functions ``flow_func`` is, or ``None``."""
+    for name in _FLOW_KWARGS:
+        if flow_func is _registered(name):
+            return name
+    return None
+
+
+@functools.cache
+def _cut_by_layers():
+    """Whether the installed ``minimum_cut`` (3.7+) finds the sink side with
+    its own breadth-first search over edges with ``flow < capacity``,
+    adding to ``{_t}`` one node at a time. Earlier versions delete the
+    edges with ``flow == capacity``, take ``set(dict(shortest_path_length(R,
+    target=_t)))`` (a presized set) and add the edges back, which moves them
+    to the end of R's rows and so changes later flows on the same R."""
+    return "non_reachable = {_t}" in _source_text(_registered("minimum_cut"))
+
+
+@functools.cache
+def _simplex_single_demand():
+    """Whether the installed ``network_simplex`` (before 3.6) takes the
+    largest single demand, rather than the demands' sum, for its faux
+    infinity."""
+    return "sum(abs(d) for d in DEAF.node_demands)" not in _source_text(
+        _registered("network_simplex")
+    )
+
+
+@functools.cache
+def _sets_replayable():
+    """Whether rustnx's replica of CPython's set table gives this
+    interpreter's set iteration order (``preflow_push`` picks nodes with
+    ``next(iter(level.active))``), checked on random operations with keys
+    whose hashes collide, are negative or large."""
+    rng = random.Random(20261004)
+    keys = list(range(48)) + [-1, -2, 2**61 - 1, 2**61, -(2**61), 2**64 + 7]
+    keys += [1000 + 64 * i for i in range(60)] + [f"k{i}" for i in range(40)]
+    keys += [(i, "t") for i in range(20)]
+    position = {k: i for i, k in enumerate(keys)}
+    nsets = 4
+    sets = [set() for _ in range(nsets)]
+    ops, firsts = [], []
+    for _ in range(4000):
+        s, r = rng.randrange(nsets), rng.random()
+        if r < 0.55:
+            op, k = 0, rng.randrange(len(keys))
+            sets[s].add(keys[k])
+        elif r < 0.9:
+            op, k = 1, rng.randrange(len(keys))
+            sets[s].discard(keys[k])
+        elif r < 0.94:
+            op, k = 2, 0
+            sets[s].clear()
+        else:
+            op, k = 3, rng.randrange(nsets)
+            sets[s].update(sets[k])
+        ops.append((op, s, k))
+        first = next(iter(sets[s]), None)
+        firsts.append(-1 if first is None else position[first])
+    try:
+        got_firsts, got_sets = _core._replay_sets([hash(k) for k in keys], nsets, ops)
+    except Exception:
+        return False
+    return got_firsts == firsts and got_sets == [[position[k] for k in s] for s in sets]
+
+
+def _node_list(G):
+    nodes = G._nodes
+    return nodes if type(nodes) is list else list(nodes)
+
+
+def _flow_rows(G):
+    """The NetworkX graph's adjacency rows, aligned with the conversion."""
+    return list(_networkx_graph(G)._adj.values())
+
+
+def _flow_network(G, capacity):
+    """``build_residual_network(G, capacity)`` as a ``FlowRun``."""
+    if callable(capacity):
+        raise NotImplementedError("rustnx does not support callable capacities")
+    return G._core.residual_network(_flow_rows(G), capacity, _COMPENSATED_SUM)
+
+
+def _flow_ends(G, s, t):
+    if s not in G:
+        raise nx.NetworkXError(f"node {str(s)} not in graph")
+    if t not in G:
+        raise nx.NetworkXError(f"node {str(t)} not in graph")
+    if s == t:
+        raise nx.NetworkXError("source and sink are the same node")
+    return G._index[s], G._index[t]
+
+
+def _run_flow(G, s, t, capacity, name, value_only, residual=None, cutoff=None,
+              two_phase=False, global_relabel_freq=1):
+    """NetworkX's flow function ``name`` up to building R: the ``FlowRun``
+    and the flow value."""
+    if residual is not None:
+        raise NotImplementedError("rustnx does not reuse residual networks")
+    si, ti = _flow_ends(G, s, t)
+    if name == "preflow_push":
+        if global_relabel_freq is None:
+            global_relabel_freq = 0
+        if global_relabel_freq < 0:
+            raise nx.NetworkXError("global_relabel_freq must be nonnegative.")
+    run = _flow_network(G, capacity)
+    n, m = len(G), run.edge_count()
+    if name == "preflow_push":
+        if not _sets_replayable():
+            raise NotImplementedError("this interpreter's sets can't be replayed")
+        # GlobalRelabelThreshold
+        threshold = (n + m) / global_relabel_freq if global_relabel_freq else float("inf")
+        if type(threshold) is not float:
+            raise NotImplementedError("unsupported global_relabel_freq")
+        hashes = [hash(v) for v in G._nodes]
+        value = run.run(name, si, ti, value_only=bool(value_only), threshold=threshold, hashes=hashes)
+    elif name == "shortest_augmenting_path":
+        half = m / 2
+        d = n if not two_phase else int(min(half**0.5, 2 * n ** (2.0 / 3)))
+        value = run.run(name, si, ti, cutoff, two_phase=bool(two_phase), d=d)
+    else:
+        value = run.run(name, si, ti, cutoff)
+    return run, value
+
+
+def _current_edge(edges, position):
+    """A ``CurrentEdge`` over ``edges`` that has moved ``position`` times."""
+    from networkx.algorithms.flow.utils import CurrentEdge
+
+    current = CurrentEdge(edges)
+    if position:
+        current._it = it = iter(edges.items())
+        current._curr = next(islice(it, position, None))
+    return current
+
+
+def _residual_graph(G, run, value=None, algorithm=None):
+    """NetworkX's residual network ``R`` for ``run``: without flows from
+    ``build_residual_network``, else with the flow and node attributes the
+    algorithm leaves, then the graph's ``flow_value`` and ``algorithm``."""
+    nodes = _node_list(G)
+    R = nx.DiGraph()
+    R.__networkx_cache__ = None
+    R.add_nodes_from(nodes)
+    run.fill(list(R._succ.values()), list(R._pred.values()), nodes, algorithm is not None)
+    R.graph["inf"] = run.inf()
+    if algorithm is None:
+        return R
+    positions = run.set_node_attrs(list(R._node.values()))
+    if positions is not None:
+        for row, edges, position in zip(R._node.values(), R._succ.values(), positions):
+            row["curr_edge"] = _current_edge(edges, position)
+    trees = run.trees(nodes)
+    if trees is not None:
+        R.graph["trees"] = trees
+    R.graph["flow_value"] = value
+    R.graph["algorithm"] = algorithm
+    return R
+
+
+def build_residual_network(G, capacity):
+    return _residual_graph(G, _flow_network(G, capacity))
+
+
+def edmonds_karp(G, s, t, capacity="capacity", residual=None, value_only=False, cutoff=None):
+    run, value = _run_flow(G, s, t, capacity, "edmonds_karp", value_only, residual, cutoff)
+    return _residual_graph(G, run, value, "edmonds_karp")
+
+
+def shortest_augmenting_path(
+    G, s, t, capacity="capacity", residual=None, value_only=False, two_phase=False, cutoff=None
+):
+    run, value = _run_flow(
+        G, s, t, capacity, "shortest_augmenting_path", value_only, residual, cutoff, two_phase
+    )
+    return _residual_graph(G, run, value, "shortest_augmenting_path")
+
+
+def dinitz(G, s, t, capacity="capacity", residual=None, value_only=False, cutoff=None):
+    run, value = _run_flow(G, s, t, capacity, "dinitz", value_only, residual, cutoff)
+    return _residual_graph(G, run, value, "dinitz")
+
+
+def boykov_kolmogorov(G, s, t, capacity="capacity", residual=None, value_only=False, cutoff=None):
+    run, value = _run_flow(G, s, t, capacity, "boykov_kolmogorov", value_only, residual, cutoff)
+    return _residual_graph(G, run, value, "boykov_kolmogorov")
+
+
+def preflow_push(G, s, t, capacity="capacity", residual=None, global_relabel_freq=1, value_only=False):
+    run, value = _run_flow(
+        G, s, t, capacity, "preflow_push", value_only, residual,
+        global_relabel_freq=global_relabel_freq,
+    )
+    return _residual_graph(G, run, value, "preflow_push")
+
+
+def _pick_flow_func(flow_func, kwargs, cut=False):
+    """``maximum_flow``'s checks of ``flow_func``; the flow function's name."""
+    if flow_func is None:
+        if kwargs:
+            raise nx.NetworkXError(
+                "You have to explicitly set a flow_func if you need to pass parameters via kwargs."
+            )
+        flow_func = _registered("preflow_push")
+    if not callable(flow_func):
+        raise nx.NetworkXError("flow_func has to be callable.")
+    if cut and kwargs.get("cutoff") is not None and flow_func is _registered("preflow_push"):
+        raise nx.NetworkXError("cutoff should not be specified.")
+    name = _flow_func_name(flow_func)
+    if name is None or not set(kwargs) <= _FLOW_KWARGS[name]:
+        raise NotImplementedError("rustnx only runs NetworkX's own flow functions")
+    return name
+
+
+def maximum_flow(flowG, _s, _t, capacity="capacity", flow_func=None, **kwargs):
+    name = _pick_flow_func(flow_func, kwargs)
+    run, value = _run_flow(flowG, _s, _t, capacity, name, False, **kwargs)
+    return value, run.flow_dict(_node_list(flowG))
+
+
+def maximum_flow_value(flowG, _s, _t, capacity="capacity", flow_func=None, **kwargs):
+    name = _pick_flow_func(flow_func, kwargs)
+    return _run_flow(flowG, _s, _t, capacity, name, True, **kwargs)[1]
+
+
+def minimum_cut(flowG, _s, _t, capacity="capacity", flow_func=None, **kwargs):
+    name = _pick_flow_func(flow_func, kwargs, cut=True)
+    run, value = _run_flow(flowG, _s, _t, capacity, name, True, **kwargs)
+    nodes = flowG._nodes
+    strict = _cut_by_layers()
+    order = run.cut_order(flowG._index[_t], strict)
+    # The sink itself is the caller's object, the rest R's nodes.
+    if strict:
+        non_reachable = {_t}
+        add = non_reachable.add
+        for i in order[1:]:
+            add(nodes[i])
+    else:
+        found = {_t: None}
+        for i in order[1:]:
+            found[nodes[i]] = None
+        non_reachable = set(found)
+    partition = (set(nodes) - non_reachable, non_reachable)
+    return value, partition
+
+
+def minimum_cut_value(flowG, _s, _t, capacity="capacity", flow_func=None, **kwargs):
+    name = _pick_flow_func(flow_func, kwargs, cut=True)
+    return _run_flow(flowG, _s, _t, capacity, name, True, **kwargs)[1]
+
+
+def gomory_hu_tree(G, capacity="capacity", flow_func=None):
+    _undirected_only(G)
+    if flow_func is None:
+        flow_func = _registered("edmonds_karp")
+    if len(G) == 0:
+        raise nx.NetworkXError("Empty Graph does not have a Gomory-Hu tree representation")
+    name = _flow_func_name(flow_func)
+    if name is None:
+        raise NotImplementedError("rustnx only runs NetworkX's own flow functions")
+    run = _flow_network(G, capacity)
+    n, m = len(G), run.edge_count()
+    params = {}
+    if name == "preflow_push":
+        if not _sets_replayable():
+            raise NotImplementedError("this interpreter's sets can't be replayed")
+        params = {"threshold": (n + m) / 1, "hashes": [hash(v) for v in G._nodes]}
+    elif name == "shortest_augmenting_path":
+        params = {"d": n}
+    tree = run.gomory_hu(name, _cut_by_layers(), **params)
+    nodes = G._nodes
+    T = nx.Graph()
+    T.add_nodes_from(nodes)
+    T.add_weighted_edges_from((nodes[u], nodes[p], w) for u, (p, w) in enumerate(tree, 1))
+    return T
+
+
+def _network_simplex(G, demand, capacity, weight, overrides=(), as_directed=False):
+    """``network_simplex``'s ``(flow_cost, flow_dict)`` after its first checks."""
+    H = _networkx_graph(G)
+    nodes = _node_list(G)
+    code, a, b = G._core.network_simplex(
+        list(H._adj.values()), list(H._node.values()), nodes, demand, capacity, weight,
+        list(overrides), as_directed, _simplex_single_demand(), _COMPENSATED_SUM,
+    )
+    if code == 0:
+        return a, b
+    if code == 1:
+        raise nx.NetworkXError(f"node {nodes[a]!r} has infinite demand")
+    e = (nodes[a], nodes[b])
+    if code == 2:
+        raise nx.NetworkXError(f"edge {e!r} has infinite weight")
+    if code == 3:
+        raise nx.NetworkXUnfeasible("total node demand is not zero")
+    if code == 4:
+        raise nx.NetworkXUnfeasible(f"edge {e!r} has negative capacity")
+    if code == 5:
+        raise nx.NetworkXUnfeasible("no flow satisfies all node demands")
+    raise nx.NetworkXUnbounded("negative cycle with infinite capacity found")
+
+
+def network_simplex(G, demand="demand", capacity="capacity", weight="weight"):
+    _directed_only(G)
+    if len(G) == 0:
+        raise nx.NetworkXError("graph has no nodes")
+    return _network_simplex(G, demand, capacity, weight)
+
+
+def min_cost_flow_cost(G, demand="demand", capacity="capacity", weight="weight"):
+    return network_simplex(G, demand, capacity, weight)[0]
+
+
+def min_cost_flow(G, demand="demand", capacity="capacity", weight="weight"):
+    return network_simplex(G, demand, capacity, weight)[1]
+
+
+def max_flow_min_cost(G, s, t, capacity="capacity", weight="weight"):
+    max_flow = maximum_flow_value(G, s, t, capacity=capacity)
+    # nx.DiGraph(G) with demands -max_flow at s and max_flow at t.
+    index = G._index
+    overrides = [(index[s], -max_flow), (index[t], max_flow)]
+    return _network_simplex(G, "demand", capacity, weight, overrides, as_directed=True)[1]
+
+
+def cost_of_flow(G, flowDict, weight="weight"):
+    if callable(weight):
+        raise NotImplementedError("rustnx does not support callable weights")
+    return G._core.cost_of_flow(_flow_rows(G), _node_list(G), flowDict, weight, _COMPENSATED_SUM)
+
+
+def _cut_weight(G, weight):
+    """The weight attribute for the cut measures (``None``: each edge is 1)."""
+    if weight is None:
+        return None
+    if not isinstance(weight, str):
+        raise NotImplementedError("rustnx needs an edge attribute name for weight")
+    G._ensure_weight(weight)
+    return weight
+
+
+def _reusable_sets(*args):
+    # A one-shot iterator would be consumed before rustnx could fall back.
+    from collections.abc import Iterator
+
+    if any(isinstance(a, Iterator) for a in args):
+        raise NotImplementedError("rustnx needs reusable node containers")
+
+
+def _nset_positions(G, nbunch):
+    """``{n for n in nbunch if n in G}`` as positions, in the set's order."""
+    index = G._index
+    return [index[v] for v in {n for n in nbunch if n in G}]
+
+
+def _set_positions(G, nbunch):
+    """``set(nbunch)``'s nodes of G as positions."""
+    index = G._index
+    return [index[v] for v in set(nbunch) if v in G]
+
+
+def cut_size(G, S, T=None, weight=None):
+    _reusable_sets(S, T)
+    weight = _cut_weight(G, weight)
+    if G.is_directed() and T is None:
+        raise NotImplementedError("NetworkX fails with T=None on directed graphs")
+    parts = [(_nset_positions(G, S), None if T is None else _set_positions(G, T))]
+    if G.is_directed():
+        parts.append((_nset_positions(G, T), _set_positions(G, S)))
+    return G._core.cut_size_value(parts, _COMPENSATED_SUM, weight)
+
+
+def volume(G, S, weight=None):
+    _reusable_sets(S)
+    weight = _cut_weight(G, weight)
+    if S in G:
+        raise NotImplementedError("NetworkX fails on a single node here")
+    index = G._index
+    try:
+        positions = [index[n] for n in S if n in index]  # nbunch_iter
+    except TypeError:
+        raise NotImplementedError("NetworkX raises for this nbunch") from None
+    return G._core.volume_value(positions, _COMPENSATED_SUM, weight)
+
+
+def normalized_cut_size(G, S, T=None, weight=None):
+    _reusable_sets(S, T)
+    _cut_weight(G, weight)
+    if T is None:
+        T = set(G._nodes) - set(S)
+    num_cut_edges = cut_size(G, S, T=T, weight=weight)
+    volume_S = volume(G, S, weight=weight)
+    volume_T = volume(G, T, weight=weight)
+    return num_cut_edges * (1 / volume_S + 1 / volume_T)
+
+
+def conductance(G, S, T=None, weight=None):
+    _reusable_sets(S, T)
+    _cut_weight(G, weight)
+    if T is None:
+        T = set(G._nodes) - set(S)
+    num_cut_edges = cut_size(G, S, T, weight=weight)
+    volume_S = volume(G, S, weight=weight)
+    volume_T = volume(G, T, weight=weight)
+    return num_cut_edges / min(volume_S, volume_T)
+
+
+def edge_expansion(G, S, T=None, weight=None):
+    _reusable_sets(S, T)
+    _cut_weight(G, weight)
+    if T is None:
+        T = set(G._nodes) - set(S)
+    num_cut_edges = cut_size(G, S, T=T, weight=weight)
+    return num_cut_edges / min(len(S), len(T))
+
+
+def mixing_expansion(G, S, T=None, weight=None):
+    _reusable_sets(S, T)
+    num_cut_edges = cut_size(G, S, T=T, weight=weight)
+    num_total_edges = G.number_of_edges()
+    return num_cut_edges / (2 * num_total_edges)
+
+
+def node_expansion(G, S):
+    _reusable_sets(S)
+    index = G._index
+    try:
+        positions = [index[v] for v in S]
+    except (KeyError, TypeError):
+        raise NotImplementedError("NetworkX raises for nodes not in G") from None
+    union, _ = G._core.neighborhood_sizes(positions)
+    return union / len(S)
+
+
+def boundary_expansion(G, S):
+    _reusable_sets(S)
+    _, outside = G._core.neighborhood_sizes(_nset_positions(G, S))
+    return outside / len(S)

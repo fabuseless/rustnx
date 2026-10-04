@@ -4384,6 +4384,11 @@ impl FlowRun {
         self.res.tail.len()
     }
 
+    /// `R.graph["inf"]`.
+    fn inf<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        val_obj(py, self.res.inf)
+    }
+
     /// Run a maximum flow algorithm from scratch; returns the flow value.
     /// `cutoff` is the caller's value (None for NetworkX's default),
     /// `d` and `threshold` as `flow::Algo` describes.
