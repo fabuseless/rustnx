@@ -18,8 +18,8 @@ use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
     approximation, bipartite, centrality, centrality_more, cluster, communities, connectivity,
-    cores_more, dag, directed, distance, flow, graph_classes, isomorphism, leftovers, matching,
-    measures, paths, pyset, spectral, structure, structure_more, trees_more,
+    conversion, cores_more, dag, directed, distance, flow, graph_classes, isomorphism, leftovers,
+    matching, measures, paths, pyset, spectral, structure, structure_more, trees_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -41,6 +41,32 @@ fn unbounded() -> PyErr {
 
 fn all_nodes(n: usize) -> Vec<u32> {
     (0..n as u32).collect()
+}
+
+/// COO arrays (row, col, data) as native-endian int64/f64 bytes, for
+/// `numpy.frombuffer` (writable, unlike `bytes`).
+type CooBytes<'py> = (
+    Bound<'py, PyByteArray>,
+    Bound<'py, PyByteArray>,
+    Bound<'py, PyByteArray>,
+);
+
+fn i64_bytes<'py>(py: Python<'py>, v: &[i64]) -> Bound<'py, PyByteArray> {
+    let bytes: Vec<u8> = v.iter().flat_map(|x| x.to_ne_bytes()).collect();
+    PyByteArray::new(py, &bytes)
+}
+
+fn f64_bytes<'py>(py: Python<'py>, v: &[f64]) -> Bound<'py, PyByteArray> {
+    let bytes: Vec<u8> = v.iter().flat_map(|x| x.to_ne_bytes()).collect();
+    PyByteArray::new(py, &bytes)
+}
+
+fn coo_bytes<'py>(py: Python<'py>, coo: &conversion::Coo) -> PyResult<CooBytes<'py>> {
+    Ok((
+        i64_bytes(py, &coo.row),
+        i64_bytes(py, &coo.col),
+        f64_bytes(py, &coo.data),
+    ))
 }
 
 #[pymethods]
@@ -4699,6 +4725,182 @@ impl CoreGraph {
         }))
     }
 
+    // --- Batch 19: matrices and conversion ---
+
+    /// `to_scipy_sparse_array`'s COO input `(row, col, data)` as native
+    /// int64/f64 bytes; `map[v]` is node `v`'s row, -1 to leave it out
+    /// (`None`: all nodes, in order).
+    #[pyo3(signature = (map=None, weight=None))]
+    fn adjacency_coo<'py>(
+        &self,
+        py: Python<'py>,
+        map: Option<Vec<i64>>,
+        weight: Option<&str>,
+    ) -> PyResult<CooBytes<'py>> {
+        let map = self.node_map(map)?;
+        let w = self.weight_slice(weight, false)?;
+        let coo =
+            py.detach(|| conversion::adjacency_coo(&self.succ, self.n, self.directed, &map, w));
+        coo_bytes(py, &coo)
+    }
+
+    /// `bipartite.biadjacency_matrix`'s COO input: `rows` holds
+    /// `(position, row)` for the row nodes in `G`, `col[v]` node `v`'s column
+    /// or -1.
+    #[pyo3(signature = (rows, col, weight=None))]
+    fn biadjacency_coo<'py>(
+        &self,
+        py: Python<'py>,
+        rows: Vec<(u32, i64)>,
+        col: Vec<i64>,
+        weight: Option<&str>,
+    ) -> PyResult<CooBytes<'py>> {
+        if col.len() != self.n || rows.iter().any(|&(u, _)| u as usize >= self.n) {
+            return Err(PyValueError::new_err("rows and col must index this graph"));
+        }
+        let w = self.weight_slice(weight, false)?;
+        let coo = py.detach(|| {
+            conversion::biadjacency_coo(&self.succ, self.n, self.directed, &rows, &col, w)
+        });
+        coo_bytes(py, &coo)
+    }
+
+    /// `to_numpy_array`'s `(row, col, weight)` entries (see `adjacency_coo`).
+    #[pyo3(signature = (map=None, weight=None))]
+    fn dense_entries<'py>(
+        &self,
+        py: Python<'py>,
+        map: Option<Vec<i64>>,
+        weight: Option<&str>,
+    ) -> PyResult<CooBytes<'py>> {
+        let map = self.node_map(map)?;
+        let w = self.weight_slice(weight, false)?;
+        let coo = py.detach(|| conversion::dense_entries(&self.succ, self.n, &map, w));
+        coo_bytes(py, &coo)
+    }
+
+    /// `incidence_matrix` as CSR bytes `(indptr, indices, data)` with
+    /// `rows` rows, and the number of columns (edges); or the positions of
+    /// the first edge with an endpoint outside `map`.
+    #[pyo3(signature = (rows, map=None, weight=None, oriented=false))]
+    #[allow(clippy::type_complexity)]
+    fn incidence_csr<'py>(
+        &self,
+        py: Python<'py>,
+        rows: usize,
+        map: Option<Vec<i64>>,
+        weight: Option<&str>,
+        oriented: bool,
+    ) -> PyResult<(Option<(CooBytes<'py>, usize)>, Option<(u32, u32)>)> {
+        let map = self.node_map(map)?;
+        if map.iter().any(|&i| i >= rows as i64) {
+            return Err(PyValueError::new_err("map must give rows below `rows`"));
+        }
+        let w = self.weight_slice(weight, false)?;
+        let found = py.detach(|| {
+            conversion::incidence_csr(&self.succ, self.n, self.directed, rows, &map, w, oriented)
+        });
+        Ok(match found {
+            Ok((indptr, indices, data, columns)) => (
+                Some((
+                    (
+                        i64_bytes(py, &indptr),
+                        i64_bytes(py, &indices),
+                        f64_bytes(py, &data),
+                    ),
+                    columns,
+                )),
+                None,
+            ),
+            Err(edge) => (None, Some(edge)),
+        })
+    }
+
+    /// Number of self-loops (`number_of_selfloops`).
+    fn number_of_selfloops(&self) -> usize {
+        (0..self.n)
+            .filter(|&v| self.succ.neighbors(v).contains(&(v as u32)))
+            .count()
+    }
+
+    /// Whether every value of an edge attribute is an exact Python int or
+    /// float (see `Weights::plain`); true for `None` (unit weights).
+    #[pyo3(signature = (weight=None))]
+    fn weight_plain(&self, weight: Option<&str>) -> bool {
+        weight
+            .and_then(|a| self.weights.get(a))
+            .is_none_or(|w| w.plain)
+    }
+
+    /// `is_weighted`: whether every edge's data in `adj` (`G._adj`) has `key`.
+    #[staticmethod]
+    fn all_edges_have(adj: &Bound<'_, PyAny>, key: &Bound<'_, PyAny>) -> PyResult<bool> {
+        conversion::all_edges_have(conversion::plain_dict(adj)?, key)
+    }
+
+    /// `get_node_attributes` on `node` (`G._node`); `default=None` keeps only
+    /// the nodes that have the attribute.
+    #[staticmethod]
+    #[pyo3(signature = (node, name, default=None))]
+    fn node_attributes<'py>(
+        node: &Bound<'py, PyAny>,
+        name: &Bound<'py, PyAny>,
+        default: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        conversion::node_attributes(conversion::plain_dict(node)?, name, default)
+    }
+
+    /// `get_edge_attributes` on the source graph's `_adj` (unchanged since
+    /// this graph was built from it, with node order `nodes`).
+    #[pyo3(signature = (nodes, adj, name, default=None))]
+    fn edge_attributes<'py>(
+        &self,
+        nodes: &Bound<'py, PyList>,
+        adj: &Bound<'py, PyAny>,
+        name: &Bound<'py, PyAny>,
+        default: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        conversion::edge_attributes(
+            nodes,
+            conversion::plain_dict(adj)?,
+            &self.succ,
+            self.directed,
+            name,
+            default,
+        )
+    }
+
+    /// `relabel_nodes(copy=True)`: fill the new graph's `_node`, `_succ`
+    /// (`_adj`) and `_pred` dicts from the source graph's `_node` and `_adj`.
+    /// `labels[i]` is node `i`'s new label (`None`: unchanged).
+    #[pyo3(signature = (nodes, node, adj, labels, new_node, new_succ, new_pred=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn relabel_copy<'py>(
+        &self,
+        nodes: &Bound<'py, PyList>,
+        node: &Bound<'py, PyAny>,
+        adj: &Bound<'py, PyAny>,
+        labels: Vec<Option<Bound<'py, PyAny>>>,
+        new_node: &Bound<'py, PyDict>,
+        new_succ: &Bound<'py, PyDict>,
+        new_pred: Option<&Bound<'py, PyDict>>,
+    ) -> PyResult<()> {
+        if labels.len() != self.n || nodes.len() != self.n || new_pred.is_some() != self.directed {
+            return Err(PyValueError::new_err("arguments do not match this graph"));
+        }
+        conversion::relabel_copy(
+            nodes,
+            conversion::plain_dict(adj)?,
+            conversion::plain_dict(node)?,
+            &self.succ,
+            self.directed,
+            &labels,
+            new_node,
+            new_succ,
+            new_pred,
+        )
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -5059,6 +5261,15 @@ impl CoreGraph {
             connectivity::pair_flows(&h, &pairs, cutoff.unwrap_or(f64::INFINITY))
         })
         .map_err(|_| unbounded())
+    }
+
+    /// A node map for the batch 19 matrix functions: identity if `None`.
+    fn node_map(&self, map: Option<Vec<i64>>) -> PyResult<Vec<i64>> {
+        match map {
+            None => Ok((0..self.n as i64).collect()),
+            Some(map) if map.len() == self.n => Ok(map),
+            Some(_) => Err(PyValueError::new_err("map must have one entry per node")),
+        }
     }
 
     fn check_index(&self, v: usize) -> PyResult<()> {

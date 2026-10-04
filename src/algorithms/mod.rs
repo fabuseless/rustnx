@@ -5,6 +5,7 @@ pub mod centrality_more;
 pub mod cluster;
 pub mod communities;
 pub mod connectivity;
+pub mod conversion;
 pub mod cores_more;
 pub mod dag;
 pub mod directed;

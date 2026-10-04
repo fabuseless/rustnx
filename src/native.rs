@@ -184,6 +184,9 @@ fn assemble(n: usize, b: Builder) -> CoreGraph {
                 all_int,
                 has_hidden,
                 any_int,
+                // Native graphs decode values to Python ints and floats,
+                // except bools.
+                plain: !attr.kinds.contains(&kind::BOOL),
             },
         );
     }
