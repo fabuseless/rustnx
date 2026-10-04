@@ -3246,7 +3246,7 @@ impl CoreGraph {
     }
 
     /// Whether every node is adjacent to all others (self-loops aside).
-    fn is_complete(&self) -> bool {
+    fn tsp_is_complete(&self) -> bool {
         approximation::is_complete(&self.succ, self.n)
     }
 
@@ -3325,7 +3325,12 @@ impl CoreGraph {
 
     /// `cut_size` between the nodes with `side` set and the rest (int weights).
     #[pyo3(signature = (side, weight=None))]
-    fn cut_value(&self, py: Python<'_>, side: Vec<bool>, weight: Option<&str>) -> PyResult<i128> {
+    fn partition_cut_value(
+        &self,
+        py: Python<'_>,
+        side: Vec<bool>,
+        weight: Option<&str>,
+    ) -> PyResult<i128> {
         if side.len() != self.n {
             return Err(PyValueError::new_err("one side per node"));
         }
@@ -3351,12 +3356,12 @@ impl CoreGraph {
     }
 
     /// `complement`'s edges in the order NetworkX adds them.
-    fn complement_edges(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
+    fn complement_pairs(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         py.detach(|| approximation::complement_edges(&self.succ, self.n, self.directed))
     }
 
     /// `power(G, k)`'s edges in the order NetworkX adds them.
-    fn power_edges(&self, py: Python<'_>, k: usize) -> (Vec<u32>, Vec<u32>) {
+    fn power_pairs(&self, py: Python<'_>, k: usize) -> (Vec<u32>, Vec<u32>) {
         py.detach(|| approximation::power_edges(&self.succ, self.n, k))
     }
 

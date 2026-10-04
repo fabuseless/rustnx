@@ -5,11 +5,12 @@ counterpart. Inputs rustnx can't handle raise ``NotImplementedError``, which
 makes NetworkX fall back to its own implementation.
 """
 
+import copy
 import functools
 from collections import Counter, defaultdict
 from collections.abc import Set
 import inspect
-from itertools import chain
+from itertools import chain, permutations
 import math
 import operator
 import random
@@ -40,6 +41,7 @@ __all__ = [
     "ancestors",
     "antichain_width",
     "antichains",
+    "approximate_diameter",
     "articulation_points",
     "astar_path",
     "astar_path_length",
@@ -76,6 +78,7 @@ __all__ = [
     "closeness_centrality",
     "clustering",
     "color",
+    "complement",
     "complete_to_chordal_graph",
     "condensation",
     "connected_components",
@@ -97,6 +100,7 @@ __all__ = [
     "dfs_successors",
     "dfs_tree",
     "diameter",
+    "difference",
     "dijkstra_path",
     "dijkstra_path_length",
     "dijkstra_predecessor_and_distance",
@@ -133,6 +137,7 @@ __all__ = [
     "goldberg_radzik",
     "greedy_branching",
     "greedy_color",
+    "greedy_tsp",
     "group_betweenness_centrality",
     "group_closeness_centrality",
     "group_degree_centrality",
@@ -171,6 +176,7 @@ __all__ = [
     "is_graphical",
     "is_isomorphic",
     "is_k_regular",
+    "is_kl_connected",
     "is_matching",
     "is_maximal_matching",
     "is_minimal_d_separator",
@@ -199,6 +205,7 @@ __all__ = [
     "k_shell",
     "k_truss",
     "katz_centrality",
+    "kl_connected_subgraph",
     "kosaraju_strongly_connected_components",
     "kruskal_mst_edges",
     "label_propagation_communities",
@@ -214,7 +221,11 @@ __all__ = [
     "maximum_spanning_edges",
     "maximum_spanning_tree",
     "min_edge_cover",
+    "min_edge_dominating_set",
+    "min_maximal_matching",
     "min_weight_matching",
+    "min_weighted_dominating_set",
+    "min_weighted_vertex_cover",
     "minimal_branching",
     "minimum_branching",
     "minimum_cycle_basis",
@@ -235,16 +246,19 @@ __all__ = [
     "number_of_isolates",
     "number_strongly_connected_components",
     "number_weakly_connected_components",
+    "one_exchange",
     "onion_layers",
     "out_degree_centrality",
     "pagerank",
     "partition_spanning_tree",
     "percolation_centrality",
     "periphery",
+    "power",
     "predecessor",
     "prim_mst_edges",
     "prominent_group",
     "radius",
+    "randomized_partitioning",
     "root_to_leaf_paths",
     "root_trees",
     "rooted_tree_isomorphism",
@@ -253,6 +267,7 @@ __all__ = [
     "shortest_path",
     "shortest_path_length",
     "shortest_simple_paths",
+    "simulated_annealing_tsp",
     "single_source_all_shortest_paths",
     "single_source_bellman_ford",
     "single_source_bellman_ford_path",
@@ -266,6 +281,8 @@ __all__ = [
     "single_target_shortest_path_length",
     "square_clustering",
     "strongly_connected_components",
+    "symmetric_difference",
+    "threshold_accepting_tsp",
     "to_nested_tuple",
     "to_prufer_sequence",
     "to_vertex_cover",
@@ -279,6 +296,8 @@ __all__ = [
     "tree_all_pairs_lowest_common_ancestor",
     "tree_centroid",
     "tree_isomorphism",
+    "treewidth_decomp",
+    "treewidth_min_fill_in",
     "triadic_census",
     "triangles",
     "v_structures",
@@ -6608,3 +6627,456 @@ def butterflies(G, nodes=None):
         raise NotImplementedError("nodes is not a node or a container of nodes") from None
     index = G._index
     return {v: counts[index[v]] for v in picked}
+
+
+# --- Batch 16: approximation algorithms and graph operations -----------------------
+
+
+def _node_attr_values(G, attr, default=1):
+    """``G.nodes[v].get(attr, default)`` for each node, in node order, or
+    ``None`` for native graphs (they have no node data, so every node gets
+    the default)."""
+    if G._core.is_native():
+        return None
+    source = G._source
+    if source is None or not G._source_unchanged():
+        raise NotImplementedError("rustnx needs the NetworkX graph's node data")
+    node_data = source._node
+    return [node_data[v].get(attr, default) for v in G._nodes]
+
+
+def min_weighted_vertex_cover(G, weight=None):
+    order = G._core.local_ratio_cover(_node_attr_values(G, weight))
+    if order is None:
+        raise NotImplementedError("rustnx needs int or float node weights here")
+    nodes = G._nodes
+    # NetworkX adds the nodes to its set in this order.
+    return {nodes[i] for i in order}
+
+
+@functools.cache
+def _dominating_counts_uncovered():
+    """NetworkX 3.6+ prices a node by its uncovered closed neighbors; before,
+    by its closed neighbors outside the dominating set."""
+    return "neighborhood & uncovered_nodes" in _source_text(
+        _registered("min_weighted_dominating_set")
+    )
+
+
+def _true_division_operands(values):
+    """``values`` as floats that ``value / count`` divides exactly as Python
+    does: ints that floats hold exactly, and floats other than NaN."""
+    out = []
+    for x in values:
+        if type(x) in (int, bool):
+            if abs(x) > _MAX_EXACT_INT:
+                raise NotImplementedError("integer node weight is too large")
+        elif not isinstance(x, float) or x != x:
+            raise NotImplementedError("rustnx needs int or float node weights here")
+        out.append(float(x))
+    return out
+
+
+def min_weighted_dominating_set(G, weight=None):
+    _undirected_only(G)
+    if len(G) == 0:
+        return set()
+    values = _node_attr_values(G, weight)
+    if values is not None:
+        values = _true_division_operands(values)
+    order = G._core.min_weighted_dominating(values, _dominating_counts_uncovered())
+    nodes = G._nodes
+    return {nodes[i] for i in order}
+
+
+def min_edge_dominating_set(G):
+    if len(G) == 0:
+        raise ValueError("Expected non-empty NetworkX graph!")
+    return maximal_matching(G)
+
+
+def min_maximal_matching(G):
+    return maximal_matching(G)
+
+
+def _tsp_weight(G, weight):
+    """Validate a TSP weight; returns whether all values are ints."""
+    if weight is None:
+        raise NotImplementedError("rustnx needs a weight attribute here")
+    weight, all_int, has_hidden = _check_weight(G, weight)
+    if has_hidden:
+        raise NotImplementedError("rustnx does not support None edge weights here")
+    if G._core.weight_mixed(weight):
+        raise NotImplementedError("edge weights mix ints and floats")
+    return all_int
+
+
+def greedy_tsp(G, weight="weight", source=None):
+    if len(G) < 3:
+        raise NotImplementedError("rustnx needs three or more nodes")
+    _tsp_weight(G, weight)
+    if not G._core.tsp_is_complete():
+        raise nx.NetworkXError("G must be a complete graph.")
+    if source is None:
+        s = 0
+    else:
+        try:
+            s = G._index[source]
+        except (KeyError, TypeError):
+            raise NotImplementedError("NetworkX raises for a missing source") from None
+    status, cycle = G._core.greedy_tsp(weight, s)
+    if status == 2:
+        # NetworkX takes the first of the nearest nodes in set order.
+        raise NotImplementedError("two nearest nodes tie")
+    nodes = G._nodes
+    first = nodes[s] if source is None else source
+    return [first] + [nodes[i] for i in cycle[1:-1]] + [first]
+
+
+def _tsp_tour(G, init_cycle, weight, source, move, message):
+    """The checks ``simulated_annealing_tsp`` and ``threshold_accepting_tsp``
+    make before their search: ``(cycle, move kind, tour state)``."""
+    if len(G) < 3:
+        raise NotImplementedError("rustnx needs three or more nodes")
+    if move == "1-1":
+        kind = 0
+    elif move == "1-0":
+        kind = 1
+    else:
+        raise NotImplementedError("rustnx does not support custom moves")
+    all_int = _tsp_weight(G, weight)
+    index = G._index
+    if init_cycle == "greedy":
+        cycle = greedy_tsp(G, weight=weight, source=source)
+    else:
+        cycle = list(init_cycle)
+        if source is None:
+            source = cycle[0]
+        elif source != cycle[0]:
+            raise nx.NetworkXError("source must be first node in init_cycle")
+        if cycle[0] != cycle[-1]:
+            raise nx.NetworkXError("init_cycle must be a cycle. (return to start)")
+        if len(cycle) - 1 != len(G):
+            raise nx.NetworkXError(message)
+        try:
+            found = [index.get(n) for n in cycle]
+        except TypeError:
+            raise NotImplementedError("init_cycle has an unhashable item") from None
+        if len({i for i in found if i is not None}) != len(G):
+            raise nx.NetworkXError(message)
+        if not G._core.tsp_is_complete():
+            raise nx.NetworkXError("G must be a complete graph.")
+    positions = [index[n] for n in cycle]
+    return cycle, kind, G._core.tsp_tour(weight, positions, all_int, _COMPENSATED_SUM)
+
+
+def simulated_annealing_tsp(
+    G,
+    init_cycle,
+    weight="weight",
+    source=None,
+    temp=100,
+    move="1-1",
+    max_iterations=10,
+    N_inner=100,
+    alpha=0.01,
+    seed=None,
+):
+    cycle, kind, tour = _tsp_tour(
+        G, init_cycle, weight, source, move, "init_cycle should be a cycle over all nodes in G."
+    )
+    # NetworkX's moves change the cycle in place, accepted or not; only the
+    # cost it compares against waits for acceptance.
+    cost = tour.cost()
+    count = 0
+    best_cost = cost
+    while count <= max_iterations and temp > 0:
+        count += 1
+        for i in range(N_inner):
+            a, b = seed.sample(range(1, len(cycle) - 1), k=2)
+            adj_cost = tour.step(kind, a, b)
+            delta = adj_cost - cost
+            if delta <= 0:
+                cost = adj_cost
+                if cost < best_cost:
+                    count = 0
+                    tour.save_best()
+                    best_cost = cost
+            else:
+                p = math.exp(-delta / temp)
+                if p >= seed.random():
+                    cost = adj_cost
+        temp -= temp * alpha
+    return [cycle[k] for k in tour.best()]
+
+
+def threshold_accepting_tsp(
+    G,
+    init_cycle,
+    weight="weight",
+    source=None,
+    threshold=1,
+    move="1-1",
+    max_iterations=10,
+    N_inner=100,
+    alpha=0.1,
+    seed=None,
+):
+    cycle, kind, tour = _tsp_tour(
+        G, init_cycle, weight, source, move, "init_cycle is not all and only nodes."
+    )
+    cost = tour.cost()
+    count = 0
+    best_cost = cost
+    while count <= max_iterations:
+        count += 1
+        accepted = False
+        for i in range(N_inner):
+            a, b = seed.sample(range(1, len(cycle) - 1), k=2)
+            adj_cost = tour.step(kind, a, b)
+            delta = adj_cost - cost
+            if delta <= threshold:
+                accepted = True
+                cost = adj_cost
+                if cost < best_cost:
+                    count = 0
+                    tour.save_best()
+                    best_cost = cost
+        if accepted:
+            threshold -= threshold * alpha
+    return [cycle[k] for k in tour.best()]
+
+
+def _treewidth_decomposition(G, order):
+    """``treewidth_decomp``'s result for the elimination ``order`` (node
+    positions). The bags are frozensets copied from sets whose iteration
+    order depends on their history, so this replays NetworkX's set
+    operations exactly; the heuristic, NetworkX's expensive part, ran in
+    Rust."""
+    nodes = G._nodes
+    if G._core.is_native():
+        core = G._core
+        graph_dict = {n: set([nodes[j] for j in core.neighbors(i)]) - {n} for i, n in enumerate(nodes)}
+    else:
+        source = _networkx_graph(G)
+        graph_dict = {n: set(source[n]) - {n} for n in source}
+    node_stack = []
+    for i in order:
+        elim_node = nodes[i]
+        nbrs = graph_dict[elim_node]
+        for u, v in permutations(nbrs, 2):
+            if v not in graph_dict[u]:
+                graph_dict[u].add(v)
+        node_stack.append((elim_node, nbrs))
+        for u in graph_dict[elim_node]:
+            graph_dict[u].remove(elim_node)
+        del graph_dict[elim_node]
+
+    decomp = nx.Graph()
+    first_bag = frozenset(graph_dict.keys())
+    decomp.add_node(first_bag)
+    treewidth = len(first_bag) - 1
+    while node_stack:
+        curr_node, nbrs = node_stack.pop()
+        old_bag = None
+        for bag in decomp.nodes:
+            if nbrs <= bag:
+                old_bag = bag
+                break
+        if old_bag is None:
+            old_bag = first_bag
+        nbrs.add(curr_node)
+        new_bag = frozenset(nbrs)
+        treewidth = max(treewidth, len(new_bag) - 1)
+        decomp.add_edge(old_bag, new_bag)
+    return treewidth, decomp
+
+
+def treewidth_decomp(G):
+    if G.is_directed():
+        raise NotImplementedError("rustnx supports treewidth_decomp on undirected graphs")
+    return _treewidth_decomposition(G, G._core.min_fill_in_order())
+
+
+def treewidth_min_fill_in(G):
+    _undirected_only(G)
+    return treewidth_decomp(G)
+
+
+def approximate_diameter(G, seed=None):
+    if len(G) == 0:
+        raise nx.NetworkXError("Expected non-empty NetworkX graph!")
+    if len(G) == 1:
+        return 0
+    source = seed.choice(list(G._nodes))
+    result = G._core.two_sweep(G._index[source])
+    if result is None:
+        if G.is_directed():
+            raise nx.NetworkXError("DiGraph not strongly connected.")
+        raise nx.NetworkXError("Graph not connected.")
+    return result
+
+
+def _int_cut_weight(G, weight):
+    if weight is not None:
+        weight, all_int, has_hidden = _check_weight(G, weight)
+        if not all_int or has_hidden:
+            # Float sums follow the set order of the cut.
+            raise NotImplementedError("rustnx needs int edge weights here")
+    return weight
+
+
+def _cut_partition(G, cut):
+    # `G.nodes - cut`, as `Set.__sub__` builds it.
+    return cut, set(v for v in G._nodes if v not in cut)
+
+
+def one_exchange(G, initial_cut=None, seed=None, weight=None):
+    _undirected_only(G)
+    if len(G) == 0:
+        raise NotImplementedError("rustnx needs a non-empty graph here")
+    weight = _int_cut_weight(G, weight)
+    if initial_cut is None:
+        initial_cut = set()
+    cut = set(initial_cut)
+    nodes = G._nodes
+    state = G._core.max_cut([v in cut for v in nodes], weight)
+    current_cut_size = state.cut()
+    n = len(nodes)
+    while True:
+        # Shuffling positions draws the same as shuffling `list(G.nodes())`.
+        order = list(range(n))
+        seed.shuffle(order)
+        best, potential_cut_size = state.best(order)
+        if potential_cut_size > current_cut_size:
+            node = nodes[best]
+            # NetworkX's `_swap_node_partition`; the new set's iteration
+            # order depends on how it was built.
+            cut = cut - {node} if node in cut else cut.union({node})
+            current_cut_size = potential_cut_size
+            state.switch(best)
+        else:
+            break
+    return current_cut_size, _cut_partition(G, cut)
+
+
+def randomized_partitioning(G, seed=None, p=0.5, weight=None):
+    _undirected_only(G)
+    weight = _int_cut_weight(G, weight)
+    nodes = G._nodes
+    cut = {node for node in nodes if seed.random() < p}
+    cut_size = G._core.partition_cut_value([v in cut for v in nodes], weight)
+    return cut_size, _cut_partition(G, cut)
+
+
+def _kl_limit(G, l):
+    """The path count at which NetworkX's ``cnt >= l`` first holds."""
+    if type(l) not in (int, bool, float):
+        raise NotImplementedError("rustnx needs a numeric l")
+    if l <= 1:
+        return 1
+    if l != l or l == math.inf:
+        if G._core.has_self_loops():
+            raise NotImplementedError("NetworkX never finishes here")
+        return 2**64 - 1
+    limit = math.ceil(l)
+    if limit >= 2**64:
+        raise NotImplementedError("l is too large")
+    return limit
+
+
+def _kl_rejected(G, l, low_memory, first_only):
+    if low_memory:
+        # The searches then run on subgraphs whose order follows a set.
+        raise NotImplementedError("rustnx does not support low_memory")
+    limit = _kl_limit(G, l)
+    if G.is_directed():
+        G._ensure_exact_pred()
+    return G._core.kl_rejected(limit, first_only)
+
+
+def is_kl_connected(G, k, l, low_memory=False):
+    us, _ = _kl_rejected(G, l, low_memory, True)
+    return not us
+
+
+def kl_connected_subgraph(G, k, l, low_memory=False, same_as_graph=False):
+    us, vs = _kl_rejected(G, l, low_memory, False)
+    # Each edge's searches run on a fresh copy of G, so the edges NetworkX's
+    # later passes keep are exactly those its first pass keeps.
+    H = copy.deepcopy(_networkx_graph(G))
+    nodes = G._nodes
+    for u, v in zip(us, vs):
+        H.remove_edge(nodes[u], nodes[v])
+    if same_as_graph:
+        return (H, not us)
+    return H
+
+
+def _plain_result_class(G):
+    """``G.__class__`` of the NetworkX graph G stands for (plain graphs only)."""
+    if G._core.is_native():
+        return nx.DiGraph if G.is_directed() else nx.Graph
+    cls = type(G._source)
+    if cls not in (nx.Graph, nx.DiGraph):
+        raise NotImplementedError("rustnx builds plain Graph and DiGraph results only")
+    return cls
+
+
+def _graph_with_plain_edges(cls, nodes, us, vs):
+    """A new ``cls`` with ``nodes``, then edges added as ``add_edges_from``
+    would add the pairs of positions ``us``, ``vs``."""
+    nodes = nodes if type(nodes) is list else list(nodes)
+    R = cls()
+    R.add_nodes_from(nodes)
+    adj = R._adj
+    pred = [R._pred[n] for n in nodes] if R.is_directed() else None
+    _core._add_plain_edges([adj[n] for n in nodes], pred, nodes, us, vs)
+    return R
+
+
+def complement(G):
+    cls = _plain_result_class(G)
+    us, vs = G._core.complement_pairs()
+    return _graph_with_plain_edges(cls, G._nodes, us, vs)
+
+
+def power(G, k):
+    _undirected_only(G)
+    if k <= 0:
+        raise ValueError("k must be a positive integer")
+    if type(k) in (int, bool):
+        depth = min(k, len(G) + 1)
+    elif type(k) is float:
+        # The search stops after the first level `k <= level` holds for.
+        depth = len(G) + 1 if k != k or k > len(G) else math.ceil(k)
+    else:
+        raise NotImplementedError("rustnx needs a numeric k")
+    us, vs = G._core.power_pairs(depth)
+    return _graph_with_plain_edges(nx.Graph, G._nodes, us, vs)
+
+
+def _same_node_positions(G, H):
+    if set(G._nodes) != set(H._nodes):
+        raise nx.NetworkXError("Node sets of graphs not equal")
+    index = H._index
+    return [index[v] for v in G._nodes]
+
+
+def difference(G, H):
+    cls = _plain_result_class(G)
+    mapping = _same_node_positions(G, H)
+    us, vs = G._core.edges_missing_from(H._core, mapping)
+    return _graph_with_plain_edges(cls, G._nodes, us, vs)
+
+
+def symmetric_difference(G, H):
+    cls = _plain_result_class(G)
+    mapping = _same_node_positions(G, H)
+    us, vs = G._core.edges_missing_from(H._core, mapping)
+    index = G._index
+    back = [index[v] for v in H._nodes]
+    hus, hvs = H._core.edges_missing_from(G._core, back)
+    us += [back[u] for u in hus]
+    vs += [back[v] for v in hvs]
+    return _graph_with_plain_edges(cls, G._nodes, us, vs)
