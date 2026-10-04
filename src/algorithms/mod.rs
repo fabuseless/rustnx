@@ -6,6 +6,7 @@ pub mod cores_more;
 pub mod dag;
 pub mod directed;
 pub mod distance;
+pub mod flow;
 pub mod graph_classes;
 pub mod isomorphism;
 pub mod leftovers;

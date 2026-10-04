@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 267 NetworkX functions. Call them as usual (for
+rustnx implements 292 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -443,6 +443,46 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `As `nx.bipartite.closeness_centrality`. Bit-for-bit identical; parallel searches.` | `nodes`, `normalized` | yes | rustnx |  |
 | `A one-shot iterator of nodes, and nodes not in the graph, fall back.` | `nodes` | yes | rustnx |  |
 | `NetworkX 3.7+.` | `nodes` | no | rustnx |  |
+
+### Flows
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.maximum_flow` | `_s`, `_t`, `capacity`, `flow_func`, `kwargs` | no | rustnx | Runs `flow_func` in Rust when it is one of NetworkX's five maximum flow functions (default `preflow_push`), with their keyword arguments (`cutoff`, `two_phase`, `global_relabel_freq`); other callables, `residual`, callable capacities and ints beyond 64 bits fall back. Capacities (and the flow values) can be ints or floats, mixed or missing (infinite): every value, its type and the order of every float addition are NetworkX's. |
+| `nx.maximum_flow_value` | `_s`, `_t`, `capacity`, `flow_func`, `kwargs` | no | rustnx | As `maximum_flow`. |
+| `nx.minimum_cut` | `_s`, `_t`, `capacity`, `flow_func`, `kwargs` | no | rustnx | As `maximum_flow`. The partition's sets are built as the installed NetworkX builds them (3.7 searches from the sink one node at a time; earlier versions build a presized set), so they iterate the same way. |
+| `nx.minimum_cut_value` | `_s`, `_t`, `capacity`, `flow_func`, `kwargs` | no | rustnx | As `maximum_flow`. |
+| `nx.flow.edmonds_karp` | `s`, `t`, `capacity`, `residual`, `value_only`, `cutoff` | no | rustnx | Returns NetworkX's residual network: same node and edge order (successors and predecessors), attributes and graph attributes. `residual` and callable capacities fall back. Capacities (and the flow values) can be ints or floats, mixed or missing (infinite): every value, its type and the order of every float addition are NetworkX's. |
+| `nx.flow.shortest_augmenting_path` | `s`, `t`, `capacity`, `residual`, `value_only`, `two_phase`, `cutoff` | no | rustnx | As `edmonds_karp`; the nodes' `height` and `curr_edge` attributes (a `CurrentEdge` at NetworkX's position) too. |
+| `nx.flow.dinitz` | `s`, `t`, `capacity`, `residual`, `value_only`, `cutoff` | no | rustnx | As `edmonds_karp`. |
+| `nx.flow.boykov_kolmogorov` | `s`, `t`, `capacity`, `residual`, `value_only`, `cutoff` | no | rustnx | As `edmonds_karp`, with the search trees in `R.graph["trees"]`. |
+| `nx.flow.preflow_push` | `s`, `t`, `capacity`, `residual`, `global_relabel_freq`, `value_only` | no | rustnx | As `shortest_augmenting_path`, with `excess`. NetworkX picks active nodes with `next(iter(set))`; rustnx replays CPython's set table to pick the same ones (checked against the interpreter at first use; elsewhere it falls back). |
+| `nx.flow.build_residual_network` | `capacity` | no | NetworkX | As `edmonds_karp` (no flows yet). |
+| `nx.flow.build_flow_dict` | `R` | no | NetworkX | Takes G and a residual network R; flows are R's own objects (anything comparable with 0). Nodes of G missing from R, and edges without a flow, fall back. |
+| `nx.gomory_hu_tree` | `capacity`, `flow_func` | no | rustnx | Any of NetworkX's five maximum flow functions as `flow_func`; before 3.7 NetworkX's `minimum_cut` reorders the shared residual network, which rustnx repeats. Edge weights are bit-for-bit NetworkX's. |
+
+### Minimum cost flows
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.network_simplex` | `demand`, `capacity`, `weight` | no | rustnx | Ports NetworkX's pivot rule and spanning tree updates, so the flow (among several optimal ones) is NetworkX's; the faux infinity follows the installed version (3.6 changed it). Demands, capacities and weights can be ints or floats; other values (and ints beyond 64 bits) fall back, as do multigraphs. Errors and their messages are NetworkX's. |
+| `nx.min_cost_flow` | `demand`, `capacity`, `weight` | no | rustnx | As `network_simplex`. |
+| `nx.min_cost_flow_cost` | `demand`, `capacity`, `weight` | no | rustnx | As `network_simplex`. |
+| `nx.max_flow_min_cost` | `s`, `t`, `capacity`, `weight` | no | rustnx | `preflow_push` for the flow value, then `network_simplex` on `nx.DiGraph(G)`, as NetworkX does. |
+| `nx.cost_of_flow` | `flowDict`, `weight` | no | NetworkX | Flow values and weights can be ints or floats; anything else, and missing entries in `flowDict`, fall back. |
+
+### Cut measures
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.cut_size` | `S`, `T`, `weight` | no | NetworkX | The `sum()` follows NetworkX's edge order and Python's summation (compensated from 3.12), so floats match bit for bit; weights mixing ints and floats are read from the NetworkX graph. Iterators as `S` or `T`, `None` weights, and directed graphs with `T=None` (NetworkX fails) fall back. |
+| `nx.volume` | `S`, `weight` | no | NetworkX | As `cut_size`. A single node as `S` falls back (NetworkX fails). |
+| `nx.normalized_cut_size` | `S`, `T`, `weight` | no | NetworkX | As `cut_size`. |
+| `nx.conductance` | `S`, `T`, `weight` | no | NetworkX | As `cut_size`. |
+| `nx.edge_expansion` | `S`, `T`, `weight` | no | NetworkX | As `cut_size`. |
+| `nx.mixing_expansion` | `S`, `T`, `weight` | no | NetworkX | As `cut_size`. |
+| `nx.node_expansion` | `S` | yes | NetworkX | Nodes not in G fall back. |
+| `nx.boundary_expansion` | `S` | yes | NetworkX |  |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 

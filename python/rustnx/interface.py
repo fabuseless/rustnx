@@ -34,17 +34,23 @@ _LINEAR_TIME = {
     "biconnected_components",
     "bidirectional_dijkstra",
     "bidirectional_shortest_path",
+    "boundary_expansion",
     "branching_weight",
     "bridges",
+    "build_flow_dict",
+    "build_residual_network",
     "chain_decomposition",
     "check_planarity",
     "check_planarity_recursive",
     "chordal_graph_treewidth",
     "color",
     "condensation",
+    "conductance",
     "connected_components",
     "connected_dominating_set",
     "core_number",
+    "cost_of_flow",
+    "cut_size",
     "cycle_basis",
     "dag_longest_path",
     "dag_longest_path_length",
@@ -65,6 +71,7 @@ _LINEAR_TIME = {
     "edge_bfs",
     "edge_boundary",
     "edge_dfs",
+    "edge_expansion",
     "eulerian_circuit",
     "eulerian_path",
     "faster_could_be_isomorphic",
@@ -130,11 +137,14 @@ _LINEAR_TIME = {
     "maximum_spanning_tree",
     "minimum_spanning_edges",
     "minimum_spanning_tree",
+    "mixing_expansion",
     "multi_source_dijkstra",
     "multi_source_dijkstra_path",
     "multi_source_dijkstra_path_length",
     "node_boundary",
     "node_connected_component",
+    "node_expansion",
+    "normalized_cut_size",
     "number_attracting_components",
     "number_connected_components",
     "number_of_isolates",
@@ -161,6 +171,7 @@ _LINEAR_TIME = {
     "tree_centroid",
     "triadic_census",
     "v_structures",
+    "volume",
     "weakly_connected_components",
 }
 SMALL_GRAPH_NODES = 500
@@ -201,6 +212,7 @@ MULTIGRAPH_FUNCTIONS = {
     "bidirectional_dijkstra",
     "bidirectional_shortest_path",
     "bipartite_closeness_centrality",
+    "boundary_expansion",
     "center",
     "closeness_centrality",
     "color",
@@ -250,6 +262,7 @@ MULTIGRAPH_FUNCTIONS = {
     "newman_betweenness_centrality",
     "node_boundary",
     "node_connected_component",
+    "node_expansion",
     "node_redundancy",
     "number_attracting_components",
     "number_connected_components",
@@ -280,9 +293,15 @@ MULTIGRAPH_FUNCTIONS = {
     "wiener_index",
 }
 
-# Functions that return subgraphs of the original NetworkX graph.
+# Functions that return subgraphs of the original NetworkX graph, or (the flow
+# functions) read its edge attributes there.
 _BUILDS_FROM_SOURCE = {
     "boruvka_mst_edges",
+    "boykov_kolmogorov",
+    "build_residual_network",
+    "dinitz",
+    "edmonds_karp",
+    "gomory_hu_tree",
     "k_core",
     "k_corona",
     "k_crust",
@@ -290,16 +309,22 @@ _BUILDS_FROM_SOURCE = {
     "k_truss",
     "kruskal_mst_edges",
     "maximum_branching",
+    "maximum_flow",
+    "maximum_flow_value",
     "maximum_spanning_arborescence",
     "maximum_spanning_edges",
     "maximum_spanning_tree",
     "minimal_branching",
     "minimum_branching",
+    "minimum_cut",
+    "minimum_cut_value",
     "minimum_spanning_arborescence",
     "minimum_spanning_edges",
     "minimum_spanning_tree",
     "partition_spanning_tree",
+    "preflow_push",
     "prim_mst_edges",
+    "shortest_augmenting_path",
     "transitive_closure",
     "transitive_closure_dag",
 }
@@ -390,7 +415,10 @@ def _bind(name, args, kwargs):
         if key == "backend":
             continue
         if param.kind is param.VAR_KEYWORD:
-            unsupported.extend(value)  # backend-specific keywords
+            if key in ours:  # e.g. maximum_flow's options for its flow_func
+                arguments.update(value)
+            else:
+                unsupported.extend(value)  # backend-specific keywords
         elif renamed.get(key, key) in ours:
             arguments[renamed.get(key, key)] = value
         elif not _is_default(value, param):

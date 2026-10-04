@@ -163,8 +163,22 @@ SECTIONS = [
         "color", "sets", "is_bipartite_node_set", "hopcroft_karp_matching", "to_vertex_cover",
         "bipartite_closeness_centrality", "node_redundancy", "butterflies",
     ]),
+    ("Flows", [
+        "maximum_flow", "maximum_flow_value", "minimum_cut", "minimum_cut_value",
+        "edmonds_karp", "shortest_augmenting_path", "dinitz", "boykov_kolmogorov",
+        "preflow_push", "build_residual_network", "build_flow_dict", "gomory_hu_tree",
+    ]),
+    ("Minimum cost flows", [
+        "network_simplex", "min_cost_flow", "min_cost_flow_cost", "max_flow_min_cost",
+        "cost_of_flow",
+    ]),
+    ("Cut measures", [
+        "cut_size", "volume", "normalized_cut_size", "conductance", "edge_expansion",
+        "mixing_expansion", "node_expansion", "boundary_expansion",
+    ]),
 ]
 
+FLOWNOTE = "Capacities (and the flow values) can be ints or floats, mixed or missing (infinite): every value, its type and the order of every float addition are NetworkX's."
 LENGTHS = "Falls back when weights mix ints and floats (NetworkX's length types then depend on the path)."
 NOTES = {
     "betweenness_centrality": "Parallel. Matches NetworkX to about 1e-15 (sums in a different order). `k` picks the same nodes as NetworkX for a given `seed`. `None` weights fall back.",
@@ -333,6 +347,31 @@ NOTES = {
     "complete_to_chordal_graph": "Self-loops fall back. Chords are added in NetworkX's (set iteration) order.",
     "is_reachable": "Unhashable nodes fall back.",
     "is_perfect_graph": "NetworkX 3.7 and later.",
+    "maximum_flow": "Runs `flow_func` in Rust when it is one of NetworkX's five maximum flow functions (default `preflow_push`), with their keyword arguments (`cutoff`, `two_phase`, `global_relabel_freq`); other callables, `residual`, callable capacities and ints beyond 64 bits fall back. " + FLOWNOTE,
+    "maximum_flow_value": "As `maximum_flow`.",
+    "minimum_cut": "As `maximum_flow`. The partition's sets are built as the installed NetworkX builds them (3.7 searches from the sink one node at a time; earlier versions build a presized set), so they iterate the same way.",
+    "minimum_cut_value": "As `maximum_flow`.",
+    "edmonds_karp": "Returns NetworkX's residual network: same node and edge order (successors and predecessors), attributes and graph attributes. `residual` and callable capacities fall back. " + FLOWNOTE,
+    "shortest_augmenting_path": "As `edmonds_karp`; the nodes' `height` and `curr_edge` attributes (a `CurrentEdge` at NetworkX's position) too.",
+    "dinitz": "As `edmonds_karp`.",
+    "boykov_kolmogorov": "As `edmonds_karp`, with the search trees in `R.graph[\"trees\"]`.",
+    "preflow_push": "As `shortest_augmenting_path`, with `excess`. NetworkX picks active nodes with `next(iter(set))`; rustnx replays CPython's set table to pick the same ones (checked against the interpreter at first use; elsewhere it falls back).",
+    "build_residual_network": "As `edmonds_karp` (no flows yet).",
+    "build_flow_dict": "Takes G and a residual network R; flows are R's own objects (anything comparable with 0). Nodes of G missing from R, and edges without a flow, fall back.",
+    "gomory_hu_tree": "Any of NetworkX's five maximum flow functions as `flow_func`; before 3.7 NetworkX's `minimum_cut` reorders the shared residual network, which rustnx repeats. Edge weights are bit-for-bit NetworkX's.",
+    "network_simplex": "Ports NetworkX's pivot rule and spanning tree updates, so the flow (among several optimal ones) is NetworkX's; the faux infinity follows the installed version (3.6 changed it). Demands, capacities and weights can be ints or floats; other values (and ints beyond 64 bits) fall back, as do multigraphs. Errors and their messages are NetworkX's.",
+    "min_cost_flow": "As `network_simplex`.",
+    "min_cost_flow_cost": "As `network_simplex`.",
+    "max_flow_min_cost": "`preflow_push` for the flow value, then `network_simplex` on `nx.DiGraph(G)`, as NetworkX does.",
+    "cost_of_flow": "Flow values and weights can be ints or floats; anything else, and missing entries in `flowDict`, fall back.",
+    "cut_size": "The `sum()` follows NetworkX's edge order and Python's summation (compensated from 3.12), so floats match bit for bit; weights mixing ints and floats are read from the NetworkX graph. Iterators as `S` or `T`, `None` weights, and directed graphs with `T=None` (NetworkX fails) fall back.",
+    "volume": "As `cut_size`. A single node as `S` falls back (NetworkX fails).",
+    "normalized_cut_size": "As `cut_size`.",
+    "conductance": "As `cut_size`.",
+    "edge_expansion": "As `cut_size`.",
+    "mixing_expansion": "As `cut_size`.",
+    "node_expansion": "Nodes not in G fall back.",
+    "boundary_expansion": "",
 }
 
 # Functions NetworkX exposes only in a submodule, or under another name.
@@ -417,6 +456,13 @@ SUBMODULE = {
     "prim_mst_edges": "nx.tree.mst",
     "boruvka_mst_edges": "nx.tree.mst",
     "is_tournament": "nx.tournament",
+    "edmonds_karp": "nx.flow",
+    "shortest_augmenting_path": "nx.flow",
+    "dinitz": "nx.flow",
+    "boykov_kolmogorov": "nx.flow",
+    "preflow_push": "nx.flow",
+    "build_residual_network": "nx.flow",
+    "build_flow_dict": "nx.flow",
 }
 
 
@@ -428,9 +474,10 @@ def location(name):
 
 def parameters(name):
     params = list(inspect.signature(getattr(algorithms, name)).parameters)
-    if params and params[0] in ("G", "T"):
+    if params and params[0] in ("G", "T", "flowG"):
         params = params[1:]  # drop the graph
-    params = [p for p in params if not p.startswith("_")]  # internal keywords
+    # Drop internal keywords (the flow functions' `_s` and `_t` are NetworkX's).
+    params = [p for p in params if not p.startswith("_") or p in ("_s", "_t")]
     return ", ".join(f"`{p}`" for p in params) or "none"
 
 

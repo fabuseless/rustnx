@@ -354,6 +354,25 @@ def algorithm_calls(H, directed):
             calls["tournament_sc"] = lambda G, b: nx.tournament.is_strongly_connected(G, backend=b)
         if src is not None:
             calls["is_reachable"] = lambda G, b: nx.tournament.is_reachable(G, src, nodes[-1], backend=b)
+    # Batch 12: flows (capacities in "cap", some missing) and cut measures.
+    if len(nodes) >= 2:
+        s, t = nodes[0], nodes[-1]
+        calls["maximum_flow"] = lambda G, b: nx.maximum_flow(G, s, t, capacity="cap", backend=b)
+        calls["minimum_cut"] = lambda G, b: (lambda v, p: (v, list(p[0]), list(p[1])))(
+            *nx.minimum_cut(G, s, t, capacity="cap", backend=b)
+        )
+        calls["edmonds_karp"] = lambda G, b: (lambda R: (R.graph, list(R.edges(data=True))))(
+            nx.flow.edmonds_karp(G, s, t, capacity="cap", backend=b)
+        )
+        calls["cut_size"] = lambda G, b: nx.cut_size(G, nodes[::2], nodes[1::2], weight="weight", backend=b)
+        calls["volume"] = lambda G, b: nx.volume(G, nodes[::2], weight="weight", backend=b)
+        calls["node_expansion"] = lambda G, b: nx.node_expansion(G, nodes[::2], backend=b)
+        if directed:
+            calls["min_cost_flow"] = lambda G, b: nx.min_cost_flow(G, capacity="cap", backend=b)
+        else:
+            calls["gomory_hu"] = lambda G, b: list(
+                nx.gomory_hu_tree(G, capacity="cap", backend=b).edges(data=True)
+            )
     return calls
 
 
