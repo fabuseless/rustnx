@@ -101,6 +101,8 @@ __all__ = [
     "common_neighbor_centrality",
     "complement",
     "complete_to_chordal_graph",
+    "compose",
+    "compose_all",
     "condensation",
     "conductance",
     "connected_components",
@@ -134,6 +136,8 @@ __all__ = [
     "dijkstra_path_length",
     "dijkstra_predecessor_and_distance",
     "dinitz",
+    "disjoint_union",
+    "disjoint_union_all",
     "dispersion",
     "dominance_frontiers",
     "eccentricity",
@@ -166,6 +170,7 @@ __all__ = [
     "floyd_warshall_tree",
     "from_nested_tuple",
     "from_prufer_sequence",
+    "full_join",
     "generalized_degree",
     "generic_bfs_edges",
     "get_counterexample",
@@ -303,6 +308,7 @@ __all__ = [
     "minimum_st_node_cut",
     "mixing_expansion",
     "modularity",
+    "moral_graph",
     "multi_source_dijkstra",
     "multi_source_dijkstra_path",
     "multi_source_dijkstra_path_length",
@@ -349,6 +355,7 @@ __all__ = [
     "randomized_partitioning",
     "reciprocity",
     "resource_allocation_index",
+    "reverse",
     "rich_club_coefficient",
     "root_to_leaf_paths",
     "root_trees",
@@ -398,6 +405,8 @@ __all__ = [
     "triangles",
     "unconstrained_bridge_augmentation",
     "unconstrained_one_edge_augmentation",
+    "union",
+    "union_all",
     "v_structures",
     "vf2pp_is_isomorphic",
     "vf2pp_is_monomorphic",
@@ -9762,3 +9771,146 @@ def symmetric_difference(G, H):
     us += [back[u] for u in hus]
     vs += [back[v] for v in hvs]
     return _graph_with_plain_edges(cls, G._nodes, us, vs)
+
+
+# --- Batch 21: operators and structure ---
+
+from itertools import repeat  # noqa: E402
+
+_b21_deepcopy = copy.deepcopy
+
+
+def _b21_view(G):
+    """``(NetworkX graph, OpView)`` for an operator's input: the graph's
+    dicts in the order NetworkX's methods iterate them."""
+    base = _networkx_graph(G)
+    core, nodes = G._core, G._nodes
+    if core.is_native():
+        from .graph import from_networkx
+
+        snapshot = from_networkx(base)
+        core, nodes = snapshot._core, snapshot._nodes
+    return base, core.op_view(list(nodes), base._node, base._adj)
+
+
+def _b21_target(R):
+    """The dicts ``OpView.add_to`` fills: ``_node``, ``_succ``, ``_pred``."""
+    return R._node, R._adj, (R._pred if R.is_directed() else None)
+
+
+def _b21_labels(G, prefix):
+    """``union_all``'s ``f"{prefix}{x}"`` labels (``nx.relabel_nodes``
+    merges nodes whose labels collide; rustnx declines those)."""
+    labels = [f"{prefix}{x}" for x in G._nodes]
+    if len(set(labels)) != len(labels):
+        raise NotImplementedError("relabeling merges nodes")
+    return labels
+
+
+def _b21_union(items, disjoint):
+    """``union_all`` / ``compose_all`` over ``(G, graph dict, OpView)``."""
+    R = None
+    for i, (G, graph, view) in enumerate(items):
+        if i == 0:
+            R = _plain_result_class(G)()
+        elif G.is_directed() != R.is_directed():
+            raise nx.NetworkXError("All graphs must be directed or undirected.")
+        elif disjoint and view.shares_node(R._node):
+            raise nx.NetworkXError(
+                "The node sets of the graphs are not disjoint.\n"
+                "Use `rename` to specify prefixes for the graphs or use\n"
+                "disjoint_union(G1, G2, ..., GN)."
+            )
+        R.graph.update(graph)
+        view.add_to(*_b21_target(R), 1)
+    return R
+
+
+def union_all(graphs, rename=()):
+    def items():
+        for G, prefix in zip(graphs, chain(rename, repeat(None))):
+            base, view = _b21_view(G)
+            if prefix is not None:
+                view = view.relabeled(_b21_labels(G, prefix))
+            yield G, base.graph, view
+
+    R = _b21_union(items(), True)
+    if R is None:
+        raise ValueError("cannot apply union_all to an empty list")
+    return R
+
+
+def union(G, H, rename=()):
+    return union_all([G, H], rename)
+
+
+def compose_all(graphs):
+    def items():
+        for G in graphs:
+            base, view = _b21_view(G)
+            yield G, base.graph, view
+
+    R = _b21_union(items(), False)
+    if R is None:
+        raise ValueError("cannot apply compose_all to an empty list")
+    return R
+
+
+def compose(G, H):
+    return compose_all([G, H])
+
+
+def disjoint_union_all(graphs):
+    def items():
+        # `convert_node_labels_to_integers` on each graph, then `union_all`.
+        first = 0
+        for G in graphs:
+            base, view = _b21_view(G)
+            yield G, base.graph, view.relabeled(list(range(first, first + len(G))))
+            first += len(G)
+
+    R = _b21_union(items(), False)
+    if R is None:
+        raise ValueError("cannot apply union_all to an empty list")
+    return R
+
+
+def disjoint_union(G, H):
+    return disjoint_union_all([G, H])
+
+
+def full_join(G, H, rename=(None, None)):
+    R = union(G, H, rename)
+
+    def nodes(graph, prefix):
+        return list(graph._nodes) if prefix is None else _b21_labels(graph, prefix)
+
+    left, right = nodes(G, rename[0]), nodes(H, rename[1])
+    succ, pred = R._adj, (R._pred if R.is_directed() else None)
+    _core._op_join(succ, pred, left, right)
+    if R.is_directed():
+        _core._op_join(succ, pred, right, left)
+    return R
+
+
+def reverse(G, copy=True):
+    if not G.is_directed():
+        raise nx.NetworkXError("Cannot reverse an undirected graph.")
+    if not copy:
+        raise NotImplementedError("NetworkX returns a view of the graph")
+    base, view = _b21_view(G)
+    H = _plain_result_class(G)()
+    H.graph.update(_b21_deepcopy(base.graph))
+    view.add_to(*_b21_target(H), 1, reverse=True, deep=True)
+    return H
+
+
+def moral_graph(G):
+    _directed_only(G)
+    base, view = _b21_view(G)
+    _plain_result_class(G)  # `to_undirected_class()` is nx.Graph
+    H = nx.Graph()
+    H.graph.update(_b21_deepcopy(base.graph))
+    view.add_to(H._node, H._adj, None, 2, deep=True)
+    _core._op_pred_combinations(H._adj, base._pred)
+    return H

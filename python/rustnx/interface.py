@@ -351,8 +351,13 @@ _BUILDS_FROM_SOURCE = {
     "boruvka_mst_edges",
     "boykov_kolmogorov",
     "build_residual_network",
+    "compose",
+    "compose_all",
     "dinitz",
+    "disjoint_union",
+    "disjoint_union_all",
     "edmonds_karp",
+    "full_join",
     "gomory_hu_tree",
     "k_core",
     "k_corona",
@@ -376,10 +381,13 @@ _BUILDS_FROM_SOURCE = {
     "partition_spanning_tree",
     "preflow_push",
     "prim_mst_edges",
+    "reverse",
     "shortest_augmenting_path",
     "steiner_tree",
     "transitive_closure",
     "transitive_closure_dag",
+    "union",
+    "union_all",
 }
 
 

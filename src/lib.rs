@@ -19,7 +19,7 @@ use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
     approximation, bipartite, centrality, centrality_more, cluster, communities, connectivity,
     cores_more, dag, directed, distance, flow, graph_classes, isomorphism, leftovers, matching,
-    measures, paths, pyset, spectral, structure, structure_more, trees_more,
+    measures, operators, paths, pyset, spectral, structure, structure_more, trees_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -4699,6 +4699,19 @@ impl CoreGraph {
         }))
     }
 
+    // --- Batch 21: operators and structure ---
+
+    /// This graph's NetworkX dicts (`list(G)`, `G._node`, `G._adj`) read
+    /// in the order NetworkX iterates them, for the operators.
+    fn op_view(
+        &self,
+        nodes: &Bound<'_, PyList>,
+        node_dict: &Bound<'_, PyDict>,
+        adj: &Bound<'_, PyDict>,
+    ) -> PyResult<operators::OpView> {
+        operators::OpView::read(self, nodes, node_dict, adj)
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -6122,6 +6135,9 @@ fn _py_sum(values: Vec<f64>, compensated: bool) -> f64 {
 #[pymodule(gil_used = false)]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CoreGraph>()?;
+    m.add_class::<operators::OpView>()?;
+    m.add_function(wrap_pyfunction!(operators::_op_join, m)?)?;
+    m.add_function(wrap_pyfunction!(operators::_op_pred_combinations, m)?)?;
     m.add_class::<AllPaths>()?;
     m.add_class::<PredPaths>()?;
     m.add_class::<LinkScorer>()?;

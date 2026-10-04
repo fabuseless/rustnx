@@ -4987,3 +4987,151 @@ def test_float_distance_totals_follow_python_sum(seed):
         D[u][v]["weight"] = rng.random()
     exact_outcome(nx.wiener_index, D, weight="weight")
     exact_outcome(nx.closeness_centrality, D, distance="weight")
+
+
+# --- Batch 21: operators and structure ---
+
+
+def _b21_graph_state(R, *inputs):
+    """Everything about a result graph a caller could see: its class, the
+    graph dict, node and adjacency order (succ and pred), node and edge
+    attribute dicts with the types of keys and values, which edge dicts are
+    shared between directions, and which dicts and values are the inputs'
+    own objects (shared) rather than copies."""
+    if not isinstance(R, nx.Graph):
+        return R
+    known = {}
+    for k, G in enumerate(inputs):
+        if not isinstance(G, nx.Graph):
+            continue
+        known.setdefault(id(G.graph), ("graph", k))
+        for n, d in G.nodes(data=True):
+            known.setdefault(id(d), ("node", k, n))
+            for key, val in d.items():
+                known.setdefault(id(val), ("node value", k, n, key))
+        for u, v, d in G.edges(data=True):
+            known.setdefault(id(d), ("edge", k, u, v))
+            for key, val in d.items():
+                known.setdefault(id(val), ("edge value", k, u, v, key))
+
+    def attrs(d):
+        return (
+            known.get(id(d)),
+            [(type(k).__name__, k, type(v).__name__, v, known.get(id(v))) for k, v in d.items()],
+        )
+
+    def rows(adj):
+        return [
+            (type(u).__name__, u, [(type(v).__name__, v, attrs(d)) for v, d in nbrs.items()])
+            for u, nbrs in adj.items()
+        ]
+
+    state = [type(R).__name__, attrs(R.graph)]
+    state.append([(type(n).__name__, n, attrs(d)) for n, d in R._node.items()])
+    state.append(rows(R._adj))
+    if R.is_directed():
+        state.append(rows(R._pred))
+        state.append([R._succ[u][v] is R._pred[v][u] for u in R for v in R._succ[u]])
+    else:
+        state.append([R._adj[u][v] is R._adj[v][u] for u in R for v in R._adj[u]])
+    return state
+
+
+def _b21_graphs(func):
+    """Compare graph results with `_b21_graph_state` (the graph arguments,
+    also inside a list, are the inputs it checks sharing against)."""
+
+    def run(*args, **kwargs):
+        inputs = []
+        for a in args:
+            inputs.extend(a if isinstance(a, list) else [a])
+        result = func(*args, **kwargs)
+        if isinstance(result, tuple):
+            return tuple(_b21_graph_state(r, *inputs) for r in result)
+        return _b21_graph_state(result, *inputs)
+
+    return run
+
+
+def _b21_decorate(G, seed):
+    """Graph, node and edge attributes of several kinds, some mutable (so
+    copies and deep copies are told apart), on some nodes and edges."""
+    rng = random.Random(seed)
+    G.graph["name"] = f"g{seed}"
+    G.graph["tags"] = [seed]
+    for v in G:
+        r = rng.random()
+        if r < 0.3:
+            G.nodes[v]["color"] = rng.choice(["red", "blue"])
+        elif r < 0.5:
+            G.nodes[v]["data"] = [v]
+            G.nodes[v]["w"] = rng.randint(1, 3)
+    for u, v, d in G.edges(data=True):
+        r = rng.random()
+        if r < 0.3:
+            d["weight"] = rng.choice([1, 2.5])
+        elif r < 0.45:
+            d["path"] = [u, v]
+    return G
+
+
+def _b21_pair(seed, directed, overlap):
+    """Two decorated graphs: disjoint node sets, or (``overlap``) sharing
+    some nodes and edges with different attributes."""
+    G = _b21_decorate(graph_for(seed, directed), seed)
+    H = _b21_decorate(graph_for(seed + 1000, directed), seed + 1)
+    if overlap:
+        nodes = list(G)
+        rng = random.Random(seed)
+        H.add_nodes_from(rng.sample(nodes, len(nodes) // 2), color="green")
+        H.add_edges_from(e for e in G.edges if rng.random() < 0.5)
+        H.add_edge(nodes[0], nodes[-1], weight=7)
+    else:
+        H = nx.relabel_nodes(H, {v: ("h", v) for v in H})
+    return G, H
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch21_unions(seed, directed):
+    G, H = _b21_pair(seed, directed, False)
+    G2, H2 = _b21_pair(seed, directed, True)
+    K = _b21_decorate(graph_for(seed + 7, directed), seed + 7)
+    exact_outcome(_b21_graphs(nx.union), G, H)
+    exact_outcome(_b21_graphs(nx.union), G2, H2)  # not disjoint
+    exact_outcome(_b21_graphs(nx.union), G2, H2, rename=("a", "b"))
+    exact_outcome(_b21_graphs(nx.union), G, H, rename=("a",))
+    exact_outcome(_b21_graphs(nx.union), G, G, rename=("x-", "y-"))
+    exact_outcome(_b21_graphs(nx.union_all), [G, H])
+    exact_outcome(_b21_graphs(nx.union_all), [G, K, H], rename=("p", "q", "r"))
+    exact_outcome(_b21_graphs(nx.union_all), [G])
+    exact_outcome(_b21_graphs(nx.union_all), [])
+    exact_outcome(_b21_graphs(nx.compose), G, H)
+    exact_outcome(_b21_graphs(nx.compose), G2, H2)
+    exact_outcome(_b21_graphs(nx.compose), H2, G2)
+    exact_outcome(_b21_graphs(nx.compose_all), [G2, H2, K])
+    exact_outcome(_b21_graphs(nx.compose_all), [])
+    exact_outcome(_b21_graphs(nx.disjoint_union), G2, H2)
+    exact_outcome(_b21_graphs(nx.disjoint_union_all), [G2, H2, K])
+    exact_outcome(_b21_graphs(nx.disjoint_union_all), [])
+    exact_outcome(_b21_graphs(nx.full_join), G, H)
+    exact_outcome(_b21_graphs(nx.full_join), G2, H2, rename=("a", "b"))
+    exact_outcome(_b21_graphs(nx.full_join), G2, H2)
+    exact_outcome(_b21_graphs(nx.full_join), G, H, rename=("a",))
+    # Mixed directedness.
+    other = H.to_undirected() if directed else H.to_directed()
+    for func in [nx.union, nx.compose, nx.disjoint_union, nx.full_join]:
+        exact_outcome(_b21_graphs(func), G, other)
+    exact_outcome(_b21_graphs(nx.union_all), [G, H2, other])  # not disjoint first
+
+
+@pytest.mark.parametrize("seed", range(30))
+def test_batch21_reverse_and_moral(seed):
+    D = _b21_decorate(graph_for(seed, True), seed)
+    G = _b21_decorate(graph_for(seed, False), seed)
+    exact_outcome(_b21_graphs(nx.reverse), D)
+    exact_outcome(_b21_graphs(nx.reverse), D, copy=True)
+    exact_outcome(_b21_graphs(lambda G, **kw: nx.reverse(G, copy=False, **kw).copy()), D)
+    exact_outcome(_b21_graphs(nx.reverse), G)
+    exact_outcome(_b21_graphs(nx.moral_graph), D)
+    exact_outcome(_b21_graphs(nx.moral_graph), G)
