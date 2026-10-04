@@ -12,6 +12,7 @@ import random
 import warnings
 
 import networkx as nx
+from networkx.algorithms import approximation as approx
 from networkx.algorithms.coloring.equitable_coloring import is_coloring
 import pytest
 
@@ -186,6 +187,13 @@ def algorithm_calls(H, directed):
         "maximum_branching": lambda G, b: list(nx.maximum_branching(G, backend=b).edges(data=True)),
         "greedy_branching": lambda G, b: list(nx.tree.greedy_branching(G, backend=b).edges(data=True)),
         "branching_weight": lambda G, b: nx.tree.branching_weight(G, backend=b),
+        "vertex_cover": lambda G, b: list(approx.min_weighted_vertex_cover(G, backend=b)),
+        "dominating": lambda G, b: list(approx.min_weighted_dominating_set(G, backend=b)),
+        "approx_diameter": lambda G, b: approx.diameter(G, seed=1, backend=b),
+        "treewidth": lambda G, b: approx.treewidth_min_fill_in(G, backend=b)[0],
+        "kl_connected": lambda G, b: nx.is_kl_connected(G, 2, 2, backend=b),
+        "complement": lambda G, b: list(nx.complement(G, backend=b).edges),
+        "power": lambda G, b: list(nx.power(G, 2, backend=b).edges),
     }
     if src is not None:
         calls["bfs"] = lambda G, b: nx.single_source_shortest_path_length(G, src, backend=b)
@@ -237,6 +245,7 @@ def algorithm_calls(H, directed):
         calls["local_reaching"] = lambda G, b: nx.local_reaching_centrality(G, src, backend=b)
         calls["local_reaching_w"] = lambda G, b: nx.local_reaching_centrality(G, src, weight="weight", backend=b)
         calls["goldberg_radzik"] = lambda G, b: nx.goldberg_radzik(G, src, backend=b)
+        calls["steiner_tree"] = lambda G, b: list(approx.steiner_tree(G, [src, dst], backend=b).edges)
         calls["simple_paths"] = lambda G, b: list(islice(nx.all_simple_paths(G, src, dst, cutoff=4, backend=b), 100))
         calls["shortest_simple"] = lambda G, b: list(
             islice(nx.shortest_simple_paths(G, src, dst, weight="weight", backend=b), 20)
@@ -344,6 +353,38 @@ def algorithm_calls(H, directed):
             lambda H, alpha: (list(H.edges), list(alpha.items()))
         )(*nx.complete_to_chordal_graph(G, backend=b))
         calls["at_free"] = lambda G, b: nx.is_at_free(G, backend=b)
+    # Batch 13: connectivity, cuts, disjoint paths and augmentation.
+    conn = nx.algorithms.connectivity
+    calls["node_connectivity"] = lambda G, b: nx.node_connectivity(G, backend=b)
+    calls["edge_connectivity"] = lambda G, b: nx.edge_connectivity(G, backend=b)
+    calls["minimum_node_cut"] = lambda G, b: list(nx.minimum_node_cut(G, backend=b))
+    calls["minimum_edge_cut"] = lambda G, b: list(nx.minimum_edge_cut(G, backend=b))
+    if len(nodes) >= 2:
+        s, t = nodes[0], nodes[-1]
+        calls["node_disjoint_paths"] = lambda G, b: list(conn.node_disjoint_paths(G, s, t, backend=b))
+        calls["edge_disjoint_paths"] = lambda G, b: list(conn.edge_disjoint_paths(G, s, t, backend=b))
+        calls["minimum_st_edge_cut"] = lambda G, b: list(conn.minimum_st_edge_cut(G, s, t, backend=b))
+        calls["minimum_st_node_cut"] = lambda G, b: list(conn.minimum_st_node_cut(G, s, t, backend=b))
+    if not directed:
+        calls["stoer_wagner"] = lambda G, b: nx.stoer_wagner(G, backend=b)
+        calls["bridge_components"] = lambda G, b: [list(c) for c in conn.bridge_components(G, backend=b)]
+        calls["k_edge_augmentation"] = lambda G, b: list(conn.k_edge_augmentation(G, 2, backend=b))
+    calls["degree_mixing_dict"] = lambda G, b: nx.degree_mixing_dict(G, backend=b)
+    calls["degree_xy_w"] = lambda G, b: list(nx.node_degree_xy(G, weight="cap", backend=b))
+    calls["attribute_mixing_dict"] = lambda G, b: nx.attribute_mixing_dict(G, "c", backend=b)
+    calls["avg_neighbor_degree"] = lambda G, b: nx.average_neighbor_degree(G, backend=b)
+    calls["avg_degree_connectivity"] = lambda G, b: nx.average_degree_connectivity(G, backend=b)
+    calls["s_metric"] = lambda G, b: nx.s_metric(G, backend=b)
+    calls["number_of_walks"] = lambda G, b: nx.number_of_walks(G, 2, backend=b)
+    if directed:
+        calls["reciprocity"] = lambda G, b: nx.reciprocity(G, nodes, backend=b)
+        calls["overall_reciprocity"] = lambda G, b: nx.overall_reciprocity(G, backend=b)
+    else:
+        calls["jaccard"] = lambda G, b: list(nx.jaccard_coefficient(G, backend=b))
+        calls["resource_allocation"] = lambda G, b: list(nx.resource_allocation_index(G, backend=b))
+        calls["ra_soundarajan_hopcroft"] = lambda G, b: list(nx.ra_index_soundarajan_hopcroft(G, backend=b))
+        calls["ccpa"] = lambda G, b: list(nx.common_neighbor_centrality(G, nodes and [(nodes[0], nodes[-1])], backend=b))
+        calls["rich_club"] = lambda G, b: nx.rich_club_coefficient(G, normalized=False, backend=b)
     calls["is_planar"] = lambda G, b: nx.is_planar(G, backend=b)
     calls["planarity"] = lambda G, b: (
         lambda ok, E: (ok, None if E is None else list(E.edges(data=True)))
@@ -354,6 +395,45 @@ def algorithm_calls(H, directed):
             calls["tournament_sc"] = lambda G, b: nx.tournament.is_strongly_connected(G, backend=b)
         if src is not None:
             calls["is_reachable"] = lambda G, b: nx.tournament.is_reachable(G, src, nodes[-1], backend=b)
+    # Batch 12: flows (capacities in "cap", some missing) and cut measures.
+    if len(nodes) >= 2:
+        s, t = nodes[0], nodes[-1]
+        calls["maximum_flow"] = lambda G, b: nx.maximum_flow(G, s, t, capacity="cap", backend=b)
+        calls["minimum_cut"] = lambda G, b: (lambda v, p: (v, list(p[0]), list(p[1])))(
+            *nx.minimum_cut(G, s, t, capacity="cap", backend=b)
+        )
+        calls["edmonds_karp"] = lambda G, b: (lambda R: (R.graph, list(R.edges(data=True))))(
+            nx.flow.edmonds_karp(G, s, t, capacity="cap", backend=b)
+        )
+        calls["cut_size"] = lambda G, b: nx.cut_size(G, nodes[::2], nodes[1::2], weight="weight", backend=b)
+        calls["volume"] = lambda G, b: nx.volume(G, nodes[::2], weight="weight", backend=b)
+        calls["node_expansion"] = lambda G, b: nx.node_expansion(G, nodes[::2], backend=b)
+        if directed:
+            calls["min_cost_flow"] = lambda G, b: nx.min_cost_flow(G, capacity="cap", backend=b)
+        else:
+            calls["gomory_hu"] = lambda G, b: list(
+                nx.gomory_hu_tree(G, capacity="cap", backend=b).edges(data=True)
+            )
+    # Batch 15: communities, efficiency and structural holes.
+    halves = [set(nodes[::2]), set(nodes[1::2])]
+    calls["modularity"] = lambda G, b: nx.community.modularity(G, halves, backend=b)
+    calls["partition_quality"] = lambda G, b: nx.community.partition_quality(G, halves, backend=b)
+    calls["greedy_modularity"] = lambda G, b: [
+        list(c) for c in nx.community.greedy_modularity_communities(G, weight="weight", backend=b)
+    ]
+    calls["asyn_lpa"] = lambda G, b: [
+        list(c) for c in nx.community.asyn_lpa_communities(G, seed=1, backend=b)
+    ]
+    calls["closeness_vitality"] = lambda G, b: list(nx.closeness_vitality(G, weight="weight", backend=b).items())
+    if directed:
+        calls["flow_hierarchy"] = lambda G, b: nx.flow_hierarchy(G, backend=b)
+    else:
+        calls["global_efficiency"] = lambda G, b: nx.global_efficiency(G, backend=b)
+        calls["local_efficiency"] = lambda G, b: nx.local_efficiency(G, backend=b)
+        calls["gutman_index"] = lambda G, b: nx.gutman_index(G, weight="weight", backend=b)
+        calls["edge_betweenness_partition"] = lambda G, b: [
+            list(c) for c in nx.community.edge_betweenness_partition(G, 2, backend=b)
+        ] if len(nodes) >= 2 else None
     return calls
 
 
@@ -441,10 +521,10 @@ def test_unimplemented_functions_fall_back_with_enable():
         nx.config.backend_priority.algos = []
         nx.config.fallback_to_nx = False
         with pytest.raises(NotImplementedError):
-            nx.flow_hierarchy(G)
+            nx.trophic_levels(G)
         rustnx.enable()
         assert nx.config.backend_priority.algos[0] == "rustnx"
-        assert nx.flow_hierarchy(G) == 1.0
+        assert nx.trophic_levels(G) == {0: 1.0, 1: 2.0, 2: 3.0}
     finally:
         nx.config.backend_priority.algos, nx.config.fallback_to_nx = old
 

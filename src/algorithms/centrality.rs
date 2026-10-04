@@ -318,6 +318,7 @@ pub fn closeness(
     weights: Option<&[f64]>,
     wf_improved: bool,
     sources: &[u32],
+    compensated: bool,
 ) -> Result<Vec<f64>, NegativeCycle> {
     let score = |reached: usize, totsp: f64| -> f64 {
         let mut c = 0.0;
@@ -340,11 +341,12 @@ pub fn closeness(
                 || DijkstraState::new(n),
                 |state, &s| {
                     state.run(adj, Some(w), s as usize, None)?;
-                    // Same left-to-right order as `sum(sp.values())`.
-                    let totsp = state
-                        .order
-                        .iter()
-                        .fold(0.0, |acc, &v| acc + state.dist[v as usize]);
+                    // `sum(sp.values())`: same order, and compensated
+                    // from Python 3.12.
+                    let totsp = crate::algorithms::spectral::py_sum(
+                        state.order.iter().map(|&v| state.dist[v as usize]),
+                        compensated,
+                    );
                     Ok(score(state.order.len(), totsp))
                 },
             )

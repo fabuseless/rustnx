@@ -17,9 +17,9 @@ use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
-    bipartite, centrality, centrality_more, cluster, cores_more, dag, directed, distance,
-    graph_classes, isomorphism, leftovers, matching, paths, spectral, structure, structure_more,
-    trees_more,
+    approximation, bipartite, centrality, centrality_more, cluster, communities, connectivity,
+    cores_more, dag, directed, distance, flow, graph_classes, isomorphism, leftovers, matching,
+    measures, paths, spectral, structure, structure_more, trees_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -33,6 +33,10 @@ impl From<NegativeCycle> for PyErr {
 
 fn planarity_bail() -> PyErr {
     PyNotImplementedError::new_err("NetworkX's planarity test fails on this graph")
+}
+
+fn unbounded() -> PyErr {
+    PyNotImplementedError::new_err("infinite capacity path")
 }
 
 fn all_nodes(n: usize) -> Vec<u32> {
@@ -252,13 +256,14 @@ impl CoreGraph {
         }))
     }
 
-    #[pyo3(signature = (distance=None, wf_improved=true, sources=None))]
+    #[pyo3(signature = (distance=None, wf_improved=true, sources=None, compensated=false))]
     fn closeness(
         &self,
         py: Python<'_>,
         distance: Option<&str>,
         wf_improved: bool,
         sources: Option<Vec<u32>>,
+        compensated: bool,
     ) -> PyResult<Vec<f64>> {
         // NetworkX runs closeness on `G.reverse()` for directed graphs.
         let (adj, w) = self.reverse_exact(distance)?;
@@ -266,7 +271,8 @@ impl CoreGraph {
         for &s in &sources {
             self.check_index(s as usize)?;
         }
-        Ok(py.detach(|| centrality::closeness(adj, self.n, w, wf_improved, &sources))?)
+        Ok(py
+            .detach(|| centrality::closeness(adj, self.n, w, wf_improved, &sources, compensated))?)
     }
 
     /// PageRank scores in node order, or `None` if it didn't converge.
@@ -327,20 +333,22 @@ impl CoreGraph {
 
     /// Per source `(reached, max distance)` or `None` on a negative cycle,
     /// plus the NetworkX-ordered sum of all distances (`None` on any error).
-    #[pyo3(signature = (weight, sources=None))]
+    #[pyo3(signature = (weight, sources=None, compensated=false))]
     #[allow(clippy::type_complexity)]
     fn dijkstra_stats(
         &self,
         py: Python<'_>,
         weight: &str,
         sources: Option<Vec<u32>>,
+        compensated: bool,
     ) -> PyResult<(Vec<Option<(usize, f64)>>, Option<f64>)> {
         let w = self
             .weight_slice(Some(weight), false)?
             .expect("weight given");
         let sources = self.sources_or_all(sources)?;
         Ok(py.detach(|| {
-            let (stats, total) = distance::dijkstra_stats(&self.succ, self.n, w, &sources);
+            let (stats, total) =
+                distance::dijkstra_stats(&self.succ, self.n, w, &sources, compensated);
             let stats = stats
                 .into_iter()
                 .map(|r| r.ok().map(|s| (s.reached, s.max)))
@@ -3190,6 +3198,1507 @@ impl CoreGraph {
         py.detach(|| bipartite::butterflies(&self.succ, self.n, &degree))
     }
 
+    // --- Batch 12: flows and cut measures ---
+
+    /// `build_residual_network(G, capacity)`. `rows` is `list(G._adj.values())`
+    /// of the NetworkX graph this snapshot was made from (rows in node order,
+    /// as in `succ`); `capacity` is the attribute name.
+    fn residual_network(
+        &self,
+        py: Python<'_>,
+        rows: &Bound<'_, PyList>,
+        capacity: &Bound<'_, PyAny>,
+        compensated: bool,
+    ) -> PyResult<FlowRun> {
+        let caps = self.edge_values(rows, &[(capacity, flow::FLOAT_INF)])?;
+        let mut edges = Vec::new();
+        for u in 0..self.n {
+            for e in self.succ.range(u) {
+                let v = self.succ.targets[e] as usize;
+                // Undirected `G.edges` reports each edge from its first end.
+                if self.directed || v >= u {
+                    edges.push((u as u32, v as u32, caps[0][e]));
+                }
+            }
+        }
+        let (n, directed) = (self.n, self.directed);
+        let res = py
+            .detach(|| flow::Residual::build(n, directed, &edges, compensated))
+            .map_err(fail_err)?;
+        Ok(FlowRun {
+            res,
+            g_offsets: self.succ.offsets.clone(),
+            g_targets: self.succ.targets.clone(),
+            outcome: None,
+        })
+    }
+
+    /// `network_simplex` on G (`as_directed`: on `nx.DiGraph(G)` of an
+    /// undirected G, as `max_flow_min_cost` does). `rows` as for
+    /// `residual_network`, `node_rows` is `list(G._node.values())`, and
+    /// `overrides` replaces some demands. Returns `(0, cost, flow_dict)`,
+    /// or an error code with the node or edge positions it is about.
+    #[allow(clippy::too_many_arguments)]
+    fn network_simplex<'py>(
+        &self,
+        py: Python<'py>,
+        rows: &Bound<'py, PyList>,
+        node_rows: &Bound<'py, PyList>,
+        nodes: &Bound<'py, PyList>,
+        demand: &Bound<'py, PyAny>,
+        capacity: &Bound<'py, PyAny>,
+        weight: &Bound<'py, PyAny>,
+        overrides: Vec<(u32, Bound<'py, PyAny>)>,
+        as_directed: bool,
+        max_single_demand: bool,
+        compensated: bool,
+    ) -> PyResult<(u8, Bound<'py, PyAny>, Bound<'py, PyAny>)> {
+        if !self.directed && !as_directed {
+            return Err(PyNotImplementedError::new_err(
+                "network_simplex needs a directed graph",
+            ));
+        }
+        if node_rows.len() != self.n || nodes.len() != self.n {
+            return Err(PyValueError::new_err("node rows do not match this graph"));
+        }
+        let mut demands = Vec::with_capacity(self.n);
+        for row in node_rows.iter() {
+            let row = row
+                .cast::<PyDict>()
+                .map_err(|_| PyNotImplementedError::new_err("node data is not a dict"))?;
+            demands.push(match row.get_item(demand)? {
+                Some(d) => py_val(&d)?,
+                None => flow::Val::I(0),
+            });
+        }
+        for (u, value) in &overrides {
+            self.check_index(*u as usize)?;
+            demands[*u as usize] = py_val(value)?;
+        }
+        let vals = self.edge_values(
+            rows,
+            &[(capacity, flow::FLOAT_INF), (weight, flow::Val::I(0))],
+        )?;
+        let (caps, weights) = (&vals[0], &vals[1]);
+        // Arcs in `G.edges` order: edges with a nonzero capacity take
+        // part; zero-capacity edges and self-loops don't.
+        let (mut src, mut dst, mut cap, mut w) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut arcs = Vec::new();
+        let mut loops = Vec::new();
+        let mut loop_arcs = Vec::new();
+        let mut zero_arcs = Vec::new(); // in `G.edges` order, with self-loops
+        for u in 0..self.n {
+            for e in self.succ.range(u) {
+                let v = self.succ.targets[e] as usize;
+                if v == u {
+                    loops.push((caps[e], weights[e]));
+                    loop_arcs.push(e);
+                    zero_arcs.push((e, true));
+                } else if caps[e].eq(flow::Val::I(0)) {
+                    zero_arcs.push((e, false));
+                } else {
+                    src.push(u as u32);
+                    dst.push(v as u32);
+                    cap.push(caps[e]);
+                    w.push(weights[e]);
+                    arcs.push(e);
+                }
+            }
+        }
+        let input = flow::SimplexInput {
+            demands: &demands,
+            src: &src,
+            dst: &dst,
+            cap: &cap,
+            weight: &w,
+            loops: &loops,
+        };
+        let result = py.detach(|| flow::network_simplex(&input, max_single_demand, compensated));
+        let err = |code: u8,
+                   a: usize,
+                   b: usize|
+         -> PyResult<(u8, Bound<'py, PyAny>, Bound<'py, PyAny>)> {
+            Ok((
+                code,
+                a.into_pyobject(py)?.into_any(),
+                b.into_pyobject(py)?.into_any(),
+            ))
+        };
+        let arc_ends = |e: usize| -> (usize, usize) {
+            let u = self.succ.offsets.partition_point(|&o| o <= e) - 1;
+            (u, self.succ.targets[e] as usize)
+        };
+        let res = match result {
+            Ok(res) => res,
+            Err(flow::SimplexError::Fail(f)) => return Err(fail_err(f)),
+            Err(flow::SimplexError::InfiniteDemand(i)) => return err(1, i, i),
+            Err(flow::SimplexError::InfiniteWeight(k)) => {
+                let (a, b) = arc_ends(arcs[k]);
+                return err(2, a, b);
+            }
+            Err(flow::SimplexError::SelfLoopInfiniteWeight(k)) => {
+                let (a, b) = arc_ends(loop_arcs[k]);
+                return err(2, a, b);
+            }
+            Err(flow::SimplexError::DemandNotZero) => return err(3, 0, 0),
+            Err(flow::SimplexError::NegativeCapacity(k)) => {
+                let (a, b) = arc_ends(arcs[k]);
+                return err(4, a, b);
+            }
+            Err(flow::SimplexError::SelfLoopNegativeCapacity(k)) => {
+                let (a, b) = arc_ends(loop_arcs[k]);
+                return err(4, a, b);
+            }
+            Err(flow::SimplexError::NoFeasibleFlow) => return err(5, 0, 0),
+            Err(flow::SimplexError::Unbounded) => return err(6, 0, 0),
+        };
+        // flow_dict: every node, then each edge's flow in edge order, then
+        // the zero entries (and self-loop flows) in `G.edges` order.
+        let objects: Vec<Bound<'py, PyAny>> = nodes.iter().collect();
+        let rows_out: Vec<Bound<'py, PyDict>> = (0..self.n).map(|_| PyDict::new(py)).collect();
+        let flow_dict = PyDict::new(py);
+        for (obj, row) in objects.iter().zip(&rows_out) {
+            flow_dict.set_item(obj, row)?;
+        }
+        for (k, &e) in arcs.iter().enumerate() {
+            let (u, v) = arc_ends(e);
+            rows_out[u].set_item(&objects[v], val_obj(py, res.flows[k])?)?;
+        }
+        let zero = 0i64.into_pyobject(py)?.into_any();
+        let mut next_loop = 0;
+        for &(e, is_loop) in &zero_arcs {
+            let (u, v) = arc_ends(e);
+            let value = if is_loop {
+                let f = res.loop_flows[next_loop];
+                next_loop += 1;
+                match f {
+                    Some(c) => val_obj(py, c)?,
+                    None => zero.clone(),
+                }
+            } else {
+                zero.clone()
+            };
+            rows_out[u].set_item(&objects[v], value)?;
+        }
+        Ok((0, val_obj(py, res.cost)?, flow_dict.into_any()))
+    }
+
+    /// `build_flow_dict(G, R)`: `r_rows` holds `R._succ[u]` for each node u
+    /// of G, in order. Values and R's neighbor keys go in as they are.
+    fn build_flow_dict<'py>(
+        &self,
+        py: Python<'py>,
+        nodes: &Bound<'py, PyList>,
+        r_rows: &Bound<'py, PyList>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        if nodes.len() != self.n || r_rows.len() != self.n {
+            return Err(PyValueError::new_err("rows do not match this graph"));
+        }
+        let objects: Vec<Bound<'py, PyAny>> = nodes.iter().collect();
+        let zero = 0i64.into_pyobject(py)?.into_any();
+        let flow_key = pyo3::intern!(py, "flow");
+        let unsupported = |_| PyNotImplementedError::new_err("NetworkX raises here");
+        let out = PyDict::new(py);
+        for (u, r_row) in r_rows.iter().enumerate() {
+            let row = PyDict::new(py);
+            for &v in self.succ.neighbors(u) {
+                row.set_item(&objects[v as usize], &zero)?;
+            }
+            let r_row = r_row
+                .cast::<PyDict>()
+                .map_err(|_| PyNotImplementedError::new_err("R's rows are not dicts"))?;
+            for (v, attr) in r_row.iter() {
+                let f = attr.get_item(flow_key).map_err(unsupported)?;
+                if f.gt(&zero).map_err(unsupported)? {
+                    row.set_item(v, f)?;
+                }
+            }
+            out.set_item(&objects[u], row)?;
+        }
+        Ok(out)
+    }
+
+    /// `cost_of_flow(G, flowDict, weight)`. `rows` as for `residual_network`.
+    fn cost_of_flow<'py>(
+        &self,
+        py: Python<'py>,
+        rows: &Bound<'py, PyList>,
+        nodes: &Bound<'py, PyList>,
+        flow_dict: &Bound<'py, PyAny>,
+        weight: &Bound<'py, PyAny>,
+        compensated: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let weights = self.edge_values(rows, &[(weight, flow::Val::I(0))])?;
+        let objects: Vec<Bound<'py, PyAny>> = nodes.iter().collect();
+        let mut products = Vec::new();
+        for u in 0..self.n {
+            let row = flow_dict
+                .get_item(&objects[u])
+                .map_err(|_| PyNotImplementedError::new_err("flowDict lacks a node"))?;
+            for e in self.succ.range(u) {
+                let v = self.succ.targets[e] as usize;
+                if !self.directed && v < u {
+                    continue;
+                }
+                let f = row
+                    .get_item(&objects[v])
+                    .map_err(|_| PyNotImplementedError::new_err("flowDict lacks an edge"))?;
+                products.push(py_val(&f)?.mul(weights[0][e]).map_err(fail_err)?);
+            }
+        }
+        val_obj(py, flow::py_sum(products, compensated).map_err(fail_err)?)
+    }
+
+    /// `cut_size`: the parts are `(nset1 order, nset2)` (see `flow::cut_size`);
+    /// `rows` as for `residual_network`, needed when weights mix ints and floats.
+    #[pyo3(signature = (parts, compensated, weight=None, rows=None))]
+    fn cut_size_value<'py>(
+        &self,
+        py: Python<'py>,
+        parts: Vec<(Vec<u32>, Option<Vec<u32>>)>,
+        compensated: bool,
+        weight: Option<&str>,
+        rows: Option<&Bound<'py, PyList>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        for (order, nset2) in &parts {
+            self.membership(order)?;
+            if let Some(s) = nset2 {
+                self.membership(s)?;
+            }
+        }
+        let w = self.cut_weights(weight, rows)?;
+        let (n, directed) = (self.n, self.directed);
+        let value = py
+            .detach(|| flow::cut_size(&self.succ, n, directed, &w, &parts, compensated))
+            .map_err(fail_err)?;
+        val_obj(py, value)
+    }
+
+    /// `volume(G, S, weight)` for the positions of `nbunch_iter(S)`; `rows`
+    /// as for `cut_size_value`.
+    #[pyo3(signature = (nodes, compensated, weight=None, rows=None))]
+    fn volume_value<'py>(
+        &self,
+        py: Python<'py>,
+        nodes: Vec<u32>,
+        compensated: bool,
+        weight: Option<&str>,
+        rows: Option<&Bound<'py, PyList>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.membership(&nodes)?;
+        let w = self.cut_weights(weight, rows)?;
+        let directed = self.directed;
+        let value = py
+            .detach(|| flow::volume(&self.succ, directed, &w, &nodes, compensated))
+            .map_err(fail_err)?;
+        val_obj(py, value)
+    }
+
+    /// The number of distinct neighbors of `nodes`, and of those not in
+    /// `nodes` (`node_expansion`, `boundary_expansion`).
+    fn neighborhood_sizes(&self, py: Python<'_>, nodes: Vec<u32>) -> PyResult<(usize, usize)> {
+        let inside = self.membership(&nodes)?;
+        Ok(py.detach(|| {
+            let union = matching::neighbor_union(&self.succ, self.n, &nodes);
+            let outside = union.iter().filter(|&&v| !inside[v as usize]).count();
+            (union.len(), outside)
+        }))
+    }
+
+    // --- Batch 13: connectivity, disjoint paths and augmentation ---
+
+    /// Edmonds-Karp flow value from `s` to `t` on the auxiliary digraph of
+    /// `local_node_connectivity` (`node_split`: from `sB` to `tA`) or
+    /// `local_edge_connectivity`. `s != t` for edge connectivity.
+    #[pyo3(signature = (node_split, s, t, cutoff=None))]
+    fn conn_local_flow(
+        &self,
+        py: Python<'_>,
+        node_split: bool,
+        s: u32,
+        t: u32,
+        cutoff: Option<f64>,
+    ) -> PyResult<i64> {
+        self.check_index(s as usize)?;
+        self.check_index(t as usize)?;
+        let values = self.conn_flows(py, node_split, vec![(s, t)], cutoff)?;
+        Ok(values[0])
+    }
+
+    /// Flow values (no cutoff) for each pair `(ss[i], ts[i])`, as
+    /// `conn_local_flow`; pairs run in parallel.
+    fn conn_pair_flows(
+        &self,
+        py: Python<'_>,
+        node_split: bool,
+        ss: Vec<u32>,
+        ts: Vec<u32>,
+    ) -> PyResult<Vec<i64>> {
+        if ss.len() != ts.len() {
+            return Err(PyValueError::new_err("one target per source"));
+        }
+        for (&s, &t) in ss.iter().zip(&ts) {
+            self.check_index(s as usize)?;
+            self.check_index(t as usize)?;
+            if !node_split && s == t {
+                return Err(PyValueError::new_err("source and sink are the same node"));
+            }
+        }
+        self.conn_flows(py, node_split, ss.into_iter().zip(ts).collect(), None)
+    }
+
+    /// `node_connectivity(G)` (no source and target given); `isolating`
+    /// is NetworkX 3.7's version (see `connectivity::node_connectivity`).
+    fn conn_node_connectivity(&self, py: Python<'_>, isolating: bool) -> PyResult<i64> {
+        let degree = self.degrees();
+        let pred = self.adj(true);
+        py.detach(|| {
+            let (v, k) = if isolating {
+                let (v, k, _) =
+                    connectivity::isolating_cut(&self.succ, pred, self.n, self.directed);
+                (v, k)
+            } else {
+                // min(G.degree(), key=itemgetter(1)): the first minimum.
+                let v = (0..self.n).min_by_key(|&u| degree[u]).unwrap_or(0);
+                (v, degree[v])
+            };
+            connectivity::node_connectivity(
+                &self.succ,
+                pred,
+                self.n,
+                self.directed,
+                v,
+                k as i64,
+                isolating,
+            )
+        })
+        .map_err(|_| unbounded())
+    }
+
+    /// `edge_connectivity(G)`'s minimum local connectivity with `cutoff`;
+    /// see `connectivity::edge_connectivity`.
+    fn conn_edge_connectivity(&self, py: Python<'_>, cutoff: f64) -> PyResult<Option<i64>> {
+        py.detach(|| connectivity::edge_connectivity(&self.succ, self.n, self.directed, cutoff))
+            .map_err(|_| unbounded())
+    }
+
+    /// One s-t minimum cut: `(flow value, sink side in insertion order,
+    /// cut arcs as us/offsets/vs)`, positions in the auxiliary digraph.
+    /// `graph_rows` reads the cut edges from G's rows instead of the
+    /// auxiliary digraph's (`minimum_st_edge_cut` called on G itself).
+    #[allow(clippy::type_complexity)]
+    fn conn_st_cut(
+        &self,
+        py: Python<'_>,
+        node_split: bool,
+        s: u32,
+        t: u32,
+        graph_rows: bool,
+    ) -> PyResult<(i64, Vec<u32>, Vec<u32>, Vec<u32>, Vec<u32>)> {
+        self.check_index(s as usize)?;
+        self.check_index(t as usize)?;
+        if !node_split && s == t {
+            return Err(PyValueError::new_err("source and sink are the same node"));
+        }
+        py.detach(|| {
+            let (h, s, t) = self.conn_aux(node_split, s, t);
+            let mut r = connectivity::Residual::build(&h);
+            let rows = if graph_rows && !node_split {
+                connectivity::CutRows::Graph(&self.succ)
+            } else {
+                connectivity::CutRows::Aux
+            };
+            let cut = connectivity::st_cut(&h, &mut r, s, t, &rows, false)?;
+            Ok((cut.value, cut.sink_order, cut.us, cut.offsets, cut.vs))
+        })
+        .map_err(|_: connectivity::Unbounded| unbounded())
+    }
+
+    /// `minimum_node_cut` / `minimum_edge_cut`'s search over the pairs
+    /// `(ss[i], ts[i])` on one shared residual network. Returns `None`
+    /// (the initial cut stands) or `(pair index, cut)`, the cut as in
+    /// `conn_st_cut` without the value, or `None` for adjacent nodes.
+    #[allow(clippy::type_complexity, clippy::too_many_arguments)]
+    fn conn_search_cuts(
+        &self,
+        py: Python<'_>,
+        node_split: bool,
+        ss: Vec<u32>,
+        ts: Vec<u32>,
+        skips: Vec<bool>,
+        initial_len: usize,
+        adjacent_both: bool,
+        requeue: bool,
+    ) -> PyResult<Option<(usize, Option<(Vec<u32>, Vec<u32>, Vec<u32>, Vec<u32>)>)>> {
+        if ss.len() != ts.len() || ss.len() != skips.len() {
+            return Err(PyValueError::new_err("one target and flag per source"));
+        }
+        let mut pairs = Vec::with_capacity(ss.len());
+        for ((&s, &t), &skip_if_edge) in ss.iter().zip(&ts).zip(&skips) {
+            self.check_index(s as usize)?;
+            self.check_index(t as usize)?;
+            if !node_split && s == t {
+                return Err(PyValueError::new_err("source and sink are the same node"));
+            }
+            pairs.push(connectivity::CutPair { s, t, skip_if_edge });
+        }
+        py.detach(|| {
+            let h = if node_split {
+                connectivity::node_aux(&self.succ, self.n, self.directed)
+            } else {
+                connectivity::edge_aux(&self.succ, self.n, self.directed)
+            };
+            let chosen = connectivity::search_cuts(
+                &self.succ,
+                &h,
+                node_split,
+                &pairs,
+                initial_len,
+                adjacent_both,
+                requeue,
+            )?;
+            Ok(chosen.map(|(i, cut)| (i, cut.map(|c| (c.sink_order, c.us, c.offsets, c.vs)))))
+        })
+        .map_err(|_: connectivity::Unbounded| unbounded())
+    }
+
+    /// `edge_disjoint_paths` / `node_disjoint_paths` (node positions of G).
+    /// Status 0: the paths; 1: `NetworkXNoPath`; 2: source and sink are the
+    /// same node (edge paths only).
+    #[pyo3(signature = (node_split, s, t, cutoff=None))]
+    fn conn_disjoint_paths(
+        &self,
+        py: Python<'_>,
+        node_split: bool,
+        s: u32,
+        t: u32,
+        cutoff: Option<f64>,
+    ) -> PyResult<(u8, Vec<Vec<u32>>)> {
+        self.check_index(s as usize)?;
+        self.check_index(t as usize)?;
+        py.detach(|| {
+            let (h, s, t) = self.conn_aux(node_split, s, t);
+            // possible = min(H.out_degree(s), H.in_degree(t))
+            let possible = h.succ[s as usize].len().min(h.pred[t as usize].len());
+            if possible == 0 {
+                return Ok((1, Vec::new()));
+            }
+            if s == t {
+                return Ok((2, Vec::new()));
+            }
+            let possible = possible as f64;
+            let cutoff = cutoff.map_or(possible, |c| if c <= possible { c } else { possible });
+            let mut r = connectivity::Residual::build(&h);
+            if r.edmonds_karp(s, t, cutoff)? == 0 {
+                return Ok((1, Vec::new()));
+            }
+            let mut paths = r.disjoint_paths(s, t, cutoff);
+            if node_split {
+                // Each auxiliary node's original node, first occurrences only.
+                let mut seen = vec![false; self.n];
+                for path in paths.iter_mut() {
+                    let mut ids = Vec::new();
+                    for &a in path.iter() {
+                        let i = a / 2;
+                        if !seen[i as usize] {
+                            seen[i as usize] = true;
+                            ids.push(i);
+                        }
+                    }
+                    for &i in &ids {
+                        seen[i as usize] = false;
+                    }
+                    *path = ids;
+                }
+            }
+            Ok((0, paths))
+        })
+        .map_err(|_: connectivity::Unbounded| unbounded())
+    }
+
+    /// `minimum_node_cut` (3.7+): the first node with the smallest
+    /// isolating cut, and whether that cut is its predecessors (directed).
+    fn conn_isolating_cut(&self) -> (usize, bool) {
+        let (v, _, use_pred) =
+            connectivity::isolating_cut(&self.succ, self.adj(true), self.n, self.directed);
+        (v, use_pred)
+    }
+
+    /// Predecessors of `v` in NetworkX's `G.pred[v]` order (call
+    /// `_ensure_exact_pred` first for converted graphs).
+    fn conn_exact_predecessors(&self, v: usize) -> PyResult<Vec<u32>> {
+        self.check_index(v)?;
+        let (rows, _) = self.reverse_exact_order(None)?;
+        Ok(rows.neighbors(v).to_vec())
+    }
+
+    /// `stoer_wagner` on a connected graph with two or more nodes:
+    /// `(status, cut value, nodes in the rebuilt graph's order, reachable
+    /// side in breadth-first order)`. Status 1: a negative weight (outside
+    /// self-loops); 2: an infinite weight, or int weights too large to sum
+    /// exactly in f64; both skip the computation.
+    #[allow(clippy::type_complexity)]
+    #[pyo3(signature = (weight=None))]
+    fn conn_stoer_wagner(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+    ) -> PyResult<(u8, f64, Vec<u32>, Vec<u32>)> {
+        let w = self.weight_slice(weight, false)?;
+        let (all_int, _) = self.weights_info(weight);
+        if let Some(ws) = w {
+            let mut total = 0.0f64;
+            let mut status = 0;
+            for u in 0..self.n {
+                for e in self.succ.range(u) {
+                    if self.succ.targets[e] as usize == u {
+                        continue;
+                    }
+                    let x = ws[e];
+                    if x < 0.0 {
+                        return Ok((1, 0.0, Vec::new(), Vec::new()));
+                    }
+                    if !x.is_finite() {
+                        status = 2;
+                    }
+                    total += x;
+                }
+            }
+            if status == 2 || (all_int && total > (1u64 << 52) as f64) {
+                return Ok((2, 0.0, Vec::new(), Vec::new()));
+            }
+        }
+        Ok(py.detach(|| {
+            let r = connectivity::stoer_wagner(&self.succ, self.n, w);
+            (0, r.cut_value, r.node_order, r.reachable)
+        }))
+    }
+
+    /// `bridge_components`: node positions per component, in insertion order.
+    fn conn_bridge_components(&self, py: Python<'_>) -> Vec<Vec<u32>> {
+        py.detach(|| {
+            let bridges = structure_more::bridges(&self.succ, self.n, None, false);
+            connectivity::bridge_components(&self.succ, self.n, &bridges)
+        })
+    }
+
+    /// `complement_edges` for `u` in `start..end`: flat position pairs.
+    fn conn_complement_edges(&self, py: Python<'_>, start: usize, end: usize) -> Vec<u32> {
+        let end = end.min(self.n);
+        py.detach(|| {
+            connectivity::complement_edges(
+                &self.succ,
+                self.adj(true),
+                self.n,
+                self.directed,
+                start.min(end),
+                end,
+            )
+        })
+    }
+
+    // --- Batch 14: assortativity, link prediction and reciprocity ---
+
+    /// A scorer for link prediction pairs (see `measures::LinkMode`; `mode`
+    /// 0 counts, 1 communities, 2 sums of `table[degree]`), holding the
+    /// per-node data once for all batches of pairs.
+    #[pyo3(signature = (mode, hashes=None, table=None, classes=None, compensated=false))]
+    fn link_scorer(
+        slf: Bound<'_, Self>,
+        mode: u8,
+        hashes: Option<Vec<i64>>,
+        table: Option<Vec<f64>>,
+        classes: Option<Vec<i64>>,
+        compensated: bool,
+    ) -> PyResult<LinkScorer> {
+        let g = slf.get();
+        let degree = g.degrees();
+        let max_deg = degree.iter().copied().max().unwrap_or(0);
+        let hashes = hashes.unwrap_or_else(|| vec![0; g.n]);
+        let table = table.unwrap_or_default();
+        let mode = match mode {
+            0 => measures::LinkMode::Counts,
+            1 => measures::LinkMode::Community,
+            2 if table.len() > max_deg => measures::LinkMode::Sum,
+            _ => return Err(PyValueError::new_err("bad link scorer mode or table")),
+        };
+        if hashes.len() != g.n || classes.as_ref().is_some_and(|c| c.len() != g.n) {
+            return Err(PyValueError::new_err("per-node data has the wrong length"));
+        }
+        Ok(LinkScorer {
+            graph: slf.unbind(),
+            mode,
+            hashes,
+            degree,
+            table,
+            classes,
+            compensated,
+        })
+    }
+
+    /// `list(G._adj[u].keys() & G._adj[v].keys() - {u, v})` per pair, as
+    /// rustnx's replay of CPython's set table orders it.
+    fn common_neighbors_in_set_order(
+        &self,
+        us: Vec<u32>,
+        vs: Vec<u32>,
+        hashes: Vec<i64>,
+    ) -> PyResult<Vec<Vec<u32>>> {
+        self.check_pairs(&us, &vs)?;
+        if hashes.len() != self.n {
+            return Err(PyValueError::new_err("hashes has the wrong length"));
+        }
+        Ok(measures::common_neighbors_in_set_order(
+            &self.succ, self.n, &hashes, &us, &vs,
+        ))
+    }
+
+    /// Unweighted distance per pair, -1 if unreachable.
+    fn pair_distances(&self, py: Python<'_>, us: Vec<u32>, vs: Vec<u32>) -> PyResult<Vec<i64>> {
+        self.check_pairs(&us, &vs)?;
+        Ok(py.detach(|| measures::pair_distances(&self.succ, self.n, &us, &vs)))
+    }
+
+    /// Integer degrees of one kind (0 `G.degree`, 1 out, 2 in), summing an
+    /// integer edge attribute when `weight` is given.
+    #[pyo3(signature = (kind, weight=None))]
+    fn kind_degrees(&self, kind: u8, weight: Option<&str>) -> PyResult<Vec<i64>> {
+        let n = self.n;
+        let w_out = self.weight_slice(weight, false)?;
+        let out = measures::row_sums(&self.succ, n, w_out);
+        Ok(match (kind, self.directed) {
+            (1, true) => out,
+            (2, true) => measures::row_sums(self.adj(true), n, self.weight_slice(weight, true)?),
+            (0, true) => {
+                let ins = measures::row_sums(self.adj(true), n, self.weight_slice(weight, true)?);
+                out.iter().zip(ins).map(|(a, b)| a + b).collect()
+            }
+            (0, false) => (0..n)
+                .map(|v| {
+                    // A self-loop counts twice.
+                    let own = self
+                        .succ
+                        .range(v)
+                        .find(|&e| self.succ.targets[e] as usize == v)
+                        .map_or(0, |e| w_out.map_or(1, |w| w[e] as i64));
+                    out[v] + own
+                })
+                .collect(),
+            _ => return Err(PyValueError::new_err("bad degree kind")),
+        })
+    }
+
+    /// Pairs of `node_degree_xy`/`node_attribute_xy` as node positions.
+    #[pyo3(signature = (order, nbr_mask=None))]
+    fn xy_pairs(
+        &self,
+        order: Vec<u32>,
+        nbr_mask: Option<Vec<bool>>,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        self.sources_or_all(Some(order.clone()))?;
+        if nbr_mask.as_ref().is_some_and(|m| m.len() != self.n) {
+            return Err(PyValueError::new_err("mask has the wrong length"));
+        }
+        Ok(measures::xy_pairs(&self.succ, &order, nbr_mask.as_deref()))
+    }
+
+    /// NetworkX's `mixing_dict` over the `xy_pairs` stream, with per-node
+    /// x and y classes: `(number of pairs, [(class, node, [(class, node,
+    /// count)])])` in insertion order.
+    #[pyo3(signature = (order, xcls, ycls, nbr_mask=None))]
+    fn mixing(
+        &self,
+        py: Python<'_>,
+        order: Vec<u32>,
+        xcls: Vec<i64>,
+        ycls: Vec<i64>,
+        nbr_mask: Option<Vec<bool>>,
+    ) -> PyResult<(u64, Vec<measures::MixingRow>)> {
+        self.sources_or_all(Some(order.clone()))?;
+        if xcls.len() != self.n
+            || ycls.len() != self.n
+            || nbr_mask.as_ref().is_some_and(|m| m.len() != self.n)
+        {
+            return Err(PyValueError::new_err("per-node data has the wrong length"));
+        }
+        Ok(py.detach(|| measures::mixing(&self.succ, &order, nbr_mask.as_deref(), &xcls, &ycls)))
+    }
+
+    /// `average_neighbor_degree` numerators and source degrees for `nodes`
+    /// (kinds as in `kind_degrees`; the source kind picks the rows).
+    #[pyo3(signature = (nodes, source, target, weight=None))]
+    fn neighbor_degree_terms(
+        &self,
+        nodes: Vec<u32>,
+        source: u8,
+        target: u8,
+        weight: Option<&str>,
+    ) -> PyResult<Vec<(i64, i64)>> {
+        let nodes = self.sources_or_all(Some(nodes))?;
+        let target_degree = self.kind_degrees(target, None)?;
+        let source_degree = self.kind_degrees(source, weight)?;
+        let mut rows = Vec::new();
+        if !self.directed || source != 2 {
+            rows.push((&self.succ, self.weight_slice(weight, false)?));
+        }
+        if self.directed && source != 1 {
+            rows.push((self.adj(true), self.weight_slice(weight, true)?));
+        }
+        measures::neighbor_degree_terms(&rows, &target_degree, &source_degree, &nodes)
+            .ok_or_else(|| PyNotImplementedError::new_err("integer overflow"))
+    }
+
+    /// `average_degree_connectivity` sums per source degree, in first-seen
+    /// order: `(degrees, neighbor degree sums, weighted degree sums)`.
+    #[pyo3(signature = (nodes, source, target, weight=None))]
+    #[allow(clippy::type_complexity)]
+    fn degree_connectivity(
+        &self,
+        nodes: Vec<u32>,
+        source: u8,
+        target: u8,
+        weight: Option<&str>,
+    ) -> PyResult<(Vec<i64>, Vec<i64>, Vec<i64>)> {
+        let nodes = self.sources_or_all(Some(nodes))?;
+        let k_degree = self.kind_degrees(source, None)?;
+        let target_degree = self.kind_degrees(target, None)?;
+        let weighted_source = self.kind_degrees(source, weight)?;
+        // Neighbors: predecessors for "in", else successors (NetworkX's
+        // `G.neighbors` for "in+out").
+        let reverse = self.directed && source == 2;
+        measures::degree_connectivity(
+            self.adj(reverse),
+            self.weight_slice(weight, reverse)?,
+            &k_degree,
+            &target_degree,
+            &weighted_source,
+            &nodes,
+        )
+        .ok_or_else(|| PyNotImplementedError::new_err("integer overflow"))
+    }
+
+    /// `(len(pred & succ), len(pred) + len(succ))` per node (directed).
+    fn reciprocity_counts(&self, nodes: Vec<u32>) -> PyResult<Vec<(u64, u64)>> {
+        let nodes = self.sources_or_all(Some(nodes))?;
+        Ok(measures::reciprocity_counts(
+            &self.succ,
+            self.adj(true),
+            self.n,
+            &nodes,
+        ))
+    }
+
+    /// Directed edges `u -> v` (u != v) whose reverse edge exists.
+    fn reciprocated_edges(&self, py: Python<'_>) -> u64 {
+        py.detach(|| measures::reciprocated_edges(&self.succ, self.n))
+    }
+
+    /// `(nk, ek)` per degree, for `rich_club_coefficient`.
+    fn rich_club_counts(&self) -> Vec<(u64, u64)> {
+        let degree = self.degrees();
+        measures::rich_club_counts(&self.succ, self.n, &degree)
+    }
+
+    /// `sum(G.degree(u) * G.degree(v) for u, v in G.edges())`.
+    fn s_metric_sum(&self, py: Python<'_>) -> u128 {
+        let degree = self.degrees();
+        py.detach(|| measures::s_metric(&self.succ, self.n, self.directed, &degree))
+    }
+
+    /// Rows of the adjacency matrix to the power `k` (wrapping int64).
+    fn walk_counts(&self, py: Python<'_>, k: u64) -> Vec<Vec<i64>> {
+        py.detach(|| measures::walk_counts(&self.succ, self.n, k))
+    }
+
+    // --- Batch 15: communities, efficiency and structural holes ---
+
+    /// `global_efficiency`'s running total of `1 / d`, before the division.
+    fn global_efficiency_total(&self, py: Python<'_>) -> f64 {
+        py.detach(|| communities::global_efficiency(&self.succ, self.n))
+    }
+
+    /// `local_efficiency`'s per-node efficiencies (`None`: NetworkX's int
+    /// 0). `orders[v]`: the nodes of `G.subgraph(G[v])` in its iteration
+    /// order when that is a set's order, else `None` (G's order).
+    fn local_efficiencies(
+        &self,
+        py: Python<'_>,
+        orders: Vec<Option<Vec<u32>>>,
+    ) -> PyResult<Vec<Option<f64>>> {
+        if orders.len() != self.n {
+            return Err(PyValueError::new_err("one order per node expected"));
+        }
+        for order in orders.iter().flatten() {
+            for &v in order {
+                self.check_index(v as usize)?;
+            }
+        }
+        Ok(py.detach(|| communities::local_efficiency(&self.succ, self.n, &orders)))
+    }
+
+    /// The sum in `gutman_index` (kind 0), `schultz_index` (1) or
+    /// `hyper_wiener_index` (2), before halving, in NetworkX's order;
+    /// `None` if it can't be matched (overflow, a negative cycle).
+    fn distance_index(
+        &self,
+        py: Python<'_>,
+        kind: u8,
+        weight: Option<&str>,
+        float: bool,
+        compensated: bool,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        let kind = match kind {
+            0 => communities::IndexKind::Gutman,
+            1 => communities::IndexKind::Schultz,
+            _ => communities::IndexKind::HyperWiener,
+        };
+        let w = self.weight_slice(weight, false)?;
+        // NetworkX's `dict(G.degree, weight=weight)` holds unweighted degrees.
+        let degrees = self.degrees();
+        let total = py.detach(|| {
+            if float {
+                let deg: Vec<f64> = degrees.iter().map(|&d| d as f64).collect();
+                communities::distance_index_float(&self.succ, self.n, w?, &deg, kind, compensated)
+                    .map(communities::Num::Float)
+            } else {
+                let deg: Vec<i128> = degrees.iter().map(|&d| d as i128).collect();
+                communities::distance_index_int(&self.succ, self.n, w, &deg, kind)
+                    .map(communities::Num::Int)
+            }
+        });
+        total.map(|t| num_object(py, t)).transpose()
+    }
+
+    /// `closeness_vitality`'s Wiener index totals: G's (if `whole`), and
+    /// G's without each node of `removals` (`None`: not connected).
+    #[allow(clippy::type_complexity)]
+    fn vitality_totals(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+        float: bool,
+        compensated: bool,
+        removals: Vec<u32>,
+        whole: bool,
+    ) -> PyResult<(Option<Py<PyAny>>, Vec<Option<Py<PyAny>>>)> {
+        let w = self.weight_slice(weight, false)?;
+        let removals = self.sources_or_all(Some(removals))?;
+        let (whole, without) = py.detach(|| {
+            communities::vitality_totals(
+                &self.succ,
+                self.n,
+                w,
+                float,
+                compensated,
+                &removals,
+                whole,
+            )
+        });
+        let whole = whole.map(|t| num_object(py, t)).transpose()?;
+        let without = without
+            .into_iter()
+            .map(|t| t.map(|t| num_object(py, t)).transpose())
+            .collect::<PyResult<_>>()?;
+        Ok((whole, without))
+    }
+
+    /// `flow_hierarchy`'s integer sums: arc weight inside strongly
+    /// connected components, and in total.
+    #[pyo3(signature = (weight=None))]
+    fn scc_arc_weights(&self, py: Python<'_>, weight: Option<&str>) -> PyResult<(i128, i128)> {
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| communities::scc_arc_weights(&self.succ, self.n, w)))
+    }
+
+    /// Edges inside one block and between two blocks, given each node's
+    /// block (`-1`: none). `None` if `strict` and an edge has an end in no
+    /// block.
+    fn block_edge_counts(
+        &self,
+        py: Python<'_>,
+        block: Vec<i64>,
+        strict: bool,
+    ) -> PyResult<Option<(u64, u64)>> {
+        if block.len() != self.n {
+            return Err(PyValueError::new_err("one block per node expected"));
+        }
+        Ok(py.detach(|| {
+            communities::block_edge_counts(&self.succ, self.n, self.directed, &block, strict)
+        }))
+    }
+
+    /// Edges inside each block (positions, flattened with `ends`), summed.
+    fn edges_inside_blocks(
+        &self,
+        py: Python<'_>,
+        flat: Vec<u32>,
+        ends: Vec<usize>,
+    ) -> PyResult<u64> {
+        self.check_flat(&flat, &ends)?;
+        Ok(py.detach(|| {
+            communities::edges_inside_blocks(&self.succ, self.n, self.directed, &flat, &ends)
+        }))
+    }
+
+    /// `modularity`'s sums (see `communities::modularity_stats`). Float
+    /// weights on a directed graph need exact in-edge order loaded.
+    #[allow(clippy::type_complexity)]
+    fn modularity_stats(
+        &self,
+        py: Python<'_>,
+        flat: Vec<u32>,
+        ends: Vec<usize>,
+        weight: Option<&str>,
+        float: bool,
+        compensated: bool,
+    ) -> PyResult<(Py<PyAny>, Vec<(Py<PyAny>, Py<PyAny>, Py<PyAny>)>)> {
+        self.check_flat(&flat, &ends)?;
+        let w = self.weight_slice(weight, false)?;
+        if float && w.is_none() {
+            return Err(PyValueError::new_err("float sums need a weight"));
+        }
+        if !float && communities::degrees_int(&self.succ, self.n, w).is_none() {
+            return Err(PyNotImplementedError::new_err(
+                "integer weights are too large",
+            ));
+        }
+        let pred = if !self.directed {
+            None
+        } else if float {
+            Some(self.reverse_exact(weight)?)
+        } else {
+            Some((self.adj(true), self.weight_slice(weight, true)?))
+        };
+        let (total, per) = py.detach(|| {
+            communities::modularity_stats(
+                &self.succ,
+                pred,
+                self.n,
+                w,
+                float,
+                compensated,
+                &flat,
+                &ends,
+            )
+        });
+        let per = per
+            .into_iter()
+            .map(|(l, o, i)| Ok((num_object(py, l)?, num_object(py, o)?, num_object(py, i)?)))
+            .collect::<PyResult<_>>()?;
+        Ok((num_object(py, total)?, per))
+    }
+
+    /// `greedy_modularity_communities`' merges and whether the generator ran
+    /// out (`None`: hand the call to NetworkX). `rank[v]`: v's position in
+    /// sorted order, for ties. Float weights on a directed graph need exact
+    /// in-edge order loaded.
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::type_complexity)]
+    fn greedy_modularity(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+        float: bool,
+        compensated: bool,
+        resolution: f64,
+        rank: Vec<u32>,
+        cutoff: f64,
+        best_n: f64,
+    ) -> PyResult<Option<(Vec<(u32, u32)>, bool)>> {
+        if rank.len() != self.n {
+            return Err(PyValueError::new_err("one rank per node expected"));
+        }
+        let n = self.n;
+        let w = self.weight_slice(weight, false)?;
+        // Degrees as `G.degree`, `G.out_degree` and `G.in_degree` give them.
+        let (out_deg, in_deg, total): (Vec<f64>, Vec<f64>, f64) = if self.directed {
+            let (pred, pw) = if float {
+                self.reverse_exact(weight)?
+            } else {
+                (self.adj(true), self.weight_slice(weight, true)?)
+            };
+            if float {
+                let out =
+                    communities::row_sums_float(&self.succ, n, w.expect("weight"), compensated);
+                let inn = communities::row_sums_float(pred, n, pw.expect("weight"), compensated);
+                let deg: Vec<f64> = out.iter().zip(&inn).map(|(a, b)| a + b).collect();
+                let s = spectral::py_sum(deg.into_iter(), compensated);
+                (out, inn, s)
+            } else {
+                let out = communities::row_sums_int(&self.succ, n, w);
+                let inn = communities::row_sums_int(pred, n, pw);
+                let s: i128 = out.iter().chain(&inn).sum();
+                let f = |v: Vec<i128>| v.into_iter().map(|x| x as f64).collect::<Vec<f64>>();
+                (f(out), f(inn), s as f64)
+            }
+        } else if float {
+            let deg = communities::degrees_float(&self.succ, n, w.expect("weight"), compensated);
+            let s = spectral::py_sum(deg.iter().copied(), compensated);
+            (deg, Vec::new(), s)
+        } else {
+            let Some(deg) = communities::degrees_int(&self.succ, n, w) else {
+                return Ok(None);
+            };
+            let s: i128 = deg.iter().sum();
+            (
+                deg.into_iter().map(|x| x as f64).collect(),
+                Vec::new(),
+                s as f64,
+            )
+        };
+        // `G.size(weight)`: the degree sum halved (exact: it is even).
+        let m = total / 2.0;
+        if m == 0.0 || !m.is_finite() {
+            return Ok(None);
+        }
+        let q0 = 1.0 / m;
+        let (a, b) = if self.directed {
+            (
+                out_deg.iter().map(|&d| d * q0).collect(),
+                in_deg.iter().map(|&d| d * q0).collect(),
+            )
+        } else {
+            (out_deg.iter().map(|&d| d * q0 * 0.5).collect(), Vec::new())
+        };
+        let mut edges = Vec::new();
+        for u in 0..n {
+            for e in self.succ.range(u) {
+                let v = self.succ.targets[e];
+                if self.directed || v as usize >= u {
+                    edges.push((u as u32, v, w.map_or(1.0, |w| w[e])));
+                }
+            }
+        }
+        let input = communities::GreedyInput {
+            n,
+            directed: self.directed,
+            edges,
+            a,
+            b,
+            q0,
+            resolution,
+            rank: &rank,
+            cutoff,
+            best_n,
+        };
+        Ok(py.detach(|| communities::greedy_modularity(input)))
+    }
+
+    /// `naive_greedy_modularity_communities`' merges for unit or integer
+    /// weights (`None`: hand the call to NetworkX). `m` and `norm` are
+    /// computed by Python, as `modularity` does.
+    #[allow(clippy::too_many_arguments)]
+    fn naive_greedy_modularity(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+        m: f64,
+        norm: f64,
+        res_int: Option<i128>,
+        res_float: f64,
+        compensated: bool,
+    ) -> PyResult<Option<Vec<(u32, u32)>>> {
+        let w = self.weight_slice(weight, false)?;
+        let res = match res_int {
+            Some(r) => communities::Resolution::Int(r),
+            None => communities::Resolution::Float(res_float),
+        };
+        Ok(py.detach(|| {
+            communities::naive_greedy_modularity(&self.succ, self.n, w, m, norm, res, compensated)
+        }))
+    }
+
+    /// `girvan_newman`'s state after `G.copy().to_undirected()` and removing
+    /// self-loops. `scale`: `edge_betweenness_centrality`'s normalization.
+    #[pyo3(signature = (scale=None))]
+    fn girvan_newman(&self, scale: Option<f64>) -> GirvanNewman {
+        let mut g = communities::EditableGraph::rebuilt(&self.succ, self.n, None);
+        g.remove_self_loops();
+        GirvanNewman { g, scale }
+    }
+
+    /// `edge_betweenness_partition` for an undirected graph (on `G.copy()`).
+    #[pyo3(signature = (number_of_sets, weight=None, scale=None))]
+    fn edge_betweenness_partition(
+        &self,
+        py: Python<'_>,
+        number_of_sets: usize,
+        weight: Option<&str>,
+        scale: Option<f64>,
+    ) -> PyResult<Vec<Vec<u32>>> {
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| {
+            let mut g = communities::EditableGraph::rebuilt(&self.succ, self.n, w);
+            g.betweenness_partition(number_of_sets, w.is_some(), scale)
+        }))
+    }
+
+    /// `asyn_lpa_communities`: final labels, and the generator's new state
+    /// (`state`: `random.Random.getstate()[1]`). `None` for a bad state.
+    #[allow(clippy::type_complexity)]
+    fn asyn_lpa(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+        state: Vec<u32>,
+    ) -> PyResult<Option<(Vec<u32>, Vec<u32>)>> {
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| {
+            let mut rng = communities::Mt19937::from_state(&state)?;
+            let labels = communities::asyn_lpa(&self.succ, self.n, w, &mut rng);
+            Some((labels, rng.state()))
+        }))
+    }
+
+    /// `fast_label_propagation_communities`: final labels and the
+    /// generator's new state. Directed graphs need exact in-edge order.
+    #[allow(clippy::type_complexity)]
+    fn fast_label_propagation(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+        state: Vec<u32>,
+    ) -> PyResult<Option<(Vec<u32>, Vec<u32>)>> {
+        let w = self.weight_slice(weight, false)?;
+        let pred = if self.directed {
+            Some(self.reverse_exact_order(weight)?)
+        } else {
+            None
+        };
+        Ok(py.detach(|| {
+            let mut rng = communities::Mt19937::from_state(&state)?;
+            let labels = communities::fast_label_propagation(&self.succ, pred, self.n, w, &mut rng);
+            Some((labels, rng.state()))
+        }))
+    }
+
+    /// `asyn_fluidc`: each node's community (`None`: unassigned), the order
+    /// nodes joined NetworkX's dict, and the generator's new state. `None`
+    /// where NetworkX would fail or for a bad state.
+    #[allow(clippy::type_complexity)]
+    fn asyn_fluidc(
+        &self,
+        py: Python<'_>,
+        k: usize,
+        max_iter: i64,
+        legacy: bool,
+        state: Vec<u32>,
+    ) -> Option<(Vec<Option<u32>>, Vec<u32>, Vec<u32>)> {
+        if k == 0 || k > self.n {
+            return None;
+        }
+        py.detach(|| {
+            let mut rng = communities::Mt19937::from_state(&state)?;
+            let (com, order) =
+                communities::asyn_fluidc(&self.succ, self.n, k, max_iter, legacy, &mut rng)?;
+            let com = com
+                .into_iter()
+                .map(|c| (c != u32::MAX).then_some(c))
+                .collect();
+            Some((com, order, rng.state()))
+        })
+    }
+
+    /// `overlapping_modularity`'s sums (see `communities::overlap_stats`).
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::type_complexity)]
+    fn overlap_stats(
+        &self,
+        py: Python<'_>,
+        flat: Vec<u32>,
+        ends: Vec<usize>,
+        membership: Vec<u64>,
+        weight: Option<&str>,
+        float: bool,
+        compensated: bool,
+    ) -> PyResult<(Py<PyAny>, Vec<(f64, f64)>)> {
+        self.check_flat(&flat, &ends)?;
+        if membership.len() != self.n {
+            return Err(PyValueError::new_err("one count per node expected"));
+        }
+        let w = self.weight_slice(weight, false)?;
+        if float && w.is_none() {
+            return Err(PyValueError::new_err("float sums need a weight"));
+        }
+        if !float && communities::degrees_int(&self.succ, self.n, w).is_none() {
+            return Err(PyNotImplementedError::new_err(
+                "integer weights are too large",
+            ));
+        }
+        let (total, per) = py.detach(|| {
+            communities::overlap_stats(
+                &self.succ,
+                self.n,
+                w,
+                float,
+                compensated,
+                &membership,
+                &flat,
+                &ends,
+            )
+        });
+        Ok((num_object(py, total)?, per))
+    }
+
+    // --- Batch 16: approximation algorithms and graph operations ---
+
+    /// `min_weighted_vertex_cover`'s cover in insertion order. `costs` are
+    /// the node weights (`None`: all 1); `None` if one isn't a Python int
+    /// or float, or int arithmetic would leave `i64`.
+    #[pyo3(signature = (costs=None))]
+    fn local_ratio_cover(
+        &self,
+        py: Python<'_>,
+        costs: Option<Vec<Bound<'_, PyAny>>>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let costs = match costs {
+            None => vec![trees_more::Num::Int(1); self.n],
+            Some(values) => {
+                if values.len() != self.n {
+                    return Err(PyValueError::new_err("one cost per node"));
+                }
+                let mut out = Vec::with_capacity(self.n);
+                for value in &values {
+                    match py_num(value) {
+                        Some(x) => out.push(x),
+                        None => return Ok(None),
+                    }
+                }
+                out
+            }
+        };
+        Ok(
+            py.detach(|| {
+                approximation::local_ratio_cover(&self.succ, self.n, self.directed, costs)
+            }),
+        )
+    }
+
+    /// `min_weighted_dominating_set`'s nodes in insertion order.
+    #[pyo3(signature = (weights, uncovered_rule))]
+    fn min_weighted_dominating(
+        &self,
+        py: Python<'_>,
+        weights: Option<Vec<f64>>,
+        uncovered_rule: bool,
+    ) -> PyResult<Vec<u32>> {
+        if weights.as_ref().is_some_and(|w| w.len() != self.n) {
+            return Err(PyValueError::new_err("one weight per node"));
+        }
+        Ok(py.detach(|| {
+            approximation::min_weighted_dominating(
+                &self.succ,
+                self.n,
+                weights.as_deref(),
+                uncovered_rule,
+            )
+        }))
+    }
+
+    /// Whether every node is adjacent to all others (self-loops aside).
+    fn tsp_is_complete(&self) -> bool {
+        approximation::is_complete(&self.succ, self.n)
+    }
+
+    /// `greedy_tsp` from `source`: `(0, cycle)`, or `(1, [])` if G isn't
+    /// complete, or `(2, [])` on a tie between nearest nodes.
+    fn greedy_tsp(&self, py: Python<'_>, weight: &str, source: usize) -> PyResult<(u8, Vec<u32>)> {
+        self.check_index(source)?;
+        let w = self
+            .weight_slice(Some(weight), false)?
+            .expect("an attribute");
+        Ok(py.detach(
+            || match approximation::greedy_tsp(&self.succ, w, self.n, source) {
+                Ok(cycle) => (0, cycle),
+                Err(approximation::TspError::NotComplete) => (1, Vec::new()),
+                Err(approximation::TspError::Tie) => (2, Vec::new()),
+            },
+        ))
+    }
+
+    /// The tour state of `simulated_annealing_tsp` and
+    /// `threshold_accepting_tsp`; `nodes[k]` is the position of
+    /// `init_cycle[k]`. The caller checked that G is complete.
+    fn tsp_tour(
+        &self,
+        weight: &str,
+        nodes: Vec<u32>,
+        ints: bool,
+        compensated: bool,
+    ) -> PyResult<TspTour> {
+        for &v in &nodes {
+            self.check_index(v as usize)?;
+        }
+        let w = self
+            .weight_slice(Some(weight), false)?
+            .expect("an attribute");
+        Ok(TspTour(approximation::Tour::new(
+            &self.succ,
+            w,
+            self.n,
+            nodes,
+            ints,
+            compensated,
+        )))
+    }
+
+    /// The nodes `treewidth_decomp` eliminates with the min fill-in heuristic.
+    fn min_fill_in_order(&self, py: Python<'_>) -> Vec<u32> {
+        py.detach(|| approximation::min_fill_in_order(&self.succ, self.n))
+    }
+
+    /// `approximate_diameter`'s two sweeps from `source`, or `None` if the
+    /// graph isn't (strongly) connected.
+    fn two_sweep(&self, py: Python<'_>, source: usize) -> PyResult<Option<u32>> {
+        self.check_index(source)?;
+        let pred = if self.directed {
+            Some(self.adj(true))
+        } else {
+            None
+        };
+        Ok(py.detach(|| approximation::two_sweep(&self.succ, pred, self.n, source).ok()))
+    }
+
+    /// `one_exchange`'s state, starting from the nodes with `side` set.
+    /// The caller checked that the weights are ints.
+    #[pyo3(signature = (side, weight=None))]
+    fn max_cut(&self, side: Vec<bool>, weight: Option<&str>) -> PyResult<MaxCutState> {
+        if side.len() != self.n {
+            return Err(PyValueError::new_err("one side per node"));
+        }
+        let w = match self.weight_slice(weight, false)? {
+            Some(w) => w.iter().map(|&x| x as i64).collect(),
+            None => vec![1; self.succ.targets.len()],
+        };
+        Ok(MaxCutState(approximation::MaxCut::new(&self.succ, w, side)))
+    }
+
+    /// `cut_size` between the nodes with `side` set and the rest (int weights).
+    #[pyo3(signature = (side, weight=None))]
+    fn partition_cut_value(
+        &self,
+        py: Python<'_>,
+        side: Vec<bool>,
+        weight: Option<&str>,
+    ) -> PyResult<i128> {
+        if side.len() != self.n {
+            return Err(PyValueError::new_err("one side per node"));
+        }
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| approximation::cut_value(&self.succ, w, &side)))
+    }
+
+    /// Edges `is_kl_connected` rejects for path count `limit`, in edge order
+    /// (only the first with `first_only`). Directed graphs need the exact
+    /// predecessor order loaded.
+    fn kl_rejected(
+        &self,
+        py: Python<'_>,
+        limit: u64,
+        first_only: bool,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        let pred = self.path_adj(None, true)?.0;
+        Ok(py.detach(|| {
+            approximation::kl_rejected(&self.succ, pred, self.n, self.directed, limit, first_only)
+                .into_iter()
+                .unzip()
+        }))
+    }
+
+    /// `complement`'s edges in the order NetworkX adds them.
+    fn complement_pairs(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
+        py.detach(|| approximation::complement_edges(&self.succ, self.n, self.directed))
+    }
+
+    /// `power(G, k)`'s edges in the order NetworkX adds them.
+    fn power_pairs(&self, py: Python<'_>, k: usize) -> (Vec<u32>, Vec<u32>) {
+        py.detach(|| approximation::power_edges(&self.succ, self.n, k))
+    }
+
+    /// Mehlhorn's spanning tree over the terminals (`steiner_tree`):
+    /// `(missing, us, vs)`, where `missing` is the first node no terminal
+    /// reaches. Distances use `dist_weight` (hop counts with `hops`); the
+    /// `G_1'` weights add the `weight` attribute.
+    #[pyo3(signature = (sources, dist_weight, hops, weight))]
+    #[allow(clippy::type_complexity)]
+    fn mehlhorn_terminal_mst(
+        &self,
+        py: Python<'_>,
+        sources: Vec<u32>,
+        dist_weight: Option<&str>,
+        hops: bool,
+        weight: Option<&str>,
+    ) -> PyResult<(Option<u32>, Vec<u32>, Vec<u32>)> {
+        let sources = self.sources_or_all(Some(sources))?;
+        let wd = self.weight_slice(dist_weight, false)?;
+        let w = self.weight_slice(weight, false)?;
+        let tree = py
+            .detach(|| more_paths::dijkstra_forest(&self.succ, self.n, wd, &sources, None, None))?;
+        Ok(
+            match py
+                .detach(|| approximation::mehlhorn_terminal_mst(&self.succ, self.n, &tree, hops, w))
+            {
+                Ok(pairs) => {
+                    let (us, vs) = pairs.into_iter().unzip();
+                    (None, us, vs)
+                }
+                Err(v) => (Some(v), Vec::new(), Vec::new()),
+            },
+        )
+    }
+
+    /// `densest_subgraph` by greedy++ (`heap_init` is `None`) or FISTA
+    /// (`heap_init`: the peeling heap's `(node, index into b)` fill order):
+    /// `(best density, nodes removed in the best run, prefix)`. The caller
+    /// checked FISTA's graph has no self-loops.
+    #[pyo3(signature = (iterations, fista, heap_init=None))]
+    #[allow(clippy::type_complexity)]
+    fn densest_peeling(
+        &self,
+        py: Python<'_>,
+        iterations: usize,
+        fista: bool,
+        heap_init: Option<Vec<(u32, u32)>>,
+    ) -> PyResult<(f64, Vec<u32>, Option<usize>)> {
+        let p = if fista {
+            let init = heap_init.unwrap_or_else(|| (0..self.n as u32).map(|v| (v, v)).collect());
+            if init.len() != self.n
+                || init
+                    .iter()
+                    .any(|&(a, b)| a as usize >= self.n || b as usize >= self.n)
+            {
+                return Err(PyValueError::new_err("one heap entry per node"));
+            }
+            py.detach(|| approximation::fista_peeling(&self.succ, self.n, iterations, &init))
+        } else {
+            let degree = self.degrees();
+            let m = self.number_of_edges();
+            py.detach(|| {
+                approximation::greedy_plus_plus(&self.succ, self.n, &degree, m, iterations)
+            })
+        };
+        Ok((p.density, p.removed, p.prefix))
+    }
+
+    /// Edges of this graph, in `G.edges()` order, that `other` lacks;
+    /// `map[v]` is node `v`'s position in `other`.
+    fn edges_missing_from(
+        &self,
+        py: Python<'_>,
+        other: &Bound<'_, CoreGraph>,
+        map: Vec<u32>,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        let other = other.get();
+        if map.len() != self.n || map.iter().any(|&h| h as usize >= other.n) {
+            return Err(PyValueError::new_err(
+                "map must give a node of other per node",
+            ));
+        }
+        Ok(py.detach(|| {
+            approximation::edges_missing_from(&self.succ, self.n, self.directed, &other.succ, &map)
+        }))
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -3503,6 +5012,55 @@ impl CoreGraph {
         Ok(flags)
     }
 
+    /// Equal-length lists of valid node positions.
+    fn check_pairs(&self, us: &[u32], vs: &[u32]) -> PyResult<()> {
+        if us.len() != vs.len() {
+            return Err(PyValueError::new_err("pair lists differ in length"));
+        }
+        for &v in us.iter().chain(vs) {
+            self.check_index(v as usize)?;
+        }
+        Ok(())
+    }
+
+    /// The auxiliary digraph for local connectivity, and `s`, `t` mapped
+    /// into it (`sB`, `tA` when node-split).
+    fn conn_aux(&self, node_split: bool, s: u32, t: u32) -> (connectivity::Aux, u32, u32) {
+        if node_split {
+            let h = connectivity::node_aux(&self.succ, self.n, self.directed);
+            (h, 2 * s + 1, 2 * t)
+        } else {
+            (
+                connectivity::edge_aux(&self.succ, self.n, self.directed),
+                s,
+                t,
+            )
+        }
+    }
+
+    fn conn_flows(
+        &self,
+        py: Python<'_>,
+        node_split: bool,
+        pairs: Vec<(u32, u32)>,
+        cutoff: Option<f64>,
+    ) -> PyResult<Vec<i64>> {
+        py.detach(|| {
+            let h = if node_split {
+                connectivity::node_aux(&self.succ, self.n, self.directed)
+            } else {
+                connectivity::edge_aux(&self.succ, self.n, self.directed)
+            };
+            let pairs: Vec<(u32, u32)> = if node_split {
+                pairs.into_iter().map(|(s, t)| (2 * s + 1, 2 * t)).collect()
+            } else {
+                pairs
+            };
+            connectivity::pair_flows(&h, &pairs, cutoff.unwrap_or(f64::INFINITY))
+        })
+        .map_err(|_| unbounded())
+    }
+
     fn check_index(&self, v: usize) -> PyResult<()> {
         if v < self.n {
             Ok(())
@@ -3719,6 +5277,117 @@ impl CliqueQueue {
         }
         Ok(out)
     }
+}
+
+// --- Batch 16: approximation algorithms and graph operations ---
+
+/// The cycle of `simulated_annealing_tsp` / `threshold_accepting_tsp`.
+#[pyclass(module = "rustnx._core")]
+pub struct TspTour(approximation::Tour);
+
+fn tour_cost<'py>(py: Python<'py>, cost: approximation::Cost) -> PyResult<Bound<'py, PyAny>> {
+    Ok(match cost {
+        approximation::Cost::Int(x) => x.into_pyobject(py)?.into_any(),
+        approximation::Cost::Float(x) => PyFloat::new(py, x).into_any(),
+    })
+}
+
+#[pymethods]
+impl TspTour {
+    /// The current cycle's cost, as NetworkX's `sum()` gives it.
+    fn cost<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        tour_cost(py, self.0.cost())
+    }
+
+    /// Apply the move (0: swap two nodes, 1: move one node) for the sampled
+    /// indices, and return the new cost.
+    fn step<'py>(
+        &mut self,
+        py: Python<'py>,
+        kind: u8,
+        a: usize,
+        b: usize,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        if !self.0.apply(kind, a, b) {
+            return Err(PyIndexError::new_err("move index out of range"));
+        }
+        tour_cost(py, self.0.cost())
+    }
+
+    fn save_best(&mut self) {
+        self.0.save_best();
+    }
+
+    /// Indices into `init_cycle` of the best cycle saved.
+    fn best(&self) -> Vec<u32> {
+        self.0.best()
+    }
+}
+
+/// `one_exchange`'s cut state.
+#[pyclass(module = "rustnx._core")]
+pub struct MaxCutState(approximation::MaxCut);
+
+#[pymethods]
+impl MaxCutState {
+    fn cut(&self) -> i128 {
+        self.0.cut()
+    }
+
+    /// The first node in `order` whose switch gives the largest cut, and
+    /// that cut.
+    fn best(&self, py: Python<'_>, order: Vec<u32>) -> PyResult<Option<(u32, i128)>> {
+        let state = &self.0;
+        match py.detach(|| state.best(&order)) {
+            Some(found) => Ok(Some(found)),
+            None if order.is_empty() => Ok(None),
+            None => Err(PyIndexError::new_err("node index out of range")),
+        }
+    }
+
+    fn switch(&mut self, v: usize) -> PyResult<()> {
+        if v >= self.0.len() {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        self.0.switch(v);
+        Ok(())
+    }
+}
+
+/// Add edges `(nodes[u], nodes[v])` to a new NetworkX graph's adjacency
+/// dicts as `add_edges_from` would (batch 16): one shared empty attribute
+/// dict per edge, and edges already present left as they are. `pred_rows`
+/// are a directed graph's `_pred` dicts.
+#[pyfunction]
+#[pyo3(signature = (succ_rows, pred_rows, nodes, us, vs))]
+fn _add_plain_edges(
+    succ_rows: Vec<Bound<'_, PyDict>>,
+    pred_rows: Option<Vec<Bound<'_, PyDict>>>,
+    nodes: Vec<Bound<'_, PyAny>>,
+    us: Vec<u32>,
+    vs: Vec<u32>,
+) -> PyResult<()> {
+    let n = nodes.len();
+    if succ_rows.len() != n
+        || pred_rows.as_ref().is_some_and(|p| p.len() != n)
+        || us.len() != vs.len()
+        || us.iter().chain(&vs).any(|&v| v as usize >= n)
+    {
+        return Err(PyValueError::new_err("rows, nodes and edges must agree"));
+    }
+    for (&u, &v) in us.iter().zip(&vs) {
+        let (u, v) = (u as usize, v as usize);
+        if succ_rows[u].contains(&nodes[v])? {
+            continue;
+        }
+        let data = PyDict::new(succ_rows[u].py());
+        succ_rows[u].set_item(&nodes[v], &data)?;
+        match &pred_rows {
+            Some(pred) => pred[v].set_item(&nodes[u], &data)?,
+            None => succ_rows[v].set_item(&nodes[u], &data)?,
+        }
+    }
+    Ok(())
 }
 
 /// A degree-sequence test (batch 10) on a list of Python ints: `kind` is
@@ -3978,6 +5647,472 @@ fn unzip3(items: Vec<(u32, u32, u8)>) -> (Vec<u32>, Vec<u32>, Vec<u8>) {
     (us, vs, labels)
 }
 
+// --- Batch 15: communities, efficiency and structural holes ---
+
+impl CoreGraph {
+    /// Checks node lists flattened with `ends` (each list's end).
+    fn check_flat(&self, flat: &[u32], ends: &[usize]) -> PyResult<()> {
+        if ends.windows(2).any(|w| w[0] > w[1]) || ends.last().is_some_and(|&e| e != flat.len()) {
+            return Err(PyValueError::new_err("bad list ends"));
+        }
+        for &v in flat {
+            self.check_index(v as usize)?;
+        }
+        Ok(())
+    }
+}
+
+/// A batch 15 sum as the Python int or float NetworkX gets.
+fn num_object(py: Python<'_>, x: communities::Num) -> PyResult<Py<PyAny>> {
+    Ok(match x {
+        communities::Num::Int(i) => i.into_pyobject(py)?.into_any().unbind(),
+        communities::Num::Float(f) => PyFloat::new(py, f).into_any().unbind(),
+    })
+}
+
+/// `girvan_newman`'s working graph, one level of communities per call.
+#[pyclass(module = "rustnx._core")]
+pub struct GirvanNewman {
+    g: communities::EditableGraph,
+    scale: Option<f64>,
+}
+
+#[pymethods]
+impl GirvanNewman {
+    /// The next tuple of components, or `None` once the graph has no edges.
+    fn next_level(&mut self, py: Python<'_>) -> Option<Vec<Vec<u32>>> {
+        if self.g.number_of_edges() == 0 {
+            return None;
+        }
+        let scale = self.scale;
+        let g = &mut self.g;
+        Some(py.detach(|| g.girvan_newman_step(scale)))
+    }
+}
+
+/// Link prediction scores for batches of pairs (`CoreGraph.link_scorer`).
+#[pyclass(module = "rustnx._core", frozen)]
+pub struct LinkScorer {
+    graph: Py<CoreGraph>,
+    mode: measures::LinkMode,
+    hashes: Vec<i64>,
+    degree: Vec<usize>,
+    table: Vec<f64>,
+    classes: Option<Vec<i64>>,
+    compensated: bool,
+}
+
+#[pymethods]
+impl LinkScorer {
+    /// `(codes, a, b, f, w)` per pair; see `measures::code`.
+    #[allow(clippy::type_complexity)]
+    fn scores(
+        &self,
+        py: Python<'_>,
+        us: Vec<u32>,
+        vs: Vec<u32>,
+    ) -> PyResult<(Vec<u8>, Vec<i64>, Vec<i64>, Vec<f64>, Vec<u32>)> {
+        let g = self.graph.get();
+        g.check_pairs(&us, &vs)?;
+        let inp = measures::LinkInput {
+            adj: &g.succ,
+            n: g.n,
+            hashes: &self.hashes,
+            degree: &self.degree,
+            table: &self.table,
+            classes: self.classes.as_deref(),
+            compensated: self.compensated,
+        };
+        let out = py.detach(|| measures::link_scores(&inp, self.mode, &us, &vs));
+        Ok((out.codes, out.a, out.b, out.f, out.w))
+    }
+}
+
+// --- Batch 12: flows and cut measures ---
+
+impl CoreGraph {
+    /// Edge attributes read from NetworkX's adjacency rows (`list(G._adj
+    /// .values())`, aligned with `succ`), one vector per `(name, default)`.
+    fn edge_values(
+        &self,
+        rows: &Bound<'_, PyList>,
+        attrs: &[(&Bound<'_, PyAny>, flow::Val)],
+    ) -> PyResult<Vec<Vec<flow::Val>>> {
+        if rows.len() != self.n {
+            return Err(PyNotImplementedError::new_err(
+                "adjacency does not match this graph",
+            ));
+        }
+        let m = self.succ.targets.len();
+        let mut out: Vec<Vec<flow::Val>> = attrs.iter().map(|_| Vec::with_capacity(m)).collect();
+        for (u, row) in rows.iter().enumerate() {
+            let row = row
+                .cast::<PyDict>()
+                .map_err(|_| PyNotImplementedError::new_err("adjacency rows are not dicts"))?;
+            if row.len() != self.succ.range(u).len() {
+                return Err(PyNotImplementedError::new_err(
+                    "adjacency does not match this graph",
+                ));
+            }
+            for (_, data) in row.iter() {
+                let data = data
+                    .cast::<PyDict>()
+                    .map_err(|_| PyNotImplementedError::new_err("edge data is not a dict"))?;
+                for (k, (name, default)) in attrs.iter().enumerate() {
+                    out[k].push(match data.get_item(name)? {
+                        Some(x) => py_val(&x)?,
+                        None => *default,
+                    });
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Weights for the cut measures, as Python numbers: the converted ones,
+    /// or, for an attribute mixing ints and floats, read from `rows` (see
+    /// `edge_values`). `None` values fall back (NetworkX raises).
+    fn cut_weights(
+        &self,
+        weight: Option<&str>,
+        rows: Option<&Bound<'_, PyList>>,
+    ) -> PyResult<flow::Weights<'_>> {
+        let Some(attr) = weight else {
+            return Ok(flow::Weights::Unit);
+        };
+        let (all_int, hidden) = self.weights_info(Some(attr));
+        if hidden {
+            return Err(PyNotImplementedError::new_err("None weights"));
+        }
+        if self.weights_mixed(Some(attr)) {
+            let rows =
+                rows.ok_or_else(|| PyNotImplementedError::new_err("weights mix ints and floats"))?;
+            let name = pyo3::types::PyString::new(rows.py(), attr).into_any();
+            let mut vals = self.edge_values(rows, &[(&name, flow::Val::I(1))])?;
+            return Ok(flow::Weights::Exact(vals.pop().unwrap_or_default()));
+        }
+        Ok(match self.weight_slice(Some(attr), false)? {
+            Some(w) => flow::Weights::Stored(w, all_int),
+            None => flow::Weights::Unit,
+        })
+    }
+}
+
+/// A Python int (within `i64`, not a bool) or float (not NaN) as a `Val`.
+fn py_val(x: &Bound<'_, PyAny>) -> PyResult<flow::Val> {
+    if x.is_exact_instance_of::<PyInt>() {
+        return x
+            .extract::<i64>()
+            .map(flow::Val::I)
+            .map_err(|_| PyNotImplementedError::new_err("integer too large"));
+    }
+    if x.is_exact_instance_of::<PyFloat>() {
+        let f = x.cast::<PyFloat>()?.value();
+        if !f.is_nan() {
+            return Ok(flow::Val::F(f));
+        }
+    }
+    Err(PyNotImplementedError::new_err(
+        "rustnx needs int or float values here",
+    ))
+}
+
+fn val_obj(py: Python<'_>, v: flow::Val) -> PyResult<Bound<'_, PyAny>> {
+    Ok(match v {
+        flow::Val::I(i) => i.into_pyobject(py)?.into_any(),
+        flow::Val::F(f) => PyFloat::new(py, f).into_any(),
+    })
+}
+
+fn fail_err(f: flow::Fail) -> PyErr {
+    let raise = |name: &str, msg: &str| {
+        Python::attach(|py| -> PyErr {
+            match py
+                .import("networkx")
+                .and_then(|nx| nx.getattr(name))
+                .and_then(|cls| cls.call1((msg,)))
+            {
+                Ok(exc) => PyErr::from_value(exc),
+                Err(e) => e,
+            }
+        })
+    };
+    match f {
+        flow::Fail::Unsupported => PyNotImplementedError::new_err(
+            "NetworkX raises an error rustnx doesn't reproduce, or a value is too large",
+        ),
+        flow::Fail::Unbounded(msg) => raise("NetworkXUnbounded", msg),
+    }
+}
+
+/// A residual network and the flow last computed on it (batch 12).
+#[pyclass(module = "rustnx._core")]
+pub struct FlowRun {
+    res: flow::Residual,
+    /// G's own adjacency, for `build_flow_dict`.
+    g_offsets: Vec<usize>,
+    g_targets: Vec<u32>,
+    outcome: Option<flow::Outcome>,
+}
+
+fn flow_algo(name: &str, two_phase: bool, d: i64, threshold: f64) -> PyResult<flow::Algo> {
+    Ok(match name {
+        "edmonds_karp" => flow::Algo::EdmondsKarp,
+        "shortest_augmenting_path" => flow::Algo::ShortestAugmentingPath(two_phase, d),
+        "dinitz" => flow::Algo::Dinitz,
+        "boykov_kolmogorov" => flow::Algo::BoykovKolmogorov,
+        "preflow_push" => flow::Algo::PreflowPush(threshold),
+        _ => return Err(PyValueError::new_err("unknown flow algorithm")),
+    })
+}
+
+#[pymethods]
+impl FlowRun {
+    /// `R.size()`.
+    fn edge_count(&self) -> usize {
+        self.res.tail.len()
+    }
+
+    /// `R.graph["inf"]`.
+    fn inf<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        val_obj(py, self.res.inf)
+    }
+
+    /// Run a maximum flow algorithm from scratch; returns the flow value.
+    /// `cutoff` is the caller's value (None for NetworkX's default),
+    /// `d` and `threshold` as `flow::Algo` describes.
+    #[pyo3(signature = (algorithm, s, t, cutoff=None, value_only=false, two_phase=false, d=0, threshold=0.0, hashes=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn run<'py>(
+        &mut self,
+        py: Python<'py>,
+        algorithm: &str,
+        s: u32,
+        t: u32,
+        cutoff: Option<&Bound<'py, PyAny>>,
+        value_only: bool,
+        two_phase: bool,
+        d: i64,
+        threshold: f64,
+        hashes: Option<Vec<i64>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let algo = flow_algo(algorithm, two_phase, d, threshold)?;
+        let cutoff = match cutoff {
+            Some(c) if !c.is_none() => Some(py_val(c)?),
+            _ => None,
+        };
+        let n = self.res.n;
+        if s as usize >= n || t as usize >= n {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        let hashes = hashes.unwrap_or_default();
+        let res = &mut self.res;
+        let outcome = py
+            .detach(|| flow::run_flow(res, algo, s, t, cutoff, value_only, &hashes))
+            .map_err(fail_err)?;
+        let value = val_obj(py, outcome.value)?;
+        self.outcome = Some(outcome);
+        Ok(value)
+    }
+
+    /// `minimum_cut`'s reverse search from `t` (see `Residual::cut_order`).
+    fn cut_order(&self, t: u32, strict: bool) -> PyResult<Vec<u32>> {
+        if t as usize >= self.res.n {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        Ok(self.res.cut_order(t, strict))
+    }
+
+    /// Fill a fresh `R`: `succ_rows`/`pred_rows` are `R._succ` and
+    /// `R._pred` rows in node order; edge dicts hold the capacity (and the
+    /// flow, `with_flow`). Each edge's dict is shared by both rows.
+    fn fill<'py>(
+        &self,
+        py: Python<'py>,
+        succ_rows: &Bound<'py, PyList>,
+        pred_rows: &Bound<'py, PyList>,
+        nodes: &Bound<'py, PyList>,
+        with_flow: bool,
+    ) -> PyResult<()> {
+        let r = &self.res;
+        if succ_rows.len() != r.n || pred_rows.len() != r.n || nodes.len() != r.n {
+            return Err(PyValueError::new_err(
+                "rows do not match the residual network",
+            ));
+        }
+        let objects: Vec<Bound<'py, PyAny>> = nodes.iter().collect();
+        let capacity = pyo3::intern!(py, "capacity");
+        let flow_key = pyo3::intern!(py, "flow");
+        let mut dicts: Vec<Option<Bound<'py, PyDict>>> = vec![None; r.tail.len()];
+        for (u, row) in succ_rows.iter().enumerate() {
+            let row = row.cast::<PyDict>()?;
+            for &e in &r.succ[u] {
+                let e = e as usize;
+                let d = PyDict::new(py);
+                d.set_item(capacity, val_obj(py, r.cap[e])?)?;
+                if with_flow {
+                    d.set_item(flow_key, val_obj(py, r.flow[e])?)?;
+                }
+                row.set_item(&objects[r.head[e] as usize], &d)?;
+                dicts[e] = Some(d);
+            }
+        }
+        for (v, row) in pred_rows.iter().enumerate() {
+            let row = row.cast::<PyDict>()?;
+            for &e in &r.pred[v] {
+                let e = e as usize;
+                let d = dicts[e]
+                    .as_ref()
+                    .ok_or_else(|| PyValueError::new_err("edge missing"))?;
+                row.set_item(&objects[r.tail[e] as usize], d)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Set the `excess` and `height` node attributes the last run left
+    /// (`node_rows` is `list(R._node.values())`); returns the positions of
+    /// the `curr_edge`s, if the run set them.
+    fn set_node_attrs<'py>(
+        &self,
+        py: Python<'py>,
+        node_rows: &Bound<'py, PyList>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let Some(out) = &self.outcome else {
+            return Ok(None);
+        };
+        if node_rows.len() != self.res.n {
+            return Err(PyValueError::new_err(
+                "rows do not match the residual network",
+            ));
+        }
+        if let Some(excess) = &out.excess {
+            let key = pyo3::intern!(py, "excess");
+            for (row, &x) in node_rows.iter().zip(excess) {
+                row.set_item(key, val_obj(py, x)?)?;
+            }
+        }
+        let Some(state) = &out.state else {
+            return Ok(None);
+        };
+        let key = pyo3::intern!(py, "height");
+        for (row, &h) in node_rows.iter().zip(&state.height) {
+            row.set_item(key, h)?;
+        }
+        Ok(Some(state.curr.clone()))
+    }
+
+    /// `R.graph["trees"]` after `boykov_kolmogorov`.
+    fn trees<'py>(
+        &self,
+        py: Python<'py>,
+        nodes: &Bound<'py, PyList>,
+    ) -> PyResult<Option<Bound<'py, PyTuple>>> {
+        let Some((source, target)) = self.outcome.as_ref().and_then(|o| o.trees.as_ref()) else {
+            return Ok(None);
+        };
+        let objects: Vec<Bound<'py, PyAny>> = nodes.iter().collect();
+        let to_dict = |tree: &Vec<(u32, Option<u32>)>| -> PyResult<Bound<'py, PyDict>> {
+            let d = PyDict::new(py);
+            for &(k, p) in tree {
+                match p {
+                    Some(p) => d.set_item(&objects[k as usize], &objects[p as usize])?,
+                    None => d.set_item(&objects[k as usize], py.None())?,
+                }
+            }
+            Ok(d)
+        };
+        Ok(Some(PyTuple::new(
+            py,
+            [to_dict(source)?, to_dict(target)?],
+        )?))
+    }
+
+    /// `build_flow_dict(G, R)` for the last run.
+    fn flow_dict<'py>(
+        &self,
+        py: Python<'py>,
+        nodes: &Bound<'py, PyList>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let r = &self.res;
+        let objects: Vec<Bound<'py, PyAny>> = nodes.iter().collect();
+        if objects.len() != r.n {
+            return Err(PyValueError::new_err(
+                "nodes do not match the residual network",
+            ));
+        }
+        let zero = 0i64.into_pyobject(py)?.into_any();
+        let out = PyDict::new(py);
+        for u in 0..r.n {
+            let row = PyDict::new(py);
+            for &v in &self.g_targets[self.g_offsets[u]..self.g_offsets[u + 1]] {
+                row.set_item(&objects[v as usize], &zero)?;
+            }
+            for &e in &r.succ[u] {
+                let f = r.flow[e as usize];
+                if f.gt(flow::Val::I(0)) {
+                    row.set_item(&objects[r.head[e as usize] as usize], val_obj(py, f)?)?;
+                }
+            }
+            out.set_item(&objects[u], row)?;
+        }
+        Ok(out)
+    }
+
+    /// `gomory_hu_tree` from this (fresh) residual network: each non-root
+    /// node's parent position and edge weight, in node order.
+    #[pyo3(signature = (algorithm, strict_cut, two_phase=false, d=0, threshold=0.0, hashes=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn gomory_hu<'py>(
+        &mut self,
+        py: Python<'py>,
+        algorithm: &str,
+        strict_cut: bool,
+        two_phase: bool,
+        d: i64,
+        threshold: f64,
+        hashes: Option<Vec<i64>>,
+    ) -> PyResult<Vec<(u32, Bound<'py, PyAny>)>> {
+        let algo = flow_algo(algorithm, two_phase, d, threshold)?;
+        let hashes = hashes.unwrap_or_default();
+        let res = &mut self.res;
+        let tree = py
+            .detach(|| flow::gomory_hu(res, algo, &hashes, strict_cut))
+            .map_err(fail_err)?;
+        tree.into_iter()
+            .map(|(p, w)| Ok((p, val_obj(py, w)?)))
+            .collect()
+    }
+}
+
+/// Replays set operations on `flow::PySet` (the runtime check that it
+/// matches the interpreter's sets); see `flow::replay_sets`.
+#[pyfunction]
+fn _replay_sets(
+    hashes: Vec<i64>,
+    nsets: usize,
+    ops: Vec<(u8, u32, u32)>,
+) -> PyResult<(Vec<i64>, Vec<Vec<u32>>)> {
+    for &(op, s, k) in &ops {
+        let key_ok = match op {
+            0 | 1 => (k as usize) < hashes.len(),
+            3 => (k as usize) < nsets,
+            _ => true,
+        };
+        if s as usize >= nsets || !key_ok {
+            return Err(PyIndexError::new_err("set or key out of range"));
+        }
+    }
+    Ok(flow::replay_sets(&hashes, nsets, &ops))
+}
+
+/// Tells the core whether `sum()` compensates ints after the first float
+/// (Python 3.14+), as detected by `rustnx.algorithms` at import.
+#[pyfunction]
+fn _set_sum_ints_compensated(on: bool) {
+    flow::SUM_INTS_COMPENSATED.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// CPython's float `sum()` (exposed for tests).
 #[pyfunction]
 fn _py_sum(values: Vec<f64>, compensated: bool) -> f64 {
@@ -3989,6 +6124,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CoreGraph>()?;
     m.add_class::<AllPaths>()?;
     m.add_class::<PredPaths>()?;
+    m.add_class::<LinkScorer>()?;
     m.add_class::<AllTopoSorts>()?;
     m.add_class::<ClosureDag>()?;
     m.add_class::<RootLeafPaths>()?;
@@ -4001,14 +6137,21 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<TreeLca>()?;
     m.add_class::<Boruvka>()?;
     m.add_class::<CliqueQueue>()?;
+    m.add_class::<FlowRun>()?;
+    m.add_class::<GirvanNewman>()?;
+    m.add_class::<TspTour>()?;
+    m.add_class::<MaxCutState>()?;
     m.add_function(wrap_pyfunction!(graph::build_graph, m)?)?;
     m.add_function(wrap_pyfunction!(serialize::_core_graph_from_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(native::build_native, m)?)?;
     m.add_function(wrap_pyfunction!(native::build_native_arrays, m)?)?;
     m.add_function(wrap_pyfunction!(rx::build_rx, m)?)?;
     m.add_function(wrap_pyfunction!(_py_sum, m)?)?;
+    m.add_function(wrap_pyfunction!(_set_sum_ints_compensated, m)?)?;
     m.add_function(wrap_pyfunction!(_degree_sequence_test, m)?)?;
     m.add_function(wrap_pyfunction!(_digraphical, m)?)?;
     m.add_function(wrap_pyfunction!(_plain_int_list, m)?)?;
+    m.add_function(wrap_pyfunction!(_replay_sets, m)?)?;
+    m.add_function(wrap_pyfunction!(_add_plain_edges, m)?)?;
     Ok(())
 }
