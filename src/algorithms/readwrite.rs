@@ -456,8 +456,9 @@ fn node_of(b: &mut Builder, token: &str, kind: NodeType) -> Option<u32> {
         return Some(b.str_node(token));
     }
     match convert(token, kind)? {
-        // NaN != NaN: every NaN would be its own node.
-        Val::Float(f) if f.is_nan() => None,
+        // NaN != NaN: every NaN would be its own node. -0.0 == 0.0, but
+        // NetworkX keeps whichever object each row's dict saw first.
+        Val::Float(f) if f.is_nan() || (f == 0.0 && f.is_sign_negative()) => None,
         v => Some(b.node(v)),
     }
 }
@@ -732,17 +733,55 @@ fn lower_starts_with(s: &str, prefix: &str) -> bool {
     }
 }
 
-/// `shlex.split(s)` for a line without quotes or backslashes (`None`
-/// otherwise): it splits on space, tab, CR and LF only.
-fn shlex_split(s: &str) -> Option<Vec<&str>> {
-    if s.contains(['\'', '"', '\\']) {
-        return None;
+/// `shlex.split(s)` (POSIX mode, no comments): tokens split at space, tab,
+/// CR and LF; quotes group (and join adjacent text), a backslash escapes
+/// the next character outside quotes and `"` or `\\` inside double quotes.
+/// `None` where shlex raises (an unclosed quote, a trailing backslash).
+fn shlex_split(s: &str) -> Option<Vec<String>> {
+    let mut tokens = Vec::new();
+    let mut token = String::new();
+    let mut in_token = false;
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            ' ' | '\t' | '\r' | '\n' => {
+                if in_token {
+                    tokens.push(std::mem::take(&mut token));
+                    in_token = false;
+                }
+            }
+            '\\' => {
+                token.push(chars.next()?);
+                in_token = true;
+            }
+            '\'' | '"' => {
+                in_token = true;
+                loop {
+                    let q = chars.next()?;
+                    if q == c {
+                        break;
+                    }
+                    if c == '"' && q == '\\' {
+                        let e = chars.next()?;
+                        if e != '"' && e != '\\' {
+                            token.push('\\');
+                        }
+                        token.push(e);
+                    } else {
+                        token.push(q);
+                    }
+                }
+            }
+            _ => {
+                token.push(c);
+                in_token = true;
+            }
+        }
     }
-    Some(
-        s.split([' ', '\t', '\r', '\n'])
-            .filter(|t| !t.is_empty())
-            .collect(),
-    )
+    if in_token {
+        tokens.push(token);
+    }
+    Some(tokens)
 }
 
 /// `parse_pajek` for files with vertices and one `*edges` or `*arcs`
@@ -754,7 +793,7 @@ pub fn pajek(lines: &[&str]) -> Option<Parsed> {
     let id_key = b.key("id");
     let (x_key, y_key, shape_key, weight_key) =
         (b.key("x"), b.key("y"), b.key("shape"), b.key("weight"));
-    let mut nodelabels: Option<HashMap<&str, u32>> = None;
+    let mut nodelabels: Option<HashMap<String, u32>> = None;
     let mut i = 0;
     while i < lines.len() {
         let l = lines[i];
@@ -777,17 +816,16 @@ pub fn pajek(lines: &[&str]) -> Option<Parsed> {
                 if split.len() < 2 {
                     return None;
                 }
-                let (id, label) = (split[0], split[1]);
-                let node = b.str_node(label);
-                labels.insert(id, node);
-                let mut attrs = vec![(id_key, Val::Str(id.to_string()))];
+                let node = b.str_node(&split[1]);
+                labels.insert(split[0].clone(), node);
+                let mut attrs = vec![(id_key, Val::Str(split[0].clone()))];
                 if split.len() >= 5 {
-                    match py_float(split[2]) {
-                        FloatParse::Ok(x) => match py_float(split[3]) {
+                    match py_float(&split[2]) {
+                        FloatParse::Ok(x) => match py_float(&split[3]) {
                             FloatParse::Ok(y) => {
                                 attrs.push((x_key, Val::Float(x)));
                                 attrs.push((y_key, Val::Float(y)));
-                                attrs.push((shape_key, Val::Str(split[4].to_string())));
+                                attrs.push((shape_key, Val::Str(split[4].clone())));
                             }
                             FloatParse::Invalid => {}
                             FloatParse::Unsure => return None,
@@ -796,16 +834,10 @@ pub fn pajek(lines: &[&str]) -> Option<Parsed> {
                         FloatParse::Unsure => return None,
                     }
                 }
-                let extra: Vec<(&str, &str)> = split
-                    .iter()
-                    .skip(5)
-                    .step_by(2)
-                    .zip(split.iter().skip(6).step_by(2))
-                    .map(|(k, v)| (*k, *v))
-                    .collect();
-                for (k, v) in extra {
+                let extra = split.iter().skip(5).step_by(2);
+                for (k, v) in extra.zip(split.iter().skip(6).step_by(2)) {
                     let k = b.key(k);
-                    attrs.push((k, Val::Str(v.to_string())));
+                    attrs.push((k, Val::Str(v.clone())));
                 }
                 b.parsed.ops.push(Op::Node(node, attrs));
             }
@@ -826,32 +858,26 @@ pub fn pajek(lines: &[&str]) -> Option<Parsed> {
                 }
                 let mut ends = [0u32; 2];
                 for (end, token) in ends.iter_mut().zip(&split[..2]) {
-                    *end = match labels.get(token) {
+                    *end = match labels.get(token.as_str()) {
                         Some(&n) => n,
                         None => b.str_node(token),
                     };
                 }
                 let mut attrs = Vec::new();
                 if split.len() >= 3 {
-                    match py_float(split[2]) {
+                    match py_float(&split[2]) {
                         FloatParse::Ok(w) => attrs.push((weight_key, Val::Float(w))),
                         FloatParse::Invalid => {}
                         FloatParse::Unsure => return None,
                     }
                 }
-                let extra: Vec<(&str, &str)> = split
-                    .iter()
-                    .skip(3)
-                    .step_by(2)
-                    .zip(split.iter().skip(4).step_by(2))
-                    .map(|(k, v)| (*k, *v))
-                    .collect();
-                for (k, v) in extra {
+                let extra = split.iter().skip(3).step_by(2);
+                for (k, v) in extra.zip(split.iter().skip(4).step_by(2)) {
                     if reserved(k) {
                         return None;
                     }
                     let k = b.key(k);
-                    attrs.push((k, Val::Str(v.to_string())));
+                    attrs.push((k, Val::Str(v.clone())));
                 }
                 b.parsed.ops.push(Op::Edge(ends[0], ends[1], attrs));
             }
@@ -877,6 +903,15 @@ fn data_to_n(data: &[u8]) -> Option<(u64, &[u8])> {
     }
     let n = (d(2)? << 30) + (d(3)? << 24) + (d(4)? << 18) + (d(5)? << 12) + (d(6)? << 6) + d(7)?;
     Some((n, &data[8..]))
+}
+
+/// `bytes.strip()`: ASCII whitespace, including the vertical tab that
+/// `<[u8]>::trim_ascii` keeps.
+pub fn py_bytes_strip(b: &[u8]) -> &[u8] {
+    let ws = |c: &u8| matches!(c, b' ' | b'\t' | b'\n' | b'\r' | b'\x0b' | b'\x0c');
+    let start = b.iter().position(|c| !ws(c)).unwrap_or(b.len());
+    let end = b.iter().rposition(|c| !ws(c)).map_or(start, |p| p + 1);
+    &b[start..end]
 }
 
 /// Character values minus 63, if every character is in range(63, 127).
@@ -961,7 +996,6 @@ pub fn sparse6(bytes: &[u8]) -> Option<Parsed> {
                 Some(c) => d = c,
                 None => break 'outer,
             }
-            d_len = 6;
             x = (x << 6) + d;
             x_len += 6;
         }

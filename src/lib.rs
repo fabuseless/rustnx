@@ -4867,7 +4867,7 @@ impl CoreGraph {
         let chunks: Vec<&[u8]> = if file {
             bytes
                 .split_inclusive(|&c| c == b'\n')
-                .map(|line| line.trim_ascii())
+                .map(readwrite::py_bytes_strip)
                 .filter(|line| !line.is_empty())
                 .collect()
         } else {
