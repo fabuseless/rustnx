@@ -107,6 +107,12 @@ versions may change behavior.
   graph is one component, the set's iteration order now matches (3.7 added an
   early exit that fills the set in a different order).
 
+### Changed
+- Internal: one replica of CPython's set table (`src/algorithms/pyset.rs`)
+  now serves both the flow algorithms and link prediction, and the
+  connectivity functions use the flow module's Edmonds-Karp instead of a
+  second copy. Results and speed are unchanged.
+
 ## [0.1.0a3] - 2026-10-03
 
 ### Added

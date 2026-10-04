@@ -2,210 +2,17 @@
 //!
 //! Link prediction scores that add floats over `nx.common_neighbors(G, u, v)`
 //! (a Python set) depend on the set's iteration order, so this module
-//! replays CPython's set table (`Objects/setobject.c`) on node positions,
-//! with each node's Python hash. The Python side checks once that the
-//! replay agrees with the running interpreter before relying on it.
+//! replays CPython's set table (`pyset`) on node positions, with each
+//! node's Python hash. The Python side checks once that the replay agrees
+//! with the running interpreter before relying on it.
 
 use std::collections::HashMap;
 
 use rayon::prelude::*;
 
+use super::pyset::PySet;
 use super::spectral::py_sum;
 use crate::graph::Csr;
-
-const EMPTY: u32 = u32::MAX;
-const DUMMY: u32 = u32::MAX - 1;
-const LINEAR_PROBES: usize = 9;
-const PERTURB_SHIFT: u32 = 5;
-const SET_MINSIZE: usize = 8;
-
-/// A CPython set of node positions: the same table, probe sequence, resize
-/// rule and dummy entries, so it iterates in the same order.
-struct PySet<'a> {
-    hashes: &'a [i64],
-    table: Vec<u32>,
-    mask: usize,
-    fill: usize,
-    used: usize,
-}
-
-impl<'a> PySet<'a> {
-    fn new(hashes: &'a [i64]) -> Self {
-        PySet {
-            hashes,
-            table: vec![EMPTY; SET_MINSIZE],
-            mask: SET_MINSIZE - 1,
-            fill: 0,
-            used: 0,
-        }
-    }
-
-    #[inline]
-    fn hash(&self, key: u32) -> u64 {
-        // `(size_t)hash`
-        self.hashes[key as usize] as u64
-    }
-
-    /// `set_add_entry` for a key no other element equals.
-    fn add(&mut self, key: u32) {
-        let hash = self.hash(key);
-        let mask = self.mask;
-        let mut i = hash as usize & mask;
-        let mut perturb = hash;
-        let mut freeslot = None;
-        loop {
-            let probes = if i + LINEAR_PROBES <= mask {
-                LINEAR_PROBES
-            } else {
-                0
-            };
-            for j in i..=i + probes {
-                let k = self.table[j];
-                if k == EMPTY {
-                    if let Some(slot) = freeslot {
-                        self.used += 1;
-                        self.table[slot] = key;
-                        return;
-                    }
-                    self.fill += 1;
-                    self.used += 1;
-                    self.table[j] = key;
-                    if self.fill * 5 >= mask * 3 {
-                        let minused = if self.used > 50000 {
-                            self.used * 2
-                        } else {
-                            self.used * 4
-                        };
-                        self.resize(minused);
-                    }
-                    return;
-                }
-                if k == key {
-                    return;
-                }
-                if k == DUMMY {
-                    freeslot = Some(j);
-                }
-            }
-            perturb >>= PERTURB_SHIFT;
-            i = (i
-                .wrapping_mul(5)
-                .wrapping_add(1)
-                .wrapping_add(perturb as usize))
-                & mask;
-        }
-    }
-
-    /// `set_insert_clean`: into a table with no dummies and no equal key.
-    fn insert_clean(table: &mut [u32], mask: usize, key: u32, hash: u64) {
-        let mut i = hash as usize & mask;
-        let mut perturb = hash;
-        loop {
-            if table[i] == EMPTY {
-                table[i] = key;
-                return;
-            }
-            if i + LINEAR_PROBES <= mask {
-                if let Some(slot) = table[i + 1..=i + LINEAR_PROBES]
-                    .iter_mut()
-                    .find(|slot| **slot == EMPTY)
-                {
-                    *slot = key;
-                    return;
-                }
-            }
-            perturb >>= PERTURB_SHIFT;
-            i = (i
-                .wrapping_mul(5)
-                .wrapping_add(1)
-                .wrapping_add(perturb as usize))
-                & mask;
-        }
-    }
-
-    /// `set_table_resize`.
-    fn resize(&mut self, minused: usize) {
-        let mut newsize = SET_MINSIZE;
-        while newsize <= minused {
-            newsize <<= 1;
-        }
-        if newsize == SET_MINSIZE && self.mask == SET_MINSIZE - 1 && self.fill == self.used {
-            return; // the small table, without dummies: nothing to do
-        }
-        let old = std::mem::replace(&mut self.table, vec![EMPTY; newsize]);
-        self.mask = newsize - 1;
-        self.fill = self.used;
-        for key in old {
-            if key != EMPTY && key != DUMMY {
-                let hash = self.hash(key);
-                Self::insert_clean(&mut self.table, self.mask, key, hash);
-            }
-        }
-    }
-
-    /// `set(d)` for a dict `d` with these keys, in order (presized).
-    fn from_dict(hashes: &'a [i64], keys: &[u32]) -> Self {
-        let mut s = PySet::new(hashes);
-        if (s.fill + keys.len()) * 5 >= s.mask * 3 {
-            s.resize((s.used + keys.len()) * 2);
-        }
-        for &k in keys {
-            s.add(k);
-        }
-        s
-    }
-
-    /// `set_discard_entry`.
-    fn discard(&mut self, key: u32) {
-        let hash = self.hash(key);
-        let mask = self.mask;
-        let mut i = hash as usize & mask;
-        let mut perturb = hash;
-        loop {
-            let probes = if i + LINEAR_PROBES <= mask {
-                LINEAR_PROBES
-            } else {
-                0
-            };
-            for j in i..=i + probes {
-                let k = self.table[j];
-                if k == EMPTY {
-                    return;
-                }
-                if k == key {
-                    self.table[j] = DUMMY;
-                    self.used -= 1;
-                    return;
-                }
-            }
-            perturb >>= PERTURB_SHIFT;
-            i = (i
-                .wrapping_mul(5)
-                .wrapping_add(1)
-                .wrapping_add(perturb as usize))
-                & mask;
-        }
-    }
-
-    /// The end of `set_difference_update_internal`: purge many dummies.
-    fn after_difference_update(&mut self) {
-        if self.fill - self.used > self.mask / 4 {
-            let minused = if self.used > 50000 {
-                self.used * 2
-            } else {
-                self.used * 4
-            };
-            self.resize(minused);
-        }
-    }
-
-    fn iter(&self) -> impl Iterator<Item = u32> + '_ {
-        self.table
-            .iter()
-            .copied()
-            .filter(|&k| k != EMPTY && k != DUMMY)
-    }
-}
 
 /// The iteration order of `G._adj[u].keys() & G._adj[v].keys() - {u, v}`
 /// (NetworkX's `common_neighbors`), given its elements in `adj[u]` order
@@ -230,21 +37,21 @@ fn set_order(
     if u != v {
         len_s -= has(nv, v) as usize;
     }
-    let mut result = PySet::new(hashes);
+    let mut result = PySet::default();
     if nu.len() <= len_s {
         for &w in cn {
-            result.add(w);
+            result.add(w, hashes);
         }
     } else {
-        let mut s = PySet::from_dict(hashes, nv);
-        s.discard(u as u32);
+        let mut s = PySet::from_dict(nv, hashes);
+        s.discard(u as u32, hashes);
         if u != v {
-            s.discard(v as u32);
+            s.discard(v as u32, hashes);
         }
-        s.after_difference_update();
+        s.after_difference_update(hashes);
         for w in s.iter() {
             if in_u(w) {
-                result.add(w);
+                result.add(w, hashes);
             }
         }
     }

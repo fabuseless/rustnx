@@ -19,7 +19,7 @@ use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
     approximation, bipartite, centrality, centrality_more, cluster, communities, connectivity,
     cores_more, dag, directed, distance, flow, graph_classes, isomorphism, leftovers, matching,
-    measures, paths, spectral, structure, structure_more, trees_more,
+    measures, paths, pyset, spectral, structure, structure_more, trees_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -3602,7 +3602,7 @@ impl CoreGraph {
         }
         py.detach(|| {
             let (h, s, t) = self.conn_aux(node_split, s, t);
-            let mut r = connectivity::Residual::build(&h);
+            let mut r = connectivity::residual(&h);
             let rows = if graph_rows && !node_split {
                 connectivity::CutRows::Graph(&self.succ)
             } else {
@@ -3688,11 +3688,11 @@ impl CoreGraph {
             }
             let possible = possible as f64;
             let cutoff = cutoff.map_or(possible, |c| if c <= possible { c } else { possible });
-            let mut r = connectivity::Residual::build(&h);
-            if r.edmonds_karp(s, t, cutoff)? == 0 {
+            let mut r = connectivity::residual(&h);
+            if connectivity::max_flow(&mut r, s, t, cutoff)? == 0 {
                 return Ok((1, Vec::new()));
             }
-            let mut paths = r.disjoint_paths(s, t, cutoff);
+            let mut paths = connectivity::disjoint_paths(&r, s, t, cutoff);
             if node_split {
                 // Each auxiliary node's original node, first occurrences only.
                 let mut seen = vec![false; self.n];
@@ -6085,8 +6085,8 @@ impl FlowRun {
     }
 }
 
-/// Replays set operations on `flow::PySet` (the runtime check that it
-/// matches the interpreter's sets); see `flow::replay_sets`.
+/// Replays set operations on `pyset::PySet` (the runtime check that it
+/// matches the interpreter's sets); see `pyset::replay_sets`.
 #[pyfunction]
 fn _replay_sets(
     hashes: Vec<i64>,
@@ -6103,7 +6103,7 @@ fn _replay_sets(
             return Err(PyIndexError::new_err("set or key out of range"));
         }
     }
-    Ok(flow::replay_sets(&hashes, nsets, &ops))
+    Ok(pyset::replay_sets(&hashes, nsets, &ops))
 }
 
 /// Tells the core whether `sum()` compensates ints after the first float
