@@ -5355,3 +5355,25 @@ def test_batch21_projections(seed, directed):
     side = rng.sample(nodes, len(nodes) // 2)
     exact_outcome(_b21_graphs(nx.bipartite.projected_graph), G, side)
     exact_outcome(_b21_graphs(nx.bipartite.weighted_projected_graph), G, side)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch21_intersections(seed, directed):
+    G, H = _b21_pair(seed, directed, True)
+    K = graph_for(seed + 3, directed)
+    K.add_edges_from(list(G.edges)[::2])
+    exact_outcome(_b21_graphs(nx.intersection), G, H)
+    exact_outcome(_b21_graphs(nx.intersection), H, G)
+    exact_outcome(_b21_graphs(nx.intersection), G, G)
+    exact_outcome(_b21_graphs(nx.intersection_all), [G, H, K])
+    exact_outcome(_b21_graphs(nx.intersection_all), [K, G])
+    exact_outcome(_b21_graphs(nx.intersection_all), [G])
+    exact_outcome(_b21_graphs(nx.intersection_all), [])
+    other = H.to_undirected() if directed else H.to_directed()
+    exact_outcome(_b21_graphs(nx.intersection), G, other)
+    # Larger graphs: big sets, many collisions and resizes.
+    A = nx.gnm_random_graph(300, 900, seed=seed, directed=directed)
+    B = nx.gnm_random_graph(200, 700, seed=seed + 1, directed=directed)
+    exact_outcome(_b21_graphs(nx.intersection), A, B)
+    exact_outcome(_b21_graphs(nx.intersection), nx.relabel_nodes(A, str), nx.relabel_nodes(B, str))

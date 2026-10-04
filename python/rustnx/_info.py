@@ -189,6 +189,8 @@ FUNCTIONS = {
     "in_degree_centrality": {},
     "inter_community_edges": {},
     "inter_community_non_edges": {},
+    "intersection": {},
+    "intersection_all": {},
     "intersection_array": {},
     "intra_community_edges": {},
     "is_aperiodic": {},

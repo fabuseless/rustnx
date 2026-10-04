@@ -1511,3 +1511,140 @@ pub fn _op_projection<'py>(
     }
     Ok(())
 }
+
+// --- Intersections --------------------------------------------------------------------
+
+/// Ids of `(u, v)` tuples of node ids, with their hashes.
+struct EdgeIds<'a> {
+    ids: &'a mut HashMap<(u32, u32), u32>,
+    hashes: &'a mut Vec<i64>,
+    ends: &'a mut Vec<(u32, u32)>,
+}
+
+impl EdgeIds<'_> {
+    fn id(&mut self, a: u32, b: u32, node_hashes: &[i64]) -> u32 {
+        if let Some(&id) = self.ids.get(&(a, b)) {
+            return id;
+        }
+        let id = self.hashes.len() as u32;
+        self.hashes.push(tuple_hash(&[node_hashes[a as usize], node_hashes[b as usize]]));
+        self.ends.push((a, b));
+        self.ids.insert((a, b), id);
+        id
+    }
+}
+
+/// `intersection_all(graphs)` into the empty graph given by its dicts.
+/// `index0` maps the first graph's nodes to positions. NetworkX builds
+/// `set(G.nodes)` and `set(G.edges)` (plus reversed edges when undirected)
+/// for each graph, intersects them with `&=`, then adds the surviving nodes
+/// and edges in set order; all of it is replayed with CPython's set table.
+#[pyfunction]
+pub fn _op_intersection<'py>(
+    py: Python<'py>,
+    views: Vec<PyRef<'py, OpView>>,
+    index0: &Bound<'py, PyDict>,
+    node: Bound<'py, PyDict>,
+    succ: Bound<'py, PyDict>,
+    pred: Option<Bound<'py, PyDict>>,
+) -> PyResult<()> {
+    let Some(first) = views.first() else {
+        return Err(changed());
+    };
+    let n0 = first.n();
+    let mut hashes: Vec<i64> = Vec::with_capacity(n0);
+    for v in &first.nodes {
+        hashes.push(v.bind(py).hash()? as i64);
+    }
+    let mut edge_ids: HashMap<(u32, u32), u32> = HashMap::new();
+    let mut edge_hashes: Vec<i64> = Vec::new();
+    let mut edge_ends: Vec<(u32, u32)> = Vec::new();
+    let mut nodes_acc: Option<SetReplica> = None;
+    let mut edges_acc: Option<SetReplica> = None;
+    // `a &= b`: iterate the smaller set (`b` on a tie), keeping its keys
+    // that `a` holds, in a new set.
+    let intersect = |a: &SetReplica, b: &SetReplica, hashes: &[i64]| -> SetReplica {
+        let (big, small) = if b.len() > a.len() { (b, a) } else { (a, b) };
+        let mut out = SetReplica::default();
+        for k in small.iter() {
+            if big.contains(k, hashes) {
+                out.add(k, hashes);
+            }
+        }
+        out
+    };
+    for (gi, view) in views.iter().enumerate() {
+        // Ids: positions in the first graph, or fresh ones.
+        let mut ids: Vec<u32> = Vec::with_capacity(view.n());
+        for v in &view.nodes {
+            let v = v.bind(py);
+            let found = if gi == 0 { None } else { index0.get_item(v)? };
+            let id = match found {
+                Some(i) => {
+                    let i: usize = i.extract()?;
+                    if i >= n0 || !same_key(v, first.nodes[i].bind(py))? {
+                        return Err(PyNotImplementedError::new_err("equal nodes differ between graphs"));
+                    }
+                    i as u32
+                }
+                None if gi == 0 => ids.len() as u32,
+                None => {
+                    hashes.push(v.hash()? as i64);
+                    (hashes.len() - 1) as u32
+                }
+            };
+            ids.push(id);
+        }
+        let mut node_set = SetReplica::default();
+        for &id in &ids {
+            node_set.add(id, &hashes);
+        }
+        let mut edges = EdgeIds {
+            ids: &mut edge_ids,
+            hashes: &mut edge_hashes,
+            ends: &mut edge_ends,
+        };
+        let mut edge_set = SetReplica::default();
+        for (u, e) in view.edge_entries() {
+            let id = edges.id(ids[u], ids[view.targets[e] as usize], &hashes);
+            edge_set.add(id, edges.hashes);
+        }
+        if !view.directed {
+            let listed: Vec<u32> = edge_set.iter().collect();
+            for k in listed {
+                let (a, b) = edges.ends[k as usize];
+                let id = edges.id(b, a, &hashes);
+                edge_set.add(id, edges.hashes);
+            }
+        }
+        nodes_acc = Some(match nodes_acc {
+            None => node_set,
+            Some(acc) => intersect(&acc, &node_set, &hashes),
+        });
+        edges_acc = Some(match edges_acc {
+            None => edge_set,
+            Some(acc) => intersect(&acc, &edge_set, &edge_hashes),
+        });
+    }
+    let out = Out { py, node, succ, pred };
+    let mut rows: Vec<Option<RowPair<'py>>> = (0..n0).map(|_| None).collect();
+    for id in nodes_acc.unwrap_or_default().iter() {
+        let id = id as usize;
+        if id >= n0 {
+            return Err(changed());
+        }
+        rows[id] = Some(out.create(first.nodes[id].bind(py), None)?);
+    }
+    for k in edges_acc.unwrap_or_default().iter() {
+        let (a, b) = edge_ends[k as usize];
+        let (a, b) = (a as usize, b as usize);
+        if a >= n0 || b >= n0 {
+            return Err(changed());
+        }
+        let (Some(ra), Some(rb)) = (&rows[a], &rows[b]) else {
+            return Err(changed());
+        };
+        out.edge((first.nodes[a].bind(py), ra), (first.nodes[b].bind(py), rb), None, false)?;
+    }
+    Ok(())
+}

@@ -210,6 +210,8 @@ __all__ = [
     "in_degree_centrality",
     "inter_community_edges",
     "inter_community_non_edges",
+    "intersection",
+    "intersection_all",
     "intersection_array",
     "intra_community_edges",
     "is_aperiodic",
@@ -10269,3 +10271,26 @@ def weighted_projected_graph(B, nodes, ratio=False):
         )
     _core._op_projection(view, positions, True, n_top if ratio else None, *_b21_target(G))
     return G
+
+
+def intersection_all(graphs):
+    graphs = list(graphs)
+    if not graphs:
+        raise ValueError("cannot apply intersection_all to an empty list")
+    for G in graphs[1:]:
+        if G.is_directed() != graphs[0].is_directed():
+            raise nx.NetworkXError("All graphs must be directed or undirected.")
+    if not (_sets_replayable() and _b21_tuple_hashes_match()):
+        raise NotImplementedError("Python's set order can't be replayed here")
+    views = [_b21_canonical_view(G)[1] for G in graphs]
+    R = _plain_result_class(graphs[0])()
+    first = graphs[0]
+    index = first._index
+    if type(index) is not dict:
+        index = dict(zip(first._nodes, range(len(first))))
+    _core._op_intersection(views, index, *_b21_target(R))
+    return R
+
+
+def intersection(G, H):
+    return intersection_all([G, H])
