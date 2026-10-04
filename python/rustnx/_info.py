@@ -31,7 +31,6 @@ FUNCTIONS = {
     "center": {},
     "closeness_centrality": {},
     "clustering": {},
-    "colliders": {},
     "condensation": {},
     "connected_components": {},
     "core_number": {},

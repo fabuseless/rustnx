@@ -54,7 +54,7 @@ SECTIONS = [
         "topological_sort", "topological_generations", "is_directed_acyclic_graph",
         "has_cycle", "lexicographical_topological_sort", "all_topological_sorts",
         "dag_longest_path", "dag_longest_path_length", "transitive_closure",
-        "transitive_closure_dag", "transitive_reduction", "is_aperiodic", "colliders",
+        "transitive_closure_dag", "transitive_reduction", "is_aperiodic",
         "v_structures", "root_to_leaf_paths", "dag_to_branching",
     ]),
     ("Clustering", ["triangles", "clustering", "average_clustering", "transitivity"]),
@@ -134,7 +134,6 @@ NOTES = {
     "transitive_closure_dag": "`topo_order` falls back. Builds the closure in NetworkX, adding edges in NetworkX's order (including set iteration order).",
     "transitive_reduction": "Kept edges are added in NetworkX's (set iteration) order.",
     "is_aperiodic": "On NetworkX 3.4, graphs not reachable from their first node fall back (NetworkX recurses in set order).",
-    "colliders": "Generator.",
     "v_structures": "Generator.",
     "root_to_leaf_paths": "Paths are generated lazily. Undirected graphs fall back.",
     "generic_bfs_edges": "`neighbors` falls back.",
@@ -146,7 +145,7 @@ NOTES = {
 }
 
 # Functions NetworkX only exposes under `nx.dag`.
-DAG_ONLY = {"colliders", "v_structures", "root_to_leaf_paths", "has_cycle"}
+DAG_ONLY = {"v_structures", "root_to_leaf_paths", "has_cycle"}
 
 
 def location(name):

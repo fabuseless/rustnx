@@ -32,7 +32,6 @@ _LINEAR_TIME = {
     "biconnected_components",
     "bidirectional_dijkstra",
     "bidirectional_shortest_path",
-    "colliders",
     "condensation",
     "connected_components",
     "core_number",

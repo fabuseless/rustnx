@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 106 NetworkX functions. Call them as usual (for
+rustnx implements 105 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -121,7 +121,6 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.transitive_closure_dag` | none | no | rustnx | `topo_order` falls back. Builds the closure in NetworkX, adding edges in NetworkX's order (including set iteration order). |
 | `nx.transitive_reduction` | none | yes | rustnx | Kept edges are added in NetworkX's (set iteration) order. |
 | `nx.is_aperiodic` | none | no | NetworkX | On NetworkX 3.4, graphs not reachable from their first node fall back (NetworkX recurses in set order). |
-| `nx.dag.colliders` | none | no | NetworkX | Generator. |
 | `nx.dag.v_structures` | none | no | NetworkX | Generator. |
 | `nx.dag.root_to_leaf_paths` | none | no | rustnx | Paths are generated lazily. Undirected graphs fall back. |
 | `nx.dag_to_branching` | none | no | rustnx |  |

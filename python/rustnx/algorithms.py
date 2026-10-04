@@ -44,7 +44,6 @@ __all__ = [
     "center",
     "closeness_centrality",
     "clustering",
-    "colliders",
     "condensation",
     "connected_components",
     "core_number",
@@ -2135,27 +2134,39 @@ def dag_to_branching(G):
     return B
 
 
-# Triples per Rust call in colliders and v_structures.
-_TRIPLES_BATCH = 4096
+# Triples per Rust call in v_structures.
+_TRIPLES_BATCH = 65536
 
 
 def _colliders(G, v_structures):
     _directed_only(G)
     G._ensure_exact_pred()  # combinations of G.predecessors(node), in order
+    guard = _MutationGuard(G)
 
-    def produce():
+    def generate():
         nodes = G._nodes
+        get = nodes.__getitem__
+        # guard.changed() inlined: every change made through the NetworkX
+        # API clears this cache dict, removing the key. Native graphs (no
+        # key) can't change.
+        cache, key = guard._cache, guard._key
         start = 0
-        while start < len(nodes):
-            flat, start = G._core.colliders(start, _TRIPLES_BATCH, v_structures)
-            for k in range(0, len(flat), 3):
-                yield (nodes[flat[k]], nodes[flat[k + 1]], nodes[flat[k + 2]])
+        try:
+            while start < len(nodes):
+                flat, start = G._core.colliders(start, _TRIPLES_BATCH, v_structures)
+                # Tuples are built in C; NetworkX's loop is C-level too.
+                triples = zip(map(get, flat[0::3]), map(get, flat[1::3]), map(get, flat[2::3]))
+                if key is None:
+                    yield from triples
+                    continue
+                for triple in triples:
+                    if key not in cache:
+                        raise RuntimeError("Graph changed during iteration")
+                    yield triple
+        finally:
+            guard.release()
 
-    return _traversal(G, produce)
-
-
-def colliders(G):
-    return _colliders(G, False)
+    return generate()
 
 
 def v_structures(G):

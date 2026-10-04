@@ -282,7 +282,7 @@ def test_batch3_dags(seed, weights):
         exact_outcome(graph_parts(nx.transitive_closure_dag), G)
         for reflexive in [False, True, None, 1]:
             exact_outcome(graph_parts(nx.transitive_closure), G, reflexive)
-        exact_outcome(listed(dag_func("colliders")), G)
+        exact_outcome(listed(dag_func("colliders")), G)  # falls back
         exact_outcome(listed(dag_func("v_structures")), G)
         exact_outcome(first(dag_func("root_to_leaf_paths")), G)
     S = random_dag(seed, weights, small=True)
@@ -292,7 +292,7 @@ def test_batch3_dags(seed, weights):
         exact_outcome(listed(dag_func("root_to_leaf_paths")), G)
     if weights == "none":
         assert runs_in_rustnx(nx.dag_longest_path, D) == nx.dag_longest_path(D, backend="networkx")
-        for name in ["has_cycle", "colliders", "v_structures"]:
+        for name in ["has_cycle", "v_structures"]:
             runs_in_rustnx(dag_func(name), D)
         next(dag_func("root_to_leaf_paths")(D, backend="rustnx"), None)
         for func in [nx.transitive_reduction, nx.transitive_closure, nx.transitive_closure_dag,
@@ -490,12 +490,12 @@ def test_batch3_graph_changes_during_iteration():
         lambda G, b: nx.edge_bfs(G, 0, backend=b),
         lambda G, b: nx.edge_dfs(G, 0, backend=b),
         lambda G, b: nx.kosaraju_strongly_connected_components(G, backend=b),
-        lambda G, b: nx.dag.colliders(G, backend=b),
+        lambda G, b: nx.dag.v_structures(G, backend=b),
         lambda G, b: nx.dag.root_to_leaf_paths(G, backend=b),
         lambda G, b: nx.all_topological_sorts(G, backend=b),
     ]
     for call in calls:
-        G = nx.DiGraph([(0, 1), (0, 2), (1, 3), (2, 3), (3, 4), (2, 4)])
+        G = nx.DiGraph([(0, 1), (0, 2), (1, 3), (2, 3), (3, 4), (2, 4), (5, 4), (6, 4)])
         it = call(G, "rustnx")
         next(it)
         G.add_edge("x", "y")
@@ -557,4 +557,4 @@ def test_batch3_lazy_errors():
         with pytest.raises(nx.NetworkXNotImplemented):
             nx.all_topological_sorts(U, backend=backend)
         with pytest.raises(nx.NetworkXNotImplemented):
-            nx.dag.colliders(U, backend=backend)
+            nx.dag.v_structures(U, backend=backend)

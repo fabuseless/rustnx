@@ -198,7 +198,6 @@ def algorithm_calls(H, directed):
         )(nx.condensation(G, backend=b))
         calls["semiconnected"] = lambda G, b: nx.is_semiconnected(G, backend=b)
         calls["has_cycle"] = lambda G, b: nx.dag.has_cycle(G, backend=b)
-        calls["colliders"] = lambda G, b: list(nx.dag.colliders(G, backend=b))
         calls["v_structures"] = lambda G, b: list(nx.dag.v_structures(G, backend=b))
         calls["longest_path"] = lambda G, b: nx.dag_longest_path(G, backend=b)
         calls["longest_path_length"] = lambda G, b: nx.dag_longest_path_length(G, backend=b)
