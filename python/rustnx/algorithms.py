@@ -23,6 +23,7 @@ from networkx.algorithms import matching as _nx_matching
 from . import _core
 
 __all__ = [
+    "adamic_adar_index",
     "all_pairs_all_shortest_paths",
     "all_pairs_bellman_ford_path",
     "all_pairs_bellman_ford_path_length",
@@ -44,7 +45,12 @@ __all__ = [
     "astar_path",
     "astar_path_length",
     "attracting_components",
+    "attribute_assortativity_coefficient",
+    "attribute_mixing_dict",
+    "attribute_mixing_matrix",
     "average_clustering",
+    "average_degree_connectivity",
+    "average_neighbor_degree",
     "average_shortest_path_length",
     "barycenter",
     "bellman_ford_path",
@@ -75,7 +81,9 @@ __all__ = [
     "chordal_graph_treewidth",
     "closeness_centrality",
     "clustering",
+    "cn_soundarajan_hopcroft",
     "color",
+    "common_neighbor_centrality",
     "complete_to_chordal_graph",
     "condensation",
     "connected_components",
@@ -86,7 +94,11 @@ __all__ = [
     "dag_longest_path",
     "dag_longest_path_length",
     "dag_to_branching",
+    "degree_assortativity_coefficient",
     "degree_centrality",
+    "degree_mixing_dict",
+    "degree_mixing_matrix",
+    "degree_pearson_correlation_coefficient",
     "descendants",
     "descendants_at_distance",
     "dfs_edges",
@@ -192,6 +204,7 @@ __all__ = [
     "is_valid_degree_sequence_havel_hakimi",
     "is_weakly_connected",
     "isolates",
+    "jaccard_coefficient",
     "johnson",
     "k_core",
     "k_corona",
@@ -226,28 +239,39 @@ __all__ = [
     "multi_source_dijkstra_path_length",
     "negative_edge_cycle",
     "newman_betweenness_centrality",
+    "node_attribute_xy",
     "node_boundary",
     "node_clique_number",
     "node_connected_component",
+    "node_degree_xy",
     "node_redundancy",
     "number_attracting_components",
     "number_connected_components",
     "number_of_isolates",
+    "number_of_walks",
     "number_strongly_connected_components",
     "number_weakly_connected_components",
+    "numeric_assortativity_coefficient",
     "onion_layers",
     "out_degree_centrality",
+    "overall_reciprocity",
     "pagerank",
     "partition_spanning_tree",
     "percolation_centrality",
     "periphery",
     "predecessor",
+    "preferential_attachment",
     "prim_mst_edges",
     "prominent_group",
+    "ra_index_soundarajan_hopcroft",
     "radius",
+    "reciprocity",
+    "resource_allocation_index",
+    "rich_club_coefficient",
     "root_to_leaf_paths",
     "root_trees",
     "rooted_tree_isomorphism",
+    "s_metric",
     "score_sequence",
     "sets",
     "shortest_path",
@@ -290,6 +314,7 @@ __all__ = [
     "weisfeiler_lehman_graph_hash",
     "weisfeiler_lehman_subgraph_hashes",
     "wiener_index",
+    "within_inter_cluster",
 ]
 
 
@@ -6608,3 +6633,651 @@ def butterflies(G, nodes=None):
         raise NotImplementedError("nodes is not a node or a container of nodes") from None
     index = G._index
     return {v: counts[index[v]] for v in picked}
+
+
+# --- Batch 14: assortativity, link prediction and reciprocity -----------------------
+
+
+def _b14_int_weight(G, weight):
+    """A degree weight rustnx can sum: integer values only (summing floats
+    would have to follow Python's mixed int/float ``sum()`` exactly)."""
+    if weight is None:
+        return None
+    attr, all_int, has_hidden = _check_weight(G, weight)
+    if not all_int or has_hidden:
+        raise NotImplementedError("rustnx sums integer edge weights only here")
+    return attr
+
+
+def _b14_reusable(nodes):
+    """Decline a one-shot iterator of nodes: NetworkX reads ``nodes`` more
+    than once, and must be able to take over."""
+    if nodes is not None and iter(nodes) is nodes:
+        raise NotImplementedError("rustnx needs a reusable container of nodes")
+
+
+def _b14_nbunch_list(G, nodes):
+    """Positions of ``list(G.nbunch_iter(nodes))``, repeats kept."""
+    try:
+        _b14_reusable(nodes)
+        index = G._index
+        return [index[v] for v in nodes if v in index]
+    except TypeError:
+        raise NotImplementedError("NetworkX raises its own error here") from None
+
+
+def _b14_node_values(G, attribute):
+    """``G.nodes[v].get(attribute)`` for every node, in node order."""
+    try:
+        hash(attribute)
+    except TypeError:
+        raise NotImplementedError("unhashable attribute name") from None
+    if G._core.is_native():
+        return [None] * len(G)  # native graphs have no node data
+    if not G._source_unchanged():
+        raise NotImplementedError("the graph changed since it was converted")
+    return [dd.get(attribute) for dd in G._source._node.values()]
+
+
+def _b14_lazy(G, compute, fallback):
+    """A generator like NetworkX's: it reads the graph when iteration starts
+    (if G changed before then, NetworkX's own ``fallback(graph)`` runs) and
+    stops loudly if G changes while it yields."""
+    guard = _MutationGuard(G)
+
+    def generate():
+        try:
+            if guard.changed():
+                yield from fallback(guard.graph)
+                return
+            for item in compute():
+                if guard.changed():
+                    raise RuntimeError("Graph changed during iteration")
+                yield item
+        finally:
+            guard.release()
+
+    return generate()
+
+
+# Link prediction. NetworkX checks every pair of `ebunch` when called, then
+# scores the pairs lazily; rustnx scores them in growing batches in Rust.
+
+_B14_MAX_BATCH = 4096
+
+
+@functools.cache
+def _b14_set_order_matches():
+    """Whether rustnx's replay of CPython's set table orders
+    ``G._adj[u].keys() & G._adj[v].keys() - {u, v}`` (NetworkX's
+    ``common_neighbors``) as this interpreter does. Checked once, on graphs
+    whose sets resize, keep dummies and take both intersection paths."""
+    from .graph import from_networkx
+
+    rng = random.Random(14)
+    for labels in ("int", "str", "mixed"):
+        H = nx.Graph()
+        names = []
+        for i in range(70):
+            name = i if labels == "int" or (labels == "mixed" and i % 2) else f"v{i}"
+            names.append(name)
+        H.add_nodes_from(names)
+        hubs = names[:3]
+        for name in names:
+            for hub in hubs:
+                if rng.random() < 0.9:
+                    H.add_edge(hub, name)  # some self-loops, too
+            for _ in range(rng.randrange(12)):
+                H.add_edge(name, rng.choice(names))
+        core = from_networkx(H)._core
+        index = {v: i for i, v in enumerate(names)}
+        pairs = [(a, b) for a in names[:12] for b in names[:24]]
+        us = [index[a] for a, _ in pairs]
+        vs = [index[b] for _, b in pairs]
+        got = core.common_neighbors_in_set_order(us, vs, [hash(v) for v in names])
+        for (a, b), order in zip(pairs, got):
+            expected = list(H._adj[a].keys() & H._adj[b].keys() - {a, b})
+            if [names[i] for i in order] != expected:
+                return False
+    return True
+
+
+def _b14_pairs(G, ebunch):
+    """NetworkX's ``_apply_prediction``: check every pair of ``ebunch`` now,
+    and give the pairs to score (``nx.non_edges(G)`` without an ebunch)."""
+    _undirected_only(G)
+    if ebunch is None:
+        return nx.non_edges(_networkx_graph(G))
+    for u, v in ebunch:
+        if u not in G:
+            raise nx.NodeNotFound(f"Node {u} not in G.")
+        if v not in G:
+            raise nx.NodeNotFound(f"Node {v} not in G.")
+    return ebunch
+
+
+def _b14_predictions(G, pairs, score, emit):
+    """Yield ``(u, v, emit(k, raw, u, v))`` for each pair, where ``raw`` is
+    ``score(us, vs)`` for the batch of positions holding the pair at ``k``.
+    ``emit`` raises NetworkX's error for a pair whose score raises."""
+    guard = _MutationGuard(G)
+    index = G._index
+
+    def generate():
+        try:
+            it = iter(pairs)
+            size = 64
+            while True:
+                batch = []
+                for u, v in it:
+                    batch.append((u, v))
+                    if len(batch) == size:
+                        break
+                if not batch:
+                    return
+                size = min(2 * size, _B14_MAX_BATCH)
+                try:
+                    us = [index[u] for u, _ in batch]
+                    vs = [index[v] for _, v in batch]
+                except (KeyError, TypeError):
+                    raise RuntimeError("ebunch changed during iteration") from None
+                raw = score(us, vs)
+                for k, (u, v) in enumerate(batch):
+                    if guard.changed():
+                        raise RuntimeError("Graph changed during iteration")
+                    yield (u, v, emit(k, raw, u, v))
+        finally:
+            guard.release()
+
+    return generate()
+
+
+# `LinkScorer` outcome codes (see `measures::code` in Rust).
+_B14_OK, _B14_INT_ZERO, _B14_NO_U, _B14_NO_V, _B14_NO_W, _B14_ZERO_DIVISION = range(6)
+_B14_COMMUNITY_TYPES = (bool, float, int, str, type(None))
+
+
+def _b14_community_classes(G, community):
+    """Each node's community as an integer class (-1 for none). Classes are
+    equal exactly when NetworkX's ``==`` says the communities are."""
+    try:
+        hash(community)
+    except TypeError:
+        raise NotImplementedError("unhashable community attribute name") from None
+    if G._core.is_native():
+        return [-1] * len(G)
+    if not G._source_unchanged():
+        raise NotImplementedError("the graph changed since it was converted")
+    classes = {}
+    out = []
+    missing = object()
+    for dd in G._source._node.values():
+        c = dd.get(community, missing)
+        if c is missing:
+            out.append(-1)
+            continue
+        if type(c) not in _B14_COMMUNITY_TYPES or c != c:
+            raise NotImplementedError("rustnx compares plain community values only")
+        out.append(classes.setdefault(c, len(classes)))
+    return out
+
+
+def _b14_scorer(G, mode, table=None, community=None):
+    """A Rust scorer; set-order-dependent modes need the set replay check."""
+    hashes = classes = None
+    if mode != 0:
+        if not _b14_set_order_matches():
+            raise NotImplementedError("this Python orders sets differently")
+        hashes = [hash(v) for v in G._nodes]
+    if community is not None:
+        classes = _b14_community_classes(G, community)
+    return G._core.link_scorer(mode, hashes, table, classes, _COMPENSATED_SUM)
+
+
+def _b14_degree_table(G, term):
+    """``term(d)`` per degree ``d`` up to the maximum (NaN where NetworkX's
+    expression divides by zero)."""
+    top = max(G._core.degrees(), default=0)
+    table = []
+    for d in range(top + 1):
+        try:
+            table.append(term(d))
+        except (ZeroDivisionError, ValueError):
+            table.append(math.nan)
+    return table
+
+
+def _b14_raise_for(code, u, v, w, G):
+    if code == _B14_NO_U:
+        raise nx.NetworkXAlgorithmError(f"No community information available for Node {u}")
+    if code == _B14_NO_V:
+        raise nx.NetworkXAlgorithmError(f"No community information available for Node {v}")
+    if code == _B14_NO_W:
+        node = G._nodes[w]
+        raise nx.NetworkXAlgorithmError(f"No community information available for Node {node}")
+    # `1 / log(G.degree(w))` with a degree-1 neighbor: NetworkX's own error.
+    1 / math.log(1)
+
+
+def _b14_sum_emit(G):
+    def emit(k, raw, u, v):
+        codes, _, _, f, w = raw
+        code = codes[k]
+        if code == _B14_OK:
+            return f[k]
+        if code == _B14_INT_ZERO:
+            return 0  # an empty sum(), or different communities
+        _b14_raise_for(code, u, v, w[k], G)
+
+    return emit
+
+
+def resource_allocation_index(G, ebunch=None):
+    pairs = _b14_pairs(G, ebunch)
+    scorer = _b14_scorer(G, 2, _b14_degree_table(G, lambda d: 1 / d))
+    return _b14_predictions(G, pairs, scorer.scores, _b14_sum_emit(G))
+
+
+def adamic_adar_index(G, ebunch=None):
+    pairs = _b14_pairs(G, ebunch)
+    scorer = _b14_scorer(G, 2, _b14_degree_table(G, lambda d: 1 / math.log(d)))
+    return _b14_predictions(G, pairs, scorer.scores, _b14_sum_emit(G))
+
+
+def ra_index_soundarajan_hopcroft(G, ebunch=None, community="community"):
+    pairs = _b14_pairs(G, ebunch)
+    scorer = _b14_scorer(G, 2, _b14_degree_table(G, lambda d: 1 / d), community)
+    return _b14_predictions(G, pairs, scorer.scores, _b14_sum_emit(G))
+
+
+def jaccard_coefficient(G, ebunch=None):
+    pairs = _b14_pairs(G, ebunch)
+    scorer = _b14_scorer(G, 0)
+
+    def emit(k, raw, u, v):
+        common, union = raw[1][k], raw[2][k]
+        return common / union if union else 0
+
+    return _b14_predictions(G, pairs, scorer.scores, emit)
+
+
+def preferential_attachment(G, ebunch=None):
+    pairs = _b14_pairs(G, ebunch)
+    degree = G._core.degrees()
+
+    def emit(k, raw, u, v):
+        return degree[raw[0][k]] * degree[raw[1][k]]
+
+    return _b14_predictions(G, pairs, lambda us, vs: (us, vs), emit)
+
+
+def _b14_community_emit(G, value):
+    def emit(k, raw, u, v):
+        codes, a, b, f, w = raw
+        if codes[k] != _B14_OK:
+            _b14_raise_for(codes[k], u, v, w[k], G)
+        return value(a[k], b[k], f[k] == 1.0)
+
+    return emit
+
+
+def cn_soundarajan_hopcroft(G, ebunch=None, community="community"):
+    pairs = _b14_pairs(G, ebunch)
+    scorer = _b14_scorer(G, 1, community=community)
+    # `len(cnbors) + neighbors`: the same-community bonus is 0 across communities.
+    emit = _b14_community_emit(G, lambda common, same, together: common + same)
+    return _b14_predictions(G, pairs, scorer.scores, emit)
+
+
+def within_inter_cluster(G, ebunch=None, delta=0.001, community="community"):
+    if delta <= 0:
+        raise nx.NetworkXAlgorithmError("Delta must be greater than zero")
+    pairs = _b14_pairs(G, ebunch)
+    scorer = _b14_scorer(G, 1, community=community)
+
+    def value(common, within, together):
+        if not together:
+            return 0
+        return within / ((common - within) + delta)
+
+    return _b14_predictions(G, pairs, scorer.scores, _b14_community_emit(G, value))
+
+
+def common_neighbor_centrality(G, ebunch=None, alpha=0.8):
+    _undirected_only(G)
+    simple = alpha == 1
+    pairs = _b14_pairs(G, ebunch)
+    scorer = _b14_scorer(G, 0)
+    n = len(G)
+    inf = float("inf")
+    core = G._core
+
+    def score(us, vs):
+        raw = scorer.scores(us, vs)
+        return raw if simple else (raw, core.pair_distances(us, vs))
+
+    def emit(k, raw, u, v):
+        if u == v:
+            raise nx.NetworkXAlgorithmError("Self loops are not supported")
+        if simple:
+            return raw[1][k]
+        raw, dist = raw
+        path_len = dist[k] if dist[k] >= 0 else inf
+        n_nbrs = raw[1][k]
+        return alpha * n_nbrs + (1 - alpha) * n / path_len
+
+    return _b14_predictions(G, pairs, score, emit)
+
+
+# Degree and attribute pairs, mixing and assortativity.
+
+_B14_DEGREE_KINDS = {"out": 1, "in": 2}
+
+
+def _b14_degree_kinds(G, x, y):
+    """``node_degree_xy``'s degree kinds (0 ``G.degree``, 1 out, 2 in)."""
+    if not G.is_directed():
+        return 0, 0  # x and y are ignored
+    if type(x) is not str or type(y) is not str or x not in _B14_DEGREE_KINDS or y not in _B14_DEGREE_KINDS:
+        raise NotImplementedError("NetworkX raises its own error here")
+    return _B14_DEGREE_KINDS[x], _B14_DEGREE_KINDS[y]
+
+
+def _b14_xy_order(G, nodes):
+    """NetworkX's ``set(G)`` or ``set(nodes)``: positions in its iteration
+    order (nodes not in G skipped), and its membership per node (``None``
+    for all nodes). The set is built the same way, so it iterates alike."""
+    index = G._index
+    S = set(G._nodes) if nodes is None else set(nodes)
+    order = [index[v] for v in S if v in index]
+    mask = None if nodes is None else [v in S for v in G._nodes]
+    return order, mask
+
+
+def _b14_degree_pairs(G, x, y, weight):
+    """Validate a degree-pairs call; return a function of ``nodes`` giving
+    ``(order, mask, xdeg, ydeg)``."""
+    kx, ky = _b14_degree_kinds(G, x, y)
+    weight = _b14_int_weight(G, weight)
+
+    def prepare(nodes):
+        order, mask = _b14_xy_order(G, nodes)
+        xdeg = G._core.kind_degrees(kx, weight)
+        ydeg = xdeg if ky == kx else G._core.kind_degrees(ky, weight)
+        return order, mask, xdeg, ydeg
+
+    return prepare
+
+
+def node_degree_xy(G, x="out", y="in", weight=None, nodes=None):
+    prepare = _b14_degree_pairs(G, x, y, weight)
+
+    def compute():
+        order, mask, xdeg, ydeg = prepare(nodes)
+        us, vs = G._core.xy_pairs(order, mask)
+        return zip(map(xdeg.__getitem__, us), map(ydeg.__getitem__, vs))
+
+    def fallback(H):
+        return _registered("node_degree_xy").orig_func(H, x=x, y=y, weight=weight, nodes=nodes)
+
+    return _b14_lazy(G, compute, fallback)
+
+
+def node_attribute_xy(G, attribute, nodes=None):
+    values = _b14_node_values(G, attribute)
+
+    def compute():
+        if nodes is None:
+            order = range(len(G))
+        else:
+            S = set(nodes)
+            order = [i for i, v in enumerate(G._nodes) if v in S]
+        us, vs = G._core.xy_pairs(list(order), None)
+        return zip(map(values.__getitem__, us), map(values.__getitem__, vs))
+
+    def fallback(H):
+        return _registered("node_attribute_xy").orig_func(H, attribute, nodes=nodes)
+
+    return _b14_lazy(G, compute, fallback)
+
+
+def _b14_mixing_dict(G, order, mask, xcls, ycls, key, normalized):
+    """NetworkX's ``mixing_dict`` over the pairs: the same keys (``key(class,
+    node)`` gives the object NetworkX inserted) in the same order."""
+    total, rows = G._core.mixing(order, xcls, ycls, mask)
+    d = {key(c, node): {} for c, node, _ in rows}
+    psum = float(total)
+    for (_, _, inner), jdict in zip(rows, d.values()):
+        if normalized:
+            jdict.update((key(c, node), count / psum) for c, node, count in inner)
+        else:
+            jdict.update((key(c, node), count) for c, node, count in inner)
+    return d
+
+
+def degree_mixing_dict(G, x="out", y="in", weight=None, nodes=None, normalized=False):
+    prepare = _b14_degree_pairs(G, x, y, weight)
+    _b14_reusable(nodes)
+    order, mask, xdeg, ydeg = prepare(nodes)
+    return _b14_mixing_dict(G, order, mask, xdeg, ydeg, lambda c, node: c, normalized)
+
+
+def _b14_matrix(d, mapping, normalized):
+    a = nx.utils.dict_to_numpy_array(d, mapping=mapping)
+    if normalized:
+        a = a / a.sum()
+    return a
+
+
+def degree_mixing_matrix(G, x="out", y="in", weight=None, nodes=None, normalized=True, mapping=None):
+    d = degree_mixing_dict(G, x=x, y=y, nodes=nodes, weight=weight)
+    return _b14_matrix(d, mapping, normalized)
+
+
+def degree_assortativity_coefficient(G, x="out", y="in", weight=None, nodes=None):
+    from networkx.algorithms.assortativity.correlation import _numeric_ac
+
+    _b14_degree_kinds(G, x, y)
+    attr = _b14_int_weight(G, weight)
+    single, positions = _nbunch_positions(G, nodes)
+    if single:
+        raise NotImplementedError("NetworkX raises its own error here")
+    if positions is None:
+        positions = range(len(G))
+    core = G._core
+    # The same insertions as NetworkX's set comprehensions, in node order.
+    if G.is_directed():
+        indeg = outdeg = set()
+        if "in" in (x, y):
+            ins = core.kind_degrees(2, attr)
+            indeg = {ins[i] for i in positions}
+        if "out" in (x, y):
+            outs = core.kind_degrees(1, attr)
+            outdeg = {outs[i] for i in positions}
+        degrees = set.union(indeg, outdeg)
+    else:
+        deg = core.kind_degrees(0, attr)
+        degrees = {deg[i] for i in positions}
+    mapping = {d: i for i, d in enumerate(degrees)}
+    M = degree_mixing_matrix(G, x=x, y=y, nodes=nodes, weight=weight, mapping=mapping)
+    return _numeric_ac(M, mapping=mapping)
+
+
+def degree_pearson_correlation_coefficient(G, x="out", y="in", weight=None, nodes=None):
+    import scipy as sp
+
+    prepare = _b14_degree_pairs(G, x, y, weight)
+    _b14_reusable(nodes)
+    order, mask, xdeg, ydeg = prepare(nodes)
+    us, vs = G._core.xy_pairs(order, mask)
+    if len(us) < 2:
+        # 3.4 to 3.6 raise (from `zip(*xy)` or SciPy); 3.7 returns NaN.
+        raise NotImplementedError("NetworkX versions differ here")
+    xs = tuple(map(xdeg.__getitem__, us))
+    ys = tuple(map(ydeg.__getitem__, vs))
+    return float(sp.stats.pearsonr(xs, ys)[0])
+
+
+def _b14_attribute_mixing(G, attribute, nodes, normalized):
+    values = _b14_node_values(G, attribute)
+    _b14_reusable(nodes)
+    classes = {}
+    try:
+        cls = [classes.setdefault(value, len(classes)) for value in values]
+    except TypeError:
+        raise NotImplementedError("unhashable attribute values") from None
+    if nodes is None:
+        order = list(range(len(G)))
+    else:
+        S = set(nodes)
+        order = [i for i, v in enumerate(G._nodes) if v in S]
+    return _b14_mixing_dict(G, order, None, cls, cls, lambda c, node: values[node], normalized)
+
+
+def attribute_mixing_dict(G, attribute, nodes=None, normalized=False):
+    return _b14_attribute_mixing(G, attribute, nodes, normalized)
+
+
+def attribute_mixing_matrix(G, attribute, nodes=None, mapping=None, normalized=True):
+    d = _b14_attribute_mixing(G, attribute, nodes, False)
+    return _b14_matrix(d, mapping, normalized)
+
+
+def attribute_assortativity_coefficient(G, attribute, nodes=None):
+    from networkx.algorithms.assortativity.correlation import attribute_ac
+
+    M = attribute_mixing_matrix(G, attribute, nodes)
+    return attribute_ac(M)
+
+
+def numeric_assortativity_coefficient(G, attribute, nodes=None):
+    from networkx.algorithms.assortativity.correlation import _numeric_ac
+
+    if G._core.is_native():
+        raise NotImplementedError("native graphs have no node attributes")
+    _b14_reusable(nodes)
+    base = _networkx_graph(G)
+    # NetworkX's own expression on the NetworkX graph: same values, same errors.
+    vals = {base.nodes[n][attribute] for n in (base.nodes if nodes is None else nodes)}
+    mapping = {d: i for i, d in enumerate(vals)}
+    M = attribute_mixing_matrix(G, attribute, nodes, mapping)
+    return _numeric_ac(M, mapping)
+
+
+def average_neighbor_degree(G, source="out", target="out", nodes=None, weight=None):
+    kinds = {"in": 2, "out": 1, "in+out": 0}
+    if G.is_directed():
+        s = next((kinds[k] for k in kinds if source == k), None)
+        if s is None:
+            raise nx.NetworkXError(f"source argument {source} must be 'in', 'out' or 'in+out'")
+        t = next((kinds[k] for k in kinds if target == k), None)
+        if t is None:
+            raise nx.NetworkXError(f"target argument {target} must be 'in', 'out' or 'in+out'")
+    else:
+        if source != "out" or target != "out":
+            raise nx.NetworkXError(
+                "source and target arguments are only supported for directed graphs"
+            )
+        s = t = 0
+    attr = _b14_int_weight(G, weight)
+    single, positions = _nbunch_positions(G, nodes)
+    if single:
+        raise NotImplementedError("NetworkX raises its own error here")
+    if positions is None:
+        positions = list(range(len(G)))
+    terms = G._core.neighbor_degree_terms(positions, s, t, attr)
+    nodes_ = G._nodes
+    return {nodes_[i]: 0.0 if deg == 0 else total / deg for i, (total, deg) in zip(positions, terms)}
+
+
+def average_degree_connectivity(G, source="in+out", target="in+out", nodes=None, weight=None):
+    kinds = {"in": 2, "out": 1, "in+out": 0}
+    if G.is_directed():
+        if source not in ("in", "out", "in+out"):
+            raise nx.NetworkXError('source must be one of "in", "out", or "in+out"')
+        if target not in ("in", "out", "in+out"):
+            raise nx.NetworkXError('target must be one of "in", "out", or "in+out"')
+        s = next(kinds[k] for k in kinds if source == k)
+        t = next(kinds[k] for k in kinds if target == k)
+    else:
+        if source != "in+out" or target != "in+out":
+            raise nx.NetworkXError(
+                "source and target arguments are only supported for directed graphs"
+            )
+        s = t = 0
+    attr = _b14_int_weight(G, weight)
+    if nodes is None:
+        positions = list(range(len(G)))
+    elif nodes in G:
+        positions = [G._index[nodes]]
+    else:
+        positions = _b14_nbunch_list(G, nodes)
+    keys, sums, norms = G._core.degree_connectivity(positions, s, t, attr)
+    return {k: total if norm == 0 else total / norm for k, total, norm in zip(keys, sums, norms)}
+
+
+# Reciprocity, rich club, s-metric and walks.
+
+
+def overall_reciprocity(G):
+    n_all_edge = G._core.number_of_edges()
+    # Undirected graphs: `G.to_undirected()` keeps every edge.
+    n_overlap_edge = G._core.reciprocated_edges() if G.is_directed() else 0
+    if n_all_edge == 0:
+        raise nx.NetworkXError("Not defined for empty graphs")
+    return n_overlap_edge / n_all_edge
+
+
+def reciprocity(G, nodes=None):
+    if nodes is None:
+        return overall_reciprocity(G)
+    if not G.is_directed():
+        raise NotImplementedError("NetworkX raises AttributeError here")
+    if nodes in G:
+        overlap, total = G._core.reciprocity_counts([G._index[nodes]])[0]
+        if total == 0:
+            raise nx.NetworkXError("Not defined for isolated nodes.")
+        return 2 * overlap / total
+    _, positions = _nbunch_positions(G, nodes)
+    counts = G._core.reciprocity_counts(positions)
+    nodes_ = G._nodes
+    return {
+        nodes_[i]: None if total == 0 else 2 * overlap / total
+        for i, (overlap, total) in zip(positions, counts)
+    }
+
+
+def rich_club_coefficient(G, normalized=True, Q=100, seed=None):
+    _undirected_only(G)
+    if G._core.has_self_loops():
+        raise Exception("rich_club_coefficient is not implemented for graphs with self loops.")
+    if normalized:
+        raise NotImplementedError("normalization uses random edge swaps")
+    if G._core.number_of_edges() == 0:
+        return {}
+    return {d: 2 * ek / (nk * (nk - 1)) for d, (nk, ek) in enumerate(G._core.rich_club_counts())}
+
+
+def s_metric(G):
+    return float(G._core.s_metric_sum())
+
+
+# NetworkX takes powers of a dense (3.4, 3.5) or sparse (3.6+) int64 matrix;
+# rustnx walks the rows, which costs time linear in the walk length.
+_B14_MAX_WALK = 100
+
+
+def number_of_walks(G, walk_length):
+    if type(walk_length) is not int:
+        raise NotImplementedError("rustnx needs an int walk_length")
+    if walk_length < 0:
+        raise ValueError(f"`walk_length` cannot be negative: {walk_length}")
+    if len(G) == 0:
+        raise nx.NetworkXError("Graph has no nodes or edges")
+    if G._core.number_of_edges() == 0:
+        raise NotImplementedError("NetworkX returns floats for a graph without edges")
+    if walk_length > _B14_MAX_WALK:
+        raise NotImplementedError("long walks run in NetworkX")
+    rows = G._core.walk_counts(walk_length)
+    nodes = G._nodes
+    return {u: dict(zip(nodes, row)) for u, row in zip(nodes, rows)}
