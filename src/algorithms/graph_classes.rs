@@ -1212,7 +1212,10 @@ fn biconnected_sets<A: Adjacency>(g: &A, alive: &[bool], nodes: &[u32]) -> Vec<V
 
 /// Whether `chordless_cycles` would yield a cycle of odd length 5 or more
 /// (a hole), searching as it does: in each biconnected component, from
-/// every stem (u, v, w) at one node v, then without v.
+/// every stem (u, v, w) at one node v, then without v. NetworkX picks v
+/// in set order; any choice finds the same cycles, so rustnx takes a node
+/// of least degree (often one with no stems at all), and skips stems whose
+/// ends no component of `c - N[v]` touches both of, which can't close.
 fn has_odd_hole<A: Adjacency>(g: &A, present: &[bool]) -> bool {
     let n = g.n();
     let nodes: Vec<u32> = (0..n as u32).filter(|&v| present[v as usize]).collect();
@@ -1220,26 +1223,96 @@ fn has_odd_hole<A: Adjacency>(g: &A, present: &[bool]) -> bool {
     let mut components = biconnected_sets(g, &alive, &nodes);
     alive.fill(false);
     let mut blocked = vec![0i32; n];
+    let mut label = vec![NONE; n];
+    let mut near = vec![false; n];
     let mut nv = Vec::new();
+    let mut scratch = Vec::new();
+    let mut queue = Vec::new();
     while let Some(c) = components.pop() {
         for &x in &c {
             alive[x as usize] = true;
         }
-        let v = c[0];
+        let mut v = c[0];
+        let mut best = usize::MAX;
+        for &x in &c {
+            g.neighbors(x, &alive, &mut scratch);
+            if scratch.len() < best {
+                best = scratch.len();
+                v = x;
+            }
+        }
         g.neighbors(v, &alive, &mut nv);
+        // Components of c - N[v], and which of them each neighbor touches.
+        near[v as usize] = true;
+        for &x in &nv {
+            near[x as usize] = true;
+        }
+        let mut next = 0u32;
+        for &s in &c {
+            if near[s as usize] || label[s as usize] != NONE {
+                continue;
+            }
+            label[s as usize] = next;
+            queue.clear();
+            queue.push(s);
+            while let Some(x) = queue.pop() {
+                g.neighbors(x, &alive, &mut scratch);
+                for &y in &scratch {
+                    if !near[y as usize] && label[y as usize] == NONE {
+                        label[y as usize] = next;
+                        queue.push(y);
+                    }
+                }
+            }
+            next += 1;
+        }
+        let touches: Vec<Vec<u32>> = nv
+            .iter()
+            .map(|&x| {
+                g.neighbors(x, &alive, &mut scratch);
+                let mut t: Vec<u32> = scratch
+                    .iter()
+                    .map(|&y| label[y as usize])
+                    .filter(|&l| l != NONE)
+                    .collect();
+                t.sort_unstable();
+                t.dedup();
+                t
+            })
+            .collect();
+        for &x in &c {
+            label[x as usize] = NONE;
+            near[x as usize] = false;
+        }
         for i in 0..nv.len() {
             for j in i + 1..nv.len() {
                 let (u, w) = (nv[i], nv[j]);
-                if !g.adjacent(w, u) && odd_hole_from(g, &alive, &mut blocked, [u, v, w]) {
+                if g.adjacent(w, u) || !shares(&touches[i], &touches[j]) {
+                    continue;
+                }
+                if odd_hole_from(g, &alive, &mut blocked, [u, v, w]) {
                     return true;
                 }
             }
         }
         alive[v as usize] = false;
-        let rest: Vec<u32> = c[1..].to_vec();
+        let rest: Vec<u32> = c.iter().copied().filter(|&x| x != v).collect();
         components.extend(biconnected_sets(g, &alive, &rest));
         for &x in &c {
             alive[x as usize] = false;
+        }
+    }
+    false
+}
+
+/// Whether two sorted lists have a common element.
+fn shares(a: &[u32], b: &[u32]) -> bool {
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() && j < b.len() {
+        match a[i].cmp(&b[j]) {
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j += 1,
+            std::cmp::Ordering::Equal => return true,
         }
     }
     false
