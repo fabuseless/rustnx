@@ -285,6 +285,9 @@ def algorithm_calls(H, directed):
         calls["prim"] = lambda G, b: list(
             nx.algorithms.tree.mst.prim_mst_edges(G, True, data=False, backend=b)
         )
+        calls["boruvka"] = lambda G, b: list(
+            nx.algorithms.tree.mst.boruvka_mst_edges(G, data=False, backend=b)
+        )
         calls["partition_spanning_tree"] = lambda G, b: list(nx.partition_spanning_tree(G, backend=b).edges)
         if src is not None:
             calls["node_cc"] = lambda G, b: nx.node_connected_component(G, src, backend=b)

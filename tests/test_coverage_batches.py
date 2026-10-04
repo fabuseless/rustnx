@@ -1680,6 +1680,9 @@ def test_batch8_spanning_trees(seed, weights):
         exact_outcome(listed(mst.prim_mst_edges), G, minimum)
         exact_outcome(listed(mst.prim_mst_edges), G, minimum, data=False)
         exact_outcome(listed(mst.prim_mst_edges), G, minimum, weight=None)
+        exact_outcome(listed(mst.boruvka_mst_edges), G, minimum)
+        exact_outcome(listed(mst.boruvka_mst_edges), G, minimum, data=False)
+        exact_outcome(listed(mst.boruvka_mst_edges), G, minimum, weight=None)
         exact_outcome(strict(nx.partition_spanning_tree), G, minimum)
         P = _with_partition(G, seed)
         exact_outcome(strict(nx.partition_spanning_tree), P, minimum)
@@ -1687,6 +1690,8 @@ def test_batch8_spanning_trees(seed, weights):
     D = _with_partition(_weighted_graph(seed, True, weights), seed)
     exact_outcome(strict(nx.partition_spanning_tree), D)
     exact_outcome(listed(mst.prim_mst_edges), D, True)  # directed: falls back
+    exact_outcome(listed(mst.boruvka_mst_edges), D, True)
+    exact_outcome(listed(mst.boruvka_mst_edges), D, False, weight=None)
 
 
 def _random_tree(seed, n):
@@ -1850,6 +1855,7 @@ def test_batch8_multigraphs_fall_back(directed, restore_config):
         exact_outcome(listed(nx.all_pairs_lowest_common_ancestor), M)
     else:
         exact_outcome(listed(mst.prim_mst_edges), M, True)
+    exact_outcome(listed(mst.boruvka_mst_edges), M)
 
 
 def test_batch8_graph_changes_during_iteration():
@@ -1857,6 +1863,7 @@ def test_batch8_graph_changes_during_iteration():
 
     cases = [
         (nx.Graph, lambda G, **kw: mst.prim_mst_edges(G, True, **kw)),
+        (nx.Graph, lambda G, **kw: mst.boruvka_mst_edges(G, **kw)),
         (nx.DiGraph, lambda G, **kw: nx.tree_all_pairs_lowest_common_ancestor(G, 0, **kw)),
     ]
     for cls, call in cases:

@@ -247,6 +247,7 @@ MULTIGRAPH_FUNCTIONS = {
 
 # Functions that return subgraphs of the original NetworkX graph.
 _BUILDS_FROM_SOURCE = {
+    "boruvka_mst_edges",
     "k_core",
     "k_corona",
     "k_crust",

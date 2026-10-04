@@ -115,7 +115,8 @@ SECTIONS = [
     ("Branchings, arborescences and more trees", [
         "maximum_branching", "minimum_branching", "minimal_branching",
         "maximum_spanning_arborescence", "minimum_spanning_arborescence",
-        "greedy_branching", "branching_weight", "prim_mst_edges", "partition_spanning_tree",
+        "greedy_branching", "branching_weight", "prim_mst_edges", "boruvka_mst_edges",
+        "partition_spanning_tree",
         "from_prufer_sequence", "from_nested_tuple", "to_nested_tuple", "tree_centroid",
     ]),
     ("Lowest common ancestors", [
@@ -263,6 +264,7 @@ NOTES = {
     "greedy_branching": "Only int or str node labels (NetworkX sorts edges by weight, then nodes); others fall back. `attr=None` uses the random state as NetworkX does.",
     "branching_weight": "Weights mixing ints and floats fall back.",
     "prim_mst_edges": "Undirected graphs; directed ones fall back. Trees start from the nodes NetworkX pops from `set(G)` (rustnx replays the same set operations). Yields the graph's own edge data dicts.",
+    "boruvka_mst_edges": "Rounds run in Rust. Where a component's best edge is tied, rustnx replays NetworkX's set of the component's nodes to scan it in the same order. Yields the graph's own edge data dicts.",
     "partition_spanning_tree": "Kruskal with the partition in Rust. `partition` values must be `EdgePartition` members or `None`.",
     "from_prufer_sequence": "Takes no graph: runs in rustnx with `backend='rustnx'` or `nx.config.backend_priority.generators`. Sequences of non-ints fall back.",
     "from_nested_tuple": "Takes no graph (see `from_prufer_sequence`). Nesting deeper than 100 levels falls back.",
@@ -284,7 +286,7 @@ def location(name):
         return "nx.algorithms.coloring.equitable_coloring"
     if name in ("branching_weight", "greedy_branching", "minimal_branching"):
         return "nx.tree"
-    if name == "prim_mst_edges":
+    if name in ("prim_mst_edges", "boruvka_mst_edges"):
         return "nx.tree.mst"
     return "nx.community" if name == "label_propagation_communities" else "nx"
     return {

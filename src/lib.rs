@@ -2176,6 +2176,18 @@ impl CoreGraph {
         )))
     }
 
+    /// `boruvka_mst_edges`, run a round at a time from Python.
+    #[pyo3(signature = (weight=None, minimum=true))]
+    fn boruvka(&self, weight: Option<&str>, minimum: bool) -> PyResult<Boruvka> {
+        let w = self.weight_slice(weight, false)?.map(|w| w.to_vec());
+        let adj = graph::Csr {
+            offsets: self.succ.offsets.clone(),
+            targets: self.succ.targets.clone(),
+        };
+        let sign = if minimum { 1.0 } else { -1.0 };
+        Ok(Boruvka(trees_more::Boruvka::new(adj, w, sign)))
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -2750,6 +2762,33 @@ impl TreeLca {
     }
 }
 
+/// `boruvka_mst_edges`' state between rounds.
+#[pyclass(module = "rustnx._core")]
+pub struct Boruvka(trees_more::Boruvka);
+
+#[pymethods]
+impl Boruvka {
+    fn components(&mut self) -> Vec<Vec<u32>> {
+        self.0.components()
+    }
+
+    /// One round: `(us, vs, any_best)`, or `None` if `orders` is needed.
+    #[pyo3(signature = (orders=None))]
+    #[allow(clippy::type_complexity)]
+    fn round(
+        &mut self,
+        py: Python<'_>,
+        orders: Option<Vec<Vec<u32>>>,
+    ) -> Option<(Vec<u32>, Vec<u32>, bool)> {
+        let inner = &mut self.0;
+        py.detach(|| inner.round(orders.as_deref()))
+            .map(|(edges, any)| {
+                let (us, vs) = edges.into_iter().unzip();
+                (us, vs, any)
+            })
+    }
+}
+
 fn unzip3(items: Vec<(u32, u32, u8)>) -> (Vec<u32>, Vec<u32>, Vec<u8>) {
     let mut us = Vec::with_capacity(items.len());
     let mut vs = Vec::with_capacity(items.len());
@@ -2779,6 +2818,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<GroupPre>()?;
     m.add_class::<DagLca>()?;
     m.add_class::<TreeLca>()?;
+    m.add_class::<Boruvka>()?;
     m.add_function(wrap_pyfunction!(graph::build_graph, m)?)?;
     m.add_function(wrap_pyfunction!(serialize::_core_graph_from_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(native::build_native, m)?)?;

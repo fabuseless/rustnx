@@ -54,6 +54,7 @@ __all__ = [
     "biconnected_components",
     "bidirectional_dijkstra",
     "bidirectional_shortest_path",
+    "boruvka_mst_edges",
     "branching_weight",
     "bridges",
     "center",
@@ -4663,6 +4664,44 @@ def prim_mst_edges(G, minimum, weight="weight", keys=True, data=True, ignore_nan
 
     def fallback(H):
         return mst.prim_mst_edges(H, minimum, weight, keys, data, ignore_nan, backend="networkx")
+
+    return _guarded(G, produce, fallback)
+
+
+def boruvka_mst_edges(G, minimum=True, weight="weight", keys=True, data=True, ignore_nan=False):
+    base = _networkx_graph(G)
+    weight = _unhidden_weight(G, weight)  # NaN weights fall back when converted
+    nodes = G._nodes
+    index = G._index
+
+    def produce():
+        state = G._core.boruvka(weight, bool(minimum))
+        adj = base._adj
+        while True:
+            found = state.round()
+            if found is None:
+                # A component's best edge is tied, so the order NetworkX
+                # scans it in matters: that of `{n for n in component}`,
+                # where `forest.to_sets()` builds the component by adding
+                # its nodes in node order.
+                orders = []
+                for comp in state.components():
+                    members = set()
+                    for i in comp:
+                        members.add(nodes[i])
+                    orders.append([index[x] for x in {x for x in members}])
+                found = state.round(orders)
+            us, vs, any_best = found
+            if not any_best:
+                return
+            for u, v in zip(us, vs):
+                a, b = nodes[u], nodes[v]
+                yield (a, b, adj[a][b]) if data else (a, b)
+
+    from networkx.algorithms.tree import mst
+
+    def fallback(H):
+        return mst.boruvka_mst_edges(H, minimum, weight, keys, data, ignore_nan, backend="networkx")
 
     return _guarded(G, produce, fallback)
 

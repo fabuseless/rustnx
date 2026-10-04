@@ -995,3 +995,99 @@ fn dfs_postorder(succ: &Csr, source: u32) -> Vec<u32> {
     }
     post
 }
+
+// --- Borůvka -----------------------------------------------------------------------
+
+/// `boruvka_mst_edges`, one round at a time: each round finds every
+/// component's best boundary edge, then joins them in component order.
+pub struct Boruvka {
+    adj: Csr,
+    weights: Option<Vec<f64>>,
+    sign: f64,
+    uf: Vec<u32>,
+}
+
+impl Boruvka {
+    pub fn new(adj: Csr, weights: Option<Vec<f64>>, sign: f64) -> Self {
+        let n = adj.offsets.len() - 1;
+        Boruvka {
+            adj,
+            weights,
+            sign,
+            uf: (0..n as u32).collect(),
+        }
+    }
+
+    /// `forest.to_sets()`: components ordered by their first node, each
+    /// listing its nodes in node order.
+    pub fn components(&mut self) -> Vec<Vec<u32>> {
+        let n = self.uf.len();
+        let mut slot = vec![NONE; n];
+        let mut comps: Vec<Vec<u32>> = Vec::new();
+        for v in 0..n as u32 {
+            let r = find(&mut self.uf, v) as usize;
+            if slot[r] == NONE {
+                slot[r] = comps.len() as u32;
+                comps.push(Vec::new());
+            }
+            comps[slot[r] as usize].push(v);
+        }
+        comps
+    }
+
+    /// One round. `orders` gives each component's nodes in the order
+    /// NetworkX visits them (its set's iteration order); without it, node
+    /// order is used, and `None` is returned (changing nothing) if some
+    /// component's best edge is tied, so that order would matter. Returns
+    /// the edges added this round and whether any component had a
+    /// boundary edge (NetworkX stops after a round with none).
+    pub fn round(&mut self, orders: Option<&[Vec<u32>]>) -> Option<(Vec<(u32, u32)>, bool)> {
+        let comps = self.components();
+        let n = self.uf.len();
+        let mut comp_of = vec![0u32; n];
+        for (c, comp) in comps.iter().enumerate() {
+            for &v in comp {
+                comp_of[v as usize] = c as u32;
+            }
+        }
+        let mut best = Vec::with_capacity(comps.len());
+        for (c, comp) in comps.iter().enumerate() {
+            let order = orders.map_or(comp.as_slice(), |o| o[c].as_slice());
+            let mut minwt = f64::INFINITY;
+            let mut edge = None;
+            let mut tied = false;
+            for &x in order {
+                for e in self.adj.range(x as usize) {
+                    let y = self.adj.targets[e];
+                    if comp_of[y as usize] == c as u32 {
+                        continue;
+                    }
+                    let wt = self.weights.as_ref().map_or(1.0, |w| w[e]) * self.sign;
+                    if wt < minwt {
+                        minwt = wt;
+                        edge = Some((x, y));
+                        tied = false;
+                    } else if wt == minwt && edge.is_some() {
+                        tied = true;
+                    }
+                }
+            }
+            if tied && orders.is_none() {
+                return None;
+            }
+            if let Some(e) = edge {
+                best.push(e);
+            }
+        }
+        let any = !best.is_empty();
+        let mut added = Vec::new();
+        for (u, v) in best {
+            let (ru, rv) = (find(&mut self.uf, u), find(&mut self.uf, v));
+            if ru != rv {
+                self.uf[ru as usize] = rv;
+                added.push((u, v));
+            }
+        }
+        Some((added, any))
+    }
+}

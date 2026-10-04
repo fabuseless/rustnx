@@ -40,6 +40,7 @@ FUNCTIONS = {
     "biconnected_components": {},
     "bidirectional_dijkstra": {},
     "bidirectional_shortest_path": {},
+    "boruvka_mst_edges": {},
     "branching_weight": {},
     "bridges": {},
     "center": {},

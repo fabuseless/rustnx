@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 179 NetworkX functions. Call them as usual (for
+rustnx implements 196 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -290,6 +290,33 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.cycle_basis` | `root` | no | NetworkX | A `root` not in the graph falls back. |
 | `nx.find_cycle` | `source`, `orientation` | no | NetworkX | A `source` that isn't one node of the graph, and invalid orientations on directed graphs, fall back. |
 | `nx.girth` | none | no | rustnx |  |
+
+### Branchings, arborescences and more trees
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.maximum_branching` | `attr`, `default`, `preserve_attrs`, `partition` | no | rustnx | Edmonds' algorithm as NetworkX runs it, in Rust; the result's edges come in NetworkX's (set iteration) order. Weights must be Python ints or floats, and `partition` values `EdgePartition` members or `None`. |
+| `nx.minimum_branching` | `attr`, `default`, `preserve_attrs`, `partition` | no | rustnx | Edmonds' algorithm as NetworkX runs it, in Rust; the result's edges come in NetworkX's (set iteration) order. Weights must be Python ints or floats, and `partition` values `EdgePartition` members or `None`. Changes G's weights exactly as NetworkX does (edges without `attr` gain it). |
+| `nx.tree.minimal_branching` | `attr`, `default`, `preserve_attrs`, `partition` | no | rustnx | Edmonds' algorithm as NetworkX runs it, in Rust; the result's edges come in NetworkX's (set iteration) order. Weights must be Python ints or floats, and `partition` values `EdgePartition` members or `None`. Changes G's weights exactly as NetworkX does (edges without `attr` gain it). |
+| `nx.maximum_spanning_arborescence` | `attr`, `default`, `preserve_attrs`, `partition` | no | rustnx | Edmonds' algorithm as NetworkX runs it, in Rust; the result's edges come in NetworkX's (set iteration) order. Weights must be Python ints or floats, and `partition` values `EdgePartition` members or `None`. Changes G's weights exactly as NetworkX does (edges without `attr` gain it). |
+| `nx.minimum_spanning_arborescence` | `attr`, `default`, `preserve_attrs`, `partition` | no | rustnx | Edmonds' algorithm as NetworkX runs it, in Rust; the result's edges come in NetworkX's (set iteration) order. Weights must be Python ints or floats, and `partition` values `EdgePartition` members or `None`. Changes G's weights exactly as NetworkX does (edges without `attr` gain it). |
+| `nx.tree.greedy_branching` | `attr`, `default`, `kind`, `seed` | no | rustnx | Only int or str node labels (NetworkX sorts edges by weight, then nodes); others fall back. `attr=None` uses the random state as NetworkX does. |
+| `nx.tree.branching_weight` | `attr`, `default` | no | NetworkX | Weights mixing ints and floats fall back. |
+| `nx.tree.mst.prim_mst_edges` | `minimum`, `weight`, `keys`, `data`, `ignore_nan` | no | rustnx | Undirected graphs; directed ones fall back. Trees start from the nodes NetworkX pops from `set(G)` (rustnx replays the same set operations). Yields the graph's own edge data dicts. |
+| `nx.tree.mst.boruvka_mst_edges` | `minimum`, `weight`, `keys`, `data`, `ignore_nan` | no | rustnx | Rounds run in Rust. Where a component's best edge is tied, rustnx replays NetworkX's set of the component's nodes to scan it in the same order. Yields the graph's own edge data dicts. |
+| `nx.partition_spanning_tree` | `minimum`, `weight`, `partition`, `ignore_nan` | no | rustnx | Kruskal with the partition in Rust. `partition` values must be `EdgePartition` members or `None`. |
+| `nx.from_prufer_sequence` | `sequence` | no | rustnx | Takes no graph: runs in rustnx with `backend='rustnx'` or `nx.config.backend_priority.generators`. Sequences of non-ints fall back. |
+| `nx.from_nested_tuple` | `sequence`, `sensible_relabeling` | no | rustnx | Takes no graph (see `from_prufer_sequence`). Nesting deeper than 100 levels falls back. |
+| `nx.to_nested_tuple` | `root`, `canonical_form` | no | rustnx | `canonical_form=True` only (otherwise children follow set order). Trees deeper than 100 levels fall back. |
+| `nx.tree_centroid` | none | no | NetworkX | NetworkX 3.7+, as `nx.tree.centroid`. |
+
+### Lowest common ancestors
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.lowest_common_ancestor` | `node1`, `node2`, `default` | no | rustnx | As `all_pairs_lowest_common_ancestor`. |
+| `nx.all_pairs_lowest_common_ancestor` | `pairs` | no | rustnx | Pairs with a unique lowest common ancestor are answered in Rust; for pairs with several, rustnx repeats NetworkX's set-based walk. |
+| `nx.tree_all_pairs_lowest_common_ancestor` | `root`, `pairs` | no | rustnx | `pairs` falls back (NetworkX keeps them in sets), and so does a `root` not in the graph. |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 
