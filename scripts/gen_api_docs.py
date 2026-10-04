@@ -112,6 +112,12 @@ SECTIONS = [
         "is_eulerian", "has_eulerian_path", "is_semieulerian", "eulerian_circuit",
         "eulerian_path", "cycle_basis", "find_cycle", "girth",
     ]),
+    ("Isomorphism and graph hashing", [
+        "could_be_isomorphic", "fast_could_be_isomorphic", "faster_could_be_isomorphic",
+        "is_isomorphic", "vf2pp_is_isomorphic", "vf2pp_subgraph_is_isomorphic",
+        "vf2pp_is_monomorphic", "tree_isomorphism", "rooted_tree_isomorphism", "root_trees",
+        "weisfeiler_lehman_graph_hash", "weisfeiler_lehman_subgraph_hashes",
+    ]),
 ]
 
 LENGTHS = "Falls back when weights mix ints and floats (NetworkX's length types then depend on the path)."
@@ -245,6 +251,25 @@ NOTES = {
     "has_eulerian_path": "A `source` not in the graph falls back.",
     "cycle_basis": "A `root` not in the graph falls back.",
     "find_cycle": "A `source` that isn't one node of the graph, and invalid orientations on directed graphs, fall back.",
+    "could_be_isomorphic": "Takes two graphs. Follows the installed NetworkX's checks (3.5+ stops at the first property that differs, which decides whether directed graphs raise). Multigraphs fall back.",
+    "fast_could_be_isomorphic": "Takes two graphs. As `could_be_isomorphic` (3.7+ stops at the first property that differs).",
+    "faster_could_be_isomorphic": "Takes two graphs.",
+    "is_isomorphic": "Takes two graphs. A yes/no answer, so an exact matcher in Rust (with color refinement) gives NetworkX's result without running VF2. `node_match`, `edge_match` and multigraphs fall back.",
+    "vf2pp_is_isomorphic": "Takes two graphs. Node labels are read from the NetworkX graphs. Empty graphs give `False`, as in NetworkX. A directed and an undirected graph fall back before NetworkX 3.7.",
+    "vf2pp_subgraph_is_isomorphic": "NetworkX 3.7+. Takes two graphs (the second is the smaller). Node labels are read from the NetworkX graphs.",
+    "vf2pp_is_monomorphic": "NetworkX 3.7+. Takes two graphs (the second is the smaller). Node labels are read from the NetworkX graphs.",
+    "tree_isomorphism": "Takes two trees. Follows the installed NetworkX's child order and errors (3.4 asserts; its recursive walk means very deep trees fall back there). A directed `t2` falls back.",
+    "rooted_tree_isomorphism": "As `tree_isomorphism`. Directed trees and roots not in the trees fall back.",
+    "root_trees": "Builds the combined tree in NetworkX from Rust searches. Roots not in the graphs fall back.",
+    "weisfeiler_lehman_graph_hash": "BLAKE2b in Rust, parallel; same hashes as NetworkX's `hashlib`, for the installed version (3.5 changed them), with the same warnings. Node and edge attribute labels are read from the NetworkX graph; non-ASCII labels, non-str attribute names and an unusual `digest_size` fall back.",
+    "weisfeiler_lehman_subgraph_hashes": "As `weisfeiler_lehman_graph_hash`.",
+}
+
+# Functions NetworkX only exposes under `nx.isomorphism` (or its modules).
+ISOMORPHISM_ONLY = {
+    "tree_isomorphism": "nx.isomorphism",
+    "rooted_tree_isomorphism": "nx.isomorphism",
+    "root_trees": "networkx.algorithms.isomorphism.tree_isomorphism",
 }
 
 # Functions NetworkX only exposes under `nx.dag`.
@@ -254,6 +279,8 @@ DAG_ONLY = {"v_structures", "root_to_leaf_paths", "has_cycle"}
 def location(name):
     if name in DAG_ONLY:
         return "nx.dag"
+    if name in ISOMORPHISM_ONLY:
+        return ISOMORPHISM_ONLY[name]
     if name in ("is_coloring", "is_equitable"):
         return "nx.algorithms.coloring.equitable_coloring"
     return "nx.community" if name == "label_propagation_communities" else "nx"

@@ -17,8 +17,8 @@ use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
-    centrality, centrality_more, cluster, cores_more, dag, directed, distance, paths, spectral,
-    structure, structure_more,
+    centrality, centrality_more, cluster, cores_more, dag, directed, distance, isomorphism, paths,
+    spectral, structure, structure_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -1939,6 +1939,207 @@ impl CoreGraph {
         let pos = self.sources_or_all(Some(pos))?;
         let degree = self.degrees();
         Ok(py.detach(|| structure_more::prufer(&self.succ, self.n, &pos, &degree)))
+    }
+
+    // --- Batch 11: isomorphism and graph hashing ---
+
+    /// Weisfeiler-Lehman steps from the initial `labels`: each step's
+    /// labels, per node (`history`), or the final graph hash. `edge_text`
+    /// holds `str(G[u][v][edge_attr])` per `succ` entry; `split` is
+    /// NetworkX 3.5+'s directed aggregation (successors then predecessors,
+    /// prefixed `s_`/`p_` without edge text).
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (labels, edge_text, split, steps, digest_size, initial_hashes=0))]
+    fn wl_hashes(
+        &self,
+        py: Python<'_>,
+        labels: Vec<String>,
+        edge_text: Option<Vec<String>>,
+        split: bool,
+        steps: usize,
+        digest_size: usize,
+        initial_hashes: usize,
+    ) -> PyResult<(String, Vec<Vec<String>>)> {
+        if labels.len() != self.n || !(1..=64).contains(&digest_size) {
+            return Err(PyValueError::new_err("bad labels or digest size"));
+        }
+        if edge_text
+            .as_ref()
+            .is_some_and(|t| t.len() != self.succ.targets.len())
+        {
+            return Err(PyValueError::new_err("edge text doesn't match the edges"));
+        }
+        Ok(py.detach(|| {
+            use isomorphism::{WlGroup, WlPrefix};
+            let n = self.n;
+            let text = edge_text.as_deref();
+            let prefix = |same: &'static str| match text {
+                Some(t) => WlPrefix::PerEdge(t),
+                None => WlPrefix::Same(same),
+            };
+            let mut groups = Vec::new();
+            if split {
+                groups.push(WlGroup {
+                    rows: isomorphism::rows_with_ids(&self.succ, n),
+                    prefix: prefix("s_"),
+                });
+                groups.push(WlGroup {
+                    rows: isomorphism::pred_rows_with_ids(&self.succ, n),
+                    prefix: prefix("p_"),
+                });
+            } else {
+                groups.push(WlGroup {
+                    rows: isomorphism::rows_with_ids(&self.succ, n),
+                    prefix: prefix(""),
+                });
+            }
+            let mut history: Vec<Vec<String>> = Vec::new();
+            if initial_hashes > 0 {
+                let first: Vec<String> = labels
+                    .par_iter()
+                    .map(|l| isomorphism::blake2b_hex(l.as_bytes(), digest_size))
+                    .collect();
+                for _ in 0..initial_hashes {
+                    history.push(first.clone());
+                }
+            }
+            let mut current = labels;
+            let mut steps_out = Vec::with_capacity(steps);
+            for _ in 0..steps {
+                current = isomorphism::wl_step(&current, &groups, digest_size);
+                steps_out.push(current.clone());
+            }
+            let graph_hash = isomorphism::blake2b_hex(
+                isomorphism::wl_counts_text(&steps_out).as_bytes(),
+                digest_size,
+            );
+            history.extend(steps_out);
+            // Per node, its labels across steps.
+            let per_node: Vec<Vec<String>> = (0..n)
+                .map(|v| history.iter().map(|step| step[v].clone()).collect())
+                .collect();
+            (graph_hash, per_node)
+        }))
+    }
+
+    /// Whether the sorted per-node property rows of the two graphs agree,
+    /// as `could_be_isomorphic` builds them: degree, triangles (undirected
+    /// graphs only) and the number of maximal cliques, for the columns
+    /// asked for.
+    fn iso_tables_match(
+        &self,
+        py: Python<'_>,
+        other: &Bound<'_, CoreGraph>,
+        degree: bool,
+        triangles: bool,
+        cliques: bool,
+    ) -> bool {
+        let other = other.get();
+        let deg_a = degree.then(|| self.degrees());
+        let deg_b = degree.then(|| other.degrees());
+        py.detach(|| {
+            let table = |g: &CoreGraph, deg: Option<Vec<usize>>| {
+                let n = g.n;
+                let tri = triangles
+                    .then(|| cluster::triangle_counts(&g.succ, None, n, &all_nodes(n)));
+                let clq = cliques.then(|| isomorphism::maximal_clique_counts(&g.succ, n));
+                let mut rows: Vec<[u64; 3]> = (0..n)
+                    .map(|v| {
+                        [
+                            deg.as_ref().map_or(0, |d| d[v] as u64),
+                            tri.as_ref().map_or(0, |t| t[v].0 / 2),
+                            clq.as_ref().map_or(0, |c| c[v]),
+                        ]
+                    })
+                    .collect();
+                rows.par_sort_unstable();
+                rows
+            };
+            table(self, deg_a) == table(other, deg_b)
+        })
+    }
+
+    /// Whether `small` maps into this graph: `problem` 0 isomorphism,
+    /// 1 induced subgraph isomorphism, 2 monomorphism. Labels are integer
+    /// classes (equal labels, equal classes); `None` means all equal.
+    fn has_morphism(
+        &self,
+        py: Python<'_>,
+        small: &Bound<'_, CoreGraph>,
+        labels: Option<Vec<u32>>,
+        small_labels: Option<Vec<u32>>,
+        problem: u8,
+    ) -> PyResult<bool> {
+        let small = small.get();
+        if small.directed != self.directed {
+            return Err(PyValueError::new_err("graphs differ in directedness"));
+        }
+        let labels = labels.unwrap_or_else(|| vec![0; self.n]);
+        let small_labels = small_labels.unwrap_or_else(|| vec![0; small.n]);
+        if labels.len() != self.n || small_labels.len() != small.n {
+            return Err(PyValueError::new_err("wrong number of labels"));
+        }
+        let problem = match problem {
+            0 => isomorphism::Problem::Iso,
+            1 => isomorphism::Problem::Induced,
+            _ => isomorphism::Problem::Mono,
+        };
+        let directed = self.directed;
+        Ok(py.detach(|| {
+            let big = isomorphism::Side {
+                succ: &self.succ,
+                pred: directed.then(|| self.adj(true)),
+                n: self.n,
+                labels: &labels,
+            };
+            let sm = isomorphism::Side {
+                succ: &small.succ,
+                pred: directed.then(|| small.adj(true)),
+                n: small.n,
+                labels: &small_labels,
+            };
+            isomorphism::has_morphism(&sm, &big, directed, problem)
+        }))
+    }
+
+    /// Centers of a tree (undirected, connected, n - 1 edges), in order.
+    fn tree_centers(&self, py: Python<'_>) -> PyResult<Vec<u32>> {
+        if self.n == 0 {
+            return Err(PyValueError::new_err("empty graph"));
+        }
+        Ok(py.detach(|| isomorphism::tree_centers(&self.succ, self.n)))
+    }
+
+    /// Height of the tree below `root`.
+    fn tree_height(&self, py: Python<'_>, root: usize) -> PyResult<u32> {
+        self.check_index(root)?;
+        Ok(py.detach(|| isomorphism::tree_height(&self.succ, self.n, root)))
+    }
+
+    /// `rooted_tree_isomorphism` of this tree from `root` and `other` from
+    /// `other_root`: position pairs in NetworkX's output order.
+    fn rooted_tree_isomorphism(
+        &self,
+        py: Python<'_>,
+        root: usize,
+        other: &Bound<'_, CoreGraph>,
+        other_root: usize,
+        descending: bool,
+    ) -> PyResult<Vec<(u32, u32)>> {
+        let other = other.get();
+        self.check_index(root)?;
+        other.check_index(other_root)?;
+        Ok(py.detach(|| {
+            isomorphism::rooted_tree_isomorphism(
+                &self.succ,
+                self.n,
+                root,
+                &other.succ,
+                other.n,
+                other_root,
+                descending,
+            )
+        }))
     }
 
     /// `greedy_color` (largest_first): processing order and each node's color.

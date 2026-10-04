@@ -319,6 +319,12 @@ def _nx_signature(name):
     return inspect.signature(_nx_function(name))
 
 
+# Parameters NetworkX renamed between releases: {function: {old: ours}}.
+_RENAMED_PARAMS = {
+    "vf2pp_is_isomorphic": {"G1": "FG", "G2": "SG"},  # renamed in 3.7
+}
+
+
 def _bind(name, args, kwargs):
     """Bind a call to the installed NetworkX function's signature.
 
@@ -331,6 +337,7 @@ def _bind(name, args, kwargs):
     nx_sig = _nx_signature(name)
     bound = nx_sig.bind(*args, **kwargs)
     ours = _OUR_PARAMS[name]
+    renamed = _RENAMED_PARAMS.get(name, {})
     arguments = {}
     unsupported = []
     for key, value in bound.arguments.items():
@@ -339,8 +346,8 @@ def _bind(name, args, kwargs):
             continue
         if param.kind is param.VAR_KEYWORD:
             unsupported.extend(value)  # backend-specific keywords
-        elif key in ours:
-            arguments[key] = value
+        elif renamed.get(key, key) in ours:
+            arguments[renamed.get(key, key)] = value
         elif not _is_default(value, param):
             unsupported.append(key)
     return arguments, unsupported
