@@ -395,83 +395,117 @@ pub fn distance_index_float(
     (!failed).then(|| sum.value())
 }
 
+/// Arc weights with the arcs into `skip` hidden (NaN), so Dijkstra never
+/// reaches it: G with `skip` removed, in the same neighbor order.
+fn without_node(adj: &Csr, weights: Option<&[f64]>, skip: usize) -> Option<Vec<f64>> {
+    let w = weights?;
+    if skip == usize::MAX {
+        return Some(w.to_vec());
+    }
+    Some(
+        w.iter()
+            .zip(&adj.targets)
+            .map(|(&x, &t)| if t as usize == skip { f64::NAN } else { x })
+            .collect(),
+    )
+}
+
+/// One source's distances in G without `skip`, or `None` if it doesn't
+/// reach every other node (a negative cycle can't happen: callers decline
+/// negative weights).
+fn wiener_row(
+    adj: &Csr,
+    weights: Option<&[f64]>,
+    s: usize,
+    size: usize,
+    skip: usize,
+    bfs: &mut Bfs,
+    dij: &mut DijkstraState,
+) -> Option<Vec<f64>> {
+    let dists = distances_from(adj, weights, s, bfs, dij, skip)?;
+    (dists.len() == size).then(|| dists.into_iter().map(|(_, d)| d).collect())
+}
+
+/// Adds one source's distances to a Wiener index total.
+fn add_row(int_total: &mut i128, sum: &mut RunningSum, float: bool, row: Vec<f64>) {
+    for d in row {
+        if float {
+            sum.add(d);
+        } else {
+            *int_total += d as i128;
+        }
+    }
+}
+
 /// The Wiener index total of G with `skip` removed (`usize::MAX`: none),
-/// or `None` if that graph isn't (strongly) connected.
-#[allow(clippy::too_many_arguments)]
+/// or `None` if that graph isn't (strongly) connected. NetworkX sums the
+/// distances source by source, each in its search order.
 fn wiener_total(
     adj: &Csr,
     n: usize,
     weights: Option<&[f64]>,
-    float: bool,
-    compensated: bool,
+    (float, compensated): (bool, bool),
     skip: usize,
-    bfs: &mut Bfs,
-    dij: &mut DijkstraState,
+    parallel: bool,
 ) -> Option<Num> {
+    let hidden = without_node(adj, weights, skip);
+    let weights = hidden.as_deref();
     let size = if skip < n { n - 1 } else { n };
     let mut int_total = 0i128;
     let mut sum = RunningSum::new(compensated);
-    for s in 0..n {
-        if s == skip {
-            continue;
-        }
-        // A negative cycle can't happen: callers decline negative weights.
-        let dists = distances_from(adj, weights, s, bfs, dij, skip)?;
-        if dists.len() != size {
-            return None;
-        }
-        for (_, d) in dists {
-            if float {
-                sum.add(d);
-            } else {
-                int_total += d as i128;
-            }
+    let sources: Vec<u32> = (0..n as u32).filter(|&s| s as usize != skip).collect();
+    let mut connected = true;
+    if parallel {
+        ordered_blocks(
+            &sources,
+            || (Bfs::new(n), DijkstraState::new(n)),
+            |(bfs, dij), s| wiener_row(adj, weights, s as usize, size, skip, bfs, dij),
+            |row| match row {
+                Some(row) => add_row(&mut int_total, &mut sum, float, row),
+                None => connected = false,
+            },
+        );
+    } else {
+        let (mut bfs, mut dij) = (Bfs::new(n), DijkstraState::new(n));
+        for &s in &sources {
+            let row = wiener_row(adj, weights, s as usize, size, skip, &mut bfs, &mut dij)?;
+            add_row(&mut int_total, &mut sum, float, row);
         }
     }
-    Some(if float {
+    connected.then_some(if float {
         Num::Float(sum.value())
     } else {
         Num::Int(int_total)
     })
 }
 
-/// `closeness_vitality`'s Wiener index totals: G's, then G's without each
-/// node. Removing a node is simulated by hiding the arcs into it.
+/// `closeness_vitality`'s Wiener index totals: G's (if `whole`), and G's
+/// without each node of `removals`.
 pub fn vitality_totals(
     adj: &Csr,
     n: usize,
     weights: Option<&[f64]>,
     float: bool,
     compensated: bool,
+    removals: &[u32],
+    whole: bool,
 ) -> (Option<Num>, Vec<Option<Num>>) {
-    let whole = wiener_total(
-        adj,
-        n,
-        weights,
-        float,
-        compensated,
-        usize::MAX,
-        &mut Bfs::new(n),
-        &mut DijkstraState::new(n),
-    );
-    let without = (0..n)
-        .into_par_iter()
-        .map_init(
-            || (Bfs::new(n), DijkstraState::new(n)),
-            |(bfs, dij), r| match weights {
-                None => wiener_total(adj, n, None, float, compensated, r, bfs, dij),
-                Some(w) => {
-                    let hidden: Vec<f64> = w
-                        .iter()
-                        .zip(&adj.targets)
-                        .map(|(&x, &t)| if t as usize == r { f64::NAN } else { x })
-                        .collect();
-                    wiener_total(adj, n, Some(&hidden), float, compensated, r, bfs, dij)
-                }
-            },
-        )
-        .collect();
-    (whole, without)
+    let mode = (float, compensated);
+    let total = whole
+        .then(|| wiener_total(adj, n, weights, mode, usize::MAX, true))
+        .flatten();
+    let without = if removals.len() > 1 {
+        removals
+            .par_iter()
+            .map(|&r| wiener_total(adj, n, weights, mode, r as usize, false))
+            .collect()
+    } else {
+        removals
+            .iter()
+            .map(|&r| wiener_total(adj, n, weights, mode, r as usize, true))
+            .collect()
+    };
+    (total, without)
 }
 
 /// `flow_hierarchy`'s sums: total weight of the arcs inside strongly

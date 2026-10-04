@@ -3233,14 +3233,15 @@ impl CoreGraph {
             _ => communities::IndexKind::HyperWiener,
         };
         let w = self.weight_slice(weight, false)?;
+        // NetworkX's `dict(G.degree, weight=weight)` holds unweighted degrees.
+        let degrees = self.degrees();
         let total = py.detach(|| {
             if float {
-                let w = w?;
-                let deg = communities::degrees_float(&self.succ, self.n, w, compensated);
-                communities::distance_index_float(&self.succ, self.n, w, &deg, kind, compensated)
+                let deg: Vec<f64> = degrees.iter().map(|&d| d as f64).collect();
+                communities::distance_index_float(&self.succ, self.n, w?, &deg, kind, compensated)
                     .map(communities::Num::Float)
             } else {
-                let deg = communities::degrees_int(&self.succ, self.n, w)?;
+                let deg: Vec<i128> = degrees.iter().map(|&d| d as i128).collect();
                 communities::distance_index_int(&self.succ, self.n, w, &deg, kind)
                     .map(communities::Num::Int)
             }
@@ -3248,8 +3249,8 @@ impl CoreGraph {
         total.map(|t| num_object(py, t)).transpose()
     }
 
-    /// `closeness_vitality`'s Wiener index totals: G's, and G's without
-    /// each node (`None`: not connected).
+    /// `closeness_vitality`'s Wiener index totals: G's (if `whole`), and
+    /// G's without each node of `removals` (`None`: not connected).
     #[allow(clippy::type_complexity)]
     fn vitality_totals(
         &self,
@@ -3257,10 +3258,22 @@ impl CoreGraph {
         weight: Option<&str>,
         float: bool,
         compensated: bool,
+        removals: Vec<u32>,
+        whole: bool,
     ) -> PyResult<(Option<Py<PyAny>>, Vec<Option<Py<PyAny>>>)> {
         let w = self.weight_slice(weight, false)?;
-        let (whole, without) =
-            py.detach(|| communities::vitality_totals(&self.succ, self.n, w, float, compensated));
+        let removals = self.sources_or_all(Some(removals))?;
+        let (whole, without) = py.detach(|| {
+            communities::vitality_totals(
+                &self.succ,
+                self.n,
+                w,
+                float,
+                compensated,
+                &removals,
+                whole,
+            )
+        });
         let whole = whole.map(|t| num_object(py, t)).transpose()?;
         let without = without
             .into_iter()
