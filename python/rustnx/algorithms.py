@@ -80,7 +80,6 @@ __all__ = [
     "closeness_centrality",
     "clustering",
     "color",
-    "complement_edges",
     "complete_to_chordal_graph",
     "condensation",
     "connected_components",
@@ -7195,35 +7194,13 @@ def is_locally_k_edge_connected(G, s, t, k):
         return local_edge_connectivity(G, s, t, cutoff=k) >= k
 
 
-# Node rows per Rust call in complement_edges.
-_B13_COMPLEMENT_BATCH = 1 << 20
-
-
-def complement_edges(G):
-    guard = _MutationGuard(G)
-
-    def generate():
-        try:
-            if guard.changed():
-                yield from nx.algorithms.connectivity.edge_augmentation.complement_edges(
-                    guard.graph, backend="networkx"
-                )
-                return
-            nodes = G._nodes
-            get = nodes.__getitem__
-            n = len(nodes)
-            step = max(1, _B13_COMPLEMENT_BATCH // max(n, 1))
-            for start in range(0, n, step):
-                flat = G._core.conn_complement_edges(start, start + step)
-                for pair in zip(map(get, flat[0::2]), map(get, flat[1::2])):
-                    if guard.changed():
-                        # NetworkX reads the live adjacency between yields.
-                        raise RuntimeError("Graph changed during iteration")
-                    yield pair
-        finally:
-            guard.release()
-
-    return generate()
+def _b13_complement_edges(G):
+    """``complement_edges(G)`` for the tiny graphs ``k_edge_augmentation``
+    hands it (fewer than k + 1 nodes). The public function stays in
+    NetworkX: its loop is cheaper than yielding pairs built from Rust."""
+    nodes = G._nodes
+    flat = G._core.conn_complement_edges(0, len(nodes))
+    return list(zip([nodes[i] for i in flat[0::2]], [nodes[i] for i in flat[1::2]]))
 
 
 def unconstrained_one_edge_augmentation(G):
@@ -7357,7 +7334,7 @@ def k_edge_augmentation(G, k, avail=None, weight=None, partial=False):
             yield from list(aug_edges)
         except nx.NetworkXUnfeasible:
             if partial:
-                yield from complement_edges(G)
+                yield from _b13_complement_edges(G)
             else:
                 raise
 

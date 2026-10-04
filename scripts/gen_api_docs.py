@@ -173,7 +173,7 @@ SECTIONS = [
         "bridge_components", "k_edge_components", "k_edge_subgraphs", "is_k_edge_connected",
         "is_locally_k_edge_connected", "k_edge_augmentation", "one_edge_augmentation",
         "unconstrained_one_edge_augmentation", "bridge_augmentation",
-        "unconstrained_bridge_augmentation", "complement_edges",
+        "unconstrained_bridge_augmentation",
     ]),
 ]
 
@@ -458,7 +458,6 @@ NOTES.update({
     "one_edge_augmentation": "Without `avail`; `avail` falls back.",
     "bridge_augmentation": "Without `avail`; `avail` falls back.",
     "unconstrained_bridge_augmentation": "Bridge components in Rust; the small tree of components is augmented with NetworkX's code.",
-    "complement_edges": "Generator, computed in batches.",
 })
 SUBMODULE.update({
     name: "nx.connectivity"
@@ -471,7 +470,7 @@ SUBMODULE.update({
     name: "nx.algorithms.connectivity.edge_augmentation"
     for name in [
         "one_edge_augmentation", "unconstrained_one_edge_augmentation", "bridge_augmentation",
-        "unconstrained_bridge_augmentation", "complement_edges",
+        "unconstrained_bridge_augmentation",
     ]
 })
 

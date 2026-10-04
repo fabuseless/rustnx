@@ -62,7 +62,6 @@ FUNCTIONS = {
     "closeness_centrality": {},
     "clustering": {},
     "color": {},
-    "complement_edges": {},
     "complete_to_chordal_graph": {},
     "condensation": {},
     "connected_components": {},

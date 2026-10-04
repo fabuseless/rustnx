@@ -3480,10 +3480,7 @@ def test_batch13_augmentation(seed):
         for k in [1, 2, 0]:
             for partial in [False, True]:
                 exact_outcome(listed(_b13_conn.k_edge_augmentation), G, k, partial=partial)
-        small = G.subgraph(list(G)[:15]).copy()
-        exact_outcome(listed(_b13_aug.complement_edges), small)
     D = graph_for(seed, True)
-    exact_outcome(listed(_b13_aug.complement_edges), D.subgraph(list(D)[:15]).copy())
     exact_outcome(listed(_b13_aug.unconstrained_one_edge_augmentation), D)
 
 
@@ -3495,13 +3492,12 @@ def _b13_converted(G, name):
 
 def test_batch13_generators_follow_mutation():
     # NetworkX's generators start work on the first next(): changes made
-    # before that count, and complement_edges reads the live adjacency.
+    # before that count.
     makers = {
         "edge_disjoint_paths": lambda G: _b13_conn.edge_disjoint_paths(G, 0, 5),
         "node_disjoint_paths": lambda G: _b13_conn.node_disjoint_paths(G, 0, 5),
         "bridge_components": lambda G: _b13_conn.bridge_components(G),
         "k_edge_augmentation": lambda G: _b13_conn.k_edge_augmentation(G, 2),
-        "complement_edges": lambda G: _b13_aug.complement_edges(G),
     }
     for name, make in makers.items():
         results = []
@@ -3513,12 +3509,6 @@ def test_batch13_generators_follow_mutation():
             G.add_edge(7, 3)
             results.append([sorted(x) if isinstance(x, set) else x for x in gen])
         assert results[0] == results[1], name
-    G = nx.path_graph(6)
-    gen = _b13_aug.complement_edges(_b13_converted(G, "complement_edges"))
-    next(gen)
-    G.add_edge(0, 5)
-    with pytest.raises(RuntimeError):
-        list(gen)
 
 
 def test_batch13_declines():

@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 291 NetworkX functions. Call them as usual (for
+rustnx implements 290 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -476,7 +476,6 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.algorithms.connectivity.edge_augmentation.unconstrained_one_edge_augmentation` | none | no | NetworkX |  |
 | `nx.algorithms.connectivity.edge_augmentation.bridge_augmentation` | `avail`, `weight` | no | NetworkX | Without `avail`; `avail` falls back. |
 | `nx.algorithms.connectivity.edge_augmentation.unconstrained_bridge_augmentation` | none | no | NetworkX | Bridge components in Rust; the small tree of components is augmented with NetworkX's code. |
-| `nx.algorithms.connectivity.edge_augmentation.complement_edges` | none | no | rustnx | Generator, computed in batches. |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 
