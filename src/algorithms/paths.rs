@@ -59,63 +59,7 @@ pub fn dijkstra_tree(
     cutoff: Option<f64>,
     target: Option<usize>,
 ) -> Result<DijkstraTree, NegativeCycle> {
-    let mut done = vec![false; n];
-    let mut final_dist = vec![0.0; n];
-    let mut seen = vec![f64::INFINITY; n];
-    let mut has_seen = vec![false; n];
-    let mut parent = vec![NO_PARENT; n];
-    let mut heap: BinaryHeap<Reverse<(HeapKey, u32)>> = BinaryHeap::new();
-    let mut counter = 0u64;
-    let mut order = Vec::new();
-    let mut dist = Vec::new();
-    let mut seen_order = vec![source as u32];
-    seen[source] = 0.0;
-    has_seen[source] = true;
-    heap.push(Reverse((HeapKey(0.0, counter), source as u32)));
-    while let Some(Reverse((HeapKey(d, _), v))) = heap.pop() {
-        let v = v as usize;
-        if done[v] {
-            continue;
-        }
-        done[v] = true;
-        final_dist[v] = d;
-        order.push(v as u32);
-        dist.push(d);
-        if target == Some(v) {
-            break;
-        }
-        for e in adj.range(v) {
-            let u = adj.targets[e] as usize;
-            let cost = weights.map_or(1.0, |w| w[e]);
-            if cost.is_nan() {
-                continue;
-            }
-            let vu = d + cost;
-            if cutoff.is_some_and(|c| vu > c) {
-                continue;
-            }
-            if done[u] {
-                if vu < final_dist[u] {
-                    return Err(NegativeCycle);
-                }
-            } else if !has_seen[u] || vu < seen[u] {
-                if !has_seen[u] {
-                    has_seen[u] = true;
-                    seen_order.push(u as u32);
-                }
-                seen[u] = vu;
-                counter += 1;
-                heap.push(Reverse((HeapKey(vu, counter), u as u32)));
-                parent[u] = v as u32;
-            }
-        }
-    }
-    Ok(DijkstraTree {
-        order,
-        dist,
-        parent,
-        seen_order,
-    })
+    super::shortest_paths_more::dijkstra_forest(adj, n, weights, &[source as u32], cutoff, target)
 }
 
 /// `_bidirectional_pred_succ` + path assembly from

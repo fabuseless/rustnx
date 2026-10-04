@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 85 NetworkX functions. Call them as usual (for
+rustnx implements 105 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -42,6 +42,8 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.all_pairs_dijkstra_path_length` | `cutoff`, `weight` | yes | rustnx | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). Generator. |
 | `nx.dijkstra_path_length` | `source`, `target`, `weight` | yes | NetworkX | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). |
 | `nx.shortest_path_length` | `source`, `target`, `weight`, `method` | yes | rustnx | `method='bellman-ford'` with a weight falls back. Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). |
+| `nx.single_target_shortest_path_length` | `target`, `cutoff` | yes | NetworkX | Returns an iterator, with NetworkX's FutureWarning, where the installed NetworkX does (3.4); a dict otherwise. |
+| `nx.multi_source_dijkstra_path_length` | `sources`, `cutoff`, `weight` | yes | NetworkX | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). An iterator of sources falls back. |
 
 ### Shortest paths: paths
 
@@ -59,6 +61,39 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.all_pairs_dijkstra_path` | `cutoff`, `weight` | yes | rustnx | Generator. |
 | `nx.all_pairs_dijkstra` | `cutoff`, `weight` | yes | rustnx | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). Generator. |
 | `nx.all_shortest_paths` | `source`, `target`, `weight`, `method` | yes | NetworkX | Paths are generated lazily. `method='bellman-ford'` falls back. |
+| `nx.multi_source_dijkstra` | `sources`, `target`, `cutoff`, `weight` | yes | NetworkX | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). The paths dict follows the installed NetworkX's order; on NetworkX 3.6+, negative weights that pop a node before all sources fall back. An iterator of sources falls back. |
+| `nx.multi_source_dijkstra_path` | `sources`, `cutoff`, `weight` | yes | NetworkX | The paths dict follows the installed NetworkX's order; on NetworkX 3.6+, negative weights that pop a node before all sources fall back. An iterator of sources falls back. |
+| `nx.single_source_all_shortest_paths` | `source`, `weight`, `method` | yes | rustnx | Generator. All three methods, including `bellman-ford`. Paths come in the installed NetworkX's order. |
+| `nx.all_pairs_all_shortest_paths` | `weight`, `method` | yes | rustnx | Generator. All three methods, including `bellman-ford`. |
+
+### Shortest paths: predecessors
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.predecessor` | `source`, `target`, `cutoff`, `return_seen` | yes | NetworkX | A `cutoff` that isn't an int or float falls back. |
+| `nx.dijkstra_predecessor_and_distance` | `source`, `cutoff`, `weight` | yes | NetworkX | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). |
+| `nx.bellman_ford_predecessor_and_distance` | `source`, `target`, `weight`, `heuristic` | yes | rustnx | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). `None` weights fall back. Uses NetworkX's queue order and negative cycle checks. |
+
+### Shortest paths: Bellman-Ford and negative cycles
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.bellman_ford_path` | `source`, `target`, `weight` | yes | rustnx | `None` weights fall back. |
+| `nx.bellman_ford_path_length` | `source`, `target`, `weight` | yes | rustnx | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). `None` weights fall back. |
+| `nx.single_source_bellman_ford` | `source`, `target`, `weight` | yes | rustnx | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). `None` weights fall back. |
+| `nx.single_source_bellman_ford_path` | `source`, `weight` | yes | rustnx | `None` weights fall back. |
+| `nx.single_source_bellman_ford_path_length` | `source`, `weight` | yes | rustnx | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). `None` weights fall back. |
+| `nx.all_pairs_bellman_ford_path` | `weight` | yes | rustnx | Generator; parallel. `None` weights fall back. |
+| `nx.all_pairs_bellman_ford_path_length` | `weight` | yes | rustnx | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). Generator; parallel. `None` weights fall back. |
+| `nx.negative_edge_cycle` | `weight`, `heuristic` | yes | rustnx | Doesn't add (and remove) a temporary node in the graph, as NetworkX does. `None` weights fall back. |
+| `nx.find_negative_cycle` | `source`, `weight` | yes | rustnx | `None` weights fall back. |
+
+### Shortest paths: A*
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.astar_path` | `source`, `target`, `heuristic`, `weight`, `cutoff` | yes | NetworkX | Only without a `heuristic`; graphs with negative weights fall back. |
+| `nx.astar_path_length` | `source`, `target`, `heuristic`, `weight`, `cutoff` | yes | NetworkX | Only without a `heuristic`; graphs with negative weights fall back. Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). |
 
 ### Reachability
 
