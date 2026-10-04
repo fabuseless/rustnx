@@ -507,6 +507,9 @@ pub fn extended_barabasi_albert(
                 }
                 let node = rng.choice(&eligible);
                 let mut nbrs = b.succ[node as usize].clone();
+                if nbrs.is_empty() {
+                    return None; // can't happen: eligible nodes have edges
+                }
                 let src = rng.choice(&nbrs);
                 nbrs.push(node);
                 let dest = choice_excluding(&pref, &nbrs, &mut mark, rng)?;
@@ -717,8 +720,10 @@ fn regular_try(d: usize, n: usize, rng: &mut Mt19937) -> Option<Vec<(u32, u32)>>
     while !stubs.is_empty() {
         let mut potential: Vec<(u32, u32)> = Vec::new();
         rng.shuffle(&mut stubs);
-        for pair in stubs.chunks_exact(2) {
-            let (s1, s2) = (pair[0].min(pair[1]), pair[0].max(pair[1]));
+        // `zip(stubiter, stubiter)`: consecutive pairs.
+        for i in 0..stubs.len() / 2 {
+            let (a, c) = (stubs[2 * i], stubs[2 * i + 1]);
+            let (s1, s2) = (a.min(c), a.max(c));
             if s1 != s2 && !members.contains(&(s1, s2)) {
                 members.insert((s1, s2));
                 hashes.push(pair_hash(s1 as u64, s2 as u64));
@@ -781,7 +786,7 @@ pub fn gn(n: usize, cumulative: bool, rng: &mut Mt19937) -> Option<Built> {
         let mut i = i + 1;
         while i < tree.len() {
             tree[i] += x;
-            i += i & i.wrapping_neg();
+            i += 1 << i.trailing_zeros();
         }
     };
     fen_add(&mut tree, 0, 1);

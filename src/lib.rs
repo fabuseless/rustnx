@@ -4705,6 +4705,7 @@ impl CoreGraph {
     /// Replays `random.Random` calls (`pyrandom::replay`) from `state`, for
     /// the tests: each result as a float, an int, a list of ints or `None`.
     #[staticmethod]
+    #[allow(clippy::type_complexity)]
     fn pyrandom_replay<'py>(
         py: Python<'py>,
         state: Vec<u32>,

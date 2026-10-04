@@ -92,7 +92,8 @@ impl Mt19937 {
 
     /// `Random._randbelow_with_getrandbits(n)` for `n >= 1`.
     pub fn randbelow(&mut self, n: u64) -> u64 {
-        debug_assert!(n >= 1);
+        // Python raises for 0 (an empty `choice`); the replica would spin.
+        assert!(n >= 1, "randbelow(0)");
         let k = u64::BITS - n.leading_zeros();
         loop {
             let r = self.getrandbits(k);

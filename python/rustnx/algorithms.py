@@ -9833,6 +9833,14 @@ def _rg_floats(*values):
     return out
 
 
+def _rg_hashable(key):
+    try:
+        hash(key)
+    except TypeError:
+        # NetworkX raises after drawing; let it.
+        raise NotImplementedError("unhashable attribute name") from None
+
+
 def _rg_class(create_using, **checks):
     """``check_create_using(create_using, **checks)`` (raising NetworkX's
     errors), then the class to build: rustnx fills fresh graphs of the
@@ -10302,6 +10310,7 @@ def random_geometric_graph(n, radius, dim=2, pos=None, p=2, seed=None, *, pos_na
     radius, p = _rg_floats(radius, p)
     if n == 0 or dim == 0 or not (0 <= radius < math.inf) or not (1 <= p < math.inf):
         raise NotImplementedError("rustnx can't match NetworkX here")
+    _rg_hashable(pos_name)
     G = nx.Graph()
     _rg_run(seed, lambda state: _CoreGraph.rg_geometric(n, radius, dim, p, state, G, pos_name))
     return G
@@ -10321,6 +10330,7 @@ def waxman_graph(
     _rg_seed(seed)
     if metric is not None:
         raise NotImplementedError("rustnx supports the default metric only")
+    _rg_hashable(pos_name)
     _rg_ints(n)
     if type(domain) not in (list, tuple) or len(domain) != 4:
         raise NotImplementedError("rustnx needs a domain of four numbers")
