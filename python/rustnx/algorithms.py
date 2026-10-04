@@ -9970,7 +9970,7 @@ def dual_barabasi_albert_graph(
 ):
     _rg_seed(seed)
     _rg_ints(n, m1, m2)
-    (p,) = _rg_floats(p)
+    (pf,) = _rg_floats(p)
     if initial_graph is not None:
         raise NotImplementedError("rustnx does not support initial_graph")
     cls = _rg_class(create_using, directed=False, multigraph=False)
@@ -9992,14 +9992,14 @@ def dual_barabasi_albert_graph(
     elif p == 0:
         m1, m2 = m2, 0
     G = cls()
-    _rg_run(seed, lambda state: _CoreGraph.rg_barabasi_albert(n, m1, m2, p, state, G))
+    _rg_run(seed, lambda state: _CoreGraph.rg_barabasi_albert(n, m1, m2, pf, state, G))
     return G
 
 
 def extended_barabasi_albert_graph(n, m, p, q, seed=None, *, create_using=None):
     _rg_seed(seed)
     _rg_ints(n, m)
-    p, q = _rg_floats(p, q)
+    pf, qf = _rg_floats(p, q)
     cls = _rg_class(create_using, directed=False, multigraph=False)
     if m < 1 or m >= n:
         msg = f"Extended Barabasi-Albert network needs m>=1 and m<n, m={m}, n={n}"
@@ -10008,7 +10008,7 @@ def extended_barabasi_albert_graph(n, m, p, q, seed=None, *, create_using=None):
         msg = f"Extended Barabasi-Albert network needs p + q <= 1, p={p}, q={q}"
         raise nx.NetworkXError(msg)
     G = cls()
-    _rg_run(seed, lambda state: _CoreGraph.rg_extended_barabasi_albert(n, m, p, q, state, G))
+    _rg_run(seed, lambda state: _CoreGraph.rg_extended_barabasi_albert(n, m, pf, qf, state, G))
     return G
 
 
@@ -10057,14 +10057,14 @@ def connected_watts_strogatz_graph(n, k, p, tries=100, seed=None, *, create_usin
 def powerlaw_cluster_graph(n, m, p, seed=None, *, create_using=None):
     _rg_seed(seed)
     _rg_ints(n, m)
-    (p,) = _rg_floats(p)
+    (pf,) = _rg_floats(p)
     cls = _rg_class(create_using, directed=False, multigraph=False)
     if m < 1 or n < m:
         raise nx.NetworkXError(f"NetworkXError must have m>1 and m<n, m={m},n={n}")
     if p > 1 or p < 0:
         raise nx.NetworkXError(f"NetworkXError p must be in [0,1], p={p}")
     G = cls()
-    _rg_run(seed, lambda state: _CoreGraph.rg_powerlaw_cluster(n, m, p, state, G))
+    _rg_run(seed, lambda state: _CoreGraph.rg_powerlaw_cluster(n, m, pf, state, G))
     return G
 
 
