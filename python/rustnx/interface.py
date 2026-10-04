@@ -18,7 +18,6 @@ _WEIGHT_PARAMS = ("weight", "distance")
 # Linear-time algorithms where, on small graphs, converting to rustnx and
 # dispatching costs more than NetworkX spends running the algorithm.
 _LINEAR_TIME = {
-    "adamic_adar_index",
     "all_shortest_paths",
     "ancestors",
     "articulation_points",
@@ -46,9 +45,7 @@ _LINEAR_TIME = {
     "check_planarity",
     "check_planarity_recursive",
     "chordal_graph_treewidth",
-    "cn_soundarajan_hopcroft",
     "color",
-    "common_neighbor_centrality",
     "condensation",
     "connected_components",
     "connected_dominating_set",
@@ -127,7 +124,6 @@ _LINEAR_TIME = {
     "is_tree",
     "is_weakly_connected",
     "isolates",
-    "jaccard_coefficient",
     "k_core",
     "k_corona",
     "k_crust",
@@ -160,10 +156,7 @@ _LINEAR_TIME = {
     "out_degree_centrality",
     "overall_reciprocity",
     "predecessor",
-    "preferential_attachment",
-    "ra_index_soundarajan_hopcroft",
     "reciprocity",
-    "resource_allocation_index",
     "rich_club_coefficient",
     "root_trees",
     "s_metric",
@@ -185,7 +178,6 @@ _LINEAR_TIME = {
     "triadic_census",
     "v_structures",
     "weakly_connected_components",
-    "within_inter_cluster",
 }
 SMALL_GRAPH_NODES = 500
 

@@ -465,14 +465,14 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 
 | Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
 |---|---|---|---|---|
-| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed.` | `ebunch` | no | NetworkX |  |
-| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed. Float sums follow the order of NetworkX's common-neighbor set, which rustnx replays (checked once against the running Python).` | `ebunch` | no | NetworkX |  |
-| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed. Float sums follow NetworkX's set order, as for `adamic_adar_index`.` | `ebunch` | no | NetworkX |  |
-| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed.` | `ebunch` | no | NetworkX |  |
-| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed. Community values must be ints, floats, strings, bools or `None`; others fall back.` | `ebunch`, `community` | no | NetworkX |  |
-| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed. Community values must be ints, floats, strings, bools or `None`; others fall back.` | `ebunch`, `community` | no | NetworkX |  |
-| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed. Community values must be ints, floats, strings, bools or `None`; others fall back.` | `ebunch`, `delta`, `community` | no | NetworkX |  |
-| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed. Distances come from one search per source node of `ebunch`.` | `ebunch`, `alpha` | no | NetworkX |  |
+| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed.` | `ebunch` | no | rustnx |  |
+| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed. Float sums follow the order of NetworkX's common-neighbor set, which rustnx replays (checked once against the running Python).` | `ebunch` | no | rustnx |  |
+| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed. Float sums follow NetworkX's set order, as for `adamic_adar_index`.` | `ebunch` | no | rustnx |  |
+| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed.` | `ebunch` | no | rustnx |  |
+| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed. Community values must be ints, floats, strings, bools or `None`; others fall back.` | `ebunch`, `community` | no | rustnx |  |
+| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed. Community values must be ints, floats, strings, bools or `None`; others fall back.` | `ebunch`, `community` | no | rustnx |  |
+| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed. Community values must be ints, floats, strings, bools or `None`; others fall back.` | `ebunch`, `delta`, `community` | no | rustnx |  |
+| `Scores pairs in batches as the generator is consumed, so `ebunch` (default: `nx.non_edges(G)`) is streamed. Distances come from one search per source node of `ebunch`.` | `ebunch`, `alpha` | no | rustnx |  |
 
 ### Reciprocity, rich club and walks
 

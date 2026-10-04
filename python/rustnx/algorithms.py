@@ -9,7 +9,7 @@ import functools
 from collections import Counter, defaultdict
 from collections.abc import Set
 import inspect
-from itertools import chain
+from itertools import chain, islice
 import math
 import operator
 import random
@@ -6748,18 +6748,32 @@ def _b14_pairs(G, ebunch):
     _undirected_only(G)
     if ebunch is None:
         return nx.non_edges(_networkx_graph(G))
+    index = G._index
     for u, v in ebunch:
-        if u not in G:
+        # `u not in G`: an unhashable node is just not in G.
+        try:
+            found = u in index
+        except TypeError:
+            found = False
+        if not found:
             raise nx.NodeNotFound(f"Node {u} not in G.")
-        if v not in G:
+        try:
+            found = v in index
+        except TypeError:
+            found = False
+        if not found:
             raise nx.NodeNotFound(f"Node {v} not in G.")
     return ebunch
 
 
-def _b14_predictions(G, pairs, score, emit):
-    """Yield ``(u, v, emit(k, raw, u, v))`` for each pair, where ``raw`` is
-    ``score(us, vs)`` for the batch of positions holding the pair at ``k``.
-    ``emit`` raises NetworkX's error for a pair whose score raises."""
+def _b14_predictions(G, pairs, score):
+    """Yield ``(u, v, score)`` for each pair, scoring growing batches.
+
+    ``score(us, vs)`` takes a batch's node positions and returns ``(values,
+    fail)``: the scores up to the first pair whose score raises in
+    NetworkX, and ``fail(k, u, v)`` raising that error for pair ``k``
+    (``None`` if no pair raises).
+    """
     guard = _MutationGuard(G)
     index = G._index
 
@@ -6767,12 +6781,9 @@ def _b14_predictions(G, pairs, score, emit):
         try:
             it = iter(pairs)
             size = 64
+            key, cache, graph = guard._key, guard._cache, guard.graph
             while True:
-                batch = []
-                for u, v in it:
-                    batch.append((u, v))
-                    if len(batch) == size:
-                        break
+                batch = list(islice(it, size))
                 if not batch:
                     return
                 size = min(2 * size, _B14_MAX_BATCH)
@@ -6781,11 +6792,20 @@ def _b14_predictions(G, pairs, score, emit):
                     vs = [index[v] for _, v in batch]
                 except (KeyError, TypeError):
                     raise RuntimeError("ebunch changed during iteration") from None
-                raw = score(us, vs)
-                for k, (u, v) in enumerate(batch):
+                values, fail = score(us, vs)
+                if key is None:  # a native graph: it can't change
+                    yield from [(u, v, value) for (u, v), value in zip(batch, values)]
+                else:
+                    for (u, v), value in zip(batch, values):
+                        # `guard.changed()`, inlined.
+                        if key not in cache or graph.__networkx_cache__ is not cache:
+                            raise RuntimeError("Graph changed during iteration")
+                        yield (u, v, value)
+                if fail is not None:
+                    k = len(values)
                     if guard.changed():
                         raise RuntimeError("Graph changed during iteration")
-                    yield (u, v, emit(k, raw, u, v))
+                    fail(k, *batch[k])
         finally:
             guard.release()
 
@@ -6847,86 +6867,88 @@ def _b14_degree_table(G, term):
     return table
 
 
-def _b14_raise_for(code, u, v, w, G):
-    if code == _B14_NO_U:
-        raise nx.NetworkXAlgorithmError(f"No community information available for Node {u}")
-    if code == _B14_NO_V:
-        raise nx.NetworkXAlgorithmError(f"No community information available for Node {v}")
-    if code == _B14_NO_W:
-        node = G._nodes[w]
-        raise nx.NetworkXAlgorithmError(f"No community information available for Node {node}")
-    # `1 / log(G.degree(w))` with a degree-1 neighbor: NetworkX's own error.
-    1 / math.log(1)
+def _b14_split(G, codes, w):
+    """``(n, fail)``: how many pairs score without raising, and the error of
+    the next one (see ``_b14_predictions``)."""
+    if not codes or max(codes) < _B14_NO_U:
+        return len(codes), None
+    k = next(i for i, c in enumerate(codes) if c >= _B14_NO_U)
+    code = codes[k]
+
+    def fail(k, u, v):
+        if code == _B14_NO_U:
+            raise nx.NetworkXAlgorithmError(f"No community information available for Node {u}")
+        if code == _B14_NO_V:
+            raise nx.NetworkXAlgorithmError(f"No community information available for Node {v}")
+        if code == _B14_NO_W:
+            node = G._nodes[w[k]]
+            raise nx.NetworkXAlgorithmError(f"No community information available for Node {node}")
+        # `1 / log(G.degree(w))` with a degree-1 neighbor: NetworkX's own error.
+        1 / math.log(1)
+
+    return k, fail
 
 
-def _b14_sum_emit(G):
-    def emit(k, raw, u, v):
-        codes, _, _, f, w = raw
-        code = codes[k]
-        if code == _B14_OK:
-            return f[k]
-        if code == _B14_INT_ZERO:
-            return 0  # an empty sum(), or different communities
-        _b14_raise_for(code, u, v, w[k], G)
+def _b14_sums(G, scorer):
+    """Scores that are float sums, or the int 0 for an empty one."""
+    def score(us, vs):
+        codes, _, _, f, w = scorer.scores(us, vs)
+        n, fail = _b14_split(G, codes, w)
+        return [x if c == _B14_OK else 0 for c, x in zip(codes[:n], f)], fail
 
-    return emit
+    return score
 
 
 def resource_allocation_index(G, ebunch=None):
     pairs = _b14_pairs(G, ebunch)
     scorer = _b14_scorer(G, 2, _b14_degree_table(G, lambda d: 1 / d))
-    return _b14_predictions(G, pairs, scorer.scores, _b14_sum_emit(G))
+    return _b14_predictions(G, pairs, _b14_sums(G, scorer))
 
 
 def adamic_adar_index(G, ebunch=None):
     pairs = _b14_pairs(G, ebunch)
     scorer = _b14_scorer(G, 2, _b14_degree_table(G, lambda d: 1 / math.log(d)))
-    return _b14_predictions(G, pairs, scorer.scores, _b14_sum_emit(G))
+    return _b14_predictions(G, pairs, _b14_sums(G, scorer))
 
 
 def ra_index_soundarajan_hopcroft(G, ebunch=None, community="community"):
     pairs = _b14_pairs(G, ebunch)
     scorer = _b14_scorer(G, 2, _b14_degree_table(G, lambda d: 1 / d), community)
-    return _b14_predictions(G, pairs, scorer.scores, _b14_sum_emit(G))
+    return _b14_predictions(G, pairs, _b14_sums(G, scorer))
 
 
 def jaccard_coefficient(G, ebunch=None):
     pairs = _b14_pairs(G, ebunch)
     scorer = _b14_scorer(G, 0)
 
-    def emit(k, raw, u, v):
-        common, union = raw[1][k], raw[2][k]
-        return common / union if union else 0
+    def score(us, vs):
+        _, common, union, _, _ = scorer.scores(us, vs)
+        return [c / s if s else 0 for c, s in zip(common, union)], None
 
-    return _b14_predictions(G, pairs, scorer.scores, emit)
+    return _b14_predictions(G, pairs, score)
 
 
 def preferential_attachment(G, ebunch=None):
     pairs = _b14_pairs(G, ebunch)
     degree = G._core.degrees()
 
-    def emit(k, raw, u, v):
-        return degree[raw[0][k]] * degree[raw[1][k]]
+    def score(us, vs):
+        return [degree[u] * degree[v] for u, v in zip(us, vs)], None
 
-    return _b14_predictions(G, pairs, lambda us, vs: (us, vs), emit)
-
-
-def _b14_community_emit(G, value):
-    def emit(k, raw, u, v):
-        codes, a, b, f, w = raw
-        if codes[k] != _B14_OK:
-            _b14_raise_for(codes[k], u, v, w[k], G)
-        return value(a[k], b[k], f[k] == 1.0)
-
-    return emit
+    return _b14_predictions(G, pairs, score)
 
 
 def cn_soundarajan_hopcroft(G, ebunch=None, community="community"):
     pairs = _b14_pairs(G, ebunch)
     scorer = _b14_scorer(G, 1, community=community)
-    # `len(cnbors) + neighbors`: the same-community bonus is 0 across communities.
-    emit = _b14_community_emit(G, lambda common, same, together: common + same)
-    return _b14_predictions(G, pairs, scorer.scores, emit)
+
+    def score(us, vs):
+        codes, common, same, _, w = scorer.scores(us, vs)
+        n, fail = _b14_split(G, codes, w)
+        # `len(cnbors) + neighbors`; the bonus is 0 across communities.
+        return [c + b for c, b in zip(common[:n], same)], fail
+
+    return _b14_predictions(G, pairs, score)
 
 
 def within_inter_cluster(G, ebunch=None, delta=0.001, community="community"):
@@ -6935,12 +6957,16 @@ def within_inter_cluster(G, ebunch=None, delta=0.001, community="community"):
     pairs = _b14_pairs(G, ebunch)
     scorer = _b14_scorer(G, 1, community=community)
 
-    def value(common, within, together):
-        if not together:
-            return 0
-        return within / ((common - within) + delta)
+    def score(us, vs):
+        codes, common, within, together, w = scorer.scores(us, vs)
+        n, fail = _b14_split(G, codes, w)
+        values = [
+            within_ / ((c - within_) + delta) if t else 0
+            for c, within_, t in zip(common[:n], within, together)
+        ]
+        return values, fail
 
-    return _b14_predictions(G, pairs, scorer.scores, _b14_community_emit(G, value))
+    return _b14_predictions(G, pairs, score)
 
 
 def common_neighbor_centrality(G, ebunch=None, alpha=0.8):
@@ -6952,21 +6978,26 @@ def common_neighbor_centrality(G, ebunch=None, alpha=0.8):
     inf = float("inf")
     core = G._core
 
+    def self_loop(k, u, v):
+        raise nx.NetworkXAlgorithmError("Self loops are not supported")
+
     def score(us, vs):
-        raw = scorer.scores(us, vs)
-        return raw if simple else (raw, core.pair_distances(us, vs))
-
-    def emit(k, raw, u, v):
-        if u == v:
-            raise nx.NetworkXAlgorithmError("Self loops are not supported")
+        # NetworkX's `u == v` test, on positions (equal nodes share one).
+        k = next((i for i, (u, v) in enumerate(zip(us, vs)) if u == v), None)
+        if k is not None:
+            us, vs = us[:k], vs[:k]
+        common = scorer.scores(us, vs)[1]
         if simple:
-            return raw[1][k]
-        raw, dist = raw
-        path_len = dist[k] if dist[k] >= 0 else inf
-        n_nbrs = raw[1][k]
-        return alpha * n_nbrs + (1 - alpha) * n / path_len
+            values = common
+        else:
+            dist = core.pair_distances(us, vs)
+            values = [
+                alpha * c + (1 - alpha) * n / (d if d >= 0 else inf)
+                for c, d in zip(common, dist)
+            ]
+        return values, None if k is None else self_loop
 
-    return _b14_predictions(G, pairs, score, emit)
+    return _b14_predictions(G, pairs, score)
 
 
 # Degree and attribute pairs, mixing and assortativity.
