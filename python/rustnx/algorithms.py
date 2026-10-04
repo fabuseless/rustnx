@@ -359,6 +359,7 @@ __all__ = [
     "preferential_attachment",
     "preflow_push",
     "prim_mst_edges",
+    "projected_graph",
     "prominent_group",
     "ra_index_soundarajan_hopcroft",
     "radius",
@@ -430,6 +431,7 @@ __all__ = [
     "voronoi_cells",
     "voterank",
     "weakly_connected_components",
+    "weighted_projected_graph",
     "weisfeiler_lehman_graph_hash",
     "weisfeiler_lehman_subgraph_hashes",
     "wiener_index",
@@ -10218,3 +10220,52 @@ def bipartite_degree_centrality(G, nodes):
     if G.is_directed():
         G._ensure_exact_pred()
     return G._core.bipartite_degree_centrality(index, top, bottom, s_top, s_bottom)
+
+
+def _b21_projection_nodes(B, nodes):
+    """``nodes`` as a list with their positions. NetworkX iterates
+    ``nodes`` twice, so only containers that iterate the same way twice are
+    taken; a missing node raises ``KeyError`` (``B.nodes[n]``)."""
+    if not isinstance(nodes, (list, tuple, set, frozenset, dict, range)):
+        raise NotImplementedError("rustnx needs nodes in a container")
+    size = len(nodes)
+    nodes = list(nodes)
+    index = B._index
+    positions = []
+    for n in nodes:
+        try:
+            i = index.get(n)
+        except TypeError:
+            raise NotImplementedError("unhashable node") from None
+        if i is None:
+            raise KeyError(n)
+        if not _b21_same_key(n, B._nodes[i]):
+            raise NotImplementedError("a node differs from B's node object")
+        positions.append(i)
+    return size, positions
+
+
+def projected_graph(B, nodes, multigraph=False):
+    if multigraph:
+        raise NotImplementedError("rustnx does not build multigraphs")
+    base, view = _b21_canonical_view(B)
+    _, positions = _b21_projection_nodes(B, nodes)
+    G = nx.DiGraph() if B.is_directed() else nx.Graph()
+    G.graph.update(base.graph)
+    _core._op_projection(view, positions, False, None, *_b21_target(G))
+    return G
+
+
+def weighted_projected_graph(B, nodes, ratio=False):
+    base, view = _b21_canonical_view(B)
+    size, positions = _b21_projection_nodes(B, nodes)
+    G = nx.DiGraph() if B.is_directed() else nx.Graph()
+    G.graph.update(base.graph)
+    n_top = len(B) - size
+    if n_top < 1:
+        raise nx.NetworkXAlgorithmError(
+            f"the size of the nodes to project onto ({size}) is >= the graph size ({len(B)}).\n"
+            "They are either not a valid bipartite partition or contain duplicates"
+        )
+    _core._op_projection(view, positions, True, n_top if ratio else None, *_b21_target(G))
+    return G

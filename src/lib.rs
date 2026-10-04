@@ -6232,6 +6232,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(operators::_op_rooted_product, m)?)?;
     m.add_function(wrap_pyfunction!(operators::_op_corona_product, m)?)?;
     m.add_function(wrap_pyfunction!(operators::_tuple_hash, m)?)?;
+    m.add_function(wrap_pyfunction!(operators::_op_projection, m)?)?;
     m.add_class::<AllPaths>()?;
     m.add_class::<PredPaths>()?;
     m.add_class::<LinkScorer>()?;

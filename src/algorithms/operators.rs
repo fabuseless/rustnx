@@ -1377,3 +1377,137 @@ pub fn bipartite_degree_centrality<'py>(
     }
     Ok(out)
 }
+
+// --- Bipartite projections ------------------------------------------------------------
+
+/// `projected_graph(B, nodes)` (`weighted` false) or
+/// `weighted_projected_graph(B, nodes, ratio)` (`ratio`: `n_top` when the
+/// weights are ratios) into the empty graph given by its dicts. `members`
+/// are the positions of `nodes`, in order. The second neighbors of each
+/// node are a Python set, added to the result in its iteration order, so
+/// it is replayed with CPython's set table.
+#[pyfunction]
+#[pyo3(signature = (view, members, weighted, ratio, node, succ, pred))]
+#[allow(clippy::too_many_arguments)]
+pub fn _op_projection<'py>(
+    py: Python<'py>,
+    view: &OpView,
+    members: Vec<u32>,
+    weighted: bool,
+    ratio: Option<i64>,
+    node: Bound<'py, PyDict>,
+    succ: Bound<'py, PyDict>,
+    pred: Option<Bound<'py, PyDict>>,
+) -> PyResult<()> {
+    let n = view.n();
+    if members.iter().any(|&p| p as usize >= n) {
+        return Err(changed());
+    }
+    let out = Out { py, node, succ, pred };
+    let mut rows: Vec<Option<RowPair<'py>>> = (0..n).map(|_| None).collect();
+    // `G.add_nodes_from((n, B.nodes[n]) for n in nodes)`.
+    for &p in &members {
+        let p = p as usize;
+        let key = view.nodes[p].bind(py);
+        let data = view.ndata[p].bind(py);
+        match &rows[p] {
+            Some(_) => {
+                let d = out.node.get_item(key)?.ok_or_else(changed)?.cast_into::<PyDict>()?;
+                update_from(&d, data, None)?;
+            }
+            None => {
+                let d = PyDict::new(py);
+                update_from(&d, data, None)?;
+                rows[p] = Some(out.create(key, Some(d))?);
+            }
+        }
+    }
+    let mut hashes = vec![0i64; n];
+    for (h, v) in hashes.iter_mut().zip(&view.nodes) {
+        *h = v.bind(py).hash()? as i64;
+    }
+    let targets = |v: usize| &view.targets[view.range(v)];
+    let weight_key = pyo3::types::PyString::new(py, "weight");
+    let mut count = vec![0i64; n];
+    for &u in &members {
+        let u = u as usize;
+        let mut second = SetReplica::default();
+        if weighted {
+            // `{n for nbr in set(B[u]) for n in B[nbr]} - {u}`
+            let mut first = SetReplica::default();
+            for &w in targets(u) {
+                first.add(w, &hashes);
+            }
+            for w in first.iter() {
+                for &x in targets(w as usize) {
+                    second.add(x, &hashes);
+                    count[x as usize] += 1;
+                }
+            }
+            if (second.len() >> 2) > 1 {
+                let mut copy = SetReplica::default();
+                copy.merge(&second, &hashes);
+                copy.discard(u as u32, &hashes);
+                copy.after_difference_update(&hashes);
+                second = copy;
+            } else {
+                let mut fresh = SetReplica::default();
+                for x in second.iter() {
+                    if x as usize != u {
+                        fresh.add(x, &hashes);
+                    }
+                }
+                second = fresh;
+            }
+        } else {
+            // `{v for nbr in B[u] for v in B[nbr] if v != u}`
+            for &w in targets(u) {
+                for &x in targets(w as usize) {
+                    if x as usize != u {
+                        second.add(x, &hashes);
+                    }
+                }
+            }
+        }
+        let order: Vec<u32> = second.iter().collect();
+        for &v in &order {
+            let v = v as usize;
+            if rows[v].is_none() {
+                rows[v] = Some(out.create(view.nodes[v].bind(py), None)?);
+            }
+            let (ru, rv) = (rows[u].as_ref().unwrap(), rows[v].as_ref().unwrap());
+            let (ku, kv) = (view.nodes[u].bind(py), view.nodes[v].bind(py));
+            if !weighted {
+                out.edge((ku, ru), (kv, rv), None, false)?;
+                continue;
+            }
+            let c = count[v];
+            let w = match ratio {
+                None => c.into_pyobject(py)?.into_any(),
+                Some(top) => {
+                    let q = true_div(Val::I(c), Val::I(top))?;
+                    PyFloat::new(py, q.to_f64()).into_any()
+                }
+            };
+            // `G.add_edge(u, v, weight=w)`
+            let datadict = match ru.0.get_item(kv)? {
+                Some(d) => d.cast_into::<PyDict>()?,
+                None => PyDict::new(py),
+            };
+            datadict.set_item(&weight_key, w)?;
+            ru.0.set_item(kv, &datadict)?;
+            match &rv.1 {
+                Some(p) => p.set_item(ku, &datadict)?,
+                None => rv.0.set_item(ku, &datadict)?,
+            }
+        }
+        if weighted {
+            for w in targets(u) {
+                for &x in targets(*w as usize) {
+                    count[x as usize] = 0;
+                }
+            }
+        }
+    }
+    Ok(())
+}

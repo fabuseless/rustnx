@@ -5310,8 +5310,48 @@ def test_batch21_bipartite_measures(seed, directed):
     for side in [top, top + ["missing", 10**6], set(top), nodes, [], top + top[:2]]:
         exact_outcome(nx.bipartite.density, G, side)
         exact_outcome(nx.bipartite.degree_centrality, G, side)
-    exact_outcome(nx.bipartite.density, G, iter(top))  # no len()
+    exact_outcome(lambda G, **kw: nx.bipartite.density(G, iter(top), **kw), G)  # no len()
     exact_outcome(nx.bipartite.density, nx.empty_graph(3), [0])
     B = nx.complete_bipartite_graph(3, 4)
     exact_outcome(nx.bipartite.density, B, [0, 1, 2])
     exact_outcome(nx.bipartite.degree_centrality, B, [0, 1, 2])
+
+
+def _b21_bipartite(seed, directed):
+    rng = random.Random(seed)
+    a, b = rng.randint(1, 15), rng.randint(1, 15)
+    B = nx.bipartite.random_graph(a, b, rng.choice([0.1, 0.3, 0.6]), seed=seed, directed=directed)
+    if rng.random() < 0.5:
+        B = nx.relabel_nodes(B, {v: (f"b{v}" if v % 2 else v) for v in B})
+    H = B.__class__()
+    nodes = list(B)
+    rng.shuffle(nodes)
+    H.add_nodes_from((v, B.nodes[v]) for v in nodes)
+    edges = list(B.edges)
+    rng.shuffle(edges)
+    H.add_edges_from(edges)
+    H.graph["name"] = "B"
+    top = [v for v in nodes if H.nodes[v]["bipartite"] == 0]
+    return _b21_decorate(H, seed), top
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(60))
+def test_batch21_projections(seed, directed):
+    B, top = _b21_bipartite(seed, directed)
+    bottom = [v for v in B if v not in set(top)]
+    rng = random.Random(seed)
+    for side in [top, bottom, set(top), tuple(bottom), top + top[:2], top[:3] + ["missing"]]:
+        exact_outcome(_b21_graphs(nx.bipartite.projected_graph), B, side)
+        exact_outcome(_b21_graphs(nx.bipartite.weighted_projected_graph), B, side)
+        exact_outcome(_b21_graphs(nx.bipartite.weighted_projected_graph), B, side, ratio=True)
+    exact_outcome(_b21_graphs(nx.bipartite.projected_graph), B, top, multigraph=True)
+    exact_outcome(_b21_graphs(nx.bipartite.weighted_projected_graph), B, list(B))
+    # An iterator: NetworkX's second pass over it finds nothing.
+    exact_outcome(_b21_graphs(lambda B, **kw: nx.bipartite.projected_graph(B, iter(top), **kw)), B)
+    # Not bipartite, with self-loops: second neighbours include the node.
+    G = graph_for(seed, directed)
+    nodes = list(G)
+    side = rng.sample(nodes, len(nodes) // 2)
+    exact_outcome(_b21_graphs(nx.bipartite.projected_graph), G, side)
+    exact_outcome(_b21_graphs(nx.bipartite.weighted_projected_graph), G, side)
