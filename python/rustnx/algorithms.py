@@ -9817,6 +9817,14 @@ def _b21_target(R):
     return R._node, R._adj, (R._pred if R.is_directed() else None)
 
 
+def _b21_container(value):
+    """Decline one-shot iterators: if rustnx consumed one and then fell
+    back, NetworkX would get it empty."""
+    if iter(value) is value:
+        raise NotImplementedError("rustnx needs a container, not an iterator")
+    return value
+
+
 def _b21_labels(G, prefix):
     """``union_all``'s ``f"{prefix}{x}"`` labels (``nx.relabel_nodes``
     merges nodes whose labels collide; rustnx declines those)."""
@@ -9846,6 +9854,8 @@ def _b21_union(items, disjoint):
 
 
 def union_all(graphs, rename=()):
+    _b21_container(rename)
+
     def items():
         for G, prefix in zip(graphs, chain(rename, repeat(None))):
             base, view = _b21_view(G)
@@ -10064,7 +10074,7 @@ def _b21_hole_nodes(G, nodes, name):
         if _b21_holes_scipy(name):
             raise NotImplementedError("NetworkX uses SciPy for all nodes")
         nodes = G._nodes
-    nodes = list(nodes)
+    nodes = list(_b21_container(nodes))
     index = G._index
     positions = []
     for v in nodes:
@@ -10212,7 +10222,7 @@ def density(B, nodes):
 
 
 def bipartite_degree_centrality(G, nodes):
-    top = set(nodes)
+    top = set(_b21_container(nodes))
     bottom = set(G._nodes) - top
     s_top = 1.0 / len(bottom)
     s_bottom = 1.0 / len(top)

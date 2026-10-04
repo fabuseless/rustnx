@@ -5311,6 +5311,7 @@ def test_batch21_bipartite_measures(seed, directed):
         exact_outcome(nx.bipartite.density, G, side)
         exact_outcome(nx.bipartite.degree_centrality, G, side)
     exact_outcome(lambda G, **kw: nx.bipartite.density(G, iter(top), **kw), G)  # no len()
+    exact_outcome(lambda G, **kw: nx.bipartite.degree_centrality(G, iter(top), **kw), G)
     exact_outcome(nx.bipartite.density, nx.empty_graph(3), [0])
     B = nx.complete_bipartite_graph(3, 4)
     exact_outcome(nx.bipartite.density, B, [0, 1, 2])
