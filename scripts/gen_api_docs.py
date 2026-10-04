@@ -215,6 +215,17 @@ SECTIONS = [
         "efficiency", "global_efficiency", "local_efficiency", "closeness_vitality",
         "gutman_index", "schultz_index", "hyper_wiener_index", "flow_hierarchy", "voronoi_cells",
     ]),
+    ("Approximation algorithms", [
+        "min_weighted_vertex_cover", "min_weighted_dominating_set", "min_edge_dominating_set",
+        "min_maximal_matching", "greedy_tsp", "simulated_annealing_tsp",
+        "threshold_accepting_tsp", "treewidth_min_fill_in", "treewidth_decomp",
+        "approximate_diameter", "one_exchange", "randomized_partitioning", "steiner_tree",
+        "densest_subgraph",
+    ]),
+    ("Graph operations", [
+        "complement", "power", "difference", "symmetric_difference", "is_kl_connected",
+        "kl_connected_subgraph",
+    ]),
 ]
 
 FLOWNOTE = "Capacities (and the flow values) can be ints or floats, mixed or missing (infinite): every value, its type and the order of every float addition are NetworkX's."
@@ -440,6 +451,26 @@ NOTES = {
     "mixing_expansion": "As `cut_size`.",
     "node_expansion": "Nodes not in G fall back.",
     "boundary_expansion": "",
+    "min_weighted_vertex_cover": "Node weights are read from the NetworkX graph and must be Python ints or floats (int arithmetic within 64 bits). The set iterates in NetworkX's order.",
+    "min_weighted_dominating_set": "Follows the installed NetworkX's cost rule (3.6 changed it). Node weights must be ints within 2**53 or floats other than NaN. The set iterates in NetworkX's order.",
+    "min_edge_dominating_set": "As `maximal_matching`.",
+    "min_maximal_matching": "As `maximal_matching`.",
+    "greedy_tsp": "NetworkX picks each next node with `min()` over a set, so a tie for the nearest node falls back, as do graphs under 3 nodes, `weight=None` and a source not in G.",
+    "simulated_annealing_tsp": "Moves and tour costs in Rust; the random draws come from `seed` exactly as in NetworkX. Custom `move` functions, `init_cycle=\"greedy\"` with a tie (see `greedy_tsp`), weights mixing ints and floats and graphs under 3 nodes fall back.",
+    "threshold_accepting_tsp": "As `simulated_annealing_tsp`.",
+    "treewidth_min_fill_in": "The min fill-in heuristic runs in Rust; rustnx then replays NetworkX's set operations, so the bags (frozensets) iterate the same way.",
+    "treewidth_decomp": "The default `heuristic` only; directed graphs fall back. As `treewidth_min_fill_in`.",
+    "approximate_diameter": "Both sweeps in Rust, from the node `seed` picks as in NetworkX.",
+    "one_exchange": "Int weights (or none); float weights fall back, since NetworkX's float sums follow set order. The cut sets are rebuilt with NetworkX's set operations.",
+    "randomized_partitioning": "Int weights (or none), as `one_exchange`.",
+    "steiner_tree": "Mehlhorn's method (the default) for the installed version (3.6 changed its distances); `method=\"kou\"` falls back (it starts from `set.pop()`), as do negative and `None` weights. Returns a view of the original graph, as NetworkX does.",
+    "densest_subgraph": "NetworkX 3.5 and newer. Greedy++ and FISTA (in float32, like NetworkX's NumPy arrays). FISTA falls back on self-loops, and with NetworkX 3.5 and 3.6 on nodes other than the ints 0..n-1.",
+    "complement": "Plain `Graph` and `DiGraph` results with NetworkX's adjacency order; subclasses fall back.",
+    "power": "Builds the result with NetworkX's adjacency order.",
+    "difference": "Takes two graphs. Plain `Graph` and `DiGraph` results; subclasses fall back.",
+    "symmetric_difference": "Takes two graphs. Plain `Graph` and `DiGraph` results; subclasses fall back.",
+    "is_kl_connected": "`low_memory=True` falls back (its searches run on subgraph views ordered by a set).",
+    "kl_connected_subgraph": "`low_memory=True` falls back. Returns a deep copy of the original graph without the rejected edges.",
 }
 
 # Functions NetworkX exposes only in a submodule, or under another name.
@@ -450,6 +481,8 @@ QUALIFIED = {
     "is_reachable": "nx.tournament.is_reachable",
     "tournament_is_strongly_connected": "nx.tournament.is_strongly_connected",
     "score_sequence": "nx.tournament.score_sequence",
+    "approximate_diameter": "nx.approximation.diameter",
+    "treewidth_decomp": "nx.algorithms.approximation.treewidth.treewidth_decomp",
     "triadic_census": "A `nodelist` that is one node or an iterator falls back.",
     "is_d_separator": "Arguments other than nodes and sets of nodes (lists, for example) fall back.",
     "is_minimal_d_separator": "Arguments other than nodes and sets of nodes (lists, for example) fall back.",
@@ -569,6 +602,18 @@ SUBMODULE = {
     "preflow_push": "nx.flow",
     "build_residual_network": "nx.flow",
     "build_flow_dict": "nx.flow",
+    "min_weighted_vertex_cover": "nx.approximation",
+    "min_weighted_dominating_set": "nx.approximation",
+    "min_edge_dominating_set": "nx.approximation",
+    "min_maximal_matching": "nx.approximation",
+    "greedy_tsp": "nx.approximation",
+    "simulated_annealing_tsp": "nx.approximation",
+    "threshold_accepting_tsp": "nx.approximation",
+    "treewidth_min_fill_in": "nx.approximation",
+    "one_exchange": "nx.approximation",
+    "randomized_partitioning": "nx.approximation",
+    "steiner_tree": "nx.approximation",
+    "densest_subgraph": "nx.approximation",
 }
 
 

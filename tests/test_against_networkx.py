@@ -739,6 +739,7 @@ def test_backend_function_list_matches_implementations():
         "butterflies",
         "centroid",
         "connected_dominating_set",
+        "densest_subgraph",
         "floyd_warshall_tree",
         "hyper_wiener_index",
         "is_connected_dominating_set",

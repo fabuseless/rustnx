@@ -4599,3 +4599,370 @@ def test_batch15_runs_in_rust():
         calls.append(lambda: community.overlapping_modularity(G, part, backend="rustnx"))
     for call in calls:
         call()
+
+
+# --- Batch 16: approximation algorithms and graph operations -----------------------
+
+from networkx.algorithms import approximation as approx  # noqa: E402
+from networkx.algorithms.approximation.treewidth import treewidth_decomp  # noqa: E402
+
+
+def _b16_graph_state(G):
+    """Everything about a result graph a caller could see: its class, node
+    and adjacency order, attribute dicts, and which edge dicts are shared."""
+    if not isinstance(G, nx.Graph):
+        return G
+    state = [type(G).__name__, G.graph, list(G.nodes(data=True))]
+    state.append([(u, list(nbrs.items())) for u, nbrs in G._adj.items()])
+    if G.is_directed():
+        state.append([(u, list(nbrs.items())) for u, nbrs in G._pred.items()])
+        state.append([G._succ[u][v] is G._pred[v][u] for u in G for v in G._succ[u]])
+    else:
+        state.append([G._adj[u][v] is G._adj[v][u] for u in G for v in G._adj[u]])
+    return state
+
+
+def _b16_graphs(func):
+    """Compare graph results (also inside tuples) with `_b16_graph_state`."""
+
+    def run(*args, **kwargs):
+        result = func(*args, **kwargs)
+        if isinstance(result, tuple):
+            return tuple(_b16_graph_state(r) for r in result)
+        return _b16_graph_state(result)
+
+    return run
+
+
+def _b16_node_weights(G, seed, kind):
+    rng = random.Random(seed)
+    for v in G:
+        if kind == "int":
+            G.nodes[v]["w"] = rng.randint(-2, 6)
+        elif kind == "float":
+            G.nodes[v]["w"] = rng.choice([0.5, 1.0, 2.25, 3.0, 0.1])
+        elif kind == "mixed" and rng.random() < 0.7:
+            G.nodes[v]["w"] = rng.choice([1, 2, 0.5, 3.75, True])
+    return G
+
+
+@pytest.mark.parametrize("kind", ["none", "int", "float", "mixed"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch16_covers_and_dominating_sets(seed, directed, kind):
+    G = _b16_node_weights(graph_for(seed, directed), seed, kind)
+    for weight in [None, "w", "missing"]:
+        exact_outcome(with_set_order(approx.min_weighted_vertex_cover), G, weight=weight)
+        exact_outcome(with_set_order(approx.min_weighted_dominating_set), G, weight=weight)
+    exact_outcome(with_set_order(approx.min_edge_dominating_set), G)
+    exact_outcome(with_set_order(approx.min_maximal_matching), G)
+
+
+def test_batch16_covers_edge_cases():
+    graphs = [nx.Graph(), nx.DiGraph(), nx.empty_graph(3), nx.Graph([(0, 0)]),
+              nx.Graph([(0, 0), (0, 1)]), nx.star_graph(5), nx.complete_graph(5)]
+    for G in graphs:
+        for func in [approx.min_weighted_vertex_cover, approx.min_weighted_dominating_set,
+                     approx.min_edge_dominating_set, approx.min_maximal_matching]:
+            exact_outcome(with_set_order(func), G)
+    G = nx.path_graph(6)
+    for value in [2**60, 2**70, -(2**62), float("inf"), float("nan"), "x", None, 1.5]:
+        G.nodes[2]["w"] = value
+        exact_outcome(with_set_order(approx.min_weighted_vertex_cover), G, weight="w")
+        exact_outcome(with_set_order(approx.min_weighted_dominating_set), G, weight="w")
+    # String labels: set iteration order follows insertion order.
+    S = nx.relabel_nodes(nx.gnp_random_graph(30, 0.15, seed=3), lambda v: f"s{v}")
+    exact_outcome(with_set_order(approx.min_weighted_vertex_cover), S)
+    exact_outcome(with_set_order(approx.min_weighted_dominating_set), S)
+
+
+def _b16_complete(seed, directed, kind):
+    rng = random.Random(seed)
+    n = rng.randint(1, 12)
+    G = nx.complete_graph(n, nx.DiGraph() if directed else nx.Graph())
+    if rng.random() < 0.5:
+        G = nx.relabel_nodes(G, {v: f"t{v}" for v in G})
+    for u, v, d in G.edges(data=True):
+        if kind == "float":
+            d["weight"] = rng.random() * 10
+        elif kind == "int":
+            d["weight"] = rng.randint(1, 4)
+        elif kind == "wide":
+            d["weight"] = rng.randint(1, 10**6)
+        elif kind == "mixed":
+            d["weight"] = rng.choice([1, 2.5])
+    if rng.random() < 0.2 and n:
+        v = rng.choice(list(G))
+        G.add_edge(v, v, weight=0.5)
+    return G
+
+
+@pytest.mark.parametrize("kind", ["float", "int", "wide", "mixed", "none"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch16_tsp(seed, directed, kind):
+    G = _b16_complete(seed, directed, kind)
+    nodes = list(G)
+    rng = random.Random(seed)
+    sources = [None] + nodes[:2] + ["missing"]
+    for source in sources:
+        exact_outcome(approx.greedy_tsp, G, source=source)
+    exact_outcome(approx.greedy_tsp, G, weight=None)
+    cycle = nodes + nodes[:1]
+    rng.shuffle(cycle[1:-1]) if len(cycle) > 3 else None
+    for func in [approx.simulated_annealing_tsp, approx.threshold_accepting_tsp]:
+        for move in ["1-1", "1-0"]:
+            exact_outcome(func, G, cycle, move=move, seed=seed, max_iterations=5, N_inner=40)
+            exact_outcome(func, G, "greedy", move=move, seed=seed, max_iterations=3, N_inner=30)
+        exact_outcome(func, G, cycle, source=nodes[-1] if nodes else None, seed=1)
+        exact_outcome(func, G, cycle[:-1], seed=1)
+        exact_outcome(func, G, cycle[:-1] + ["missing", cycle[0]], seed=1)
+        exact_outcome(func, G, cycle, seed=2, N_inner=10, max_iterations=2)
+    exact_outcome(approx.simulated_annealing_tsp, G, cycle, temp=0.5, alpha=0.3, seed=3)
+    exact_outcome(approx.threshold_accepting_tsp, G, cycle, threshold=-1, seed=3)
+    exact_outcome(approx.threshold_accepting_tsp, G, cycle, threshold=0.75, alpha=0.5, seed=4)
+    if len(G) > 3:
+        H = G.copy()
+        H.remove_edge(nodes[0], nodes[1])
+        exact_outcome(approx.greedy_tsp, H)
+        exact_outcome(approx.simulated_annealing_tsp, H, cycle, seed=1)
+
+
+@pytest.mark.parametrize("seed", range(60))
+def test_batch16_treewidth(seed):
+    G = graph_for(seed, False)
+
+    def bags(func):
+        def run(G, **kw):
+            width, decomp = func(G, **kw)
+            return (width, [list(b) for b in decomp], [(list(u), list(v)) for u, v in decomp.edges])
+
+        return run
+
+    exact_outcome(bags(approx.treewidth_min_fill_in), G)
+    exact_outcome(bags(treewidth_decomp), G)
+    S = nx.relabel_nodes(G, {v: ("t", str(v)) for v in G})
+    exact_outcome(bags(approx.treewidth_min_fill_in), S)
+    exact_outcome(approx.treewidth_min_fill_in, graph_for(seed, True))
+    exact_outcome(lambda G, **kw: treewidth_decomp(G, **kw)[0], graph_for(seed, True))
+    # A custom heuristic falls back.
+    exact_outcome(bags(lambda G, **kw: treewidth_decomp(G, lambda g: None, **kw)), G)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch16_approximate_diameter(seed, directed):
+    G = graph_for(seed, directed)
+    for s in range(3):
+        exact_outcome(approx.diameter, G, seed=s)
+    C = nx.cycle_graph(7, nx.DiGraph() if directed else nx.Graph())
+    nx.add_path(C, [0, 10, 11, 12, 3])
+    for s in range(5):
+        exact_outcome(approx.diameter, C, seed=s)
+    exact_outcome(approx.diameter, nx.Graph())
+    exact_outcome(approx.diameter, nx.empty_graph(1))
+    exact_outcome(approx.diameter, nx.empty_graph(2))
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float"])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch16_maxcut(seed, weights):
+    G = graph_for(seed, False, weights)
+    G = nx.relabel_nodes(G, {v: f"m{v}" for v in G}) if seed % 2 else G
+    nodes = list(G)
+    rng = random.Random(seed)
+    weight = None if weights == "none" else "weight"
+    for s in range(3):
+        exact_outcome(with_set_order(approx.one_exchange), G, seed=s, weight=weight)
+        start = rng.sample(nodes, len(nodes) // 2) + ["not a node"]
+        exact_outcome(with_set_order(approx.one_exchange), G, start, seed=s, weight=weight)
+        for p in [0.5, 0.1, 0.9]:
+            exact_outcome(with_set_order(approx.randomized_partitioning), G, s, p, weight)
+    exact_outcome(with_set_order(approx.one_exchange), graph_for(seed, True), seed=1)
+    exact_outcome(with_set_order(approx.randomized_partitioning), graph_for(seed, True), seed=1)
+
+
+def _b16_kl_graph(seed, directed):
+    rng = random.Random(seed)
+    G = nx.gnp_random_graph(rng.randint(2, 14), rng.choice([0.2, 0.4, 0.7]), seed=seed,
+                            directed=directed)
+    if rng.random() < 0.5:
+        G = nx.relabel_nodes(G, {v: f"k{v}" for v in G})
+    if rng.random() < 0.3:
+        v = rng.choice(list(G))
+        G.add_edge(v, v)
+    for u, v, d in G.edges(data=True):
+        d["w"] = rng.randint(1, 3)
+    G.graph["name"] = "kl"
+    return G
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch16_kl_connected(seed, directed):
+    G = _b16_kl_graph(seed, directed)
+    pairs = [(1, 1), (2, 2), (3, 3), (2, 2.5), (1, 0), (2, True)]
+    if nx.number_of_selfloops(G) == 0:
+        pairs.append((2, float("inf")))  # NetworkX never finishes with self-loops
+    for k, l in pairs:
+        exact_outcome(nx.is_kl_connected, G, k, l)
+        exact_outcome(_b16_graphs(nx.kl_connected_subgraph), G, k, l)
+        exact_outcome(_b16_graphs(nx.kl_connected_subgraph), G, k, l, same_as_graph=True)
+    exact_outcome(nx.is_kl_connected, G, 2, 2, low_memory=True)
+    exact_outcome(_b16_graphs(nx.kl_connected_subgraph), G, 2, 2, low_memory=True)
+
+
+def _b16_pair(seed, directed):
+    G = graph_for(seed, directed)
+    H = G.__class__()
+    nodes = list(G)
+    random.Random(seed).shuffle(nodes)
+    H.add_nodes_from(nodes)
+    rng = random.Random(seed + 1)
+    H.add_edges_from(e for e in G.edges if rng.random() < 0.6)
+    for _ in range(len(nodes)):
+        a, b = rng.choice(nodes), rng.choice(nodes)
+        H.add_edge(a, b)
+    return G, H
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch16_operators(seed, directed):
+    G, H = _b16_pair(seed, directed)
+    G.graph["name"] = "G"
+    for v in list(G)[:3]:
+        G.nodes[v]["color"] = "red"
+    exact_outcome(_b16_graphs(nx.complement), G)
+    for k in [1, 2, 3, 2.5, 0, -1, 100, float("inf"), True]:
+        exact_outcome(_b16_graphs(nx.power), G, k)
+    for func in [nx.difference, nx.symmetric_difference]:
+        exact_outcome(_b16_graphs(func), G, H)
+        exact_outcome(_b16_graphs(func), H, G)
+        exact_outcome(_b16_graphs(func), G, G)
+        # Mixed directedness.
+        exact_outcome(_b16_graphs(func), G, H.to_undirected() if directed else H.to_directed())
+        # Different node sets.
+        K = H.copy()
+        K.add_node("extra")
+        exact_outcome(_b16_graphs(func), G, K)
+    S = nx.relabel_nodes(G, {v: f"c{v}" for v in G})
+    exact_outcome(_b16_graphs(nx.complement), S)
+
+
+def test_batch16_operators_on_subclasses():
+    class MyGraph(nx.Graph):
+        pass
+
+    G = MyGraph(nx.path_graph(5))
+    exact_outcome(_b16_graphs(nx.complement), G)
+    exact_outcome(_b16_graphs(nx.difference), G, nx.path_graph(5))
+    exact_outcome(_b16_graphs(nx.power), G, 2)
+
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float", "missing"])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch16_steiner_tree(seed, weights):
+    G = graph_for(seed, False, weights)
+    if seed % 3 == 0:
+        # One component, so every node reaches a terminal.
+        G.add_edges_from(zip(list(G), list(G)[1:]), weight=2)
+    nodes = list(G)
+    rng = random.Random(seed)
+    for k in [1, 2, 3, 6]:
+        terminals = rng.sample(nodes, min(k, len(nodes)))
+        for weight in ["weight", None, "other"]:
+            exact_outcome(_b16_graphs(approx.steiner_tree), G, terminals, weight=weight)
+        exact_outcome(_b16_graphs(approx.steiner_tree), G, terminals, method="mehlhorn")
+        exact_outcome(_b16_graphs(approx.steiner_tree), G, terminals + terminals[:1])
+    exact_outcome(_b16_graphs(approx.steiner_tree), G, nodes[:2], method="kou")
+    exact_outcome(_b16_graphs(approx.steiner_tree), G, nodes[:2], method="nope")
+    exact_outcome(_b16_graphs(approx.steiner_tree), G, [])
+    exact_outcome(_b16_graphs(approx.steiner_tree), G, ["missing"])
+    exact_outcome(_b16_graphs(approx.steiner_tree), graph_for(seed, True), nodes[:2])
+    if G.number_of_edges():
+        u, v = next(iter(G.edges))
+        H = G.copy()
+        H[u][v]["weight"] = -1
+        exact_outcome(_b16_graphs(approx.steiner_tree), H, nodes[:3])
+
+
+_b16_densest = getattr(approx, "densest_subgraph", None)
+
+
+@pytest.mark.skipif(_b16_densest is None, reason="NetworkX lacks densest_subgraph")
+@pytest.mark.parametrize("seed", range(60))
+def test_batch16_densest_subgraph(seed):
+    G = graph_for(seed, False)
+    rng = random.Random(seed)
+    if seed % 2:
+        # Plain 0..n-1 labels in a shuffled order (NetworkX 3.5 and 3.6 index
+        # by node there).
+        nodes = list(range(len(G)))
+        rng.shuffle(nodes)
+        H = nx.Graph()
+        H.add_nodes_from(nodes)
+        H.add_edges_from(nx.convert_node_labels_to_integers(G).edges)
+        G = H
+    for method in ["fista", "greedy++"]:
+        for iterations in [1, 2, 5, 30]:
+            exact_outcome(with_set_order(_b16_densest), G, iterations, method=method)
+        exact_outcome(with_set_order(_b16_densest), G, 0, method=method)
+    exact_outcome(with_set_order(_b16_densest), G, 3)
+    exact_outcome(with_set_order(_b16_densest), G, method="nope")
+    exact_outcome(with_set_order(_b16_densest), nx.Graph(), 3)
+    exact_outcome(with_set_order(_b16_densest), nx.empty_graph(4), 3)
+    exact_outcome(with_set_order(_b16_densest), graph_for(seed, True))
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(10))
+def test_batch16_multigraphs(seed, directed, restore_config):
+    M = random_multigraph(seed, directed, "none")
+    for v in M:
+        M.nodes[v]["w"] = random.Random(str(v)).randint(1, 5)
+    exact_outcome(with_set_order(approx.min_weighted_vertex_cover), M, weight="w")
+    exact_outcome(approx.diameter, M, seed=seed)
+    if not directed:
+        exact_outcome(with_set_order(approx.min_weighted_dominating_set), M, weight="w")
+    # These fall back.
+    exact_outcome(with_set_order(approx.min_maximal_matching), M)
+    exact_outcome(_b16_graphs(nx.complement), M)
+    exact_outcome(nx.is_kl_connected, M, 2, 2)
+    if not directed:
+        exact_outcome(_b16_graphs(approx.steiner_tree), M, list(M)[:2])
+
+
+def test_batch16_runs_in_rust():
+    G = nx.gnp_random_graph(30, 0.2, seed=1)
+    D = nx.gnp_random_graph(30, 0.3, seed=1, directed=True)
+    K = nx.complete_graph(8)
+    for u, v, d in K.edges(data=True):
+        d["weight"] = random.Random(u * 10 + v).random()
+    cycle = list(K) + [0]
+    calls = [
+        lambda: approx.min_weighted_vertex_cover(G, backend="rustnx"),
+        lambda: approx.min_weighted_dominating_set(G, backend="rustnx"),
+        lambda: approx.min_edge_dominating_set(G, backend="rustnx"),
+        lambda: approx.min_maximal_matching(G, backend="rustnx"),
+        lambda: approx.greedy_tsp(K, backend="rustnx"),
+        lambda: approx.simulated_annealing_tsp(K, cycle, seed=1, backend="rustnx"),
+        lambda: approx.threshold_accepting_tsp(K, "greedy", seed=1, backend="rustnx"),
+        lambda: approx.treewidth_min_fill_in(G, backend="rustnx"),
+        lambda: treewidth_decomp(G, backend="rustnx"),
+        lambda: approx.diameter(D, seed=1, backend="rustnx"),
+        lambda: approx.one_exchange(G, seed=1, backend="rustnx"),
+        lambda: approx.randomized_partitioning(G, seed=1, backend="rustnx"),
+        lambda: nx.is_kl_connected(G, 2, 2, backend="rustnx"),
+        lambda: nx.kl_connected_subgraph(D, 2, 2, backend="rustnx"),
+        lambda: nx.complement(G, backend="rustnx"),
+        lambda: nx.power(G, 2, backend="rustnx"),
+        lambda: nx.difference(G, G, backend="rustnx"),
+        lambda: nx.symmetric_difference(D, D, backend="rustnx"),
+        lambda: approx.steiner_tree(G, [0, 5, 9], backend="rustnx"),
+    ]
+    if _b16_densest is not None:
+        calls.append(lambda: _b16_densest(G, 5, backend="rustnx"))
+        calls.append(lambda: _b16_densest(G, 5, method="greedy++", backend="rustnx"))
+    for call in calls:
+        call()
