@@ -16,7 +16,12 @@ const MAX_EXACT: f64 = 9_007_199_254_740_992.0;
 /// NetworkX's order (ties go to the first predecessor), with `w` aligned to
 /// it (`None`: every edge weighs `constant`). Returns `None` if a distance
 /// leaves the range where f64 sums of ints are exact.
-pub fn longest_path(pred: &Csr, w: Option<&[f64]>, constant: f64, topo: &[u32]) -> Option<Vec<u32>> {
+pub fn longest_path(
+    pred: &Csr,
+    w: Option<&[f64]>,
+    constant: f64,
+    topo: &[u32],
+) -> Option<Vec<u32>> {
     let n = pred.offsets.len() - 1;
     let mut dist = vec![0.0f64; n];
     let mut from = vec![0u32; n];
@@ -334,8 +339,12 @@ pub struct RootLeafPaths {
 
 impl RootLeafPaths {
     pub fn new(succ: &Csr, pred: &Csr, n: usize) -> Self {
-        let roots = (0..n as u32).filter(|&v| pred.neighbors(v as usize).is_empty()).collect();
-        let leaves = (0..n as u32).filter(|&v| succ.neighbors(v as usize).is_empty()).collect();
+        let roots = (0..n as u32)
+            .filter(|&v| pred.neighbors(v as usize).is_empty())
+            .collect();
+        let leaves = (0..n as u32)
+            .filter(|&v| succ.neighbors(v as usize).is_empty())
+            .collect();
         RootLeafPaths {
             succ: (0..n).map(|v| succ.neighbors(v).to_vec()).collect(),
             pred: (0..n).map(|v| pred.neighbors(v).to_vec()).collect(),
@@ -464,7 +473,10 @@ pub fn branching(paths: &mut RootLeafPaths) -> (Vec<u32>, Vec<u32>) {
     while let Some(path) = paths.next_path() {
         let mut at = 0usize;
         for v in path {
-            let found = children[at].iter().copied().find(|&c| source[c as usize] == v);
+            let found = children[at]
+                .iter()
+                .copied()
+                .find(|&c| source[c as usize] == v);
             at = match found {
                 Some(c) => c as usize,
                 None => {
@@ -635,7 +647,12 @@ pub const MISSING: u32 = u32::MAX;
 /// `nx.bfs_labeled_edges` from `sources` (distinct; `MISSING` for nodes
 /// not in the graph, where NetworkX raises once it pops them): the labeled
 /// edges, and the position in `sources` of the missing source reached.
-pub fn bfs_labeled(adj: &Csr, n: usize, directed: bool, sources: &[u32]) -> (Vec<(u32, u32, u8)>, Option<usize>) {
+pub fn bfs_labeled(
+    adj: &Csr,
+    n: usize,
+    directed: bool,
+    sources: &[u32],
+) -> (Vec<(u32, u32, u8)>, Option<usize>) {
     let mut depth = vec![-1i64; n];
     let mut queue: VecDeque<(u32, i64)> = VecDeque::new();
     for &s in sources {
@@ -686,11 +703,12 @@ pub fn pred_arc_ids(succ: &Csr, pred: &Csr, n: usize) -> Vec<u32> {
     }
     // Rows were filled in increasing `u`, so each is sorted.
     let mut ids = vec![0u32; pred.targets.len()];
-    for v in 0..n {
-        let row = &by_head[v];
+    for (v, row) in by_head.iter().enumerate() {
         for e in pred.range(v) {
             let u = pred.targets[e];
-            let k = row.binary_search_by_key(&u, |&(t, _)| t).expect("pred matches succ");
+            let k = row
+                .binary_search_by_key(&u, |&(t, _)| t)
+                .expect("pred matches succ");
             ids[e] = row[k].1;
         }
     }
@@ -722,7 +740,11 @@ impl EdgeSource<'_> {
 
     /// Arc `k` of node `v`: `(u, w, label, edge id, child)`.
     fn arc(&self, v: usize, k: usize) -> (u32, u32, u8, u32, u32) {
-        let outs = if self.out { self.succ.neighbors(v).len() } else { 0 };
+        let outs = if self.out {
+            self.succ.neighbors(v).len()
+        } else {
+            0
+        };
         if k < outs {
             let e = self.succ.range(v).start + k;
             let w = self.succ.targets[e];

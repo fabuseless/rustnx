@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 85 NetworkX functions. Call them as usual (for
+rustnx implements 106 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -101,6 +101,9 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.attracting_components` | none | yes | NetworkX |  |
 | `nx.number_attracting_components` | none | yes | NetworkX |  |
 | `nx.is_attracting_component` | none | yes | NetworkX |  |
+| `nx.kosaraju_strongly_connected_components` | `source` | yes | NetworkX | Component sets are filled in the installed NetworkX's order. |
+| `nx.condensation` | none | yes | NetworkX | `scc` falls back. Member sets follow `strongly_connected_components`' order. |
+| `nx.is_semiconnected` | none | yes | NetworkX |  |
 
 ### Directed acyclic graphs
 
@@ -109,6 +112,19 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.topological_sort` | none | no | NetworkX | Raises NetworkX's errors if the graph changes during iteration. |
 | `nx.topological_generations` | none | no | NetworkX | Raises NetworkX's errors if the graph changes during iteration. |
 | `nx.is_directed_acyclic_graph` | none | no | NetworkX |  |
+| `nx.dag.has_cycle` | none | no | NetworkX |  |
+| `nx.lexicographical_topological_sort` | none | no | NetworkX | `key` falls back, and so do nodes that aren't all ints and floats (no NaN) or all strings. |
+| `nx.all_topological_sorts` | none | no | rustnx | Sorts are generated lazily. |
+| `nx.dag_longest_path` | `weight`, `default_weight` | no | NetworkX | `topo_order` falls back, and so do `None` weights and a `default_weight` other than the one the graph was converted with. |
+| `nx.dag_longest_path_length` | `weight`, `default_weight` | no | NetworkX | As `dag_longest_path`. Lengths are summed in Python from the edge data, as in NetworkX. |
+| `nx.transitive_closure` | `reflexive` | no | rustnx | Builds the closure in NetworkX from Rust searches; edges are added in NetworkX's order (including set iteration order). |
+| `nx.transitive_closure_dag` | none | no | rustnx | `topo_order` falls back. Builds the closure in NetworkX, adding edges in NetworkX's order (including set iteration order). |
+| `nx.transitive_reduction` | none | yes | rustnx | Kept edges are added in NetworkX's (set iteration) order. |
+| `nx.is_aperiodic` | none | no | NetworkX | On NetworkX 3.4, graphs not reachable from their first node fall back (NetworkX recurses in set order). |
+| `nx.dag.colliders` | none | no | NetworkX | Generator. |
+| `nx.dag.v_structures` | none | no | NetworkX | Generator. |
+| `nx.dag.root_to_leaf_paths` | none | no | rustnx | Paths are generated lazily. Undirected graphs fall back. |
+| `nx.dag_to_branching` | none | no | rustnx |  |
 
 ### Clustering
 
@@ -145,6 +161,11 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.dfs_postorder_nodes` | `source`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. |
 | `nx.dfs_predecessors` | `source`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. |
 | `nx.dfs_successors` | `source`, `depth_limit`, `sort_neighbors` | yes | NetworkX | `sort_neighbors` falls back. |
+| `nx.generic_bfs_edges` | `source`, `depth_limit` | yes | NetworkX | `neighbors` falls back. |
+| `nx.bfs_labeled_edges` | `sources` | yes | NetworkX |  |
+| `nx.dfs_labeled_edges` | `source`, `depth_limit` | yes | NetworkX | `sort_neighbors` falls back. |
+| `nx.edge_bfs` | `source`, `orientation` | no | NetworkX | A `source` that is neither a node nor a list, tuple, set or dict of hashable nodes falls back. |
+| `nx.edge_dfs` | `source`, `orientation` | no | NetworkX | A `source` that is neither a node nor a list, tuple, set or dict of hashable nodes falls back. |
 
 ### Trees
 

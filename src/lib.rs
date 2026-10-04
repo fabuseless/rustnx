@@ -778,7 +778,11 @@ impl CoreGraph {
 
     /// `nx.all_topological_sorts`, one sort at a time.
     fn all_topological_sorts(&self) -> AllTopoSorts {
-        AllTopoSorts(dag::AllTopologicalSorts::new(&self.succ, self.adj(true), self.n))
+        AllTopoSorts(dag::AllTopologicalSorts::new(
+            &self.succ,
+            self.adj(true),
+            self.n,
+        ))
     }
 
     /// `nx.transitive_reduction`: `None` if the graph has a cycle, else for
@@ -810,7 +814,9 @@ impl CoreGraph {
         Ok(py.detach(|| {
             sources
                 .par_iter()
-                .map(|&v| dag::closure_heads(&self.succ, self.n, self.directed, v as usize, edge_bfs))
+                .map(|&v| {
+                    dag::closure_heads(&self.succ, self.n, self.directed, v as usize, edge_bfs)
+                })
                 .collect()
         }))
     }
@@ -902,7 +908,11 @@ impl CoreGraph {
     ) -> PyResult<(Vec<u32>, Vec<u32>, Vec<u8>)> {
         let starts = self.sources_or_all(Some(starts))?;
         let inward = inward && self.directed;
-        let pred = if inward { Some(self.reverse_exact_order(None)?.0) } else { None };
+        let pred = if inward {
+            Some(self.reverse_exact_order(None)?.0)
+        } else {
+            None
+        };
         Ok(py.detach(|| {
             let (succ_id, edges) = self.edge_ids();
             let pred_id = pred.map(|p| dag::pred_arc_ids(&self.succ, p, self.n));
@@ -943,7 +953,11 @@ impl CoreGraph {
     /// `nx.condensation`: the strongly connected components (NetworkX
     /// order) and the condensed edges `(us, vs)` in insertion order.
     #[allow(clippy::type_complexity)]
-    fn condensation(&self, py: Python<'_>, early_exit: bool) -> (Vec<Vec<u32>>, Vec<u32>, Vec<u32>) {
+    fn condensation(
+        &self,
+        py: Python<'_>,
+        early_exit: bool,
+    ) -> (Vec<Vec<u32>>, Vec<u32>, Vec<u32>) {
         py.detach(|| {
             let comps = directed::strongly_connected_components(&self.succ, self.n, early_exit);
             let comp = dag::component_of(&comps, self.n);
