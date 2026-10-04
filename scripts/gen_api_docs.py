@@ -405,23 +405,25 @@ ISOMORPHISM_ONLY = {
 DAG_ONLY = {"v_structures", "root_to_leaf_paths", "has_cycle", "antichain_width"}
 
 
+# Functions NetworkX exposes only in a submodule, not as `nx.<name>`.
+SUBMODULE = {
+    "label_propagation_communities": "nx.community",
+    "is_coloring": "nx.algorithms.coloring.equitable_coloring",
+    "is_equitable": "nx.algorithms.coloring.equitable_coloring",
+    "branching_weight": "nx.tree",
+    "greedy_branching": "nx.tree",
+    "minimal_branching": "nx.tree",
+    "kruskal_mst_edges": "nx.tree.mst",
+    "prim_mst_edges": "nx.tree.mst",
+    "boruvka_mst_edges": "nx.tree.mst",
+    "is_tournament": "nx.tournament",
+}
+
+
 def location(name):
     if name in DAG_ONLY:
         return "nx.dag"
-    if name in ISOMORPHISM_ONLY:
-        return ISOMORPHISM_ONLY[name]
-    if name in ("is_coloring", "is_equitable"):
-        return "nx.algorithms.coloring.equitable_coloring"
-    if name in ("branching_weight", "greedy_branching", "minimal_branching"):
-        return "nx.tree"
-    if name in ("prim_mst_edges", "boruvka_mst_edges"):
-        return "nx.tree.mst"
-    return "nx.community" if name == "label_propagation_communities" else "nx"
-    return {
-        "label_propagation_communities": "nx.community",
-        "kruskal_mst_edges": "nx.tree.mst",
-        "is_tournament": "nx.tournament",
-    }.get(name, "nx")
+    return ISOMORPHISM_ONLY.get(name) or SUBMODULE.get(name, "nx")
 
 
 def parameters(name):

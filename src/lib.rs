@@ -447,7 +447,8 @@ impl CoreGraph {
     #[pyo3(signature = (source, reverse=false))]
     fn reachable(&self, py: Python<'_>, source: usize, reverse: bool) -> PyResult<Vec<u32>> {
         self.check_index(source)?;
-        let adj = self.adj(reverse);
+        // `nx.ancestors` walks `G._pred` in its exact order (the caller loads it).
+        let adj = self.path_adj(None, reverse && self.directed)?.0;
         let (mut order, _) = py.detach(|| paths::bfs_tree(adj, self.n, source, f64::INFINITY));
         order.remove(0);
         Ok(order)

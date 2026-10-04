@@ -1060,6 +1060,8 @@ def _reachable(G, source, reverse):
         s = G._index[source]
     except KeyError:
         raise nx.NetworkXError(f"The node {source} is not in the {kind}.") from None
+    if reverse and G.is_directed():
+        G._ensure_exact_pred()
     nodes = G._nodes
     return {nodes[i] for i in G._core.reachable(s, reverse)}
 

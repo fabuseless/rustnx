@@ -282,7 +282,7 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.maximum_spanning_edges` | `algorithm`, `weight`, `keys`, `data`, `ignore_nan` | no | NetworkX | Kruskal; Prim and Borůvka fall back. Yields the graph's own edge data dicts. |
 | `nx.minimum_spanning_tree` | `weight`, `algorithm`, `ignore_nan` | no | NetworkX | Kruskal; Prim and Borůvka fall back. |
 | `nx.maximum_spanning_tree` | `weight`, `algorithm`, `ignore_nan` | no | NetworkX | Kruskal; Prim and Borůvka fall back. |
-| `nx.kruskal_mst_edges` | `minimum`, `weight`, `keys`, `data`, `ignore_nan`, `partition` | no | NetworkX | `partition` falls back. Yields the graph's own edge data dicts. |
+| `nx.tree.mst.kruskal_mst_edges` | `minimum`, `weight`, `keys`, `data`, `ignore_nan`, `partition` | no | NetworkX | `partition` falls back. Yields the graph's own edge data dicts. |
 
 ### Structural tests
 
@@ -296,7 +296,7 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.number_of_isolates` | none | yes | NetworkX |  |
 | `nx.is_regular` | none | no | NetworkX |  |
 | `nx.is_k_regular` | `k` | no | NetworkX | A non-integer `k` falls back. |
-| `nx.is_tournament` | none | no | NetworkX |  |
+| `nx.tournament.is_tournament` | none | no | NetworkX |  |
 | `nx.immediate_dominators` | `start` | yes | NetworkX | Follows the installed NetworkX on whether `start` is included (3.7 leaves it out). |
 | `nx.dominance_frontiers` | `start` | yes | NetworkX | Follows the installed NetworkX's version (3.7 adds `start` last). Sets iterate in NetworkX's order. |
 

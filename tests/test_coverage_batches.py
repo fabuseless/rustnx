@@ -3285,3 +3285,17 @@ def test_batch11_bipartite_multigraphs(seed, directed, restore_config):
         exact_outcome(with_set_order(bipartite.to_vertex_cover), M, {}, top)
         if hasattr(bipartite, "butterflies"):
             exact_outcome(bipartite.butterflies, M)
+
+
+# --- Fixes found while integrating batches 7 to 11 ------------------------------
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_ancestors_set_order(seed):
+    # NetworkX builds the set from a reverse BFS over `G._pred`; string labels
+    # make the set's iteration order depend on that insertion order.
+    D = graph_for(seed, True)
+    D = nx.relabel_nodes(D, {v: f"s{v}" for v in D})
+    for source in list(D)[:5]:
+        exact_outcome(with_set_order(nx.ancestors), D, source)
+        exact_outcome(with_set_order(nx.descendants), D, source)
