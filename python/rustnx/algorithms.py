@@ -27,6 +27,7 @@ from . import _core
 
 __all__ = [
     "adamic_adar_index",
+    "adjacency_matrix",
     "all_pairs_all_shortest_paths",
     "all_pairs_bellman_ford_path",
     "all_pairs_bellman_ford_path_length",
@@ -72,6 +73,7 @@ __all__ = [
     "bfs_predecessors",
     "bfs_successors",
     "bfs_tree",
+    "biadjacency_matrix",
     "biconnected_component_edges",
     "biconnected_components",
     "bidirectional_dijkstra",
@@ -105,6 +107,7 @@ __all__ = [
     "conductance",
     "connected_components",
     "connected_dominating_set",
+    "convert_node_labels_to_integers",
     "core_number",
     "cost_of_flow",
     "could_be_isomorphic",
@@ -164,12 +167,20 @@ __all__ = [
     "floyd_warshall_numpy",
     "floyd_warshall_predecessor_and_distance",
     "floyd_warshall_tree",
+    "from_biadjacency_matrix",
+    "from_dict_of_dicts",
+    "from_dict_of_lists",
+    "from_edgelist",
     "from_nested_tuple",
+    "from_numpy_array",
     "from_prufer_sequence",
+    "from_scipy_sparse_array",
     "generalized_degree",
     "generic_bfs_edges",
     "get_counterexample",
     "get_counterexample_recursive",
+    "get_edge_attributes",
+    "get_node_attributes",
     "girth",
     "girvan_newman",
     "global_efficiency",
@@ -196,6 +207,7 @@ __all__ = [
     "hyper_wiener_index",
     "immediate_dominators",
     "in_degree_centrality",
+    "incidence_matrix",
     "inter_community_edges",
     "inter_community_non_edges",
     "intersection_array",
@@ -218,6 +230,7 @@ __all__ = [
     "is_directed_acyclic_graph",
     "is_distance_regular",
     "is_dominating_set",
+    "is_empty",
     "is_equitable",
     "is_eulerian",
     "is_forest",
@@ -231,6 +244,7 @@ __all__ = [
     "is_maximal_matching",
     "is_minimal_d_separator",
     "is_multigraphical",
+    "is_negatively_weighted",
     "is_partition",
     "is_perfect_graph",
     "is_perfect_matching",
@@ -248,6 +262,7 @@ __all__ = [
     "is_valid_degree_sequence_erdos_gallai",
     "is_valid_degree_sequence_havel_hakimi",
     "is_weakly_connected",
+    "is_weighted",
     "isolates",
     "jaccard_coefficient",
     "johnson",
@@ -264,6 +279,7 @@ __all__ = [
     "kosaraju_strongly_connected_components",
     "kruskal_mst_edges",
     "label_propagation_communities",
+    "laplacian_matrix",
     "lexicographical_topological_sort",
     "local_bridges",
     "local_edge_connectivity",
@@ -323,6 +339,7 @@ __all__ = [
     "number_attracting_components",
     "number_connected_components",
     "number_of_isolates",
+    "number_of_selfloops",
     "number_of_walks",
     "number_strongly_connected_components",
     "number_weakly_connected_components",
@@ -348,6 +365,7 @@ __all__ = [
     "radius",
     "randomized_partitioning",
     "reciprocity",
+    "relabel_nodes",
     "resource_allocation_index",
     "rich_club_coefficient",
     "root_to_leaf_paths",
@@ -379,8 +397,11 @@ __all__ = [
     "strongly_connected_components",
     "symmetric_difference",
     "threshold_accepting_tsp",
+    "to_dict_of_lists",
     "to_nested_tuple",
+    "to_numpy_array",
     "to_prufer_sequence",
+    "to_scipy_sparse_array",
     "to_vertex_cover",
     "topological_generations",
     "topological_sort",
@@ -9762,3 +9783,546 @@ def symmetric_difference(G, H):
     us += [back[u] for u in hus]
     vs += [back[v] for v in hvs]
     return _graph_with_plain_edges(cls, G._nodes, us, vs)
+
+
+# --- Batch 19: matrices and conversion ---------------------------------------------
+
+
+def _b19_source(G):
+    """The NetworkX graph G was converted from (its dicts are read directly),
+    or ``None`` for native graphs."""
+    if G._core.is_native():
+        return None
+    if not G._source_unchanged():
+        raise NotImplementedError("the graph changed since it was converted")
+    return G._source
+
+
+def _b19_node_map(G, nodelist):
+    """``map[v]``: node ``v``'s position in ``nodelist``, or -1. Missing,
+    unhashable or repeated nodes fall back (NetworkX's checks for them
+    build sets, whose order shows in its messages)."""
+    if type(nodelist) is not list:
+        raise NotImplementedError("rustnx needs nodelist as a list")
+    index = G._index
+    mapping = [-1] * len(G)
+    for i, v in enumerate(nodelist):
+        try:
+            p = index[v]
+        except (KeyError, TypeError):
+            raise NotImplementedError("NetworkX raises for this nodelist") from None
+        if mapping[p] != -1:
+            raise NotImplementedError("NetworkX raises for this nodelist")
+        mapping[p] = i
+    return mapping
+
+
+def _b19_weight_kind(G, weight, plain=True):
+    """Whether an edge attribute's values are all ints (``weight=None``:
+    unit weights, ints). ``plain`` also requires exact Python ints and
+    floats, from which NumPy infers ``int64`` or ``float64``."""
+    if weight is None:
+        return True
+    _, all_int, has_hidden = _check_weight(G, weight)
+    if has_hidden:
+        raise NotImplementedError("rustnx does not support None edge weights here")
+    if plain and not G._core.weight_plain(weight):
+        raise NotImplementedError("rustnx needs plain int or float edge weights here")
+    return all_int
+
+
+def _b19_coo_arrays(coo, all_int):
+    """``(row, col, data)`` NumPy arrays from Rust's COO bytes: the arrays
+    NumPy makes of NetworkX's lists of Python ints and floats."""
+    import numpy as np
+
+    row, col, data = coo
+    data = np.frombuffer(data, dtype=np.float64)
+    return (
+        np.frombuffer(row, dtype=np.int64),
+        np.frombuffer(col, dtype=np.int64),
+        data.astype(np.int64) if all_int else data,
+    )
+
+
+def _b19_check_dtype(dtype, all_int):
+    """SciPy converts NetworkX's list of weights straight to ``dtype``;
+    rustnx converts an int64 or float64 array. The two agree for float and
+    complex targets and for no conversion, not for narrower ints (a list
+    raises on overflow, an array wraps)."""
+    if dtype is None:
+        return
+    import numpy as np
+
+    try:
+        target = np.dtype(dtype)
+    except TypeError:
+        raise NotImplementedError("NetworkX raises for this dtype") from None
+    natural = np.dtype(np.int64 if all_int else np.float64)
+    if target.kind not in "fc" and target != natural:
+        raise NotImplementedError("rustnx does not support this dtype")
+
+
+def _b19_sparse(rows_cols_data, shape, dtype, format, message):
+    import scipy as sp
+
+    data, (row, col) = rows_cols_data
+    A = sp.sparse.coo_array((data, (row, col)), shape=shape, dtype=dtype)
+    try:
+        return A.asformat(format)
+    except ValueError as err:
+        raise nx.NetworkXError(f"{message}: {format}") from err
+
+
+def to_scipy_sparse_array(G, nodelist=None, dtype=None, weight="weight", format="csr"):
+    import scipy  # noqa: F401  (NetworkX imports it first)
+
+    if len(G) == 0:
+        raise nx.NetworkXError("Graph has no nodes or edges")
+    if nodelist is None:
+        nlen = len(G)
+        mapping = None
+    else:
+        if type(nodelist) is list and len(nodelist) == 0:
+            raise nx.NetworkXError("nodelist has no nodes")
+        mapping = _b19_node_map(G, nodelist)
+        nlen = len(nodelist)
+        if 2 * nlen < len(G) and format not in ("csr", "csc"):
+            # NetworkX works on `G.subgraph(nodelist)`, which then iterates
+            # nodes and neighbors in set order; only the CSR and CSC forms
+            # (sorted, duplicates summed) don't show that order.
+            raise NotImplementedError("rustnx can't replay the subgraph's set order")
+    all_int = _b19_weight_kind(G, weight)
+    _b19_check_dtype(dtype, all_int)
+    row, col, data = _b19_coo_arrays(G._core.adjacency_coo(mapping, weight), all_int)
+    if len(row) == 0:
+        # NetworkX's empty lists (NumPy makes float64 arrays of them).
+        row, col, data = [], [], []
+    return _b19_sparse(
+        (data, (row, col)), (nlen, nlen), dtype, format, "Unknown sparse matrix format"
+    )
+
+
+def adjacency_matrix(G, nodelist=None, dtype=None, weight="weight", format="csr"):
+    return to_scipy_sparse_array(G, nodelist=nodelist, dtype=dtype, weight=weight, format=format)
+
+
+@functools.cache
+def _b19_laplacian_dia():
+    """NetworkX 3.6+ builds the degree matrix with ``dia_array``; before,
+    with ``spdiags`` wrapped in ``csr_array``."""
+    text = _source_text(_registered("laplacian_matrix"))
+    if "sp.sparse.dia_array((A.sum(axis=1), 0), shape=(m, n)).tocsr()" in text:
+        return True
+    if "sp.sparse.spdiags(A.sum(axis=1), 0, m, n, format=\"csr\")" in text:
+        return False
+    return None
+
+
+def laplacian_matrix(G, nodelist=None, weight="weight"):
+    import scipy as sp
+
+    dia = _b19_laplacian_dia()
+    if dia is None:
+        raise NotImplementedError("unknown laplacian_matrix version")
+    if nodelist is None:
+        nodelist = list(G)
+    A = to_scipy_sparse_array(G, nodelist=nodelist, weight=weight, format="csr")
+    # NetworkX's own SciPy arithmetic on the same matrix.
+    n, m = A.shape
+    if dia:
+        D = sp.sparse.dia_array((A.sum(axis=1), 0), shape=(m, n)).tocsr()
+    else:
+        D = sp.sparse.csr_array(sp.sparse.spdiags(A.sum(axis=1), 0, m, n, format="csr"))
+    return D - A
+
+
+def incidence_matrix(G, nodelist=None, edgelist=None, oriented=False, weight=None, *, dtype=None):
+    import numpy as np
+    import scipy as sp
+
+    if edgelist is not None:
+        raise NotImplementedError("rustnx does not support edgelist")
+    if dtype is not None:
+        try:
+            plain_float = np.dtype(dtype) == np.float64
+        except TypeError:
+            plain_float = False
+        if not plain_float:
+            raise NotImplementedError("rustnx builds float64 incidence matrices only")
+    if nodelist is None:
+        rows = len(G)
+        mapping = None
+    else:
+        if type(nodelist) not in (list, tuple):
+            raise NotImplementedError("rustnx needs nodelist as a list")
+        node_index = {node: i for i, node in enumerate(nodelist)}
+        rows = len(nodelist)
+        mapping = [node_index.get(v, -1) for v in G._nodes]
+    if weight is not None:
+        _b19_weight_kind(G, weight, plain=False)
+    found, missing = G._core.incidence_csr(rows, mapping, weight, bool(oriented))
+    if missing is not None:
+        # NetworkX names the edge as `G.edges()` gives it, whose second node
+        # can be an object distinct from (but equal to) the node's key.
+        raise NotImplementedError("NetworkX raises for this nodelist")
+    (indptr, indices, data), columns = found
+    data = np.frombuffer(data, dtype=np.float64)
+    # NetworkX fills a LIL matrix and returns it as CSC through CSR; LIL's
+    # `tocsr` picks int32 indices unless the shape or entry count needs more.
+    idx = np.int32 if max(columns, len(data)) <= np.iinfo(np.int32).max else np.int64
+    A = sp.sparse.csr_array(
+        (
+            data,
+            np.frombuffer(indices, dtype=np.int64).astype(idx),
+            np.frombuffer(indptr, dtype=np.int64).astype(idx),
+        ),
+        shape=(rows, columns),
+    )
+    return A.asformat("csc")
+
+
+def to_numpy_array(
+    G,
+    nodelist=None,
+    dtype=None,
+    order=None,
+    multigraph_weight=sum,
+    weight="weight",
+    nonedge=0.0,
+):
+    import numpy as np
+
+    if nodelist is None:
+        mapping = None
+        nlen = len(G)
+    else:
+        mapping = _b19_node_map(G, nodelist)
+        nlen = len(nodelist)
+    A = np.full((nlen, nlen), fill_value=nonedge, dtype=dtype, order=order)
+    if nlen == 0 or G._core.number_of_edges() == 0:
+        return A
+    if A.dtype.names:
+        raise NotImplementedError("rustnx does not support structured dtypes")
+    all_int = _b19_weight_kind(G, weight, plain=False)
+    if A.dtype == np.float64:
+        as_int = False
+    elif A.dtype == np.int64 and all_int:
+        as_int = True
+    else:
+        # NumPy converts NetworkX's list of weights to A's dtype, raising
+        # where an array cast would wrap or round differently.
+        raise NotImplementedError("rustnx does not support this dtype")
+    row, col, data = _b19_coo_arrays(G._core.dense_entries(mapping, weight), as_int)
+    A[row, col] = data
+    return A
+
+
+def biadjacency_matrix(G, row_order, column_order=None, dtype=None, weight="weight", format="csr"):
+    import itertools
+
+    import scipy  # noqa: F401
+
+    if type(row_order) not in (list, tuple) or (type(row_order) is tuple and row_order in G):
+        # `G.edges(row_order)` reads a tuple that is a node as that node.
+        raise NotImplementedError("rustnx needs row_order as a list")
+    nlen = len(row_order)
+    if nlen == 0:
+        raise nx.NetworkXError("row_order is empty list")
+    if len(row_order) != len(set(row_order)):
+        msg = "Ambiguous ordering: `row_order` contained duplicates."
+        raise nx.NetworkXError(msg)
+    if column_order is None:
+        # `set(G)`: the same insertions as NetworkX's, so the same order.
+        column_order = list(set(G._nodes) - set(row_order))
+    mlen = len(column_order)
+    if len(column_order) != len(set(column_order)):
+        msg = "Ambiguous ordering: `column_order` contained duplicates."
+        raise nx.NetworkXError(msg)
+    row_index = dict(zip(row_order, itertools.count()))
+    col_index = dict(zip(column_order, itertools.count()))
+    if G._core.number_of_edges() == 0:
+        row, col, data = [], [], []
+    else:
+        all_int = _b19_weight_kind(G, weight)
+        _b19_check_dtype(dtype, all_int)
+        index = G._index
+        rows = [(index[u], row_index[u]) for u in row_order if u in index]
+        col = [col_index.get(v, -1) for v in G._nodes]
+        row, col, data = _b19_coo_arrays(G._core.biadjacency_coo(rows, col, weight), all_int)
+        if len(row) == 0:
+            # NetworkX unpacks `zip(*())`.
+            raise ValueError("not enough values to unpack (expected 3, got 0)")
+    return _b19_sparse(
+        (data, (row, col)), (nlen, mlen), dtype, format, "Unknown sparse array format"
+    )
+
+
+def to_dict_of_lists(G, nodelist=None):
+    source = _b19_source(G)
+    adj = None if source is None else source._adj
+    nodes = G._nodes
+    if nodelist is None:
+        return G._core.dict_of_lists(nodes, adj, list(zip(nodes, range(len(nodes)))))
+    if type(nodelist) not in (list, tuple, set, frozenset, dict):
+        raise NotImplementedError("rustnx needs nodelist as a list, set or dict")
+    index = G._index
+    keep = [False] * len(nodes)
+    keys = []
+    for v in nodelist:
+        try:
+            p = index[v]
+        except (KeyError, TypeError):
+            raise NotImplementedError("NetworkX raises for a node not in G") from None
+        keys.append((v, p))
+        keep[p] = True
+    return G._core.dict_of_lists(nodes, adj, keys, keep)
+
+
+def number_of_selfloops(G):
+    return G._core.number_of_selfloops()
+
+
+def is_empty(G):
+    return G._core.number_of_edges() == 0
+
+
+def is_weighted(G, edge=None, weight="weight"):
+    source = _b19_source(G)
+    if source is None:
+        raise NotImplementedError("native graphs keep no edge data dicts")
+    if edge is not None:
+        data = source.get_edge_data(*edge)
+        if data is None:
+            msg = f"Edge {edge!r} does not exist."
+            raise nx.NetworkXError(msg)
+        return weight in data
+    if G._core.number_of_edges() == 0:
+        return False
+    return _core.CoreGraph.all_edges_have(source._adj, weight)
+
+
+def is_negatively_weighted(G, edge=None, weight="weight"):
+    if edge is not None:
+        source = _b19_source(G)
+        if source is None:
+            raise NotImplementedError("native graphs keep no edge data dicts")
+        data = source.get_edge_data(*edge)
+        if data is None:
+            msg = f"Edge {edge!r} does not exist."
+            raise nx.NetworkXError(msg)
+        return weight in data and data[weight] < 0
+    if weight is None:
+        raise NotImplementedError("rustnx needs a weight attribute here")
+    _b19_weight_kind(G, weight, plain=False)
+    return G._core.has_negative_weight(weight)
+
+
+def get_node_attributes(G, name, default=None):
+    source = _b19_source(G)
+    if source is None:
+        # Native graphs have no node data.
+        return {} if default is None else dict.fromkeys(G._nodes, default)
+    return _core.CoreGraph.node_attributes(source._node, name, default)
+
+
+def get_edge_attributes(G, name, default=None):
+    source = _b19_source(G)
+    if source is None:
+        raise NotImplementedError("native graphs keep no edge data dicts")
+    return G._core.edge_attributes(G._nodes, source._adj, name, default)
+
+
+def relabel_nodes(G, mapping, copy=True):
+    if not copy:
+        raise NotImplementedError("rustnx does not change its input graph")
+    base = _networkx_graph(G)
+    cls = type(base)
+    if cls not in (nx.Graph, nx.DiGraph):
+        raise NotImplementedError("rustnx relabels plain Graph and DiGraph only")
+    m = {n: mapping(n) for n in G._nodes} if callable(mapping) else mapping
+    if type(m) is not dict:
+        raise NotImplementedError("rustnx needs a dict or callable mapping")
+    labels = []
+    for v in G._nodes:
+        if v in m:
+            new = m[v]
+            try:
+                hash(new)
+            except TypeError:
+                new = None
+            if new is None:
+                # NetworkX raises, or reads an unhashable label as a
+                # `(node, attrdict)` pair.
+                raise NotImplementedError("NetworkX rejects this label")
+            labels.append(new)
+        else:
+            labels.append(None)
+    H = cls()
+    G._core.relabel_copy(
+        G._nodes, base._node, base._adj, labels, H._node, H._adj,
+        H._pred if cls is nx.DiGraph else None,
+    )
+    H.graph.update(base.graph)
+    return H
+
+
+def convert_node_labels_to_integers(G, first_label=0, ordering="default", label_attribute=None):
+    nodes = G._nodes
+    N = len(nodes) + first_label
+    if ordering == "default":
+        mapping = dict(zip(nodes, range(first_label, N)))
+    elif ordering == "sorted":
+        nlist = sorted(nodes)
+        mapping = dict(zip(nlist, range(first_label, N)))
+    elif ordering == "increasing degree":
+        dv_pairs = [(d, n) for (n, d) in zip(nodes, G._core.degrees())]
+        dv_pairs.sort()  # in-place sort from lowest to highest degree
+        mapping = dict(zip([n for d, n in dv_pairs], range(first_label, N)))
+    elif ordering == "decreasing degree":
+        dv_pairs = [(d, n) for (n, d) in zip(nodes, G._core.degrees())]
+        dv_pairs.sort()  # in-place sort from lowest to highest degree
+        dv_pairs.reverse()
+        mapping = dict(zip([n for d, n in dv_pairs], range(first_label, N)))
+    else:
+        raise nx.NetworkXError(f"Unknown node ordering: {ordering}")
+    H = relabel_nodes(G, mapping)
+    # create node attribute with the old label
+    if label_attribute is not None:
+        set_attrs = getattr(nx.set_node_attributes, "orig_func", nx.set_node_attributes)
+        set_attrs(H, {v: k for k, v in mapping.items()}, label_attribute)
+    return H
+
+
+def _b19_new_graph(create_using):
+    """``nx.empty_graph(0, create_using)`` for the cases rustnx builds."""
+    if create_using is None:
+        return nx.Graph()
+    if create_using is nx.Graph or create_using is nx.DiGraph:
+        return create_using()
+    raise NotImplementedError("rustnx builds new plain Graph and DiGraph results only")
+
+
+def _b19_fill(H, kind, data, attr=None):
+    pred = H._pred if H.is_directed() else None
+    _core.CoreGraph.build_into(H._node, H._adj, pred, kind, data, attr)
+
+
+def _b19_fill_weighted(H, us, vs, labels, attr, values):
+    pred = H._pred if H.is_directed() else None
+    _core.CoreGraph.build_weighted_into(H._node, H._adj, pred, us, vs, labels, attr, values)
+
+
+def from_dict_of_lists(d, create_using=None):
+    G = _b19_new_graph(create_using)
+    if type(d) is not dict:
+        raise NotImplementedError("rustnx needs a dict")
+    _b19_fill(G, "lists", d)
+    return G
+
+
+def from_dict_of_dicts(d, create_using=None, multigraph_input=False):
+    G = _b19_new_graph(create_using)
+    if multigraph_input or type(d) is not dict:
+        raise NotImplementedError("rustnx does not support this input")
+    _b19_fill(G, "dicts", d)
+    return G
+
+
+def from_edgelist(edgelist, create_using=None):
+    G = _b19_new_graph(create_using)
+    if iter(edgelist) is edgelist:
+        # A one-shot iterator: falling back midway would lose edges.
+        raise NotImplementedError("rustnx needs a re-iterable edge list")
+    _b19_fill(G, "edges", edgelist)
+    return G
+
+
+def _b19_sparse_triples(A, offset=0):
+    """NetworkX's ``_generate_weighted_edges(A)`` as three lists, with
+    ``offset`` added to the columns."""
+    import numpy as np
+    import scipy as sp
+
+    if not sp.sparse.issparse(A):
+        raise NotImplementedError("rustnx needs a SciPy sparse array")
+    if A.format == "csr":
+        rows = np.repeat(np.arange(A.shape[0]), np.diff(A.indptr))
+        cols = A.indices
+    elif A.format == "csc":
+        rows = A.indices
+        cols = np.repeat(np.arange(A.shape[1]), np.diff(A.indptr))
+    elif A.format == "dok":
+        raise NotImplementedError("rustnx does not read DOK arrays")
+    else:
+        A = A.tocoo()
+        rows, cols = A.row, A.col
+    if offset:
+        cols = cols + offset
+    return rows.tolist(), cols.tolist(), A.data.tolist()
+
+
+def from_scipy_sparse_array(A, parallel_edges=False, create_using=None, edge_attribute="weight"):
+    G = _b19_new_graph(create_using)
+    n, m = A.shape
+    if n != m:
+        raise nx.NetworkXError(f"Adjacency matrix not square: nx,ny={A.shape}")
+    us, vs, values = _b19_sparse_triples(A)
+    _b19_fill(G, "nodes", range(n))
+    _b19_fill_weighted(G, us, vs, None, edge_attribute, values)
+    return G
+
+
+def from_numpy_array(
+    A,
+    parallel_edges=False,
+    create_using=None,
+    edge_attr="weight",
+    *,
+    nodelist=None,
+    nonedge=0,
+):
+    import numpy as np
+
+    G = _b19_new_graph(create_using)
+    if type(A) is not np.ndarray:
+        raise NotImplementedError("rustnx needs a NumPy array")
+    if A.ndim != 2:
+        raise nx.NetworkXError(f"Input array must be 2D, not {A.ndim}")
+    n, m = A.shape
+    if n != m:
+        raise nx.NetworkXError(f"Adjacency matrix not square: nx,ny={A.shape}")
+    dt = A.dtype
+    # `tolist()` gives what NetworkX's `python_type(A[u, v])` does for these
+    # (not for long doubles, strings or structured types).
+    if not (dt.kind in "iub" or dt in (np.float16, np.float32, np.float64, np.complex64, np.complex128)):
+        raise NotImplementedError("rustnx does not support this dtype")
+    if type(nonedge) not in (int, float, bool):
+        raise NotImplementedError("rustnx needs a number as nonedge")
+    if nodelist is None:
+        labels = None
+        nodes = range(n)
+    else:
+        if type(nodelist) not in (list, tuple):
+            raise NotImplementedError("rustnx needs nodelist as a list")
+        if len(nodelist) != n:
+            raise ValueError("nodelist must have the same length as A.shape[0]")
+        labels = nodes = list(nodelist)
+    _b19_fill(G, "nodes", nodes)
+    # NetworkX 3.4 takes `A.nonzero()`, the same entries as `A != 0`.
+    row, col = ((A == A) if nonedge != nonedge else (A != nonedge)).nonzero()
+    values = None if edge_attr in [False, None] else A[row, col].tolist()
+    _b19_fill_weighted(G, row.tolist(), col.tolist(), labels, edge_attr, values)
+    return G
+
+
+def from_biadjacency_matrix(A, create_using=None, edge_attribute="weight", *, row_order=None, column_order=None):
+    if row_order is not None or column_order is not None:
+        raise NotImplementedError("rustnx does not support row_order or column_order")
+    G = _b19_new_graph(create_using)
+    n, m = A.shape
+    us, vs, values = _b19_sparse_triples(A, n)
+    _b19_fill(G, "nodes", range(n), {"bipartite": 0})
+    _b19_fill(G, "nodes", range(n, n + m), {"bipartite": 1})
+    _b19_fill_weighted(G, us, vs, None, edge_attribute, values)
+    return G

@@ -18,6 +18,7 @@ _WEIGHT_PARAMS = ("weight", "distance")
 # Linear-time algorithms where, on small graphs, converting to rustnx and
 # dispatching costs more than NetworkX spends running the algorithm.
 _LINEAR_TIME = {
+    "adjacency_matrix",
     "all_shortest_paths",
     "ancestors",
     "approximate_diameter",
@@ -37,6 +38,7 @@ _LINEAR_TIME = {
     "bfs_predecessors",
     "bfs_successors",
     "bfs_tree",
+    "biadjacency_matrix",
     "biconnected_component_edges",
     "biconnected_components",
     "bidirectional_dijkstra",
@@ -57,6 +59,7 @@ _LINEAR_TIME = {
     "conductance",
     "connected_components",
     "connected_dominating_set",
+    "convert_node_labels_to_integers",
     "core_number",
     "cost_of_flow",
     "cut_size",
@@ -94,6 +97,8 @@ _LINEAR_TIME = {
     "find_cycle",
     "flow_hierarchy",
     "generic_bfs_edges",
+    "get_edge_attributes",
+    "get_node_attributes",
     "greedy_color",
     "group_closeness_centrality",
     "group_degree_centrality",
@@ -105,6 +110,7 @@ _LINEAR_TIME = {
     "has_path",
     "immediate_dominators",
     "in_degree_centrality",
+    "incidence_matrix",
     "intersection_array",
     "intra_community_edges",
     "is_aperiodic",
@@ -123,6 +129,7 @@ _LINEAR_TIME = {
     "is_directed_acyclic_graph",
     "is_distance_regular",
     "is_dominating_set",
+    "is_empty",
     "is_equitable",
     "is_eulerian",
     "is_forest",
@@ -130,6 +137,7 @@ _LINEAR_TIME = {
     "is_k_regular",
     "is_matching",
     "is_maximal_matching",
+    "is_negatively_weighted",
     "is_partition",
     "is_perfect_matching",
     "is_planar",
@@ -142,6 +150,7 @@ _LINEAR_TIME = {
     "is_tournament",
     "is_tree",
     "is_weakly_connected",
+    "is_weighted",
     "isolates",
     "k_core",
     "k_corona",
@@ -153,6 +162,7 @@ _LINEAR_TIME = {
     "kosaraju_strongly_connected_components",
     "kruskal_mst_edges",
     "label_propagation_communities",
+    "laplacian_matrix",
     "lexicographical_topological_sort",
     "local_bridges",
     "local_reaching_centrality",
@@ -179,6 +189,7 @@ _LINEAR_TIME = {
     "number_attracting_components",
     "number_connected_components",
     "number_of_isolates",
+    "number_of_selfloops",
     "number_strongly_connected_components",
     "number_weakly_connected_components",
     "numeric_assortativity_coefficient",
@@ -191,6 +202,7 @@ _LINEAR_TIME = {
     "predecessor",
     "randomized_partitioning",
     "reciprocity",
+    "relabel_nodes",
     "rich_club_coefficient",
     "root_trees",
     "s_metric",
@@ -206,7 +218,10 @@ _LINEAR_TIME = {
     "single_target_shortest_path_length",
     "strongly_connected_components",
     "symmetric_difference",
+    "to_dict_of_lists",
+    "to_numpy_array",
     "to_prufer_sequence",
+    "to_scipy_sparse_array",
     "topological_generations",
     "topological_sort",
     "tree_centroid",
@@ -351,9 +366,11 @@ _BUILDS_FROM_SOURCE = {
     "boruvka_mst_edges",
     "boykov_kolmogorov",
     "build_residual_network",
+    "convert_node_labels_to_integers",
     "dinitz",
     "edmonds_karp",
     "gomory_hu_tree",
+    "is_weighted",
     "k_core",
     "k_corona",
     "k_crust",
@@ -376,11 +393,16 @@ _BUILDS_FROM_SOURCE = {
     "partition_spanning_tree",
     "preflow_push",
     "prim_mst_edges",
+    "relabel_nodes",
     "shortest_augmenting_path",
     "steiner_tree",
     "transitive_closure",
     "transitive_closure_dag",
 }
+
+# Functions that read edge attributes of any type from the original NetworkX
+# graph's dicts, so they don't convert their `edge_attrs` to numbers.
+_EDGE_DATA_FROM_SOURCE = {"get_edge_attributes"}
 
 
 def convert_from_nx(
@@ -407,6 +429,9 @@ def convert_from_nx(
         raise NotImplementedError("rustnx only stores numeric edge attributes")
     if isinstance(preserve_edge_attrs, dict):
         edge_attrs = preserve_edge_attrs.get(graph_name) or edge_attrs
+    if name in _EDGE_DATA_FROM_SOURCE:
+        # Reads any edge attribute (not only numbers) from the original graph.
+        edge_attrs = None
     return from_networkx(G, edge_attrs or {}, multigraph_ok=multigraph_ok)
 
 
