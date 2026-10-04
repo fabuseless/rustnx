@@ -746,6 +746,8 @@ def test_backend_function_list_matches_implementations():
         "is_cover",
         "is_perfect_graph",
         "overlapping_modularity",
+        "random_lobster",
+        "random_lobster_graph",
         "tree_centroid",
         "vf2pp_is_monomorphic",
         "vf2pp_subgraph_is_isomorphic",
