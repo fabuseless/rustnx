@@ -1,0 +1,1260 @@
+//! Readers and parsers (batch 20): NetworkX's text formats parsed into a
+//! list of graph operations (`Parsed`), which `lib.rs` replays onto a
+//! NetworkX graph's dicts the way `add_node` / `add_edge` would.
+//!
+//! Every parser returns `None` ("bail") wherever NetworkX would raise, or
+//! where Python's own conversions (`int`, `float`, `literal_eval`,
+//! `shlex.split`) might do something this module doesn't model; the Python
+//! side then reruns NetworkX's code on the same input. `apply` (which needs
+//! the GIL) builds the result.
+
+use pyo3::prelude::*;
+use pyo3::types::{PyBool, PyDict, PyFloat, PyString};
+use std::collections::{HashMap, HashSet};
+
+/// A node or attribute value.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Val {
+    None,
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    Str(String),
+}
+
+/// One `add_node(n, **attrs)` or `add_edge(u, v, **attrs)` call; attribute
+/// keys index `Parsed::keys`.
+#[derive(Debug)]
+pub enum Op {
+    Node(u32, Vec<(u32, Val)>),
+    Edge(u32, u32, Vec<(u32, Val)>),
+}
+
+#[derive(Debug, Default)]
+pub struct Parsed {
+    /// Distinct nodes, by index.
+    pub nodes: Vec<Val>,
+    /// Attribute names, by index.
+    pub keys: Vec<String>,
+    pub ops: Vec<Op>,
+    /// For formats that pick the graph class: (multigraph, directed).
+    pub class: (bool, bool),
+    /// `G.graph["name"]`, if the format sets it.
+    pub name: Option<String>,
+}
+
+#[derive(Hash, PartialEq, Eq)]
+enum NodeKey {
+    Int(i64),
+    Float(u64),
+}
+
+#[derive(Default)]
+struct Builder {
+    parsed: Parsed,
+    str_index: HashMap<String, u32>,
+    index: HashMap<NodeKey, u32>,
+    key_index: HashMap<String, u32>,
+}
+
+impl Builder {
+    fn node(&mut self, value: Val) -> u32 {
+        let key = match &value {
+            Val::Str(s) => return self.str_node(&s.clone()),
+            Val::Int(i) => NodeKey::Int(*i),
+            // 0.0 == -0.0 as dict keys (the first one seen is kept).
+            Val::Float(f) => NodeKey::Float(if *f == 0.0 { 0 } else { f.to_bits() }),
+            _ => unreachable!("nodes are str, int or float"),
+        };
+        let next = self.parsed.nodes.len() as u32;
+        *self.index.entry(key).or_insert_with(|| {
+            self.parsed.nodes.push(value);
+            next
+        })
+    }
+
+    fn str_node(&mut self, s: &str) -> u32 {
+        if let Some(&i) = self.str_index.get(s) {
+            return i;
+        }
+        let i = self.parsed.nodes.len() as u32;
+        self.parsed.nodes.push(Val::Str(s.to_string()));
+        self.str_index.insert(s.to_string(), i);
+        i
+    }
+
+    fn key(&mut self, k: &str) -> u32 {
+        if let Some(&i) = self.key_index.get(k) {
+            return i;
+        }
+        let i = self.parsed.keys.len() as u32;
+        self.parsed.keys.push(k.to_string());
+        self.key_index.insert(k.to_string(), i);
+        i
+    }
+
+    fn finish(self) -> Parsed {
+        self.parsed
+    }
+}
+
+// --- Python string semantics ---------------------------------------------------
+
+/// `str.isspace()` for one character (what `str.split()` and `str.strip()`
+/// treat as whitespace).
+pub fn py_isspace(c: char) -> bool {
+    matches!(
+        c,
+        '\t'..='\r'
+            | '\x1c'..='\x1f'
+            | ' '
+            | '\u{85}'
+            | '\u{a0}'
+            | '\u{1680}'
+            | '\u{2000}'..='\u{200a}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{202f}'
+            | '\u{205f}'
+            | '\u{3000}'
+    )
+}
+
+/// `s.split(delimiter)`.
+pub fn py_split<'a>(s: &'a str, delimiter: Option<&str>) -> Vec<&'a str> {
+    match delimiter {
+        Some(d) => s.split(d).collect(),
+        None => s.split(py_isspace).filter(|t| !t.is_empty()).collect(),
+    }
+}
+
+/// `s.split(None, 1)`.
+fn py_split_once(s: &str) -> Vec<&str> {
+    let s = s.trim_start_matches(py_isspace);
+    if s.is_empty() {
+        return Vec::new();
+    }
+    match s.find(py_isspace) {
+        None => vec![s],
+        Some(p) => {
+            let first = &s[..p];
+            let rest = s[p..].trim_start_matches(py_isspace);
+            if rest.is_empty() {
+                vec![first]
+            } else {
+                vec![first, rest]
+            }
+        }
+    }
+}
+
+fn py_strip(s: &str) -> &str {
+    s.trim_matches(py_isspace)
+}
+
+/// `int(s)` for a str: `Some(Ok(value))`, or `None` when unsure (non-ASCII
+/// digits, underscores, values beyond i64) or when `int` would raise.
+pub fn py_int(s: &str) -> Option<i64> {
+    let t = py_strip(s);
+    let digits = t.strip_prefix(['+', '-']).unwrap_or(t);
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    t.parse::<i64>().ok()
+}
+
+/// What `float(s)` does for a str.
+#[derive(Debug, PartialEq)]
+pub enum FloatParse {
+    Ok(f64),
+    /// `float` raises ValueError.
+    Invalid,
+    /// Something this parser doesn't model (non-ASCII, underscores).
+    Unsure,
+}
+
+pub fn py_float(s: &str) -> FloatParse {
+    let t = py_strip(s);
+    if !t.is_ascii() || t.contains('_') {
+        return FloatParse::Unsure;
+    }
+    let (negative, body) = match t.as_bytes().first() {
+        Some(b'-') => (true, &t[1..]),
+        Some(b'+') => (false, &t[1..]),
+        _ => (false, t),
+    };
+    let lower = body.to_ascii_lowercase();
+    if lower == "inf" || lower == "infinity" {
+        return FloatParse::Ok(if negative {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        });
+    }
+    if lower == "nan" {
+        return FloatParse::Ok(if negative { -f64::NAN } else { f64::NAN });
+    }
+    if decimal_len(body.as_bytes()) != Some(body.len()) {
+        return FloatParse::Invalid;
+    }
+    match t.parse::<f64>() {
+        Ok(f) => FloatParse::Ok(f),
+        Err(_) => FloatParse::Invalid,
+    }
+}
+
+/// Length of the longest prefix of `b` of the form
+/// `digits ['.' digits] [e [sign] digits]` with at least one mantissa digit,
+/// or `None` if there's no mantissa digit.
+fn decimal_len(b: &[u8]) -> Option<usize> {
+    let mut i = 0;
+    let mut mantissa = 0;
+    while i < b.len() && b[i].is_ascii_digit() {
+        i += 1;
+        mantissa += 1;
+    }
+    if i < b.len() && b[i] == b'.' {
+        i += 1;
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+            mantissa += 1;
+        }
+    }
+    if mantissa == 0 {
+        return None;
+    }
+    if i < b.len() && (b[i] == b'e' || b[i] == b'E') {
+        let mut j = i + 1;
+        if j < b.len() && (b[j] == b'+' || b[j] == b'-') {
+            j += 1;
+        }
+        let start = j;
+        while j < b.len() && b[j].is_ascii_digit() {
+            j += 1;
+        }
+        if j > start {
+            i = j;
+        }
+    }
+    Some(i)
+}
+
+/// Whether `c` could continue a Python identifier or number token.
+fn is_word_char(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_' || c >= 0x80
+}
+
+// --- ast.literal_eval for flat dicts ---------------------------------------------
+
+struct Lit<'a> {
+    b: &'a [u8],
+    s: &'a str,
+    pos: usize,
+}
+
+impl Lit<'_> {
+    fn skip_ws(&mut self) {
+        while self.pos < self.b.len() && matches!(self.b[self.pos], b' ' | b'\t') {
+            self.pos += 1;
+        }
+    }
+
+    fn peek(&self) -> Option<u8> {
+        self.b.get(self.pos).copied()
+    }
+
+    /// A plain one-line string literal without escapes; not followed by
+    /// another string literal (which Python would concatenate).
+    fn string(&mut self) -> Option<String> {
+        let quote = self.peek()?;
+        let start = self.pos + 1;
+        let mut i = start;
+        loop {
+            let c = *self.b.get(i)?;
+            if c == quote {
+                break;
+            }
+            if matches!(c, b'\\' | b'\n' | b'\r' | 0) {
+                return None;
+            }
+            i += 1;
+        }
+        let value = self.s[start..i].to_string();
+        self.pos = i + 1;
+        let after = self.pos;
+        self.skip_ws();
+        if matches!(self.peek(), Some(b'\'' | b'"')) {
+            return None;
+        }
+        self.pos = after;
+        Some(value)
+    }
+
+    fn word(&mut self, w: &str) -> bool {
+        let end = self.pos + w.len();
+        if self.b.len() >= end
+            && &self.b[self.pos..end] == w.as_bytes()
+            && !self.b.get(end).is_some_and(|&c| is_word_char(c))
+        {
+            self.pos = end;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn number(&mut self) -> Option<Val> {
+        let start = self.pos;
+        let mut i = self.pos;
+        if matches!(self.b[i], b'+' | b'-') {
+            i += 1;
+        }
+        let body = &self.b[i..];
+        let len = decimal_len(body)?;
+        let text = &body[..len];
+        let end = i + len;
+        if self
+            .b
+            .get(end)
+            .is_some_and(|&c| is_word_char(c) || c == b'.')
+        {
+            return None;
+        }
+        self.pos = end;
+        let literal = &self.s[start..end];
+        if text.iter().all(|c| c.is_ascii_digit()) {
+            // Python rejects leading zeros in decimal ints ("00" is fine).
+            if text.len() > 1 && text[0] == b'0' && text.iter().any(|&c| c != b'0') {
+                return None;
+            }
+            literal.parse::<i64>().ok().map(Val::Int)
+        } else {
+            literal.parse::<f64>().ok().map(Val::Float)
+        }
+    }
+
+    fn value(&mut self) -> Option<Val> {
+        match self.peek()? {
+            b'\'' | b'"' => self.string().map(Val::Str),
+            b'0'..=b'9' | b'.' | b'+' | b'-' => self.number(),
+            _ => {
+                if self.word("True") {
+                    Some(Val::Bool(true))
+                } else if self.word("False") {
+                    Some(Val::Bool(false))
+                } else if self.word("None") {
+                    Some(Val::None)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+}
+
+/// `dict(ast.literal_eval(s))` for a flat dict display with str keys and
+/// str/int/float/bool/None values (leading spaces and tabs allowed, as
+/// `literal_eval` strips them). `None` for anything else.
+pub fn literal_dict(s: &str) -> Option<Vec<(String, Val)>> {
+    let mut p = Lit {
+        b: s.as_bytes(),
+        s,
+        pos: 0,
+    };
+    p.skip_ws();
+    if p.peek()? != b'{' {
+        return None;
+    }
+    p.pos += 1;
+    p.skip_ws();
+    let mut out = Vec::new();
+    if p.peek()? == b'}' {
+        p.pos += 1;
+    } else {
+        loop {
+            if !matches!(p.peek()?, b'\'' | b'"') {
+                return None;
+            }
+            let key = p.string()?;
+            p.skip_ws();
+            if p.peek()? != b':' {
+                return None;
+            }
+            p.pos += 1;
+            p.skip_ws();
+            let value = p.value()?;
+            out.push((key, value));
+            p.skip_ws();
+            match p.peek()? {
+                b',' => {
+                    p.pos += 1;
+                    p.skip_ws();
+                    if p.peek()? == b'}' {
+                        p.pos += 1;
+                        break;
+                    }
+                }
+                b'}' => {
+                    p.pos += 1;
+                    break;
+                }
+                _ => return None,
+            }
+        }
+    }
+    p.skip_ws();
+    if p.pos != p.b.len() {
+        return None;
+    }
+    Some(out)
+}
+
+/// Keyword names that `add_edge(u, v, **data)` would bind to a parameter
+/// (or reject) instead of storing as an attribute.
+fn reserved(key: &str) -> bool {
+    matches!(
+        key,
+        "self" | "u_of_edge" | "v_of_edge" | "u_for_edge" | "v_for_edge" | "key"
+    )
+}
+
+// --- edge lists and adjacency lists --------------------------------------------
+
+/// How node strings are converted (`nodetype`).
+#[derive(Clone, Copy, PartialEq)]
+pub enum NodeType {
+    Str,
+    Int,
+    Float,
+}
+
+impl NodeType {
+    pub fn from_code(code: u8) -> Option<NodeType> {
+        match code {
+            0 => Some(NodeType::Str),
+            1 => Some(NodeType::Int),
+            2 => Some(NodeType::Float),
+            _ => None,
+        }
+    }
+}
+
+/// `int`, `float` or `str` applied to a token.
+fn convert(token: &str, kind: NodeType) -> Option<Val> {
+    match kind {
+        NodeType::Str => Some(Val::Str(token.to_string())),
+        NodeType::Int => py_int(token).map(Val::Int),
+        NodeType::Float => match py_float(token) {
+            FloatParse::Ok(f) => Some(Val::Float(f)),
+            _ => None,
+        },
+    }
+}
+
+fn node_of(b: &mut Builder, token: &str, kind: NodeType) -> Option<u32> {
+    if kind == NodeType::Str {
+        return Some(b.str_node(token));
+    }
+    match convert(token, kind)? {
+        // NaN != NaN: every NaN would be its own node.
+        Val::Float(f) if f.is_nan() => None,
+        v => Some(b.node(v)),
+    }
+}
+
+/// Edge data handling in `parse_edgelist`.
+pub enum EdgeData {
+    /// `data=False`.
+    Ignore,
+    /// `data=True`: `literal_eval` of the remaining tokens joined by ","
+    /// (if `comma`) or " ", then `strip()`ped if `strip`.
+    Literal { comma: bool, strip: bool },
+    /// `data=[(key, type), ...]`.
+    Typed(Vec<(String, NodeType)>),
+}
+
+/// `parse_edgelist` (and bipartite `parse_edgelist` with `bipartite`,
+/// which adds the `bipartite` node attribute and always strips comments).
+pub fn edgelist(
+    lines: &[&str],
+    comments: Option<&str>,
+    delimiter: Option<&str>,
+    nodetype: NodeType,
+    data: &EdgeData,
+    bipartite: bool,
+) -> Option<Parsed> {
+    let mut b = Builder::default();
+    let typed_keys: Vec<u32> = match data {
+        EdgeData::Typed(spec) => spec.iter().map(|(k, _)| b.key(k)).collect(),
+        _ => Vec::new(),
+    };
+    let side_key = if bipartite { b.key("bipartite") } else { 0 };
+    for &raw in lines {
+        let mut line = raw;
+        if let Some(c) = comments {
+            if let Some(p) = line.find(c) {
+                line = &line[..p];
+            }
+            if line.is_empty() {
+                continue;
+            }
+        }
+        let s = py_split(line.trim_end_matches('\n'), delimiter);
+        if s.len() < 2 {
+            continue;
+        }
+        let u = node_of(&mut b, s[0], nodetype)?;
+        let v = node_of(&mut b, s[1], nodetype)?;
+        let d = &s[2..];
+        let mut attrs = Vec::new();
+        if !d.is_empty() {
+            match data {
+                EdgeData::Ignore => {}
+                EdgeData::Literal { comma, strip } => {
+                    let joined = d.join(if *comma { "," } else { " " });
+                    let text = if *strip { py_strip(&joined) } else { &joined };
+                    for (k, value) in literal_dict(text)? {
+                        if reserved(&k) {
+                            return None;
+                        }
+                        attrs.push((b.key(&k), value));
+                    }
+                }
+                EdgeData::Typed(spec) => {
+                    if d.len() != spec.len() {
+                        return None;
+                    }
+                    for ((&key, (_, kind)), token) in typed_keys.iter().zip(spec).zip(d) {
+                        attrs.push((key, convert(token, *kind)?));
+                    }
+                }
+            }
+        }
+        if bipartite {
+            b.parsed
+                .ops
+                .push(Op::Node(u, vec![(side_key, Val::Int(0))]));
+            b.parsed
+                .ops
+                .push(Op::Node(v, vec![(side_key, Val::Int(1))]));
+        }
+        b.parsed.ops.push(Op::Edge(u, v, attrs));
+    }
+    Some(b.finish())
+}
+
+fn strip_comment<'a>(line: &'a str, comments: &str) -> &'a str {
+    match line.find(comments) {
+        Some(p) => &line[..p],
+        None => line,
+    }
+}
+
+/// `parse_adjlist`.
+pub fn adjlist(
+    lines: &[&str],
+    comments: &str,
+    delimiter: Option<&str>,
+    nodetype: NodeType,
+) -> Option<Parsed> {
+    let mut b = Builder::default();
+    for &raw in lines {
+        let line = strip_comment(raw, comments);
+        if line.is_empty() {
+            continue;
+        }
+        let vlist = py_split(line.trim_end_matches('\n'), delimiter);
+        let (&first, rest) = vlist.split_first()?;
+        let u = node_of(&mut b, first, nodetype)?;
+        b.parsed.ops.push(Op::Node(u, Vec::new()));
+        let vs = rest
+            .iter()
+            .map(|t| node_of(&mut b, t, nodetype))
+            .collect::<Option<Vec<u32>>>()?;
+        for v in vs {
+            b.parsed.ops.push(Op::Edge(u, v, Vec::new()));
+        }
+    }
+    Some(b.finish())
+}
+
+/// `parse_multiline_adjlist`; `edgetype` is `None` for `literal_eval`.
+pub fn multiline_adjlist(
+    lines: &[&str],
+    comments: &str,
+    delimiter: Option<&str>,
+    nodetype: NodeType,
+    edgetype: Option<NodeType>,
+) -> Option<Parsed> {
+    let mut b = Builder::default();
+    let weight = b.key("weight");
+    let mut i = 0;
+    while i < lines.len() {
+        let line = strip_comment(lines[i], comments);
+        i += 1;
+        if line.is_empty() {
+            continue;
+        }
+        let head = py_split(line.trim_end_matches('\n'), delimiter);
+        if head.len() != 2 {
+            return None;
+        }
+        let deg = py_int(head[1])?;
+        let u = node_of(&mut b, head[0], nodetype)?;
+        b.parsed.ops.push(Op::Node(u, Vec::new()));
+        for _ in 0..deg.max(0) {
+            let line = loop {
+                let line = strip_comment(lines.get(i)?, comments);
+                i += 1;
+                if !line.is_empty() {
+                    break line;
+                }
+            };
+            let vlist = py_split(line.trim_end_matches('\n'), delimiter);
+            let Some((&first, rest)) = vlist.split_first() else {
+                continue; // isolated node
+            };
+            let data = rest.concat();
+            let v = node_of(&mut b, first, nodetype)?;
+            let attrs = match edgetype {
+                Some(kind) => vec![(weight, convert(&data, kind)?)],
+                // literal_eval("") raises, and NetworkX then uses {}.
+                None if data.is_empty() => Vec::new(),
+                None => {
+                    let mut attrs = Vec::new();
+                    for (k, value) in literal_dict(&data)? {
+                        if reserved(&k) {
+                            return None;
+                        }
+                        attrs.push((b.key(&k), value));
+                    }
+                    attrs
+                }
+            };
+            b.parsed.ops.push(Op::Edge(u, v, attrs));
+        }
+    }
+    Some(b.finish())
+}
+
+// --- LEDA -----------------------------------------------------------------------
+
+/// `parse_leda`, from its lines (a str input already split at "\n").
+pub fn leda(lines: &[&str]) -> Option<Parsed> {
+    let kept: Vec<&str> = lines
+        .iter()
+        .filter(|l| !(l.starts_with('#') || l.starts_with('\n') || l.is_empty()))
+        .map(|l| l.trim_end_matches('\n'))
+        .collect();
+    let mut it = kept.into_iter();
+    for _ in 0..3 {
+        it.next()?;
+    }
+    let du = py_int(it.next()?)?;
+    let mut b = Builder::default();
+    b.parsed.class = (false, du == -1);
+    let n = py_int(it.next()?)?;
+    let mut node = Vec::new();
+    for i in 1..=n.max(0) {
+        let raw = it.next()?;
+        let symbol = raw
+            .trim_end_matches(py_isspace)
+            .trim_matches(['|', '{', '}', ' ']);
+        let id = if symbol.is_empty() {
+            b.str_node(&i.to_string())
+        } else {
+            b.str_node(symbol)
+        };
+        node.push(id);
+    }
+    for &id in &node {
+        b.parsed.ops.push(Op::Node(id, Vec::new()));
+    }
+    let label_key = b.key("label");
+    let m = py_int(it.next()?)?;
+    for _ in 0..m.max(0) {
+        let fields = py_split(it.next()?, None);
+        if fields.len() != 4 {
+            return None;
+        }
+        let lookup = |t: &str| -> Option<u32> {
+            let i = py_int(t)?;
+            if i >= 1 && i <= node.len() as i64 {
+                Some(node[i as usize - 1])
+            } else {
+                None
+            }
+        };
+        let s = lookup(fields[0])?;
+        let t = lookup(fields[1])?;
+        // label[2:-2], counted in characters.
+        let chars: Vec<char> = fields[3].chars().collect();
+        let label: String = if chars.len() > 4 {
+            chars[2..chars.len() - 2].iter().collect()
+        } else {
+            String::new()
+        };
+        b.parsed
+            .ops
+            .push(Op::Edge(s, t, vec![(label_key, Val::Str(label))]));
+    }
+    Some(b.finish())
+}
+
+// --- Pajek ----------------------------------------------------------------------
+
+/// Whether `s.lower().startswith(prefix)` for an ASCII lowercase `prefix`.
+/// Only ASCII letters, U+0130 and the Kelvin sign lowercase to something
+/// starting with an ASCII letter.
+fn lower_starts_with(s: &str, prefix: &str) -> bool {
+    let mut want = prefix.chars();
+    let mut pending: Option<char> = None;
+    let mut chars = s.chars();
+    loop {
+        let Some(w) = want.next() else {
+            return true;
+        };
+        let c = match pending.take() {
+            Some(c) => c,
+            None => match chars.next() {
+                None => return false,
+                Some('\u{130}') => {
+                    pending = Some('\u{307}');
+                    'i'
+                }
+                Some('\u{212a}') => 'k',
+                Some(c) => c.to_ascii_lowercase(),
+            },
+        };
+        if c != w {
+            return false;
+        }
+    }
+}
+
+/// `shlex.split(s)` for a line without quotes or backslashes (`None`
+/// otherwise): it splits on space, tab, CR and LF only.
+fn shlex_split(s: &str) -> Option<Vec<&str>> {
+    if s.contains(['\'', '"', '\\']) {
+        return None;
+    }
+    Some(
+        s.split([' ', '\t', '\r', '\n'])
+            .filter(|t| !t.is_empty())
+            .collect(),
+    )
+}
+
+/// `parse_pajek` for files with vertices and one `*edges` or `*arcs`
+/// section (`*matrix` bails).
+pub fn pajek(lines: &[&str]) -> Option<Parsed> {
+    let lines: Vec<&str> = lines.iter().map(|l| l.trim_end_matches('\n')).collect();
+    let mut b = Builder::default();
+    b.parsed.class = (true, true); // MultiDiGraph
+    let id_key = b.key("id");
+    let (x_key, y_key, shape_key, weight_key) =
+        (b.key("x"), b.key("y"), b.key("shape"), b.key("weight"));
+    let mut nodelabels: Option<HashMap<&str, u32>> = None;
+    let mut i = 0;
+    while i < lines.len() {
+        let l = lines[i];
+        i += 1;
+        if lower_starts_with(l, "*network") {
+            let parts = py_split_once(l);
+            if parts.len() == 2 {
+                b.parsed.name = Some(parts[1].to_string());
+            }
+        } else if lower_starts_with(l, "*vertices") {
+            let mut labels = HashMap::new();
+            let head = py_split(l, None);
+            if head.len() != 2 {
+                return None;
+            }
+            for _ in 0..py_int(head[1])?.max(0) {
+                let line = *lines.get(i)?;
+                i += 1;
+                let split = shlex_split(line)?;
+                if split.len() < 2 {
+                    return None;
+                }
+                let (id, label) = (split[0], split[1]);
+                let node = b.str_node(label);
+                labels.insert(id, node);
+                let mut attrs = vec![(id_key, Val::Str(id.to_string()))];
+                if split.len() >= 5 {
+                    match py_float(split[2]) {
+                        FloatParse::Ok(x) => match py_float(split[3]) {
+                            FloatParse::Ok(y) => {
+                                attrs.push((x_key, Val::Float(x)));
+                                attrs.push((y_key, Val::Float(y)));
+                                attrs.push((shape_key, Val::Str(split[4].to_string())));
+                            }
+                            FloatParse::Invalid => {}
+                            FloatParse::Unsure => return None,
+                        },
+                        FloatParse::Invalid => {}
+                        FloatParse::Unsure => return None,
+                    }
+                }
+                let extra: Vec<(&str, &str)> = split
+                    .iter()
+                    .skip(5)
+                    .step_by(2)
+                    .zip(split.iter().skip(6).step_by(2))
+                    .map(|(k, v)| (*k, *v))
+                    .collect();
+                for (k, v) in extra {
+                    let k = b.key(k);
+                    attrs.push((k, Val::Str(v.to_string())));
+                }
+                b.parsed.ops.push(Op::Node(node, attrs));
+            }
+            nodelabels = Some(labels);
+        } else if lower_starts_with(l, "*edges") || lower_starts_with(l, "*arcs") {
+            if lower_starts_with(l, "*edge") {
+                b.parsed.class = (true, false);
+            }
+            if lower_starts_with(l, "*arcs") {
+                b.parsed.class = (true, true);
+            }
+            // NetworkX looks ids up in the last *vertices section.
+            let labels = nodelabels.take()?;
+            for &line in &lines[i..] {
+                let split = shlex_split(line)?;
+                if split.len() < 2 {
+                    continue;
+                }
+                let mut ends = [0u32; 2];
+                for (end, token) in ends.iter_mut().zip(&split[..2]) {
+                    *end = match labels.get(token) {
+                        Some(&n) => n,
+                        None => b.str_node(token),
+                    };
+                }
+                let mut attrs = Vec::new();
+                if split.len() >= 3 {
+                    match py_float(split[2]) {
+                        FloatParse::Ok(w) => attrs.push((weight_key, Val::Float(w))),
+                        FloatParse::Invalid => {}
+                        FloatParse::Unsure => return None,
+                    }
+                }
+                let extra: Vec<(&str, &str)> = split
+                    .iter()
+                    .skip(3)
+                    .step_by(2)
+                    .zip(split.iter().skip(4).step_by(2))
+                    .map(|(k, v)| (*k, *v))
+                    .collect();
+                for (k, v) in extra {
+                    if reserved(k) {
+                        return None;
+                    }
+                    let k = b.key(k);
+                    attrs.push((k, Val::Str(v.to_string())));
+                }
+                b.parsed.ops.push(Op::Edge(ends[0], ends[1], attrs));
+            }
+            break;
+        } else if lower_starts_with(l, "*matrix") {
+            return None;
+        }
+    }
+    Some(b.finish())
+}
+
+// --- graph6 and sparse6 ----------------------------------------------------------
+
+/// graph6's `data_to_n`: the node count and the rest of the data.
+fn data_to_n(data: &[u8]) -> Option<(u64, &[u8])> {
+    let d = |i: usize| -> Option<u64> { data.get(i).map(|&c| c as u64) };
+    if d(0)? <= 62 {
+        return Some((d(0)?, &data[1..]));
+    }
+    if d(1)? <= 62 {
+        let n = (d(1)? << 12) + (d(2)? << 6) + d(3)?;
+        return Some((n, &data[4..]));
+    }
+    let n = (d(2)? << 30) + (d(3)? << 24) + (d(4)? << 18) + (d(5)? << 12) + (d(6)? << 6) + d(7)?;
+    Some((n, &data[8..]))
+}
+
+/// Character values minus 63, if every character is in range(63, 127).
+fn six_bit(bytes: &[u8]) -> Option<Vec<u8>> {
+    bytes
+        .iter()
+        .map(|&c| {
+            if (63..127).contains(&c) {
+                Some(c - 63)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// `from_graph6_bytes`; `strip_newline` for NetworkX 3.5+, which ignores
+/// trailing newlines.
+pub fn graph6(bytes: &[u8], strip_newline: bool) -> Option<Parsed> {
+    let mut bytes = bytes.strip_prefix(b">>graph6<<").unwrap_or(bytes);
+    if strip_newline {
+        while let Some(rest) = bytes.strip_suffix(b"\n") {
+            bytes = rest;
+        }
+    }
+    let data = six_bit(bytes)?;
+    let (n, data) = data_to_n(&data)?;
+    let bits = n as u128 * (n as u128).saturating_sub(1) / 2;
+    if data.len() as u128 != bits.div_ceil(6) {
+        return None;
+    }
+    let mut b = Builder::default();
+    for i in 0..n {
+        b.parsed.nodes.push(Val::Int(i as i64));
+        b.parsed.ops.push(Op::Node(i as u32, Vec::new()));
+    }
+    let mut bit = 0usize;
+    for j in 1..n as u32 {
+        for i in 0..j {
+            if (data[bit / 6] >> (5 - bit % 6)) & 1 == 1 {
+                b.parsed.ops.push(Op::Edge(i, j, Vec::new()));
+            }
+            bit += 1;
+        }
+    }
+    Some(b.parsed)
+}
+
+/// `from_sparse6_bytes`: a MultiGraph if there are parallel edges, else a
+/// Graph built the way `nx.Graph(multigraph)` copies it.
+pub fn sparse6(bytes: &[u8]) -> Option<Parsed> {
+    let bytes = bytes.strip_prefix(b">>sparse6<<").unwrap_or(bytes);
+    let rest = bytes.strip_prefix(b":")?;
+    let chars = six_bit(rest)?;
+    let (n, data) = data_to_n(&chars)?;
+    if n > u32::MAX as u64 / 2 {
+        return None;
+    }
+    let mut k = 1u32;
+    while (1u64 << k) < n {
+        k += 1;
+    }
+    // parseData(): pairs (b, x).
+    let mut pairs = Vec::new();
+    let mut chunks = data.iter().map(|&c| c as u64);
+    let mut d = 0u64;
+    let mut d_len = 0u32;
+    'outer: loop {
+        if d_len < 1 {
+            match chunks.next() {
+                Some(c) => d = c,
+                None => break,
+            }
+            d_len = 6;
+        }
+        d_len -= 1;
+        let bit = (d >> d_len) & 1;
+        let mut x = d & ((1u64 << d_len) - 1);
+        let mut x_len = d_len;
+        while x_len < k {
+            match chunks.next() {
+                Some(c) => d = c,
+                None => break 'outer,
+            }
+            d_len = 6;
+            x = (x << 6) + d;
+            x_len += 6;
+        }
+        x >>= x_len - k;
+        d_len = x_len - k;
+        pairs.push((bit, x));
+    }
+    let mut v = 0u64;
+    let mut edges = Vec::new();
+    let mut seen = HashSet::new();
+    let mut multigraph = false;
+    for (bit, x) in pairs {
+        if bit == 1 {
+            v += 1;
+        }
+        if x >= n || v >= n {
+            break;
+        } else if x > v {
+            v = x;
+        } else {
+            let (a, c) = (x as u32, v as u32);
+            if !seen.insert((a.min(c), a.max(c))) {
+                multigraph = true;
+            }
+            edges.push((a, c));
+        }
+    }
+    let mut b = Builder::default();
+    for i in 0..n {
+        b.parsed.nodes.push(Val::Int(i as i64));
+        b.parsed.ops.push(Op::Node(i as u32, Vec::new()));
+    }
+    b.parsed.class = (multigraph, false);
+    if multigraph {
+        for (x, v) in edges {
+            b.parsed.ops.push(Op::Edge(x, v, Vec::new()));
+        }
+        return Some(b.parsed);
+    }
+    // nx.Graph(G) walks G's adjacency (neighbors in first-edge order) and
+    // adds each edge from the side it meets first.
+    let mut adj: Vec<Vec<u32>> = vec![Vec::new(); n as usize];
+    for &(x, v) in &edges {
+        adj[x as usize].push(v);
+        if x != v {
+            adj[v as usize].push(x);
+        }
+    }
+    let mut added = HashSet::new();
+    for (u, nbrs) in adj.iter().enumerate() {
+        let u = u as u32;
+        for &w in nbrs {
+            if added.insert((u.min(w), u.max(w))) {
+                b.parsed.ops.push(Op::Edge(u, w, Vec::new()));
+            }
+        }
+    }
+    Some(b.parsed)
+}
+
+// --- applying the operations to a NetworkX graph (with the GIL) ------------------
+
+fn to_py<'py>(py: Python<'py>, v: &Val) -> PyResult<Bound<'py, PyAny>> {
+    Ok(match v {
+        Val::None => py.None().into_bound(py),
+        Val::Bool(b) => PyBool::new(py, *b).to_owned().into_any(),
+        Val::Int(i) => i.into_pyobject(py)?.into_any(),
+        Val::Float(f) => PyFloat::new(py, *f).into_any(),
+        Val::Str(s) => PyString::new(py, s).into_any(),
+    })
+}
+
+/// A new, empty `networkx.(Multi)(Di)Graph`.
+pub fn new_nx_graph(
+    py: Python<'_>,
+    multigraph: bool,
+    directed: bool,
+) -> PyResult<Bound<'_, PyAny>> {
+    let name = match (multigraph, directed) {
+        (false, false) => "Graph",
+        (false, true) => "DiGraph",
+        (true, false) => "MultiGraph",
+        (true, true) => "MultiDiGraph",
+    };
+    py.import("networkx")?.getattr(name)?.call0()
+}
+
+struct Target<'py> {
+    objs: Vec<Bound<'py, PyAny>>,
+    node: Bound<'py, PyDict>,
+    adj: Bound<'py, PyDict>,
+    pred: Option<Bound<'py, PyDict>>,
+    succ_of: Vec<Option<Bound<'py, PyDict>>>,
+    pred_of: Vec<Option<Bound<'py, PyDict>>>,
+    attr_of: Vec<Option<Bound<'py, PyDict>>>,
+}
+
+impl<'py> Target<'py> {
+    /// The `if u not in self._node` part of `add_node` / `add_edge`.
+    fn ensure(&mut self, py: Python<'py>, i: usize) -> PyResult<()> {
+        if self.succ_of[i].is_some() {
+            return Ok(());
+        }
+        let key = &self.objs[i];
+        let succ = PyDict::new(py);
+        self.adj.set_item(key, &succ)?;
+        self.succ_of[i] = Some(succ);
+        if let Some(pred) = &self.pred {
+            let p = PyDict::new(py);
+            pred.set_item(key, &p)?;
+            self.pred_of[i] = Some(p);
+        }
+        let attrs = PyDict::new(py);
+        self.node.set_item(key, &attrs)?;
+        self.attr_of[i] = Some(attrs);
+        Ok(())
+    }
+
+    /// Where `add_edge(u, v)` stores the reverse entry: `_pred[v]` or `_adj[v]`.
+    fn back(&self, v: usize) -> &Bound<'py, PyDict> {
+        match &self.pred {
+            Some(_) => self.pred_of[v].as_ref(),
+            None => self.succ_of[v].as_ref(),
+        }
+        .expect("node added")
+    }
+}
+
+/// Replays `parsed.ops` onto the empty NetworkX graph `g` (a plain
+/// Graph, DiGraph, MultiGraph or MultiDiGraph) as `add_node` and
+/// `add_edge` would, filling its dicts directly.
+pub fn apply<'py>(py: Python<'py>, parsed: &Parsed, g: &Bound<'py, PyAny>) -> PyResult<()> {
+    let directed = g.call_method0("is_directed")?.is_truthy()?;
+    let multigraph = g.call_method0("is_multigraph")?.is_truthy()?;
+    let n = parsed.nodes.len();
+    let mut t = Target {
+        objs: parsed
+            .nodes
+            .iter()
+            .map(|v| to_py(py, v))
+            .collect::<PyResult<_>>()?,
+        node: g.getattr("_node")?.cast_into::<PyDict>()?,
+        adj: g.getattr("_adj")?.cast_into::<PyDict>()?,
+        pred: if directed {
+            Some(g.getattr("_pred")?.cast_into::<PyDict>()?)
+        } else {
+            None
+        },
+        succ_of: vec![None; n],
+        pred_of: vec![None; n],
+        attr_of: vec![None; n],
+    };
+    let keys: Vec<Bound<'py, PyString>> =
+        parsed.keys.iter().map(|k| PyString::new(py, k)).collect();
+    let fill = |d: &Bound<'py, PyDict>, attrs: &[(u32, Val)]| -> PyResult<()> {
+        for (k, v) in attrs {
+            d.set_item(&keys[*k as usize], to_py(py, v)?)?;
+        }
+        Ok(())
+    };
+    for op in &parsed.ops {
+        match op {
+            Op::Node(i, attrs) => {
+                let i = *i as usize;
+                t.ensure(py, i)?;
+                fill(t.attr_of[i].as_ref().expect("node added"), attrs)?;
+            }
+            Op::Edge(u, v, attrs) => {
+                let (u, v) = (*u as usize, *v as usize);
+                t.ensure(py, u)?;
+                t.ensure(py, v)?;
+                let succ = t.succ_of[u].as_ref().expect("node added");
+                let existing = succ.get_item(&t.objs[v])?;
+                if !multigraph {
+                    match existing {
+                        Some(d) => fill(d.cast::<PyDict>()?, attrs)?,
+                        None => {
+                            let d = PyDict::new(py);
+                            fill(&d, attrs)?;
+                            succ.set_item(&t.objs[v], &d)?;
+                            t.back(v).set_item(&t.objs[u], &d)?;
+                        }
+                    }
+                } else {
+                    let d = PyDict::new(py);
+                    fill(&d, attrs)?;
+                    match existing {
+                        Some(keydict) => {
+                            // new_edge_key(): len(keydict), then the next unused.
+                            let keydict = keydict.cast::<PyDict>()?;
+                            let mut key = keydict.len();
+                            while keydict.contains(key)? {
+                                key += 1;
+                            }
+                            keydict.set_item(key, &d)?;
+                        }
+                        None => {
+                            let keydict = PyDict::new(py);
+                            keydict.set_item(0, &d)?;
+                            succ.set_item(&t.objs[v], &keydict)?;
+                            t.back(v).set_item(&t.objs[u], &keydict)?;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if let Some(name) = &parsed.name {
+        g.getattr("graph")?.set_item("name", name)?;
+    }
+    Ok(())
+}
+
+/// The `str` objects behind `lines`: each item of a list of exact `str`
+/// (`mode` 0), or the one `str` given (`mode` 1: a decoded file, `mode` 2: a
+/// `str` that NetworkX splits with `split("\n")`). `None` if an item isn't
+/// an exact `str`.
+pub fn string_items<'py>(lines: &Bound<'py, PyAny>, mode: u8) -> Option<Vec<Bound<'py, PyString>>> {
+    if mode == 0 {
+        let list = lines.cast::<pyo3::types::PyList>().ok()?;
+        list.iter()
+            .map(|item| item.cast_exact::<PyString>().ok().cloned())
+            .collect()
+    } else {
+        Some(vec![lines.cast_exact::<PyString>().ok()?.clone()])
+    }
+}
+
+/// The lines of `string_items`: list items as they are, a file's text split
+/// after each "\n" (as iterating over a binary file does), or a `str` split
+/// at "\n". `None` if a string can't be encoded as UTF-8 (lone surrogates).
+pub fn split_lines<'a>(items: &'a [Bound<'_, PyString>], mode: u8) -> Option<Vec<&'a str>> {
+    use pyo3::types::PyStringMethods;
+    let mut out = Vec::new();
+    for item in items {
+        let s = item.to_str().ok()?;
+        match mode {
+            0 => out.push(s),
+            1 => out.extend(s.split_inclusive('\n')),
+            _ => out.extend(s.split('\n')),
+        }
+    }
+    Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn literal_dicts() {
+        assert_eq!(
+            literal_dict("{'weight': 3, 'c': \"x y\", 'f': -1.5e3, 'b': True, 'n': None}"),
+            Some(vec![
+                ("weight".into(), Val::Int(3)),
+                ("c".into(), Val::Str("x y".into())),
+                ("f".into(), Val::Float(-1500.0)),
+                ("b".into(), Val::Bool(true)),
+                ("n".into(), Val::None),
+            ])
+        );
+        assert_eq!(literal_dict("{}"), Some(vec![]));
+        assert_eq!(
+            literal_dict("{'a':1,}"),
+            Some(vec![("a".into(), Val::Int(1))])
+        );
+        for bad in [
+            "{'a': 07}",
+            "{'a': 1_0}",
+            "{'a': 'x' 'y'}",
+            "{'a': 1j}",
+            "{'a\\n': 1}",
+            "{1: 2}",
+            "[('a', 1)]",
+            "{'a': [1]}",
+            "{'a': Truex}",
+            "{'a': --1}",
+            "{'a': 1.2.3}",
+        ] {
+            assert_eq!(literal_dict(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn python_numbers() {
+        assert_eq!(py_int(" -12 "), Some(-12));
+        assert_eq!(py_int("1_0"), None);
+        assert_eq!(py_float("1e5"), FloatParse::Ok(1e5));
+        assert_eq!(py_float("abc"), FloatParse::Invalid);
+        assert_eq!(py_float("1_0"), FloatParse::Unsure);
+        assert_eq!(py_float("-Infinity"), FloatParse::Ok(f64::NEG_INFINITY));
+        assert!(lower_starts_with("*Vertices 3", "*vertices"));
+        assert!(lower_starts_with("*networ\u{212a}", "*network"));
+        assert!(!lower_starts_with("*net", "*network"));
+    }
+}
