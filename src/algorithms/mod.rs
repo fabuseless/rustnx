@@ -13,3 +13,4 @@ pub mod spectral;
 pub mod structure;
 pub mod structure_more;
 pub mod traversal;
+pub mod trees_more;

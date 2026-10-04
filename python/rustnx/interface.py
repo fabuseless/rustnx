@@ -34,6 +34,7 @@ _LINEAR_TIME = {
     "biconnected_components",
     "bidirectional_dijkstra",
     "bidirectional_shortest_path",
+    "branching_weight",
     "bridges",
     "chain_decomposition",
     "condensation",
@@ -136,6 +137,7 @@ _LINEAR_TIME = {
     "to_prufer_sequence",
     "topological_generations",
     "topological_sort",
+    "tree_centroid",
     "v_structures",
     "weakly_connected_components",
 }
@@ -248,16 +250,24 @@ MULTIGRAPH_FUNCTIONS = {
 
 # Functions that return subgraphs of the original NetworkX graph.
 _BUILDS_FROM_SOURCE = {
+    "boruvka_mst_edges",
     "k_core",
     "k_corona",
     "k_crust",
     "k_shell",
     "k_truss",
     "kruskal_mst_edges",
+    "maximum_branching",
+    "maximum_spanning_arborescence",
     "maximum_spanning_edges",
     "maximum_spanning_tree",
+    "minimal_branching",
+    "minimum_branching",
+    "minimum_spanning_arborescence",
     "minimum_spanning_edges",
     "minimum_spanning_tree",
+    "partition_spanning_tree",
+    "prim_mst_edges",
     "transitive_closure",
     "transitive_closure_dag",
 }

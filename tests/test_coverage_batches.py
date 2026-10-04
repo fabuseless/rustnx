@@ -1574,7 +1574,7 @@ def typed_dicts(func):
     return lambda *a, **kw: convert(func(*a, **kw))
 
 
-def first(func, k=200):
+def first_paths(func, k=200):
     """The first ``k`` items of a generator (simple paths can explode)."""
     return lambda *a, **kw: list(islice(func(*a, **kw), k))
 
@@ -1640,7 +1640,7 @@ def test_batch7_negative_weights(seed, directed):
             exact_outcome(nx.goldberg_radzik, G, source)
         if len(G) > 1:
             s, t = list(G)[0], list(G)[-1]
-            exact_outcome(first(nx.shortest_simple_paths, 20), G, s, t, weight="weight")
+            exact_outcome(first_paths(nx.shortest_simple_paths, 20), G, s, t, weight="weight")
         if not directed and len(G) < 20:
             exact_outcome(nx.minimum_cycle_basis, G, weight="weight")
 
@@ -1675,7 +1675,7 @@ def test_batch7_weight_edge_cases(edges, directed):
     for source in nodes:
         exact_outcome(nx.goldberg_radzik, G, source)
         for target in nodes:
-            exact_outcome(first(nx.shortest_simple_paths, 20), G, source, target, weight="weight")
+            exact_outcome(first_paths(nx.shortest_simple_paths, 20), G, source, target, weight="weight")
     if not directed:
         exact_outcome(nx.minimum_cycle_basis, G, weight="weight")
     exact_outcome(nx.floyd_warshall_numpy, G, nodelist=nodes[:-1])  # too short
@@ -1712,10 +1712,10 @@ def test_batch7_simple_paths(seed, directed):
     for source in picks + ["missing"]:
         for target in picks[:2] + ["missing", picks, set(picks), ["missing"], [], [None] + picks[:1], 5]:
             for cutoff in [0, 1, 2, 2.5, True, -1, float("nan"), *unbounded]:
-                exact_outcome(first(nx.all_simple_paths), G, source, target, cutoff=cutoff)
-            exact_outcome(first(nx.all_simple_edge_paths), G, source, target, cutoff=3)
+                exact_outcome(first_paths(nx.all_simple_paths), G, source, target, cutoff=cutoff)
+            exact_outcome(first_paths(nx.all_simple_edge_paths), G, source, target, cutoff=3)
         for target in picks + ["missing"]:
-            exact_outcome(first(nx.shortest_simple_paths, 20), G, source, target)
+            exact_outcome(first_paths(nx.shortest_simple_paths, 20), G, source, target)
     for k in range(5):
         path = rng.sample(nodes, min(len(nodes), k))
         exact_outcome(nx.is_simple_path, G, path)
@@ -1735,7 +1735,7 @@ def test_batch7_shortest_simple_paths_weighted(seed, directed, weights):
     nodes = list(G)
     for source in nodes[:3]:
         for target in nodes[-3:]:
-            exact_outcome(first(nx.shortest_simple_paths, 40), G, source, target, weight="weight")
+            exact_outcome(first_paths(nx.shortest_simple_paths, 40), G, source, target, weight="weight")
     if weights == "float":
         # Many equal-length paths: ties go by NetworkX's push order.
         H = nx.grid_2d_graph(4, 4)
@@ -1744,24 +1744,24 @@ def test_batch7_shortest_simple_paths_weighted(seed, directed, weights):
             H = H.to_directed()
         for u, v, d in H.edges(data=True):
             d["weight"] = [0.5, 1.0, 1.5][(u + v) % 3]
-        exact_outcome(first(nx.shortest_simple_paths, 100), H, 0, 15, weight="weight")
-        exact_outcome(first(nx.shortest_simple_paths, 100), H, 0, 15)
+        exact_outcome(first_paths(nx.shortest_simple_paths, 100), H, 0, 15, weight="weight")
+        exact_outcome(first_paths(nx.shortest_simple_paths, 100), H, 0, 15)
 
 
 @pytest.mark.parametrize("seed", range(40))
 def test_batch7_antichains(seed):
     D = random_dag(seed, "none")
-    exact_outcome(first(nx.antichains, 2000), D)
+    exact_outcome(first_paths(nx.antichains, 2000), D)
     topo = list(nx.topological_sort(D, backend="networkx"))
     lex = list(nx.lexicographical_topological_sort(D, key=str, backend="networkx"))
-    exact_outcome(first(nx.antichains, 2000), D, topo_order=topo)
-    exact_outcome(first(nx.antichains, 2000), D, topo_order=lex)
-    exact_outcome(first(nx.antichains, 2000), D, topo_order=topo[::-1])  # not a valid order
-    exact_outcome(first(nx.antichains, 2000), D, topo_order=topo[1:])
+    exact_outcome(first_paths(nx.antichains, 2000), D, topo_order=topo)
+    exact_outcome(first_paths(nx.antichains, 2000), D, topo_order=lex)
+    exact_outcome(first_paths(nx.antichains, 2000), D, topo_order=topo[::-1])  # not a valid order
+    exact_outcome(first_paths(nx.antichains, 2000), D, topo_order=topo[1:])
     if ANTICHAIN_WIDTH is not None:
         exact_outcome(ANTICHAIN_WIDTH, D)
     C = graph_for(seed, True)  # usually cyclic
-    exact_outcome(first(nx.antichains, 500), C)
+    exact_outcome(first_paths(nx.antichains, 500), C)
     if ANTICHAIN_WIDTH is not None:
         exact_outcome(ANTICHAIN_WIDTH, C)
     exact_outcome(listed(nx.antichains), graph_for(seed, False))  # undirected
@@ -1800,8 +1800,8 @@ def test_batch7_multigraphs(seed, directed, restore_config):
     # Parallel edges count separately in these: they fall back.
     exact_outcome(typed_dicts(nx.floyd_warshall), M)
     exact_outcome(nx.goldberg_radzik, M, nodes[0])
-    exact_outcome(first(nx.all_simple_paths), M, nodes[0], nodes[-1], cutoff=3)
-    exact_outcome(first(nx.shortest_simple_paths), M, nodes[0], nodes[-1])
+    exact_outcome(first_paths(nx.all_simple_paths), M, nodes[0], nodes[-1], cutoff=3)
+    exact_outcome(first_paths(nx.shortest_simple_paths), M, nodes[0], nodes[-1])
     if not directed:
         exact_outcome(nx.minimum_cycle_basis, M)
 
@@ -1837,3 +1837,334 @@ def test_batch7_graph_changes_during_iteration():
         D.add_edge(4, 5)
         results.append([first_item, *it])
     assert results[0] == results[1]
+
+
+# --- Batch 8: trees, branchings and lowest common ancestors -------------------------
+
+
+def _graph_state(G):
+    """Everything about a graph that order can show: node and adjacency
+    order (and predecessor order), and all attributes."""
+    state = [type(G).__name__, dict(G.graph), list(G._node.items()),
+             [(u, list(nbrs.items())) for u, nbrs in G._adj.items()]]
+    if G.is_directed():
+        state.append([(u, list(nbrs)) for u, nbrs in G._pred.items()])
+    return state
+
+
+def strict(func):
+    """``func`` with graphs in its result replaced by their full state."""
+
+    def convert(value):
+        if isinstance(value, nx.Graph):
+            return ("graph", _graph_state(value))
+        if hasattr(value, "__next__"):
+            return [convert(v) for v in value]
+        if isinstance(value, (list, tuple)):
+            return type(value)(convert(v) for v in value)
+        return value
+
+    return lambda *a, **kw: convert(func(*a, **kw))
+
+
+def mutating_outcome(func, G, *args, **kwargs):
+    """``exact_outcome`` for functions that change their input: each backend
+    runs on its own copy, and the copies must end up identical too."""
+    import copy
+
+    def run(backend):
+        H = copy.deepcopy(G)
+        H.__networkx_cache__.clear()
+        try:
+            result = ("ok", strict(func)(H, *args, backend=backend, **kwargs))
+        except NotImplementedError:
+            raise
+        except Exception as exc:
+            result = (type(exc), exc.args)
+        return result, _graph_state(H)
+
+    try:
+        ours = run("rustnx")
+    except NotImplementedError:
+        ours = None  # falls back; NetworkX's own run is the reference
+    ref = run("networkx")
+    if ours is not None:
+        assert ours == ref
+    return ref
+
+
+def _weighted_graph(seed, directed, weights):
+    """A random graph whose weights include negatives, zeros and ties."""
+    rng = random.Random(seed)
+    G = graph_for(seed, directed, "none")
+    for u, v, d in G.edges(data=True):
+        if weights == "int":
+            d["weight"] = rng.randint(-3, 6)
+        elif weights == "float":
+            d["weight"] = rng.choice([-2.0, 0.0, 0.1, 0.2, 0.3, 1.25, 3.5])
+        elif weights == "mixed":
+            d["weight"] = rng.choice([1, 2, 0.5, 3.25])
+            d["color"] = rng.choice(["red", "blue"])
+        elif weights == "missing" and rng.random() < 0.5:
+            d["weight"] = rng.randint(-1, 4)
+    return G
+
+
+def _with_partition(G, seed):
+    rng = random.Random(seed)
+    P = G.copy()
+    for _, _, d in P.edges(data=True):
+        r = rng.random()
+        if r < 0.15:
+            d["partition"] = nx.EdgePartition.INCLUDED
+        elif r < 0.35:
+            d["partition"] = nx.EdgePartition.EXCLUDED
+        elif r < 0.45:
+            d["partition"] = nx.EdgePartition.OPEN
+    return P
+
+
+_TRANSFORMED = [nx.minimum_branching, nx.tree.minimal_branching,
+                nx.maximum_spanning_arborescence, nx.minimum_spanning_arborescence]
+
+
+@pytest.mark.parametrize("weights", ["int", "float", "mixed", "missing", "none"])
+@pytest.mark.parametrize("directed", [True, False])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch8_branchings(seed, directed, weights):
+    G = _weighted_graph(seed, directed, weights)
+    for preserve in [False, True]:
+        exact_outcome(strict(nx.maximum_branching), G, preserve_attrs=preserve)
+        for func in _TRANSFORMED:
+            mutating_outcome(func, G, preserve_attrs=preserve)
+    exact_outcome(strict(nx.maximum_branching), G, default=2.5)
+    exact_outcome(strict(nx.maximum_branching), G, attr="color", default=0)
+    mutating_outcome(nx.minimum_branching, G, default=-1)
+    mutating_outcome(nx.minimum_spanning_arborescence, G, attr="other", default=3)
+    P = _with_partition(G, seed)
+    for preserve in [False, True]:
+        exact_outcome(strict(nx.maximum_branching), P, partition="partition", preserve_attrs=preserve)
+        mutating_outcome(nx.minimum_spanning_arborescence, P, partition="partition",
+                         preserve_attrs=preserve)
+        mutating_outcome(nx.maximum_spanning_arborescence, P, partition="partition")
+    for kind in ["max", "min", "bogus"]:
+        exact_outcome(strict(nx.tree.greedy_branching), G, kind=kind)
+        exact_outcome(strict(nx.tree.greedy_branching), G, default=2, kind=kind)
+    exact_outcome(nx.tree.branching_weight, G)
+    exact_outcome(nx.tree.branching_weight, G, default=0.5)
+    exact_outcome(nx.tree.branching_weight, G, attr="color", default=2)
+
+
+@pytest.mark.parametrize("weights", ["int", "float", "missing", "none"])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch8_spanning_trees(seed, weights):
+    from networkx.algorithms.tree import mst
+
+    G = _weighted_graph(seed, False, weights)
+    if seed % 4 == 0:  # several components, isolated nodes
+        G.add_edges_from([("a", "b"), ("b", "c"), ("x", "x")])
+        G.add_nodes_from(["lonely", 10**6])
+    for minimum in [True, False]:
+        exact_outcome(listed(mst.prim_mst_edges), G, minimum)
+        exact_outcome(listed(mst.prim_mst_edges), G, minimum, data=False)
+        exact_outcome(listed(mst.prim_mst_edges), G, minimum, weight=None)
+        exact_outcome(listed(mst.boruvka_mst_edges), G, minimum)
+        exact_outcome(listed(mst.boruvka_mst_edges), G, minimum, data=False)
+        exact_outcome(listed(mst.boruvka_mst_edges), G, minimum, weight=None)
+        exact_outcome(strict(nx.partition_spanning_tree), G, minimum)
+        P = _with_partition(G, seed)
+        exact_outcome(strict(nx.partition_spanning_tree), P, minimum)
+        exact_outcome(strict(nx.partition_spanning_tree), P, minimum, weight=None)
+    D = _with_partition(_weighted_graph(seed, True, weights), seed)
+    exact_outcome(strict(nx.partition_spanning_tree), D)
+    exact_outcome(listed(mst.prim_mst_edges), D, True)  # directed: falls back
+    exact_outcome(listed(mst.boruvka_mst_edges), D, True)
+    exact_outcome(listed(mst.boruvka_mst_edges), D, False, weight=None)
+
+
+def _random_tree(seed, n):
+    if hasattr(nx, "random_labeled_tree"):
+        return nx.random_labeled_tree(n, seed=seed)
+    return nx.random_tree(n, seed=seed)
+
+
+@pytest.mark.parametrize("seed", range(60))
+def test_batch8_tree_codes(seed):
+    rng = random.Random(seed)
+    n = rng.randint(0, 25)
+    exact_outcome(strict(nx.from_prufer_sequence), [rng.randrange(n + 2) for _ in range(n)])
+
+    def nested(depth):
+        width = rng.randint(0, 3 if depth < 5 else 0)
+        kids = [nested(depth + 1) for _ in range(width)]
+        return list(kids) if rng.random() < 0.2 else tuple(kids)
+
+    t = nested(0)
+    for sensible in [False, True]:
+        exact_outcome(strict(nx.from_nested_tuple), t, sensible_relabeling=sensible)
+    if n:
+        T = _random_tree(seed, n)
+        if seed % 2:
+            T = nx.relabel_nodes(T, {v: f"v{v}" for v in T})
+        nodes = list(T)
+        for root in nodes[:4] + ["missing"]:
+            exact_outcome(nx.to_nested_tuple, T, root, canonical_form=True)
+            exact_outcome(nx.to_nested_tuple, T, root)  # falls back
+        if hasattr(nx.tree, "centroid"):
+            exact_outcome(nx.tree.centroid, T)
+    G = graph_for(seed, False)
+    exact_outcome(nx.to_nested_tuple, G, list(G)[0], canonical_form=True)
+    if hasattr(nx.tree, "centroid"):
+        exact_outcome(nx.tree.centroid, G)
+        exact_outcome(nx.tree.centroid, graph_for(seed, True))
+
+
+def test_batch8_tree_code_edge_cases():
+    for seq in [[], [0], [3], [-1], [1, 1], [0, 0, 0], [5, 0, 1], [1.0], [True], (2, 2, 2)]:
+        exact_outcome(strict(nx.from_prufer_sequence), seq)
+    for t in [(), ((),), ((), ()), (((),), ()), [[], [[]]], ("ab",), (1,), ((),) * 6]:
+        for sensible in [False, True]:
+            exact_outcome(strict(nx.from_nested_tuple), t, sensible_relabeling=sensible)
+    deep = ()
+    for _ in range(120):
+        deep = (deep,)
+    exact_outcome(strict(nx.from_nested_tuple), deep)  # too deep: falls back
+    for T in [nx.empty_graph(0), nx.empty_graph(1), nx.path_graph(2), nx.path_graph(5),
+              nx.star_graph(4), nx.Graph([(0, 0)]), nx.balanced_tree(2, 3)]:
+        for root in [0, 1]:
+            exact_outcome(nx.to_nested_tuple, T, root, canonical_form=True)
+        if hasattr(nx.tree, "centroid"):
+            exact_outcome(nx.tree.centroid, T)
+    exact_outcome(nx.to_nested_tuple, nx.path_graph(150), 0, canonical_form=True)
+    exact_outcome(nx.to_nested_tuple, nx.DiGraph([(0, 1)]), 0, canonical_form=True)
+
+
+def _dag(seed):
+    D = graph_for(seed, True)
+    order = {v: i for i, v in enumerate(D)}
+    dag = nx.DiGraph()
+    dag.add_nodes_from(D)
+    dag.add_edges_from((u, v) for u, v in D.edges if order[u] < order[v])
+    return dag
+
+
+@pytest.mark.parametrize("seed", range(60))
+def test_batch8_lowest_common_ancestors(seed):
+    rng = random.Random(seed)
+    dag = _dag(seed)
+    nodes = list(dag)
+    exact_outcome(listed(nx.all_pairs_lowest_common_ancestor), dag)
+    pairs = [(rng.choice(nodes), rng.choice(nodes)) for _ in range(30)]
+    exact_outcome(listed(nx.all_pairs_lowest_common_ancestor), dag, pairs)
+    exact_outcome(listed(nx.all_pairs_lowest_common_ancestor), dag, pairs + [(nodes[0], "missing")])
+    for u, v in pairs[:5] + [(nodes[0], "missing")]:
+        exact_outcome(nx.lowest_common_ancestor, dag, u, v)
+        exact_outcome(nx.lowest_common_ancestor, dag, u, v, default="none")
+    D = graph_for(seed, True)
+    exact_outcome(listed(nx.all_pairs_lowest_common_ancestor), D)  # cycles
+    exact_outcome(listed(nx.all_pairs_lowest_common_ancestor), graph_for(seed, False))
+    T = _random_tree(seed, rng.randint(1, 30))
+    T = nx.bfs_tree(T, 0, backend="networkx")
+    for G in [T, dag, D]:
+        exact_outcome(listed(nx.tree_all_pairs_lowest_common_ancestor), G)
+        for root in list(G)[:3] + ["missing"]:
+            exact_outcome(listed(nx.tree_all_pairs_lowest_common_ancestor), G, root)
+        exact_outcome(listed(nx.tree_all_pairs_lowest_common_ancestor), G,
+                      pairs=[(list(G)[0], list(G)[-1])])  # falls back
+
+
+def test_batch8_lca_edge_cases():
+    # Two lowest common ancestors: NetworkX's answer depends on set order.
+    D = nx.DiGraph([(0, 2), (0, 3), (1, 2), (1, 3), (4, 0), (4, 1)])
+    for pairs in [None, [(2, 3), (3, 2), (2, 2), (0, 1)]]:
+        exact_outcome(listed(nx.all_pairs_lowest_common_ancestor), D, pairs)
+    exact_outcome(nx.lowest_common_ancestor, D, 2, 3)
+    S = nx.relabel_nodes(D, {v: f"s{v}" for v in D})
+    exact_outcome(listed(nx.all_pairs_lowest_common_ancestor), S)
+    for G in [nx.DiGraph(), nx.DiGraph([(0, 1), (2, 1)]), nx.DiGraph([(0, 1), (1, 0)]),
+              nx.DiGraph([(0, 1), (0, 2), (3, 4)]), nx.DiGraph([(0, 0)])]:
+        exact_outcome(listed(nx.all_pairs_lowest_common_ancestor), G)
+        exact_outcome(listed(nx.tree_all_pairs_lowest_common_ancestor), G)
+    # Odd pairs: an iterator, a non-pair, an equal node of another type.
+    exact_outcome(listed(lambda G, **kw: nx.all_pairs_lowest_common_ancestor(
+        G, iter([(2, 3), (0, 1)]), **kw)), D)  # a fresh iterator for each backend
+    exact_outcome(listed(lambda G, **kw: nx.all_pairs_lowest_common_ancestor(
+        G, [iter([2, 3])], **kw)), D)
+    exact_outcome(listed(nx.all_pairs_lowest_common_ancestor), D, [(2, 3, 4)])
+    exact_outcome(listed(nx.all_pairs_lowest_common_ancestor), D, [(2.0, 3)])
+    exact_outcome(nx.lowest_common_ancestor, D, 2.0, 3)
+    exact_outcome(nx.lowest_common_ancestor, nx.Graph([(0, 1)]), 0, 1)
+
+
+def test_batch8_mutating_functions_change_the_input_like_networkx():
+    # Float weights that NetworkX's rewrite doesn't restore exactly, and
+    # edges without the attribute.
+    G = nx.DiGraph()
+    G.add_edge(0, 1, weight=0.1)
+    G.add_edge(1, 2, weight=0.7)
+    G.add_edge(2, 0)
+    G.add_edge(0, 3, weight=0.3)
+    for func in _TRANSFORMED:
+        mutating_outcome(func, G)
+    mutating_outcome(nx.minimum_spanning_arborescence, nx.DiGraph([(0, 1), (2, 3)]))
+    mutating_outcome(nx.maximum_spanning_arborescence, nx.DiGraph())
+    mutating_outcome(nx.minimum_spanning_arborescence, nx.Graph([(0, 1)]))
+
+
+def test_batch8_branching_edge_cases():
+    big = 2**70
+    for G in [nx.DiGraph([(0, 1, {"weight": big}), (1, 0, {"weight": 1})]),
+              nx.DiGraph([(0, 1, {"weight": "x"})]),
+              nx.DiGraph([(0, 0, {"weight": 5}), (0, 1, {"weight": 2})]),
+              nx.DiGraph([("edmonds new node base name 0", 1, {"weight": 1}), (1, 2)]),
+              nx.DiGraph([(0, 1, {"weight": float("nan")}), (1, 2, {"weight": 1.0})])]:
+        exact_outcome(strict(nx.maximum_branching), G)
+        exact_outcome(strict(nx.tree.greedy_branching), G)
+        exact_outcome(lambda G, **kw: repr(nx.tree.branching_weight(G, **kw)), G)  # NaN
+    exact_outcome(strict(nx.maximum_branching), nx.DiGraph([(0, 1, {1: 2})]), preserve_attrs=True)
+    exact_outcome(strict(nx.maximum_branching), nx.DiGraph([(0, 1)]), attr=None)
+    exact_outcome(strict(nx.maximum_branching), nx.DiGraph([(0, 1)]), partition="weight")
+    # attr=None draws a random attribute name (from the seed's state).
+    for seed in [0, 1, None]:
+        exact_outcome(strict(lambda G, **kw: nx.tree.greedy_branching(
+            G, attr=None, seed=random.Random(5) if seed is None else seed, **kw)),
+            nx.DiGraph([(0, 1), (1, 2)]))
+    exact_outcome(strict(nx.tree.greedy_branching), nx.DiGraph([(0, 1), ("a", 2)]))
+
+
+@pytest.mark.parametrize("directed", [False, True])
+def test_batch8_multigraphs_fall_back(directed, restore_config):
+    from networkx.algorithms.tree import mst
+
+    M = random_multigraph(3, directed, "int")
+    exact_outcome(strict(nx.maximum_branching), M)
+    exact_outcome(nx.tree.branching_weight, M)
+    if directed:
+        exact_outcome(listed(nx.all_pairs_lowest_common_ancestor), M)
+    else:
+        exact_outcome(listed(mst.prim_mst_edges), M, True)
+    exact_outcome(listed(mst.boruvka_mst_edges), M)
+
+
+def test_batch8_graph_changes_during_iteration():
+    from networkx.algorithms.tree import mst
+
+    cases = [
+        (nx.Graph, lambda G, **kw: mst.prim_mst_edges(G, True, **kw)),
+        (nx.Graph, lambda G, **kw: mst.boruvka_mst_edges(G, **kw)),
+        (nx.DiGraph, lambda G, **kw: nx.tree_all_pairs_lowest_common_ancestor(G, 0, **kw)),
+    ]
+    for cls, call in cases:
+        results = []
+        for backend in ["rustnx", "networkx"]:
+            G = nx.path_graph(8, create_using=cls)
+            it = call(G, backend=backend)
+            G.add_edge(7, 8)  # before the first item: seen
+            results.append(list(it))
+        assert results[0] == results[1]
+    G = nx.path_graph(8)
+    it = mst.prim_mst_edges(G, True, backend="rustnx")
+    next(it)
+    G.add_edge("x", "y")
+    with pytest.raises(RuntimeError):
+        list(it)
