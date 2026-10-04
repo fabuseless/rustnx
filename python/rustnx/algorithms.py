@@ -344,7 +344,6 @@ __all__ = [
     "node_expansion",
     "node_redundancy",
     "normalized_cut_size",
-    "null_graph",
     "number_attracting_components",
     "number_connected_components",
     "number_of_isolates",
@@ -428,7 +427,6 @@ __all__ = [
     "triadic_census",
     "triangles",
     "triangular_lattice_graph",
-    "trivial_graph",
     "turan_graph",
     "unconstrained_bridge_augmentation",
     "unconstrained_one_edge_augmentation",
@@ -9922,14 +9920,6 @@ def _gen_source(name):
 def empty_graph(n=0, create_using=None, default=nx.Graph):
     count, labels = _gen_nodes(n)
     return _generated("empty", [count], _gen_target(create_using, default), labels=labels)
-
-
-def null_graph(create_using=None):
-    return _generated("empty", [0], _gen_target(create_using))
-
-
-def trivial_graph(create_using=None):
-    return _generated("empty", [1], _gen_target(create_using))
 
 
 def complete_graph(n, create_using=None):

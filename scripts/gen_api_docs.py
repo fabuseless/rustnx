@@ -226,6 +226,17 @@ SECTIONS = [
         "complement", "power", "difference", "symmetric_difference", "is_kl_connected",
         "kl_connected_subgraph",
     ]),
+    ("Deterministic generators", [
+        "empty_graph", "complete_graph", "cycle_graph", "path_graph", "star_graph",
+        "wheel_graph", "ladder_graph", "circular_ladder_graph", "lollipop_graph",
+        "barbell_graph", "tadpole_graph", "full_rary_tree", "balanced_tree", "binomial_tree",
+        "complete_bipartite_graph", "complete_multipartite_graph", "turan_graph",
+        "grid_2d_graph", "grid_graph", "hypercube_graph", "hexagonal_lattice_graph",
+        "triangular_lattice_graph", "circulant_graph", "caveman_graph",
+        "connected_caveman_graph", "ring_of_cliques", "windmill_graph", "sudoku_graph",
+        "LCF_graph", "generalized_petersen_graph", "dorogovtsev_goltsev_mendes_graph",
+        "mycielski_graph", "paley_graph", "kneser_graph",
+    ]),
 ]
 
 FLOWNOTE = "Capacities (and the flow values) can be ints or floats, mixed or missing (infinite): every value, its type and the order of every float addition are NetworkX's."
@@ -657,6 +668,35 @@ SUBMODULE.update({
         "one_edge_augmentation", "unconstrained_one_edge_augmentation", "bridge_augmentation",
         "unconstrained_bridge_augmentation",
     ]
+})
+
+
+# Batch 17: deterministic generators.
+GENERATOR = "Generators take no graph: they run in rustnx with `backend=\"rustnx\"` or `nx.config.backend_priority.generators`. Returns a plain NetworkX graph built in Rust, identical to NetworkX's (node and row order, attributes, keys). `create_using` may be a NetworkX graph class or instance (instances that NetworkX would fill and then reject fall back)."
+NODES = " An int, or a list, tuple, range or str of distinct nodes; other iterables fall back."
+INTS = " Int arguments only; others fall back."
+NOTES.update({
+    name: GENERATOR + INTS
+    for name in [
+        "ladder_graph", "lollipop_graph", "barbell_graph", "tadpole_graph", "full_rary_tree",
+        "balanced_tree", "binomial_tree", "complete_bipartite_graph", "complete_multipartite_graph",
+        "turan_graph", "caveman_graph", "connected_caveman_graph", "ring_of_cliques",
+        "windmill_graph", "sudoku_graph", "LCF_graph", "generalized_petersen_graph",
+        "dorogovtsev_goltsev_mendes_graph", "mycielski_graph", "hypercube_graph",
+    ]
+})
+NOTES.update({
+    name: GENERATOR + NODES
+    for name in ["empty_graph", "complete_graph", "cycle_graph", "path_graph", "star_graph", "wheel_graph", "grid_2d_graph"]
+})
+NOTES.update({
+    "circular_ladder_graph": GENERATOR + INTS + " `n` < 2 falls back before NetworkX 3.7 (which raises).",
+    "circulant_graph": GENERATOR + " Int `n` and a list of int offsets; follows the installed NetworkX's edge order (3.6 changed it).",
+    "grid_graph": GENERATOR + " Dimensions are ints or lists of distinct ints; `periodic` is a bool or a list.",
+    "hexagonal_lattice_graph": GENERATOR + " Periodic lattices fall back.",
+    "triangular_lattice_graph": GENERATOR + " Periodic lattices fall back.",
+    "paley_graph": GENERATOR + INTS + " The squares are iterated in CPython's set order (replayed in Rust).",
+    "kneser_graph": GENERATOR + INTS + " Replays CPython's set difference order; large graphs (over 2**24 nodes) fall back.",
 })
 
 
