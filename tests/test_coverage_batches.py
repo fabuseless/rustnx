@@ -444,3 +444,19 @@ def test_batch4_group_betweenness(seed, directed, weights):
     for S in [[0], [0, 3], [1, 4, 5], [[1, 2], [3, 6]]]:
         exact_outcome(nx.group_betweenness_centrality, H, S)
         exact_outcome(nx.group_betweenness_centrality, H, S, normalized=False)
+
+
+@pytest.mark.parametrize("weights", ["none", "float"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(15))
+def test_batch4_prominent_group(seed, directed, weights):
+    pytest.importorskip("pandas")
+    G = graph_for(seed, directed, weights)
+    if len(G) > 12:  # NetworkX's search is slow
+        G = G.subgraph(list(G)[:12]).copy()
+    weight = None if weights == "none" else "weight"
+    for k in [0, 1, 3, len(G) + 1]:
+        for greedy in [False, True]:
+            exact_outcome(nx.prominent_group, G, k, weight=weight, greedy=greedy)
+        exact_outcome(nx.prominent_group, G, k, weight=weight, normalized=False, endpoints=True)
+    exact_outcome(nx.prominent_group, G, 2, C=list(G)[:2])

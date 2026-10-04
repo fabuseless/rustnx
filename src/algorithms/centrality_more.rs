@@ -1189,3 +1189,197 @@ pub fn reverse_reach_counts(pred: &Csr, n: usize, targets: &[u32]) -> Vec<u32> {
         })
         .collect()
 }
+
+/// `prominent_group`'s candidate-list sort and heuristic.
+type ClSort<'a> = dyn Fn(&[f64], &[u32]) -> Result<Vec<u32>, MissingDistance> + 'a;
+type Heuristic<'a> = dyn Fn(&[f64], &[u32], usize) -> Result<f64, MissingDistance> + 'a;
+
+/// One node of `prominent_group`'s search tree (`DF_tree`). `sigma` and
+/// `betweenness` (`B[x][y]`, NetworkX's DataFrame column `x`, row `y`) are
+/// shared with the parent when unchanged.
+struct SearchNode {
+    mats: std::rc::Rc<(Vec<f64>, Vec<f64>)>,
+    cl: Vec<u32>,
+    cont: std::rc::Rc<Vec<f64>>,
+    gm: Vec<u32>,
+    gbc: f64,
+    heu: f64,
+}
+
+/// `prominent_group(G, k)` with `C=None`, where the group nodes are all of
+/// `G` in order: `(max_GBC, max_group)` before endpoint and normalization
+/// adjustments, `max_group` being `None` while NetworkX keeps its initial
+/// `0, []`. `rank` orders nodes as Python compares them (NetworkX sorts
+/// `(score, node)` tuples). `Err` where NetworkX raises (`KeyError` or
+/// `IndexError`) or would sort NaN.
+pub fn prominent_group(
+    data: &GroupData,
+    k: usize,
+    greedy: bool,
+    rank: &[u32],
+) -> Result<(f64, Option<Vec<u32>>), MissingDistance> {
+    let n = data.reach_len.len();
+    let diag = |b: &[f64]| -> Vec<f64> { (0..n).map(|i| b[i * n + i]).collect() };
+    let sorted_cl = |cont: &[f64], gm: &[u32]| -> Result<Vec<u32>, MissingDistance> {
+        if cont.iter().any(|x| x.is_nan()) {
+            return Err(MissingDistance);
+        }
+        let mut cl: Vec<u32> = (0..n as u32).filter(|v| !gm.contains(v)).collect();
+        // sorted(zip(diag, nodes), reverse=True)
+        cl.sort_unstable_by(|&a, &b| {
+            let (a, b) = (a as usize, b as usize);
+            cont[b].total_cmp(&cont[a]).then(rank[b].cmp(&rank[a]))
+        });
+        Ok(cl)
+    };
+    let heuristic = |cont: &[f64], cl: &[u32], need: usize| -> Result<f64, MissingDistance> {
+        if need > cl.len() {
+            return Err(MissingDistance); // IndexError
+        }
+        Ok(cl[..need].iter().fold(0.0, |h, &v| h + cont[v as usize]))
+    };
+    let pb = data.pb.clone();
+    let cont = diag(&pb);
+    let cl = sorted_cl(&cont, &[])?;
+    let heu = heuristic(&cont, &cl, k)?;
+    let root = SearchNode {
+        mats: std::rc::Rc::new((data.sigma.clone(), pb)),
+        cl,
+        cont: std::rc::Rc::new(cont),
+        gm: Vec::new(),
+        gbc: 0.0,
+        heu,
+    };
+
+    struct Search<'a> {
+        data: &'a GroupData,
+        n: usize,
+        k: usize,
+        greedy: bool,
+        max_gbc: f64,
+        max_group: Option<Vec<u32>>,
+    }
+
+    impl Search<'_> {
+        /// `_heuristic`: the plus child (and the minus child unless greedy).
+        fn children(
+            &self,
+            root: &SearchNode,
+            sorted_cl: &ClSort,
+            heuristic: &Heuristic,
+        ) -> Result<(SearchNode, Option<SearchNode>), MissingDistance> {
+            let n = self.n;
+            let (d, reached) = (&self.data.dist, &self.data.reached);
+            let (s, b) = (&root.mats.0, &root.mats.1);
+            let a = root.cl[0] as usize;
+            let mut gm = root.gm.clone();
+            gm.push(a as u32);
+            let gbc = root.gbc + root.cont[a];
+            let mut ps = vec![0.0; n * n];
+            let mut pbm = vec![0.0; n * n];
+            for x in 0..n {
+                for y in 0..n {
+                    let (mut dxvy, mut dxyv, mut dvxy) = (0.0, 0.0, 0.0);
+                    if !(s[x * n + y] == 0.0 || s[x * n + a] == 0.0 || s[a * n + y] == 0.0) {
+                        if !reached[y * n + a] {
+                            return Err(MissingDistance);
+                        }
+                        if d[x * n + a] == d[x * n + y] + d[y * n + a] {
+                            dxyv = s[x * n + y] * s[y * n + a] / s[x * n + a];
+                        }
+                        if d[x * n + y] == d[x * n + a] + d[a * n + y] {
+                            dxvy = s[x * n + a] * s[a * n + y] / s[x * n + y];
+                        }
+                        if !reached[a * n + x] {
+                            return Err(MissingDistance);
+                        }
+                        if d[a * n + y] == d[a * n + x] + d[x * n + y] {
+                            dvxy = s[a * n + x] * s[x * n + y] / s[a * n + y];
+                        }
+                    }
+                    ps[x * n + y] = s[x * n + y] * (1.0 - dxvy);
+                    let mut v = b[x * n + y] - b[x * n + y] * dxvy;
+                    if y != a {
+                        v -= b[x * n + a] * dxyv;
+                    }
+                    if x != a {
+                        v -= b[a * n + y] * dvxy;
+                    }
+                    pbm[x * n + y] = v;
+                }
+            }
+            let cont: Vec<f64> = (0..n).map(|i| pbm[i * n + i]).collect();
+            let cl = sorted_cl(&cont, &gm)?;
+            let heu = heuristic(&cont, &cl, self.k - gm.len().min(self.k))?;
+            let plus = SearchNode {
+                mats: std::rc::Rc::new((ps, pbm)),
+                cl,
+                cont: std::rc::Rc::new(cont),
+                gm,
+                gbc,
+                heu,
+            };
+            let minus = if self.greedy {
+                None
+            } else {
+                let cl = root.cl[1..].to_vec();
+                let heu = heuristic(&root.cont, &cl, self.k - root.gm.len())?;
+                Some(SearchNode {
+                    mats: root.mats.clone(),
+                    cl,
+                    cont: root.cont.clone(),
+                    gm: root.gm.clone(),
+                    gbc: root.gbc,
+                    heu,
+                })
+            };
+            Ok((plus, minus))
+        }
+
+        /// `_dfbnb`
+        fn dfbnb(
+            &mut self,
+            root: &SearchNode,
+            sorted_cl: &ClSort,
+            heuristic: &Heuristic,
+        ) -> Result<(), MissingDistance> {
+            let k = self.k;
+            if root.gm.len() == k && root.gbc > self.max_gbc {
+                self.max_gbc = root.gbc;
+                self.max_group = Some(root.gm.clone());
+                return Ok(());
+            }
+            if root.gm.len() == k
+                || root.cl.len() <= k.saturating_sub(root.gm.len())
+                || root.gbc + root.heu <= self.max_gbc
+            {
+                return Ok(());
+            }
+            let (plus, minus) = self.children(root, sorted_cl, heuristic)?;
+            match minus {
+                None => self.dfbnb(&plus, sorted_cl, heuristic)?,
+                Some(minus) => {
+                    if plus.gbc + plus.heu > minus.gbc + minus.heu {
+                        self.dfbnb(&plus, sorted_cl, heuristic)?;
+                        self.dfbnb(&minus, sorted_cl, heuristic)?;
+                    } else {
+                        self.dfbnb(&minus, sorted_cl, heuristic)?;
+                        self.dfbnb(&plus, sorted_cl, heuristic)?;
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
+
+    let mut search = Search {
+        data,
+        n,
+        k,
+        greedy,
+        max_gbc: 0.0,
+        max_group: None,
+    };
+    search.dfbnb(&root, &sorted_cl, &heuristic)?;
+    Ok((search.max_gbc, search.max_group))
+}

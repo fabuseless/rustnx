@@ -29,7 +29,8 @@ SECTIONS = [
         "newman_betweenness_centrality", "edge_load_centrality", "percolation_centrality",
         "group_betweenness_centrality", "group_closeness_centrality", "group_degree_centrality",
         "group_in_degree_centrality", "group_out_degree_centrality",
-        "local_reaching_centrality", "global_reaching_centrality", "voterank", "dispersion",
+        "prominent_group", "local_reaching_centrality", "global_reaching_centrality", "voterank",
+        "dispersion",
     ]),
     ("Shortest paths: lengths", [
         "single_source_shortest_path_length", "single_source_dijkstra_path_length",
@@ -90,6 +91,7 @@ NOTES = {
     "edge_load_centrality": "Parallel. Bit-for-bit identical.",
     "percolation_centrality": "Parallel. Bit-for-bit identical. Non-numeric states, 2-node graphs and states that would divide by zero fall back.",
     "group_betweenness_centrality": "Bit-for-bit identical, following the installed NetworkX's algorithm (3.7 changed it). Cases where NetworkX raises `KeyError` (directed graphs before 3.7) fall back, as does the null graph.",
+    "prominent_group": "Bit-for-bit identical search. `C`, `k` outside 0 to n, non-int/str node labels, and cases where NetworkX raises fall back. Needs pandas installed, like NetworkX.",
     "group_closeness_centrality": "Negative weights fall back.",
     "group_degree_centrality": "Missing nodes and one-shot iterators fall back.",
     "group_in_degree_centrality": "Missing nodes and one-shot iterators fall back.",

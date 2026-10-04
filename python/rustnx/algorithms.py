@@ -100,6 +100,7 @@ __all__ = [
     "pagerank",
     "percolation_centrality",
     "periphery",
+    "prominent_group",
     "radius",
     "shortest_path",
     "shortest_path_length",
@@ -2292,3 +2293,46 @@ def group_betweenness_centrality(G, C, normalized=True, weight=None, endpoints=F
     if list_of_groups:
         return GBC
     return GBC[0]
+
+
+def prominent_group(G, k, weight=None, C=None, endpoints=False, normalized=True, greedy=False):
+    try:
+        import pandas  # noqa: F401  (NetworkX imports it first)
+    except ImportError:
+        raise NotImplementedError("NetworkX needs pandas here") from None
+    if C is not None:
+        # NetworkX's DataFrame then pairs scores with nodes by position
+        # across differently ordered rows and columns.
+        raise NotImplementedError("rustnx does not support C")
+    n = len(G)
+    if type(k) is not int or not 0 <= k <= n or n == 0:
+        raise NotImplementedError("NetworkX raises or loops here")
+    rank = _node_rank(G)
+    weight = _unhidden_weight(G, weight)
+    pre = G._core.group_preprocessing(list(range(n)), weight)
+    found = pre.prominent(k, bool(greedy), rank)
+    if found is None:
+        raise NotImplementedError("NetworkX raises here")
+    max_GBC, group = found
+    if group is None:
+        max_GBC, group = 0, []
+    reached, _, reach_len, _ = pre.reach()
+    v = n
+    if not endpoints:
+        scale = 0
+        if _is_strongly_or_plainly_connected(G):
+            scale = k * (2 * v - k - 1)
+        if scale == 0:
+            members = set(group)
+            for a in group:
+                inside = sum(1 for b in members if b != a and reached[a * n + b])
+                scale += inside + 2 * (reach_len[a] - 1 - inside)
+        max_GBC -= scale
+    if normalized:
+        scale = 1 / ((v - k) * (v - k - 1))
+        max_GBC *= scale
+    elif not G.is_directed():
+        max_GBC /= 2
+    max_GBC = float(f"{max_GBC:.2f}")
+    nodes = G._nodes
+    return max_GBC, [nodes[i] for i in group]

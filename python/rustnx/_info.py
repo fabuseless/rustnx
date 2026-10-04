@@ -87,6 +87,7 @@ FUNCTIONS = {
     "pagerank": {},
     "percolation_centrality": {},
     "periphery": {},
+    "prominent_group": {},
     "radius": {},
     "shortest_path": {},
     "shortest_path_length": {},

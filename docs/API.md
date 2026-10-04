@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 99 NetworkX functions. Call them as usual (for
+rustnx implements 100 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -46,6 +46,7 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.group_degree_centrality` | `S` | no | NetworkX | Missing nodes and one-shot iterators fall back. |
 | `nx.group_in_degree_centrality` | `S` | no | NetworkX | Missing nodes and one-shot iterators fall back. |
 | `nx.group_out_degree_centrality` | `S` | no | NetworkX | Missing nodes and one-shot iterators fall back. |
+| `nx.prominent_group` | `k`, `weight`, `C`, `endpoints`, `normalized`, `greedy` | no | rustnx | Bit-for-bit identical search. `C`, `k` outside 0 to n, non-int/str node labels, and cases where NetworkX raises fall back. Needs pandas installed, like NetworkX. |
 | `nx.local_reaching_centrality` | `v`, `paths`, `weight`, `normalized` | no | NetworkX | `paths` falls back. Weighted: all edges need an int or float weight (not mixed, not zero), else it falls back. |
 | `nx.global_reaching_centrality` | `weight`, `normalized` | no | rustnx | Weighted: as `local_reaching_centrality`. Gives the installed NetworkX's warnings (3.4). |
 | `nx.voterank` | `number_of_nodes` | no | rustnx | Bit-for-bit identical. |

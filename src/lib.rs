@@ -1247,6 +1247,25 @@ impl GroupPre {
         )
     }
 
+    /// `prominent_group` search over all nodes: `(max_GBC, max_group)`
+    /// (`None` for NetworkX's initial `0, []`), or `None` where NetworkX
+    /// raises.
+    #[allow(clippy::type_complexity)]
+    fn prominent(
+        &self,
+        py: Python<'_>,
+        k: usize,
+        greedy: bool,
+        rank: Vec<u32>,
+    ) -> PyResult<Option<(f64, Option<Vec<u32>>)>> {
+        if rank.len() != self.k || self.data.reach_len.len() != self.k {
+            return Err(PyValueError::new_err(
+                "rank length must equal the node count",
+            ));
+        }
+        Ok(py.detach(|| centrality_more::prominent_group(&self.data, k, greedy, &rank).ok()))
+    }
+
     /// `PB_m[v][v]` for each `v` of one group, or `None` where NetworkX
     /// raises `KeyError`.
     #[pyo3(signature = (group, y_orders=None))]
