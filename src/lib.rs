@@ -11,14 +11,14 @@ mod serialize;
 
 use pyo3::exceptions::{PyIndexError, PyNotImplementedError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyFloat, PyInt, PyList, PyTuple};
 
 use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
     centrality, centrality_more, cluster, cores_more, dag, directed, distance, paths, spectral,
-    structure, structure_more,
+    structure, structure_more, trees_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -1941,6 +1941,241 @@ impl CoreGraph {
         Ok(py.detach(|| structure_more::prufer(&self.succ, self.n, &pos, &degree)))
     }
 
+    // --- Batch 8: trees, branchings and lowest common ancestors ---
+
+    /// NetworkX's `maximum_branching` on edges `us[k] -> vs[k]` (key `k`)
+    /// with Python int or float `weights` and partition states (0 open,
+    /// 1 included, 2 excluded): the final branching's keys and, for each
+    /// contraction from the last, its circuit and the key removed. `None`
+    /// where rustnx can't follow NetworkX (other weight types, ints leaving
+    /// `i64`, inputs on which NetworkX raises).
+    #[staticmethod]
+    #[allow(clippy::type_complexity)]
+    fn edmonds<'py>(
+        py: Python<'py>,
+        n: usize,
+        us: Vec<u32>,
+        vs: Vec<u32>,
+        weights: Vec<Bound<'py, PyAny>>,
+        part: Vec<u8>,
+    ) -> PyResult<Option<(Vec<u32>, Vec<(Vec<u32>, u32)>)>> {
+        let m = us.len();
+        if vs.len() != m || weights.len() != m || part.len() != m {
+            return Err(PyValueError::new_err("edge arrays differ in length"));
+        }
+        if us.iter().chain(&vs).any(|&x| x as usize >= n) {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        let Some(w) = weights.iter().map(py_num).collect::<Option<Vec<_>>>() else {
+            return Ok(None);
+        };
+        Ok(py
+            .detach(|| trees_more::edmonds(n, &us, &vs, &w, &part))
+            .map(|b| (b.initial, b.log)))
+    }
+
+    /// `greedy_branching`'s edges (indices, in the order they are added),
+    /// sorting by `(weight, rank[u], rank[v])`. `None` for weights that
+    /// aren't Python ints or floats, or NaN.
+    #[staticmethod]
+    fn greedy_branching<'py>(
+        py: Python<'py>,
+        us: Vec<u32>,
+        vs: Vec<u32>,
+        weights: Vec<Bound<'py, PyAny>>,
+        rank: Vec<u32>,
+        maximum: bool,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let n = rank.len();
+        if vs.len() != us.len() || weights.len() != us.len() {
+            return Err(PyValueError::new_err("edge arrays differ in length"));
+        }
+        if us.iter().chain(&vs).any(|&x| x as usize >= n) {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        let w: Option<Vec<_>> = weights
+            .iter()
+            .map(|x| py_num(x).filter(|w| !matches!(w, trees_more::Num::Float(f) if f.is_nan())))
+            .collect();
+        let Some(w) = w else { return Ok(None) };
+        Ok(Some(py.detach(|| {
+            trees_more::greedy_branching(n, &us, &vs, &w, &rank, maximum)
+        })))
+    }
+
+    /// `prim_mst_edges` (undirected), growing a tree from each of `starts`.
+    #[pyo3(signature = (starts, weight=None, minimum=true))]
+    fn prim_edges(
+        &self,
+        py: Python<'_>,
+        starts: Vec<u32>,
+        weight: Option<&str>,
+        minimum: bool,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        let starts = self.sources_or_all(Some(starts))?;
+        let w = self.weight_slice(weight, false)?;
+        let sign = if minimum { 1.0 } else { -1.0 };
+        Ok(py.detach(|| {
+            trees_more::prim(&self.succ, w, &starts, sign)
+                .into_iter()
+                .unzip()
+        }))
+    }
+
+    /// Kruskal with a partition: `state` per edge in `G.edges` order (0
+    /// open, 1 included, 2 excluded); kept edges as `(us, vs)`.
+    #[pyo3(signature = (state, weight=None, maximum=false))]
+    fn kruskal_partition(
+        &self,
+        py: Python<'_>,
+        state: Vec<u8>,
+        weight: Option<&str>,
+        maximum: bool,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        let w = self.weight_slice(weight, false)?;
+        let mut edges = Vec::new();
+        for u in 0..self.n {
+            for e in self.succ.range(u) {
+                let v = self.succ.targets[e];
+                if self.directed || v as usize >= u {
+                    edges.push((u as u32, v, w.map_or(1.0, |w| w[e])));
+                }
+            }
+        }
+        if state.len() != edges.len() {
+            return Err(PyValueError::new_err("one state per edge is needed"));
+        }
+        Ok(py.detach(|| {
+            trees_more::kruskal_partition(self.n, &edges, &state, maximum)
+                .into_iter()
+                .map(|i| (edges[i as usize].0, edges[i as usize].1))
+                .unzip()
+        }))
+    }
+
+    /// `sum()` of the attribute over `G.edges` (`branching_weight`): an
+    /// int if every value is an int, else CPython's float `sum()`.
+    fn edge_weight_sum<'py>(
+        &self,
+        py: Python<'py>,
+        weight: &str,
+        compensated: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let w = self.weight_slice(Some(weight), false)?.unwrap_or(&[]);
+        let values = (0..self.n).flat_map(|u| {
+            self.succ
+                .range(u)
+                .filter(move |&e| self.directed || self.succ.targets[e] as usize >= u)
+                .map(|e| w[e])
+        });
+        if self.weights_info(Some(weight)).0 {
+            let total: i128 = values.map(|x| x as i128).sum();
+            Ok(total.into_pyobject(py)?.into_any())
+        } else {
+            let total = spectral::py_sum(values, compensated);
+            Ok(total.into_pyobject(py)?.into_any())
+        }
+    }
+
+    /// `from_prufer_sequence`'s edges (before the orphans' edge), with `-1`
+    /// marking out-of-range entries: `(us, vs, error)`, where `error` is
+    /// the index of the first bad entry, or `-2` if NetworkX's search for a
+    /// leaf would fail.
+    #[staticmethod]
+    fn prufer_edges(seq: Vec<i64>) -> PyResult<(Vec<u32>, Vec<u32>, i64)> {
+        let n = seq.len() + 2;
+        if seq.iter().any(|&v| v < -1 || v >= n as i64) {
+            return Err(PyValueError::new_err("entries must be in -1..n"));
+        }
+        Ok(match trees_more::prufer_edges(&seq) {
+            Ok(edges) => {
+                let (us, vs) = edges.into_iter().unzip();
+                (us, vs, -1)
+            }
+            Err(usize::MAX) => (Vec::new(), Vec::new(), -2),
+            Err(i) => (Vec::new(), Vec::new(), i as i64),
+        })
+    }
+
+    /// `from_nested_tuple(sequence, sensible_relabeling)`: node order and
+    /// edges in insertion order. `None` if a level has no `len()` or can't
+    /// be iterated, or nesting is deeper than `max_depth`.
+    #[staticmethod]
+    #[allow(clippy::type_complexity)]
+    fn nested_tuple_tree(
+        py: Python<'_>,
+        sequence: &Bound<'_, PyAny>,
+        sensible: bool,
+        max_depth: usize,
+    ) -> PyResult<Option<(Vec<u32>, Vec<u32>, Vec<u32>)>> {
+        let mut children = Vec::new();
+        if parse_nested(sequence, 0, max_depth, &mut children).is_none() {
+            return Ok(None);
+        }
+        let shape = trees_more::Shape { children };
+        let (order, edges) = py.detach(|| trees_more::nested_tuple_tree(&shape, sensible));
+        let (us, vs) = edges.into_iter().unzip();
+        Ok(Some((order, us, vs)))
+    }
+
+    /// `to_nested_tuple(T, root, canonical_form=True)` for a tree, or `None`
+    /// if the tree is more than `max_height` levels deep.
+    fn canonical_nested_tuple<'py>(
+        &self,
+        py: Python<'py>,
+        root: usize,
+        max_height: usize,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        self.check_index(root)?;
+        let (post, children) =
+            py.detach(|| trees_more::canonical_children(&self.succ, root as u32));
+        let mut depth = vec![0usize; self.n];
+        for &x in post.iter().rev() {
+            for &c in &children[x as usize] {
+                depth[c as usize] = depth[x as usize] + 1;
+            }
+        }
+        if depth.iter().any(|&d| d > max_height) {
+            return Ok(None);
+        }
+        let mut tuples: Vec<Option<Bound<'py, PyTuple>>> = vec![None; self.n];
+        for &x in &post {
+            let items: Vec<Bound<'py, PyTuple>> = children[x as usize]
+                .iter()
+                .map(|&c| tuples[c as usize].take().expect("child tuple"))
+                .collect();
+            tuples[x as usize] = Some(PyTuple::new(py, items)?);
+        }
+        Ok(tuples[root].take().map(|t| t.into_any()))
+    }
+
+    /// Lowest common ancestor queries for `all_pairs_lowest_common_ancestor`.
+    fn dag_lca(&self) -> DagLca {
+        let copy = |c: &graph::Csr| graph::Csr {
+            offsets: c.offsets.clone(),
+            targets: c.targets.clone(),
+        };
+        DagLca(trees_more::DagLca::new(
+            copy(&self.succ),
+            copy(self.adj(true)),
+        ))
+    }
+
+    /// `tree_all_pairs_lowest_common_ancestor(G, root)` without `pairs`;
+    /// each node's parent is its first predecessor in NetworkX's order.
+    fn tree_lca(&self, root: usize) -> PyResult<TreeLca> {
+        self.check_index(root)?;
+        let (pred, _) = self.reverse_exact_order(None)?;
+        let parent = (0..self.n)
+            .map(|v| pred.neighbors(v).first().copied().unwrap_or(u32::MAX))
+            .collect();
+        Ok(TreeLca(trees_more::TreeLca::new(
+            &self.succ,
+            root as u32,
+            parent,
+        )))
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -2443,6 +2678,78 @@ impl RootLeafPaths {
     }
 }
 
+/// A Python int (within `i64`) or float as a `Num`; `None` otherwise.
+fn py_num(value: &Bound<'_, PyAny>) -> Option<trees_more::Num> {
+    if let Ok(f) = value.cast::<PyFloat>() {
+        return Some(trees_more::Num::Float(f.value()));
+    }
+    if value.cast::<PyInt>().is_ok() {
+        return value.extract::<i64>().ok().map(trees_more::Num::Int);
+    }
+    None
+}
+
+/// Reads a nested tuple as `from_nested_tuple` walks it: `len()` first,
+/// then the children (only for a non-empty level). Node ids in preorder.
+fn parse_nested(
+    obj: &Bound<'_, PyAny>,
+    depth: usize,
+    max_depth: usize,
+    children: &mut Vec<Vec<u32>>,
+) -> Option<u32> {
+    if depth > max_depth {
+        return None;
+    }
+    let id = children.len() as u32;
+    children.push(Vec::new());
+    if obj.len().ok()? == 0 {
+        return Some(id);
+    }
+    for child in obj.try_iter().ok()? {
+        let child = parse_nested(&child.ok()?, depth + 1, max_depth, children)?;
+        children[id as usize].push(child);
+    }
+    Some(id)
+}
+
+/// Cached ancestor sets for `all_pairs_lowest_common_ancestor`.
+#[pyclass(module = "rustnx._core")]
+pub struct DagLca(trees_more::DagLca);
+
+#[pymethods]
+impl DagLca {
+    /// Each pair's lowest common ancestor, `-1` if there is none, or `-2`
+    /// if there are several lowest ones.
+    fn query(&mut self, py: Python<'_>, us: Vec<u32>, vs: Vec<u32>) -> PyResult<Vec<i64>> {
+        let n = self.0.node_count();
+        if us.len() != vs.len() || us.iter().chain(&vs).any(|&x| x as usize >= n) {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        let inner = &mut self.0;
+        Ok(py.detach(|| inner.query(&us, &vs)))
+    }
+}
+
+/// Lazy `tree_all_pairs_lowest_common_ancestor` results.
+#[pyclass(module = "rustnx._core")]
+pub struct TreeLca(trees_more::TreeLca);
+
+#[pymethods]
+impl TreeLca {
+    /// The next results as `(vs, nodes, ancestors)`; empty when done.
+    fn next_batch(&mut self, py: Python<'_>, limit: usize) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+        let inner = &mut self.0;
+        let items = py.detach(|| inner.next_batch(limit));
+        let mut out = (Vec::new(), Vec::new(), Vec::new());
+        for (v, node, a) in items {
+            out.0.push(v);
+            out.1.push(node);
+            out.2.push(a);
+        }
+        out
+    }
+}
+
 fn unzip3(items: Vec<(u32, u32, u8)>) -> (Vec<u32>, Vec<u32>, Vec<u8>) {
     let mut us = Vec::with_capacity(items.len());
     let mut vs = Vec::with_capacity(items.len());
@@ -2470,6 +2777,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ClosureDag>()?;
     m.add_class::<RootLeafPaths>()?;
     m.add_class::<GroupPre>()?;
+    m.add_class::<DagLca>()?;
+    m.add_class::<TreeLca>()?;
     m.add_function(wrap_pyfunction!(graph::build_graph, m)?)?;
     m.add_function(wrap_pyfunction!(serialize::_core_graph_from_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(native::build_native, m)?)?;
