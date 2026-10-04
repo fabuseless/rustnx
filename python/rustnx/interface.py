@@ -129,7 +129,6 @@ _LINEAR_TIME = {
     "is_directed_acyclic_graph",
     "is_distance_regular",
     "is_dominating_set",
-    "is_empty",
     "is_equitable",
     "is_eulerian",
     "is_forest",

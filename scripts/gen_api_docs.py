@@ -229,7 +229,7 @@ SECTIONS = [
     ("Matrices and conversion", [
         "to_scipy_sparse_array", "adjacency_matrix", "laplacian_matrix", "incidence_matrix",
         "to_numpy_array", "biadjacency_matrix", "to_dict_of_lists", "number_of_selfloops",
-        "is_empty", "is_weighted", "is_negatively_weighted", "get_node_attributes",
+        "is_weighted", "is_negatively_weighted", "get_node_attributes",
         "get_edge_attributes", "relabel_nodes", "convert_node_labels_to_integers",
         "from_dict_of_lists", "from_dict_of_dicts", "from_edgelist", "from_numpy_array",
         "from_scipy_sparse_array", "from_biadjacency_matrix",
@@ -681,7 +681,6 @@ NOTES.update({
     "biadjacency_matrix": SPARSE + " A `row_order` that isn't a list or tuple falls back.",
     "to_dict_of_lists": "Neighbor objects come from the graph's own adjacency dicts. A `nodelist` that isn't a list, tuple, set or dict, or names missing nodes, falls back.",
     "number_of_selfloops": "Dispatchable from NetworkX 3.5 on.",
-    "is_empty": "Dispatchable from NetworkX 3.5 on.",
     "is_weighted": "Reads the original graph's edge data in Rust. Dispatchable from NetworkX 3.5 on; native graphs fall back.",
     "is_negatively_weighted": "`None` weights and `weight=None` fall back.",
     "get_node_attributes": "Reads the original graph's node data in Rust. Dispatchable from NetworkX 3.5 on.",

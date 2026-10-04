@@ -5200,8 +5200,6 @@ def test_batch19_queries(seed, directed, weights):
     # The names below are dispatchable from NetworkX 3.5 on.
     if _b19_registered("is_empty"):
         exact_outcome(nx.number_of_selfloops, G)
-        exact_outcome(nx.is_empty, G)
-        exact_outcome(nx.is_empty, nx.empty_graph(5, create_using=G.__class__))
         for weight in ["weight", "label", "other", None]:
             exact_outcome(nx.is_weighted, G, weight=weight)
             for edge in edges[:2] + [("missing", nodes[0])]:
@@ -5433,7 +5431,6 @@ def test_batch19_runs_in_rust():
     if _b19_registered("is_empty"):
         calls += [
             lambda: nx.number_of_selfloops(G, backend="rustnx"),
-            lambda: nx.is_empty(G, backend="rustnx"),
             lambda: nx.is_weighted(G, backend="rustnx"),
             lambda: nx.get_node_attributes(G, "x", backend="rustnx"),
             lambda: nx.get_edge_attributes(G, "weight", backend="rustnx"),

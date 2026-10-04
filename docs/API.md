@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 405 NetworkX functions. Call them as usual (for
+rustnx implements 404 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -633,7 +633,6 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.bipartite.biadjacency_matrix` | `row_order`, `column_order`, `dtype`, `weight`, `format` | no | NetworkX | Rust builds the COO coordinates in NetworkX's edge order; SciPy assembles the array exactly as for NetworkX (same dtype, format and index arrays). A `row_order` that isn't a list or tuple falls back. |
 | `nx.to_dict_of_lists` | `nodelist` | no | NetworkX | Neighbor objects come from the graph's own adjacency dicts. A `nodelist` that isn't a list, tuple, set or dict, or names missing nodes, falls back. |
 | `nx.number_of_selfloops` | none | no | NetworkX | Dispatchable from NetworkX 3.5 on. |
-| `nx.is_empty` | none | no | NetworkX | Dispatchable from NetworkX 3.5 on. |
 | `nx.is_weighted` | `edge`, `weight` | no | NetworkX | Reads the original graph's edge data in Rust. Dispatchable from NetworkX 3.5 on; native graphs fall back. |
 | `nx.is_negatively_weighted` | `edge`, `weight` | no | NetworkX | `None` weights and `weight=None` fall back. |
 | `nx.get_node_attributes` | `name`, `default` | no | NetworkX | Reads the original graph's node data in Rust. Dispatchable from NetworkX 3.5 on. |

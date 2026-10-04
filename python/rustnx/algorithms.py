@@ -230,7 +230,6 @@ __all__ = [
     "is_directed_acyclic_graph",
     "is_distance_regular",
     "is_dominating_set",
-    "is_empty",
     "is_equitable",
     "is_eulerian",
     "is_forest",
@@ -10081,10 +10080,6 @@ def to_dict_of_lists(G, nodelist=None):
 
 def number_of_selfloops(G):
     return G._core.number_of_selfloops()
-
-
-def is_empty(G):
-    return G._core.number_of_edges() == 0
 
 
 def is_weighted(G, edge=None, weight="weight"):
