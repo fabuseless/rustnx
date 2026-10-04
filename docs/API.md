@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 156 NetworkX functions. Call them as usual (for
+rustnx implements 179 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -248,6 +248,9 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 |---|---|---|---|---|
 | `nx.is_tree` | none | no | NetworkX |  |
 | `nx.is_forest` | none | no | NetworkX |  |
+| `nx.is_arborescence` | none | no | NetworkX |  |
+| `nx.is_branching` | none | no | NetworkX |  |
+| `nx.to_prufer_sequence` | none | no | NetworkX | Bit-for-bit identical. |
 
 ### Spanning trees
 
@@ -257,6 +260,36 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.maximum_spanning_edges` | `algorithm`, `weight`, `keys`, `data`, `ignore_nan` | no | NetworkX | Kruskal; Prim and Borůvka fall back. Yields the graph's own edge data dicts. |
 | `nx.minimum_spanning_tree` | `weight`, `algorithm`, `ignore_nan` | no | NetworkX | Kruskal; Prim and Borůvka fall back. |
 | `nx.maximum_spanning_tree` | `weight`, `algorithm`, `ignore_nan` | no | NetworkX | Kruskal; Prim and Borůvka fall back. |
+| `nx.kruskal_mst_edges` | `minimum`, `weight`, `keys`, `data`, `ignore_nan`, `partition` | no | NetworkX | `partition` falls back. Yields the graph's own edge data dicts. |
+
+### Structural tests
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.bridges` | `root` | no | NetworkX | `root` falls back (NetworkX then lists a subgraph copy's edges, in set order). |
+| `nx.has_bridges` | `root` | no | NetworkX |  |
+| `nx.local_bridges` | `with_span`, `weight` | no | NetworkX | Spans with float, mixed or negative weights fall back. |
+| `nx.chain_decomposition` | `root` | no | NetworkX | Computed when iteration starts, as NetworkX does. |
+| `nx.isolates` | none | yes | NetworkX |  |
+| `nx.number_of_isolates` | none | yes | NetworkX |  |
+| `nx.is_regular` | none | no | NetworkX |  |
+| `nx.is_k_regular` | `k` | no | NetworkX | A non-integer `k` falls back. |
+| `nx.is_tournament` | none | no | NetworkX |  |
+| `nx.immediate_dominators` | `start` | yes | NetworkX | Follows the installed NetworkX on whether `start` is included (3.7 leaves it out). |
+| `nx.dominance_frontiers` | `start` | yes | NetworkX | Follows the installed NetworkX's version (3.7 adds `start` last). Sets iterate in NetworkX's order. |
+
+### Cycles and Euler tours
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.is_eulerian` | none | no | NetworkX |  |
+| `nx.has_eulerian_path` | `source` | no | NetworkX | A `source` not in the graph falls back. |
+| `nx.is_semieulerian` | none | no | NetworkX |  |
+| `nx.eulerian_circuit` | `source`, `keys` | no | NetworkX | Computed when iteration starts, as NetworkX does. A `source` not in the graph falls back. |
+| `nx.eulerian_path` | `source`, `keys` | no | NetworkX | Computed when iteration starts, as NetworkX does. A `source` not in the graph falls back. |
+| `nx.cycle_basis` | `root` | no | NetworkX | A `root` not in the graph falls back. |
+| `nx.find_cycle` | `source`, `orientation` | no | NetworkX | A `source` that isn't one node of the graph, and invalid orientations on directed graphs, fall back. |
+| `nx.girth` | none | no | rustnx |  |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 

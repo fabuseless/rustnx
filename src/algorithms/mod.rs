@@ -10,4 +10,5 @@ pub mod paths;
 pub mod shortest_paths_more;
 pub mod spectral;
 pub mod structure;
+pub mod structure_more;
 pub mod traversal;

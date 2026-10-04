@@ -1362,3 +1362,190 @@ def test_batch5_graph_changes_during_iteration():
     G.add_edge("x", "y")
     with pytest.raises(RuntimeError):
         list(it)
+
+
+# --- Batch 6: trees and structural tests ------------------------------------------
+
+
+def _eulerian_graph(seed, directed):
+    """A random Eulerian graph: a closed walk's edges (no repeats), plus
+    sometimes one edge removed so only a path remains."""
+    rng = random.Random(seed)
+    n = rng.randint(2, 12)
+    labels = [f"v{i}" for i in range(n)] if seed % 2 else list(range(n))
+    G = nx.DiGraph() if directed else nx.Graph()
+    v = labels[0]
+    G.add_node(v)
+    for _ in range(rng.randint(2, 30)):
+        w = rng.choice(labels)
+        if w != v and not G.has_edge(v, w):
+            G.add_edge(v, w)
+            v = w
+    if v != labels[0] and not G.has_edge(v, labels[0]):
+        G.add_edge(v, labels[0])
+    if seed % 3 == 0 and G.number_of_edges():
+        G.remove_edge(*list(G.edges)[rng.randrange(G.number_of_edges())])
+    if seed % 5 == 0:
+        G.add_edge(labels[0], labels[0])
+    return G
+
+
+def _batch6_graphs(seed, directed):
+    G = graph_for(seed, directed)
+    yield G
+    rng = random.Random(seed)
+    T = nx.random_labeled_tree(rng.randint(1, 30), seed=seed) if hasattr(nx, "random_labeled_tree") else nx.random_tree(rng.randint(1, 30), seed=seed)
+    if directed:
+        T = nx.bfs_tree(T, 0, backend="networkx")
+    yield T
+    yield _eulerian_graph(seed, directed)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(60))
+def test_batch6_structure(seed, directed):
+    for G in _batch6_graphs(seed, directed):
+        nodes = list(G)
+        exact_outcome(listed(nx.isolates), G)
+        exact_outcome(nx.number_of_isolates, G)
+        exact_outcome(nx.is_regular, G)
+        for k in [0, 1, 2, 3, 2.0, True]:
+            exact_outcome(nx.is_k_regular, G, k)
+        exact_outcome(nx.is_tournament, G)
+        exact_outcome(nx.is_eulerian, G)
+        exact_outcome(nx.is_semieulerian, G)
+        for source in [None] + nodes[:4] + ["missing"]:
+            exact_outcome(nx.has_eulerian_path, G, source)
+            exact_outcome(listed(nx.eulerian_circuit), G, source)
+            exact_outcome(listed(nx.eulerian_path), G, source)
+        exact_outcome(nx.is_arborescence, G)
+        exact_outcome(nx.is_branching, G)
+        exact_outcome(nx.to_prufer_sequence, G)
+        exact_outcome(listed(nx.algorithms.tree.mst.kruskal_mst_edges), G, True)
+        exact_outcome(listed(nx.algorithms.tree.mst.kruskal_mst_edges), G, False, data=False)
+        for orientation in [None, "original", "reverse", "ignore", "bogus"]:
+            exact_outcome(nx.find_cycle, G, orientation=orientation)
+            for source in nodes[:3]:
+                exact_outcome(nx.find_cycle, G, source, orientation=orientation)
+        for start in nodes[:4] + ["missing"]:
+            exact_outcome(nx.immediate_dominators, G, start)
+            exact_outcome(with_set_order(nx.dominance_frontiers), G, start)
+        if not directed:
+            exact_outcome(listed(nx.bridges), G)
+            exact_outcome(nx.has_bridges, G)
+            exact_outcome(listed(nx.local_bridges), G)
+            exact_outcome(listed(nx.local_bridges), G, with_span=False)
+            exact_outcome(listed(nx.chain_decomposition), G)
+            exact_outcome(nx.cycle_basis, G)
+            exact_outcome(nx.girth, G)
+            for root in nodes[:3] + ["missing"]:
+                exact_outcome(nx.has_bridges, G, root)
+                exact_outcome(listed(nx.bridges), G, root)
+                exact_outcome(listed(nx.chain_decomposition), G, root)
+                exact_outcome(nx.cycle_basis, G, root)
+
+
+@pytest.mark.parametrize("weights", ["int", "float", "missing"])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch6_weighted(seed, weights):
+    G = graph_for(seed, False, weights)
+    exact_outcome(listed(nx.local_bridges), G, weight="weight")
+    exact_outcome(listed(nx.algorithms.tree.mst.kruskal_mst_edges), G, True)
+    exact_outcome(listed(nx.algorithms.tree.mst.kruskal_mst_edges), G, False, data=False)
+    D = graph_for(seed, True, weights)
+    exact_outcome(listed(nx.algorithms.tree.mst.kruskal_mst_edges), D, True, weight="weight")
+
+
+def test_batch6_dominators_and_cycles_on_known_graphs():
+    # Classic examples with several dominance frontiers and cycles.
+    D = nx.DiGraph([(1, 2), (2, 3), (2, 4), (3, 5), (4, 5), (5, 2), (5, 6), (6, 6), (6, 1)])
+    for start in D:
+        exact_outcome(nx.immediate_dominators, D, start)
+        exact_outcome(with_set_order(nx.dominance_frontiers), D, start)
+    exact_outcome(nx.find_cycle, nx.DiGraph([(0, 1), (2, 1), (2, 3), (3, 2)]), orientation="ignore")
+    exact_outcome(nx.find_cycle, nx.DiGraph([(0, 1), (1, 2)]))  # no cycle
+    exact_outcome(nx.find_cycle, nx.DiGraph([(0, 1), (1, 2)]), orientation="ignore")
+    for G in [nx.petersen_graph(), nx.complete_graph(5), nx.path_graph(5), nx.Graph([(0, 0)])]:
+        exact_outcome(nx.girth, G)
+        exact_outcome(nx.cycle_basis, G)
+        exact_outcome(listed(nx.chain_decomposition), G)
+        exact_outcome(listed(nx.bridges), G)
+
+
+@pytest.mark.parametrize(
+    "G",
+    [
+        nx.empty_graph(0),
+        nx.empty_graph(1),
+        nx.empty_graph(3),
+        nx.path_graph(2),
+        nx.complete_graph(4),
+        nx.Graph([(0, 0)]),
+        nx.DiGraph(),
+        nx.DiGraph([(0, 0)]),
+        nx.DiGraph([(0, 1), (1, 2), (0, 2)]),
+        nx.DiGraph([(0, 1), (1, 0)]),
+    ],
+    ids=lambda G: f"{type(G).__name__}{list(G.edges)}",
+)
+def test_batch6_small_cases(G):
+    funcs = [listed(nx.isolates), nx.number_of_isolates, nx.is_regular, nx.is_tournament,
+             nx.is_eulerian, nx.is_semieulerian, nx.has_eulerian_path, listed(nx.eulerian_circuit),
+             listed(nx.eulerian_path), nx.is_arborescence, nx.is_branching, nx.to_prufer_sequence,
+             nx.find_cycle, listed(nx.bridges), nx.has_bridges, listed(nx.local_bridges),
+             listed(nx.chain_decomposition), nx.cycle_basis, nx.girth]
+    for func in funcs:
+        exact_outcome(func, G)
+    exact_outcome(nx.is_k_regular, G, 0)
+    exact_outcome(nx.immediate_dominators, G, 0)
+    exact_outcome(with_set_order(nx.dominance_frontiers), G, 0)
+
+
+def test_batch6_prufer_labels():
+    exact_outcome(nx.to_prufer_sequence, nx.path_graph(["a", "b", "c"]))
+    T = nx.Graph([(3, 1), (1, 0), (0, 2), (2, 4), (1, 5)])
+    exact_outcome(nx.to_prufer_sequence, T)
+    T.add_edge(5, 3)
+    exact_outcome(nx.to_prufer_sequence, T)  # not a tree
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(20))
+def test_batch6_multigraphs(seed, directed, restore_config):
+    M = random_multigraph(seed, directed, "none")
+    M.add_node("lonely")
+    start = list(M)[0]
+    exact_outcome(listed(nx.isolates), M)
+    exact_outcome(nx.number_of_isolates, M)
+    if directed:
+        exact_outcome(nx.immediate_dominators, M, start)
+        exact_outcome(with_set_order(nx.dominance_frontiers), M, start)
+    # Parallel edges change degrees and cycles: these fall back.
+    exact_outcome(nx.is_eulerian, M)
+    exact_outcome(listed(nx.eulerian_circuit), M)
+    exact_outcome(nx.find_cycle, M) if directed else exact_outcome(listed(nx.bridges), M)
+    exact_outcome(nx.is_regular, M)
+
+
+def test_batch6_graph_changes_during_iteration():
+    for func in [nx.isolates, nx.bridges, nx.local_bridges]:
+        G = nx.path_graph(6)
+        G.add_nodes_from(["a", "b"])
+        it = func(G, backend="rustnx")
+        next(it)
+        G.add_edge("x", "y")
+        with pytest.raises(RuntimeError):
+            list(it)
+    # These work on a copy made when iteration starts.
+    for func in [nx.chain_decomposition, nx.eulerian_circuit, nx.eulerian_path]:
+        results = []
+        for backend in ["rustnx", "networkx"]:
+            G = nx.cycle_graph(5)
+            G.add_edges_from([(0, 2), (2, 4), (4, 1), (1, 3), (3, 0)])
+            it = func(G, backend=backend)
+            G.remove_edge(0, 1)  # before the first item: seen
+            G.add_edge(0, 1) if func is not nx.chain_decomposition else None
+            first = next(it)
+            G.add_edge("x", "y")  # after: not seen
+            results.append([first, *it])
+        assert results[0] == results[1]
