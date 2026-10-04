@@ -182,6 +182,9 @@ def algorithm_calls(H, directed):
         "kruskal_mst_edges": lambda G, b: list(
             nx.algorithms.tree.mst.kruskal_mst_edges(G, True, data=False, backend=b)
         ),
+        "maximum_branching": lambda G, b: list(nx.maximum_branching(G, backend=b).edges(data=True)),
+        "greedy_branching": lambda G, b: list(nx.tree.greedy_branching(G, backend=b).edges(data=True)),
+        "branching_weight": lambda G, b: nx.tree.branching_weight(G, backend=b),
     }
     if src is not None:
         calls["bfs"] = lambda G, b: nx.single_source_shortest_path_length(G, src, backend=b)
@@ -258,6 +261,8 @@ def algorithm_calls(H, directed):
         calls["edge_bfs_ignore"] = lambda G, b: list(nx.edge_bfs(G, orientation="ignore", backend=b))
         calls["edge_dfs_reverse"] = lambda G, b: list(nx.edge_dfs(G, orientation="reverse", backend=b))
         calls["is_arborescence"] = lambda G, b: nx.is_arborescence(G, backend=b)
+        calls["all_pairs_lca"] = lambda G, b: list(nx.all_pairs_lowest_common_ancestor(G, backend=b))
+        calls["tree_lca"] = lambda G, b: list(nx.tree_all_pairs_lowest_common_ancestor(G, backend=b))
         if src is not None:
             calls["idom"] = lambda G, b: list(nx.immediate_dominators(G, src, backend=b).items())
             calls["frontiers"] = lambda G, b: [
@@ -277,6 +282,10 @@ def algorithm_calls(H, directed):
         calls["cycle_basis"] = lambda G, b: nx.cycle_basis(G, backend=b)
         calls["girth"] = lambda G, b: nx.girth(G, backend=b)
         calls["local_bridges"] = lambda G, b: list(nx.local_bridges(G, backend=b))
+        calls["prim"] = lambda G, b: list(
+            nx.algorithms.tree.mst.prim_mst_edges(G, True, data=False, backend=b)
+        )
+        calls["partition_spanning_tree"] = lambda G, b: list(nx.partition_spanning_tree(G, backend=b).edges)
         if src is not None:
             calls["node_cc"] = lambda G, b: nx.node_connected_component(G, src, backend=b)
     return calls
