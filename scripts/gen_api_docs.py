@@ -166,7 +166,7 @@ SECTIONS = [
     ("Flows", [
         "maximum_flow", "maximum_flow_value", "minimum_cut", "minimum_cut_value",
         "edmonds_karp", "shortest_augmenting_path", "dinitz", "boykov_kolmogorov",
-        "preflow_push", "build_residual_network", "gomory_hu_tree",
+        "preflow_push", "build_residual_network", "build_flow_dict", "gomory_hu_tree",
     ]),
     ("Minimum cost flows", [
         "network_simplex", "min_cost_flow", "min_cost_flow_cost", "max_flow_min_cost",
@@ -357,6 +357,7 @@ NOTES = {
     "boykov_kolmogorov": "As `edmonds_karp`, with the search trees in `R.graph[\"trees\"]`.",
     "preflow_push": "As `shortest_augmenting_path`, with `excess`. NetworkX picks active nodes with `next(iter(set))`; rustnx replays CPython's set table to pick the same ones (checked against the interpreter at first use; elsewhere it falls back).",
     "build_residual_network": "As `edmonds_karp` (no flows yet).",
+    "build_flow_dict": "Takes G and a residual network R; flows are R's own objects (anything comparable with 0). Nodes of G missing from R, and edges without a flow, fall back.",
     "gomory_hu_tree": "Any of NetworkX's five maximum flow functions as `flow_func`; before 3.7 NetworkX's `minimum_cut` reorders the shared residual network, which rustnx repeats. Edge weights are bit-for-bit NetworkX's.",
     "network_simplex": "Ports NetworkX's pivot rule and spanning tree updates, so the flow (among several optimal ones) is NetworkX's; the faux infinity follows the installed version (3.6 changed it). Demands, capacities and weights can be ints or floats; other values (and ints beyond 64 bits) fall back, as do multigraphs. Errors and their messages are NetworkX's.",
     "min_cost_flow": "As `network_simplex`.",
@@ -461,6 +462,7 @@ SUBMODULE = {
     "boykov_kolmogorov": "nx.flow",
     "preflow_push": "nx.flow",
     "build_residual_network": "nx.flow",
+    "build_flow_dict": "nx.flow",
 }
 
 

@@ -3375,6 +3375,41 @@ impl CoreGraph {
         Ok((0, val_obj(py, res.cost)?, flow_dict.into_any()))
     }
 
+    /// `build_flow_dict(G, R)`: `r_rows` holds `R._succ[u]` for each node u
+    /// of G, in order. Values and R's neighbor keys go in as they are.
+    fn build_flow_dict<'py>(
+        &self,
+        py: Python<'py>,
+        nodes: &Bound<'py, PyList>,
+        r_rows: &Bound<'py, PyList>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        if nodes.len() != self.n || r_rows.len() != self.n {
+            return Err(PyValueError::new_err("rows do not match this graph"));
+        }
+        let objects: Vec<Bound<'py, PyAny>> = nodes.iter().collect();
+        let zero = 0i64.into_pyobject(py)?.into_any();
+        let flow_key = pyo3::intern!(py, "flow");
+        let unsupported = |_| PyNotImplementedError::new_err("NetworkX raises here");
+        let out = PyDict::new(py);
+        for (u, r_row) in r_rows.iter().enumerate() {
+            let row = PyDict::new(py);
+            for &v in self.succ.neighbors(u) {
+                row.set_item(&objects[v as usize], &zero)?;
+            }
+            let r_row = r_row
+                .cast::<PyDict>()
+                .map_err(|_| PyNotImplementedError::new_err("R's rows are not dicts"))?;
+            for (v, attr) in r_row.iter() {
+                let f = attr.get_item(flow_key).map_err(unsupported)?;
+                if f.gt(&zero).map_err(unsupported)? {
+                    row.set_item(v, f)?;
+                }
+            }
+            out.set_item(&objects[u], row)?;
+        }
+        Ok(out)
+    }
+
     /// `cost_of_flow(G, flowDict, weight)`. `rows` as for `residual_network`.
     fn cost_of_flow<'py>(
         &self,

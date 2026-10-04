@@ -68,6 +68,7 @@ __all__ = [
     "boykov_kolmogorov",
     "branching_weight",
     "bridges",
+    "build_flow_dict",
     "build_residual_network",
     "butterflies",
     "center",
@@ -6812,6 +6813,15 @@ def _residual_graph(G, run, value=None, algorithm=None):
 
 def build_residual_network(G, capacity):
     return _residual_graph(G, _flow_network(G, capacity))
+
+
+def build_flow_dict(G, R):
+    R_adj = _networkx_graph(R)._adj
+    try:
+        rows = [R_adj[u] for u in G._nodes]
+    except (KeyError, TypeError):
+        raise NotImplementedError("NetworkX raises for nodes missing from R") from None
+    return G._core.build_flow_dict(_node_list(G), rows)
 
 
 def edmonds_karp(G, s, t, capacity="capacity", residual=None, value_only=False, cutoff=None):

@@ -50,6 +50,7 @@ FUNCTIONS = {
     "boykov_kolmogorov": {},
     "branching_weight": {},
     "bridges": {},
+    "build_flow_dict": {},
     "build_residual_network": {},
     "butterflies": {},
     "center": {},

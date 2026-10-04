@@ -3391,6 +3391,12 @@ def test_batch12_maximum_flow(seed, directed, kind):
             exact_outcome(_b12(nx.minimum_cut), G, s, t, flow_func=func)
             exact_outcome(nx.maximum_flow_value, G, s, t, flow_func=func)
             exact_outcome(nx.minimum_cut_value, G, s, t, flow_func=func)
+            try:
+                R = func(G, s, t, backend="networkx")
+            except nx.NetworkXException:
+                R = None
+            if R is not None:
+                exact_outcome(nx_flow.build_flow_dict, G, R)
             if name != "preflow_push":
                 for cutoff in [0, 2, 2.5]:
                     exact_outcome(_b12(func), G, s, t, cutoff=cutoff)
@@ -3435,6 +3441,12 @@ def test_batch12_flow_errors(restore_config):
     exact_outcome(nx.minimum_cut_value, G, "a", "c", flow_func=nx_flow.preflow_push, cutoff=2)
     exact_outcome(nx.maximum_flow, G, "a", "c", flow_func=nx_flow.edmonds_karp, bogus=1)
     exact_outcome(_b12(nx_flow.preflow_push), G, "a", "c", global_relabel_freq=-1)
+    R = nx_flow.dinitz(G, "a", "c", backend="networkx")
+    exact_outcome(nx_flow.build_flow_dict, G, R)
+    exact_outcome(nx_flow.build_flow_dict, G, nx_flow.build_residual_network(G, "capacity"))  # no flows
+    exact_outcome(nx_flow.build_flow_dict, nx.DiGraph([("a", "z")]), R)  # z not in R
+    R["a"]["b"]["flow"] = 1.5
+    exact_outcome(nx_flow.build_flow_dict, G, R)
     # Inputs rustnx hands to NetworkX.
     R = nx_flow.build_residual_network(G, "capacity")
     exact_outcome(_b12(nx_flow.edmonds_karp), G, "a", "c", residual=R)

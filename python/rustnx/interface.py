@@ -37,6 +37,7 @@ _LINEAR_TIME = {
     "boundary_expansion",
     "branching_weight",
     "bridges",
+    "build_flow_dict",
     "build_residual_network",
     "chain_decomposition",
     "check_planarity",

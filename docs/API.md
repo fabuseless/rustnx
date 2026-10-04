@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 291 NetworkX functions. Call them as usual (for
+rustnx implements 292 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -458,6 +458,7 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.flow.boykov_kolmogorov` | `s`, `t`, `capacity`, `residual`, `value_only`, `cutoff` | no | rustnx | As `edmonds_karp`, with the search trees in `R.graph["trees"]`. |
 | `nx.flow.preflow_push` | `s`, `t`, `capacity`, `residual`, `global_relabel_freq`, `value_only` | no | rustnx | As `shortest_augmenting_path`, with `excess`. NetworkX picks active nodes with `next(iter(set))`; rustnx replays CPython's set table to pick the same ones (checked against the interpreter at first use; elsewhere it falls back). |
 | `nx.flow.build_residual_network` | `capacity` | no | NetworkX | As `edmonds_karp` (no flows yet). |
+| `nx.flow.build_flow_dict` | `R` | no | NetworkX | Takes G and a residual network R; flows are R's own objects (anything comparable with 0). Nodes of G missing from R, and edges without a flow, fall back. |
 | `nx.gomory_hu_tree` | `capacity`, `flow_func` | no | rustnx | Any of NetworkX's five maximum flow functions as `flow_func`; before 3.7 NetworkX's `minimum_cut` reorders the shared residual network, which rustnx repeats. Edge weights are bit-for-bit NetworkX's. |
 
 ### Minimum cost flows
