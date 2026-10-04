@@ -1667,13 +1667,13 @@ def test_batch9_chordal_and_at_free(seed):
         exact_outcome(func, graph_for(seed, True))
 
 
-@pytest.mark.parametrize("seed", range(40))
+@pytest.mark.parametrize("seed", range(30))
 def test_batch9_tournaments(seed):
     rng = random.Random(seed)
-    T = tournament.random_tournament(rng.randint(0, 12), seed=seed)
+    T = tournament.random_tournament(rng.randint(0, 10), seed=seed)
     # NetworkX 3.4 and 3.5 take time quintic in the number of nodes here.
     D = graph_for(seed, True)
-    D = D.subgraph(list(D)[:12]).copy()
+    D = D.subgraph(list(D)[:10]).copy()
     # A tournament with one arc reversed or removed, and the random digraph.
     U = T.copy()
     if U.number_of_edges():

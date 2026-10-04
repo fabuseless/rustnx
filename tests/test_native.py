@@ -279,6 +279,22 @@ def algorithm_calls(H, directed):
         calls["local_bridges"] = lambda G, b: list(nx.local_bridges(G, backend=b))
         if src is not None:
             calls["node_cc"] = lambda G, b: nx.node_connected_component(G, src, backend=b)
+        calls["is_chordal"] = lambda G, b: nx.is_chordal(G, backend=b)
+        calls["treewidth"] = lambda G, b: nx.chordal_graph_treewidth(G, backend=b)
+        calls["to_chordal"] = lambda G, b: (
+            lambda H, alpha: (list(H.edges), list(alpha.items()))
+        )(*nx.complete_to_chordal_graph(G, backend=b))
+        calls["at_free"] = lambda G, b: nx.is_at_free(G, backend=b)
+    calls["is_planar"] = lambda G, b: nx.is_planar(G, backend=b)
+    calls["planarity"] = lambda G, b: (
+        lambda ok, E: (ok, None if E is None else list(E.edges(data=True)))
+    )(*nx.check_planarity(G, True, backend=b))
+    if directed:
+        calls["score_sequence"] = lambda G, b: nx.tournament.score_sequence(G, backend=b)
+        if len(nodes) <= 10:  # quintic time in NetworkX 3.4 and 3.5
+            calls["tournament_sc"] = lambda G, b: nx.tournament.is_strongly_connected(G, backend=b)
+        if src is not None:
+            calls["is_reachable"] = lambda G, b: nx.tournament.is_reachable(G, src, nodes[-1], backend=b)
     return calls
 
 
