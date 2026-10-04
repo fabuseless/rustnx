@@ -1452,20 +1452,33 @@ fn truthy(v: &Val) -> bool {
     }
 }
 
-/// `a == b` in Python, for hashable parsed values (None if either isn't).
-fn py_eq(a: &Val, b: &Val) -> Option<bool> {
-    Some(match (a, b) {
-        (Val::Int(x), Val::Int(y)) => x == y,
-        (Val::Float(x), Val::Float(y)) => x == y,
-        (Val::Int(i), Val::Float(f)) | (Val::Float(f), Val::Int(i)) => {
-            // Exact comparison, as Python does for int and float.
-            f.fract() == 0.0 && *f >= -9.3e18 && *f <= 9.3e18 && (*f as i128) == (*i as i128)
+/// A hashable parsed value's dict key: equal keys for values Python
+/// considers equal (`1 == 1.0`, `0.0 == -0.0`).
+#[derive(Hash, PartialEq, Eq)]
+enum HKey {
+    Int(i64),
+    Float(u64),
+    Str(String),
+    EmptyTuple,
+}
+
+/// `Some(Some(key))` for a hashable value, `Some(None)` for NaN (equal to
+/// nothing else), `None` for an unhashable one (NetworkX raises).
+fn hash_key(v: &Val) -> Option<Option<HKey>> {
+    Some(Some(match v {
+        Val::Int(i) => HKey::Int(*i),
+        Val::Float(f) if f.is_nan() => return Some(None),
+        Val::Float(f) => {
+            if f.fract() == 0.0 && *f >= -(i64::MAX as f64) && *f < i64::MAX as f64 {
+                HKey::Int(*f as i64)
+            } else {
+                HKey::Float(f.to_bits())
+            }
         }
-        (Val::Str(x), Val::Str(y)) => x == y,
-        (Val::EmptyTuple, Val::EmptyTuple) => true,
-        (Val::List(_) | Val::Dict(_), _) | (_, Val::List(_) | Val::Dict(_)) => return None,
-        _ => false,
-    })
+        Val::Str(s) => HKey::Str(s.clone()),
+        Val::EmptyTuple => HKey::EmptyTuple,
+        _ => return None,
+    }))
 }
 
 /// Same value and type (and sign of zero): NetworkX would use this very
@@ -1525,26 +1538,24 @@ pub fn gml(lines: &[&str], label: Option<&str>) -> Option<Parsed> {
     let relabel = label.filter(|&l| l != "id");
     // Node ids (and labels): hashable, and no two equal.
     let mut ids: Vec<Val> = Vec::new();
+    let mut id_index: HashMap<HKey, u32> = HashMap::new();
     let mut labels: Vec<Val> = Vec::new();
+    let mut label_set: HashSet<HKey> = HashSet::new();
     let mut node_attrs = Vec::new();
     for mut node in nodes {
         let id = pop_key(&mut node, "id")?;
-        for other in &ids {
-            if py_eq(&id, other)? {
-                return None;
-            }
+        // NaN (equal to nothing) or unhashable: left to NetworkX.
+        let id_key = hash_key(&id)??;
+        if id_index.contains_key(&id_key) {
+            return None; // "node id ... is duplicated"
         }
         if let Some(label) = relabel {
             let node_label = pop_key(&mut node, label)?;
-            for other in &labels {
-                if py_eq(&node_label, other)? {
-                    return None;
-                }
+            if !label_set.insert(hash_key(&node_label)??) {
+                return None; // "node label ... is duplicated"
             }
-            py_eq(&node_label, &node_label)?; // unhashable: NetworkX raises
             labels.push(node_label);
         }
-        py_eq(&id, &id)?; // unhashable: NetworkX raises
         let mut attrs = Vec::with_capacity(node.len());
         for (k, v) in node {
             if reserved_kwarg(&k, false, true) {
@@ -1552,6 +1563,7 @@ pub fn gml(lines: &[&str], label: Option<&str>) -> Option<Parsed> {
             }
             attrs.push((b.key(&k), v));
         }
+        id_index.insert(id_key, ids.len() as u32);
         ids.push(id);
         node_attrs.push(attrs);
     }
@@ -1559,16 +1571,23 @@ pub fn gml(lines: &[&str], label: Option<&str>) -> Option<Parsed> {
     let index_of = |v: &Val| -> Option<u32> {
         // `source in G`, then the edge's own object in G's rows: only the
         // node's own id (same type) is replayed exactly.
-        let i = ids.iter().position(|id| py_eq(v, id) == Some(true))?;
-        if identical(v, &ids[i]) {
-            Some(i as u32)
+        let i = *id_index.get(&hash_key(v)??)?;
+        if identical(v, &ids[i as usize]) {
+            Some(i)
         } else {
             None
         }
     };
-    // G's rows: neighbor order, and each pair's (key, attrs) in key order.
+    // G's rows (neighbor order), and per pair of nodes its keys and, when
+    // relabel_nodes will re-add them, its edges in key order.
+    #[derive(Default)]
+    struct PairEdges {
+        count: usize,
+        keys: HashSet<HKey>,
+        edges: Vec<(Val, Attrs)>,
+    }
     let mut rows: Vec<Vec<u32>> = vec![Vec::new(); n];
-    let mut pair_edges: HashMap<(u32, u32), Vec<(Val, Attrs)>> = HashMap::new();
+    let mut pair_edges: HashMap<(u32, u32), PairEdges> = HashMap::new();
     let pair = |u: u32, v: u32| if directed || u <= v { (u, v) } else { (v, u) };
     for mut edge in edges {
         let s = index_of(&pop_key(&mut edge, "source")?)?;
@@ -1586,44 +1605,41 @@ pub fn gml(lines: &[&str], label: Option<&str>) -> Option<Parsed> {
             attrs.push((b.key(&k), v));
         }
         let existing = pair_edges.entry(pair(s, t)).or_default();
-        if existing.is_empty() {
+        if existing.count == 0 {
             rows[s as usize].push(t);
             if s != t && !directed {
                 rows[t as usize].push(s);
             }
         }
         let key = if !multigraph {
-            if !existing.is_empty() {
+            if existing.count > 0 {
                 return None; // "is duplicated"
             }
             Val::None
         } else if let Some(key) = key {
-            py_eq(&key, &key)?; // unhashable: NetworkX raises
-            for (other, _) in existing.iter() {
-                if py_eq(&key, other)? {
+            // A NaN key equals no other key; an unhashable one raises.
+            if let Some(k) = hash_key(&key)? {
+                if !existing.keys.insert(k) {
                     return None; // "is duplicated"
                 }
             }
             key
         } else {
             // new_edge_key(): len(keydict), then the next unused.
-            let mut next = existing.len() as i64;
-            while existing
-                .iter()
-                .any(|(k, _)| py_eq(k, &Val::Int(next)) == Some(true))
-            {
+            let mut next = existing.count as i64;
+            while existing.keys.contains(&HKey::Int(next)) {
                 next += 1;
             }
+            existing.keys.insert(HKey::Int(next));
             Val::Int(next)
         };
-        existing.push((key, attrs));
-        if relabel.is_none() {
-            let (k, attrs) = existing.last().expect("just pushed").clone();
-            b.parsed.ops.push(if multigraph {
-                Op::KeyedEdge(s, t, k, attrs)
-            } else {
-                Op::Edge(s, t, attrs)
-            });
+        existing.count += 1;
+        if relabel.is_some() {
+            existing.edges.push((key, attrs));
+        } else if multigraph {
+            b.parsed.ops.push(Op::KeyedEdge(s, t, key, attrs));
+        } else {
+            b.parsed.ops.push(Op::Edge(s, t, attrs));
         }
     }
     b.parsed.nodes = match relabel {
@@ -1645,7 +1661,7 @@ pub fn gml(lines: &[&str], label: Option<&str>) -> Option<Parsed> {
                 if !directed && seen[v as usize] {
                     continue;
                 }
-                for (k, attrs) in &pair_edges[&pair(u, v)] {
+                for (k, attrs) in &pair_edges[&pair(u, v)].edges {
                     ops.push(if multigraph {
                         Op::KeyedEdge(u, v, k.clone(), attrs.clone())
                     } else {
