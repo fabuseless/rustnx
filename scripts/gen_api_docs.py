@@ -660,6 +660,56 @@ SUBMODULE.update({
 })
 
 
+# Batch 21: operators and structure.
+OPERATOR = "Builds the result's dicts in Rust with the exact sequence of NetworkX's `add_nodes_from` / `add_edges_from` calls: same node and adjacency order, attribute dicts copied (or shared) as NetworkX does."
+PLAIN = " Plain `Graph` and `DiGraph` inputs and results; subclasses, graph views and multigraphs fall back."
+HOLES = "Explicit `nodes`; in 3.5+ `nodes=None` uses SciPy and falls back. Sums follow `set(nx.all_neighbors(G, v))` order, which rustnx replays, and Python's `sum()`; weights must be ints or floats."
+SECTIONS.append(("Operators, products and structure", [
+    "union", "union_all", "compose", "compose_all", "disjoint_union", "disjoint_union_all",
+    "full_join", "intersection", "intersection_all", "reverse", "moral_graph", "line_graph",
+    "ego_graph", "cartesian_product", "tensor_product", "strong_product",
+    "lexicographic_product", "rooted_product", "corona_product", "constraint",
+    "effective_size", "local_constraint", "tree_broadcast_center", "tree_broadcast_time",
+    "density", "bipartite_degree_centrality", "projected_graph", "weighted_projected_graph",
+]))
+NOTES.update({
+    "union": OPERATOR + PLAIN + " `rename` prefixes that make two nodes' labels collide fall back.",
+    "union_all": OPERATOR + PLAIN + " `rename` prefixes that make two nodes' labels collide fall back.",
+    "compose": OPERATOR + PLAIN,
+    "compose_all": OPERATOR + PLAIN,
+    "disjoint_union": OPERATOR + PLAIN + " Replays the reordering of NetworkX's relabelled copies.",
+    "disjoint_union_all": OPERATOR + PLAIN + " Replays the reordering of NetworkX's relabelled copies.",
+    "full_join": OPERATOR + PLAIN,
+    "intersection": "Replays NetworkX's node and edge sets (CPython's set table and tuple hash, checked once against the running Python), so nodes and edges come in the same order." + PLAIN,
+    "intersection_all": "As `intersection`." + PLAIN,
+    "reverse": OPERATOR + " Attributes are deep-copied, as in NetworkX. `copy=False` (a view) falls back.",
+    "moral_graph": OPERATOR + " Attributes are deep-copied (`G.to_undirected()`).",
+    "line_graph": "Undirected line graphs replay NetworkX's set of node pairs (CPython's set table and tuple hash). `create_using` falls back.",
+    "ego_graph": "Replays the subgraph view's node order (`set(sp)` when the subgraph is under half the graph). `undirected=True` falls back.",
+    "cartesian_product": OPERATOR + " Attribute tuples are built with NetworkX's set order of keys.",
+    "tensor_product": OPERATOR + " Attribute tuples are built with NetworkX's set order of keys.",
+    "strong_product": OPERATOR + " Attribute tuples are built with NetworkX's set order of keys.",
+    "lexicographic_product": OPERATOR + " Attribute tuples are built with NetworkX's set order of keys.",
+    "rooted_product": OPERATOR + " A `root` equal to, but not the same object as, H's node falls back.",
+    "corona_product": OPERATOR,
+    "constraint": HOLES,
+    "effective_size": HOLES + " Undirected unweighted graphs count edges of each ego graph, as NetworkX does.",
+    "local_constraint": "As `constraint`. Nodes not in the graph fall back.",
+    "tree_broadcast_center": "Replays NetworkX's set of leaves (ties go by set order). Non-trees fall back in 3.4 (it doesn't raise there).",
+    "tree_broadcast_time": "Missing nodes fall back in 3.4.",
+    "density": "As `nx.bipartite.density`.",
+    "bipartite_degree_centrality": "As `nx.bipartite.degree_centrality`; dict order follows NetworkX's sets.",
+    "projected_graph": "As `nx.bipartite.projected_graph`; replays the set of second neighbors. `multigraph=True`, and `nodes` that is not a container, fall back.",
+    "weighted_projected_graph": "As `nx.bipartite.weighted_projected_graph`; replays the set of second neighbors.",
+})
+QUALIFIED.update({
+    "density": "nx.bipartite.density",
+    "bipartite_degree_centrality": "nx.bipartite.degree_centrality",
+    "projected_graph": "nx.bipartite.projected_graph",
+    "weighted_projected_graph": "nx.bipartite.weighted_projected_graph",
+})
+
+
 def location(name):
     if name in DAG_ONLY:
         return "nx.dag"

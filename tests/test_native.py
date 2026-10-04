@@ -434,6 +434,27 @@ def algorithm_calls(H, directed):
         calls["edge_betweenness_partition"] = lambda G, b: [
             list(c) for c in nx.community.edge_betweenness_partition(G, 2, backend=b)
         ] if len(nodes) >= 2 else None
+    # Batch 21: operators and structure (graph results compared in full).
+    def state(R):
+        return (type(R).__name__, R.graph, list(R.nodes(data=True)),
+                [(u, list(nbrs.items())) for u, nbrs in R._adj.items()])
+
+    other = nx.DiGraph([("x", "y")]) if directed else nx.Graph([("x", "y")])
+    calls["union"] = lambda G, b: state(nx.union(G, other, backend=b))
+    calls["compose"] = lambda G, b: state(nx.compose(G, other, backend=b))
+    calls["disjoint_union"] = lambda G, b: state(nx.disjoint_union(G, other, backend=b))
+    calls["intersection"] = lambda G, b: state(nx.intersection(G, G, backend=b))
+    calls["line_graph"] = lambda G, b: state(nx.line_graph(G, backend=b))
+    calls["cartesian_product"] = lambda G, b: state(nx.cartesian_product(G, other, backend=b))
+    calls["constraint"] = lambda G, b: list(nx.constraint(G, nodes[:5], weight="weight", backend=b).items())
+    calls["effective_size"] = lambda G, b: list(nx.effective_size(G, nodes[:5], backend=b).items())
+    if src is not None:
+        calls["ego_graph"] = lambda G, b: state(nx.ego_graph(G, src, radius=2, backend=b))
+    if directed:
+        calls["reverse"] = lambda G, b: state(nx.reverse(G, backend=b))
+        calls["moral_graph"] = lambda G, b: state(nx.moral_graph(G, backend=b))
+    calls["projected_graph"] = lambda G, b: state(nx.bipartite.projected_graph(G, nodes[::2], backend=b))
+    calls["bipartite_density"] = lambda G, b: nx.bipartite.density(G, nodes[::2], backend=b)
     return calls
 
 

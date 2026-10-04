@@ -5377,3 +5377,73 @@ def test_batch21_intersections(seed, directed):
     B = nx.gnm_random_graph(200, 700, seed=seed + 1, directed=directed)
     exact_outcome(_b21_graphs(nx.intersection), A, B)
     exact_outcome(_b21_graphs(nx.intersection), nx.relabel_nodes(A, str), nx.relabel_nodes(B, str))
+
+
+def test_batch21_runs_in_rust():
+    G = _b21_decorate(nx.gnp_random_graph(30, 0.2, seed=1), 1)
+    H = nx.relabel_nodes(G, lambda v: v + 100)
+    D = _b21_decorate(nx.gnp_random_graph(30, 0.2, seed=1, directed=True), 2)
+    S = nx.path_graph(4)
+    T = nx.random_labeled_tree(30, seed=1) if hasattr(nx, "random_labeled_tree") else nx.random_tree(30, seed=1)
+    B, top = _b21_bipartite(3, False)
+    calls = [
+        lambda: nx.union(G, H, backend="rustnx"),
+        lambda: nx.union(G, G, rename=("a", "b"), backend="rustnx"),
+        lambda: nx.union_all([G, H], backend="rustnx"),
+        lambda: nx.compose(G, H, backend="rustnx"),
+        lambda: nx.compose_all([G, G], backend="rustnx"),
+        lambda: nx.disjoint_union(G, H, backend="rustnx"),
+        lambda: nx.disjoint_union_all([G, D.to_undirected()], backend="rustnx"),
+        lambda: nx.full_join(G, H, backend="rustnx"),
+        lambda: nx.intersection(G, H, backend="rustnx"),
+        lambda: nx.intersection_all([G, G], backend="rustnx"),
+        lambda: nx.reverse(D, backend="rustnx"),
+        lambda: nx.moral_graph(D, backend="rustnx"),
+        lambda: nx.line_graph(G, backend="rustnx"),
+        lambda: nx.line_graph(D, backend="rustnx"),
+        lambda: nx.ego_graph(G, 0, radius=2, backend="rustnx"),
+        lambda: nx.cartesian_product(G, S, backend="rustnx"),
+        lambda: nx.tensor_product(G, S, backend="rustnx"),
+        lambda: nx.strong_product(G, S, backend="rustnx"),
+        lambda: nx.lexicographic_product(G, S, backend="rustnx"),
+        lambda: nx.rooted_product(G, S, 0, backend="rustnx"),
+        lambda: nx.corona_product(G, S, backend="rustnx"),
+        lambda: nx.constraint(G, [0, 1, 2], backend="rustnx"),
+        lambda: nx.effective_size(D, [0, 1, 2], backend="rustnx"),
+        lambda: nx.local_constraint(G, 0, 1, backend="rustnx"),
+        lambda: nx.tree_broadcast_center(T, backend="rustnx"),
+        lambda: nx.tree_broadcast_time(T, backend="rustnx"),
+        lambda: nx.bipartite.density(B, top, backend="rustnx"),
+        lambda: nx.bipartite.degree_centrality(B, top, backend="rustnx"),
+        lambda: nx.bipartite.projected_graph(B, top, backend="rustnx"),
+        lambda: nx.bipartite.weighted_projected_graph(B, top, backend="rustnx"),
+    ]
+    for call in calls:
+        call()
+
+
+def test_batch21_dispatch_through_priority(restore_config, monkeypatch):
+    # NetworkX 3.5+ dispatch functions returning graphs by
+    # `backend_priority.generators`; 3.4 by `backend_priority.algos`.
+    from rustnx import interface
+
+    calls = []
+    original = interface.union
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(interface, "union", counting)
+    old_generators = getattr(nx.config.backend_priority, "generators", None)
+    try:
+        nx.config.backend_priority.algos = ["rustnx"]
+        if old_generators is not None:
+            nx.config.backend_priority.generators = ["rustnx"]
+        G = nx.gnm_random_graph(600, 2000, seed=1)
+        H = nx.relabel_nodes(G, lambda v: v + 1000)
+        assert _b21_graph_state(nx.union(G, H)) == _b21_graph_state(nx.union(G, H, backend="networkx"))
+        assert calls, "rustnx was not used"
+    finally:
+        if old_generators is not None:
+            nx.config.backend_priority.generators = old_generators
