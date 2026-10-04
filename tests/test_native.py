@@ -202,6 +202,21 @@ def algorithm_calls(H, directed):
         calls["generic_bfs"] = lambda G, b: list(nx.generic_bfs_edges(G, src, backend=b))
         calls["edge_bfs"] = lambda G, b: list(nx.edge_bfs(G, src, backend=b))
         calls["edge_dfs"] = lambda G, b: list(nx.edge_dfs(G, src, backend=b))
+        few = nodes[:3]
+        calls["subset_bc"] = lambda G, b: nx.betweenness_centrality_subset(G, few, nodes, weight="weight", backend=b)
+        calls["subset_ebc"] = lambda G, b: list(
+            nx.edge_betweenness_centrality_subset(G, nodes, few, backend=b).items()
+        )
+        calls["group_closeness"] = lambda G, b: nx.group_closeness_centrality(G, few, weight="weight", backend=b)
+        calls["group_degree"] = lambda G, b: nx.group_degree_centrality(G, few, backend=b)
+        calls["group_bc"] = lambda G, b: nx.group_betweenness_centrality(G, few, backend=b)
+        calls["local_reaching"] = lambda G, b: nx.local_reaching_centrality(G, src, backend=b)
+        calls["local_reaching_w"] = lambda G, b: nx.local_reaching_centrality(G, src, weight="weight", backend=b)
+    calls["load"] = lambda G, b: list(nx.load_centrality(G, backend=b).items())
+    calls["load_w"] = lambda G, b: list(nx.load_centrality(G, weight="weight", backend=b).items())
+    calls["edge_load"] = lambda G, b: list(nx.edge_load_centrality(G, backend=b).items())
+    calls["percolation"] = lambda G, b: list(nx.percolation_centrality(G, backend=b).items())
+    calls["voterank"] = lambda G, b: nx.voterank(G, backend=b)
     if directed:
         calls["scc"] = lambda G, b: list(nx.strongly_connected_components(G, backend=b))
         calls["wcc"] = lambda G, b: list(nx.weakly_connected_components(G, backend=b))
@@ -230,6 +245,7 @@ def algorithm_calls(H, directed):
         calls["articulation"] = lambda G, b: list(nx.articulation_points(G, backend=b))
         calls["biconnected"] = lambda G, b: list(nx.biconnected_component_edges(G, backend=b))
         calls["is_biconnected"] = lambda G, b: nx.is_biconnected(G, backend=b)
+        calls["dispersion"] = lambda G, b: list(nx.dispersion(G, backend=b).items())
         if src is not None:
             calls["node_cc"] = lambda G, b: nx.node_connected_component(G, src, backend=b)
     return calls
