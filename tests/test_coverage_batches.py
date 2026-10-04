@@ -4987,3 +4987,519 @@ def test_float_distance_totals_follow_python_sum(seed):
         D[u][v]["weight"] = rng.random()
     exact_outcome(nx.wiener_index, D, weight="weight")
     exact_outcome(nx.closeness_centrality, D, distance="weight")
+
+
+# --- Batch 20: readers and parsers ----------------------------------------------------
+
+
+import bz2 as _b20_bz2
+import gzip as _b20_gzip
+import io as _b20_io
+import struct as _b20_struct
+
+
+def _b20_value(value):
+    """``value`` with types made explicit and floats compared bit for bit."""
+    if isinstance(value, dict):
+        return ("dict", [(_b20_value(k), _b20_value(v)) for k, v in value.items()])
+    if isinstance(value, (list, tuple)):
+        return (type(value).__name__, [_b20_value(v) for v in value])
+    if type(value) is float:
+        return ("float", _b20_struct.pack("<d", value))
+    return (type(value).__name__, value)
+
+
+def _b20_state(G):
+    """Everything observable about a NetworkX graph: class, graph dict, node
+    order and attributes, every adjacency row in order (with keys), and which
+    rows share each edge's data dict."""
+    if isinstance(G, list):
+        return ("list", [_b20_state(H) for H in G])
+    if not isinstance(G, nx.Graph):
+        return _b20_value(G)
+    multi = G.is_multigraph()
+
+    def row(nbrs):
+        if multi:
+            return [(_b20_value(v), [(_b20_value(k), _b20_value(d)) for k, d in kd.items()])
+                    for v, kd in nbrs.items()]
+        return [(_b20_value(v), _b20_value(d)) for v, d in nbrs.items()]
+
+    state = [type(G), _b20_value(G.graph), [(_b20_value(n), _b20_value(d)) for n, d in G._node.items()]]
+    state.append([(_b20_value(u), row(nbrs)) for u, nbrs in G._adj.items()])
+    assert list(G._adj) == list(G._node)
+    back = G._pred if G.is_directed() else G._adj
+    if G.is_directed():
+        assert G._succ is G._adj and list(G._pred) == list(G._node)
+        state.append([(_b20_value(u), row(nbrs)) for u, nbrs in G._pred.items()])
+    for u, nbrs in G._adj.items():
+        for v, d in nbrs.items():
+            assert back[v][u] is d
+    return state
+
+
+def _b20_outcome(call):
+    """Runs ``call(backend)`` with rustnx and with NetworkX and requires the
+    same graph (or error). If rustnx declines, checks that NetworkX falls
+    back cleanly with rustnx first in ``backend_priority.generators``.
+    Returns whether rustnx ran the call itself."""
+
+    def run(backend):
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                return ("ok", _b20_state(call(backend)))
+        except Exception as exc:
+            return (type(exc), exc.args)
+
+    ours = run("rustnx")
+    ran = ours[0] is not NotImplementedError
+    if not ran:
+        old = nx.config.backend_priority.generators
+        nx.config.backend_priority.generators = ["rustnx"]
+        try:
+            ours = run(None)
+        finally:
+            nx.config.backend_priority.generators = old
+    ref = run("networkx")
+    assert ours == ref
+    return ran
+
+
+def _b20_attr_graph(seed, directed, multigraph=False):
+    """A random graph with str, int, float, bool and None edge attributes."""
+    rng = random.Random(seed)
+    G = graph_for(seed, directed)
+    if multigraph:
+        G = (nx.MultiDiGraph if directed else nx.MultiGraph)(G)
+        for u, v in list(G.edges())[: rng.randint(0, 5)]:
+            G.add_edge(u, v)
+    values = [1, -2, 0, 3.5, -0.25, 1e300, True, False, None, "x", "a b", "q'q", 'd"d']
+    for *_, d in G.edges(data=True):
+        for key in rng.sample(["weight", "color", "w2", "flag"], rng.randint(0, 3)):
+            d[key] = rng.choice(values)
+    return G
+
+
+_B20_TOKENS = [
+    "1", "2", "01", "-1", "+3", "0", "-0", "1.5", "-0.0", "0.0", "1e3", "nan", "inf",
+    "-Infinity", "1_0", "x", "y", "١", "é", "{}", "{'a':", "1}", "{'a': [1]}",
+    "{'key': 1}", "{'w': 2}", "{'w': 2,}", "'s'", "True", "None", "#", "a#b", ",", "\t",
+    "{'w':", "0x1",
+]
+
+
+def _b20_random_lines(seed):
+    rng = random.Random(seed)
+    lines = []
+    for _ in range(rng.randint(0, 25)):
+        tokens = [rng.choice(_B20_TOKENS) for _ in range(rng.randint(0, 5))]
+        sep = rng.choice([" ", " ", "  ", "\t", ","])
+        line = sep.join(tokens)
+        if rng.random() < 0.3:
+            line += rng.choice(["\n", " \n", "\r\n", "  "])
+        lines.append(line)
+    return lines
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch20_edgelists(seed, directed):
+    G = _b20_attr_graph(seed, directed, multigraph=seed % 4 == 3)
+    cls = type(G)
+    rng = random.Random(seed)
+    for data in [True, False]:
+        lines = list(nx.generate_edgelist(G, data=data))
+        if rng.random() < 0.5:
+            lines.insert(rng.randint(0, len(lines)), "# a comment")
+            lines.append("")
+        for create_using in [None, cls]:
+            for nodetype in [None, int, str]:
+                assert _b20_outcome(lambda backend: nx.parse_edgelist(
+                    lines, create_using=create_using, nodetype=nodetype, backend=backend,
+                )) or nodetype is int
+                assert _b20_outcome(lambda backend: nx.bipartite.parse_edgelist(
+                    lines, create_using=create_using, nodetype=nodetype, backend=backend,
+                )) or nodetype is int
+        text = "".join(line + "\n" for line in lines).encode()
+        assert _b20_outcome(lambda backend: nx.read_edgelist(
+            _b20_io.BytesIO(text), create_using=create_using, backend=backend,
+        ))
+        assert _b20_outcome(lambda backend: nx.bipartite.read_edgelist(
+            _b20_io.BytesIO(text), create_using=create_using, backend=backend,
+        ))
+    # Typed data, and the "," delimiter (data joined with "," then).
+    H = nx.Graph()
+    for u, v in G.edges():
+        H.add_edge(u, v, weight=rng.choice([1, 2.5, -3]), color=rng.choice(["r", "g"]))
+    for delimiter in [None, ",", ";", " "]:
+        lines = list(nx.generate_edgelist(H, delimiter=delimiter or " ", data=["weight", "color"]))
+        for data in [(("weight", float), ("color", str)), [("weight", float)], True]:
+            ran = _b20_outcome(lambda backend: nx.parse_edgelist(
+                lines, delimiter=delimiter, data=data, backend=backend,
+            ))
+            assert ran or data is True or len(data) != 2
+        dict_lines = list(nx.generate_edgelist(H, delimiter=delimiter or " "))
+        _b20_outcome(lambda backend: nx.parse_edgelist(dict_lines, delimiter=delimiter, backend=backend))
+        _b20_outcome(lambda backend: nx.bipartite.parse_edgelist(
+            dict_lines, delimiter=delimiter, backend=backend))
+    weighted = "".join(f"{u} {v} {d['weight']}\n" for u, v, d in H.edges(data=True)).encode()
+    for nodetype in [None, str, float]:
+        _b20_outcome(lambda backend: nx.read_weighted_edgelist(
+            _b20_io.BytesIO(weighted), nodetype=nodetype, backend=backend))
+
+
+@pytest.mark.parametrize("seed", range(150))
+def test_batch20_edgelist_tokens(seed):
+    # Odd tokens: numbers Python reads differently, broken dicts, reserved
+    # attribute names, comments mid-token, CR, non-ASCII digits.
+    lines = _b20_random_lines(seed)
+    rng = random.Random(seed)
+    comments = rng.choice(["#", "#", None, "", "a", "//"])
+    delimiter = rng.choice([None, None, ",", "\t", " "])
+    for nodetype in [None, int, float]:
+        for data in [True, False, [("w", int)], (("w", float), ("c", str))]:
+            for func in [nx.parse_edgelist, nx.bipartite.parse_edgelist]:
+                _b20_outcome(lambda backend: func(
+                    lines, comments=comments, delimiter=delimiter, nodetype=nodetype,
+                    data=data, backend=backend,
+                ))
+            # An iterator: rustnx reads it all, then hands NetworkX a copy if needed.
+            _b20_outcome(lambda backend: nx.parse_edgelist(
+                iter(lines), comments=comments, delimiter=delimiter, nodetype=nodetype,
+                data=data, backend=backend,
+            ))
+    text = "\n".join(lines).encode()
+    for nodetype in [None, int]:
+        _b20_outcome(lambda backend: nx.read_edgelist(
+            _b20_io.BytesIO(text), comments=comments, delimiter=delimiter,
+            nodetype=nodetype, backend=backend,
+        ))
+        _b20_outcome(lambda backend: nx.read_weighted_edgelist(
+            _b20_io.BytesIO(text), comments=comments, delimiter=delimiter,
+            nodetype=nodetype, backend=backend,
+        ))
+    for nodetype in [None, int]:
+        _b20_outcome(lambda backend: nx.parse_adjlist(
+            lines, comments=comments or "#", delimiter=delimiter, nodetype=nodetype,
+            backend=backend,
+        ))
+        _b20_outcome(lambda backend: nx.read_adjlist(
+            _b20_io.BytesIO(text), comments=comments or "#", delimiter=delimiter,
+            nodetype=nodetype, backend=backend,
+        ))
+        for edgetype in [None, int, float, str]:
+            _b20_outcome(lambda backend: nx.parse_multiline_adjlist(
+                iter(lines), comments=comments or "#", delimiter=delimiter,
+                nodetype=nodetype, edgetype=edgetype, backend=backend,
+            ))
+            _b20_outcome(lambda backend: nx.read_multiline_adjlist(
+                _b20_io.BytesIO(text), comments=comments or "#", delimiter=delimiter,
+                nodetype=nodetype, edgetype=edgetype, backend=backend,
+            ))
+    for func in [nx.parse_leda, nx.parse_pajek]:
+        _b20_outcome(lambda backend: func(lines, backend=backend))
+        _b20_outcome(lambda backend: func("\n".join(lines), backend=backend))
+
+
+def test_batch20_literal_values():
+    cases = [
+        "{'a': 1, 'b': -2.5, 'c': 'x y', 'd': True, 'e': None, 'f': 1e400}",
+        "{'a': 1, 'a': 2}",  # the last value wins, in the first key's place
+        "{'a': +1, 'b': 00, 'c': .5, 'd': 5., 'e': 1E-3, 'f': -0}",
+        "{ 'a' :1 , }",
+        "{'a': 01}", "{'a': 1_000}", "{'a': 0x1}", "{'a': 1j}", "{'a': 'x' 'y'}",
+        "{'a': \"q\"}", "{'a': b'x'}", "{'a': - 1}", "{'a': {}}", "{1: 2}",
+        "{'self': 1}", "{'u_of_edge': 1}", "{'key': 1}", "[('a', 1)]", "{'a': 'b\\\\c'}",
+        "{'a': 99999999999999999999}", "{'a': 1.5e}",
+    ]
+    for case in cases:
+        for create_using in [None, nx.MultiGraph]:
+            _b20_outcome(lambda backend: nx.parse_edgelist(
+                [f"1 2 {case}"], create_using=create_using, backend=backend))
+            _b20_outcome(lambda backend: nx.bipartite.parse_edgelist(
+                [f"1 2 {case}"], create_using=create_using, backend=backend))
+            _b20_outcome(lambda backend: nx.parse_multiline_adjlist(
+                iter(["1 1", f"2 {case}"]), create_using=create_using, backend=backend))
+
+
+def test_batch20_create_using():
+    lines = ["1 2", "2 3 {'w': 1}", "3 1", "1 2 {'w': 2}"]
+    for create_using in [nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph]:
+        assert _b20_outcome(lambda backend: nx.parse_edgelist(
+            lines, create_using=create_using, backend=backend))
+        assert _b20_outcome(lambda backend: nx.parse_adjlist(
+            lines, create_using=create_using, backend=backend))
+
+        # An instance is cleared (graph attributes too) and filled.
+        def filled(func, backend, create_using=create_using):
+            G = create_using(name="old")
+            G.add_edge("a", "b")
+            H = func(lines, create_using=G, backend=backend)
+            assert H is G
+            return H
+
+        assert _b20_outcome(lambda backend: filled(nx.parse_edgelist, backend))
+        assert _b20_outcome(lambda backend: filled(nx.parse_adjlist, backend))
+
+    class MyGraph(nx.Graph):
+        pass
+
+    frozen = nx.freeze(nx.Graph())
+    for create_using in [MyGraph, MyGraph(), frozen, 3, "x"]:
+        assert not _b20_outcome(lambda backend: nx.parse_edgelist(
+            lines, create_using=create_using, backend=backend))
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch20_adjlists(seed, directed):
+    G = _b20_attr_graph(seed, directed, multigraph=seed % 3 == 2)
+    cls = type(G)
+    lines = list(nx.generate_adjlist(G))
+    text = "".join(line + "\n" for line in lines).encode()
+    for create_using in [None, cls]:
+        assert _b20_outcome(lambda backend: nx.parse_adjlist(
+            lines, create_using=create_using, backend=backend))
+        assert _b20_outcome(lambda backend: nx.read_adjlist(
+            _b20_io.BytesIO(text), create_using=create_using, backend=backend))
+        _b20_outcome(lambda backend: nx.parse_adjlist(
+            lines, create_using=create_using, nodetype=int, backend=backend))
+    # Multiline: dict data (literal_eval) and typed weights.
+    H = nx.DiGraph() if directed else nx.Graph()
+    H.add_nodes_from(G)
+    rng = random.Random(seed)
+    for u, v in G.edges():
+        if rng.random() < 0.5:
+            H.add_edge(u, v, weight=rng.choice([1, 2, 3]))
+        else:
+            H.add_edge(u, v)
+    for graph, edgetypes in [(G, [None]), (H, [None, int, str])]:
+        mlines = list(nx.generate_multiline_adjlist(graph))
+        mtext = "".join(line + "\n" for line in mlines).encode()
+        for edgetype in edgetypes:
+            for create_using in [None, type(graph)]:
+                _b20_outcome(lambda backend: nx.parse_multiline_adjlist(
+                    iter(mlines), create_using=create_using, edgetype=edgetype,
+                    backend=backend))
+                ran = _b20_outcome(lambda backend: nx.read_multiline_adjlist(
+                    _b20_io.BytesIO(mtext), create_using=create_using, edgetype=edgetype,
+                    backend=backend))
+                assert ran or edgetype is not None
+    # A list fails in NetworkX for nodes with neighbors (next(list)); rustnx
+    # leaves lists alone.
+    assert not _b20_outcome(lambda backend: nx.parse_multiline_adjlist(
+        ["a 1", "b"], backend=backend))
+    assert not _b20_outcome(lambda backend: nx.parse_multiline_adjlist(
+        ["a 0", "b 0"], backend=backend))
+
+
+def test_batch20_multiline_adjlist_cases():
+    cases = [
+        ["a 2", "# c", "", "b {'weight': 2}", "c 7"],
+        ["a 2", "b"],  # runs out of neighbors
+        ["a x"], ["a"], ["a 1 2"], ["a -1", "b 0"], ["a 1", "  "], ["a 1", "b junk"],
+        ["a 1", "b {'key': 1}"], ["a 1", "b 5"], ["a 1", "b {'a': 1}{'b': 2}"],
+        ["a 1", "b {'a':", "1}"], ["a 2", "b {'a': 1}", "b {'b': 2}"],
+    ]
+    for lines in cases:
+        for create_using in [None, nx.MultiDiGraph]:
+            _b20_outcome(lambda backend: nx.parse_multiline_adjlist(
+                iter(lines), create_using=create_using, backend=backend))
+            for edgetype in [int, float]:
+                _b20_outcome(lambda backend: nx.parse_multiline_adjlist(
+                    iter(lines), create_using=create_using, edgetype=edgetype,
+                    backend=backend))
+
+
+def test_batch20_files(tmp_path):
+    G = _b20_attr_graph(3, False)
+    text = "".join(line + "\n" for line in nx.generate_edgelist(G)).encode()
+    for suffix, opener in [("", open), (".gz", _b20_gzip.open), (".bz2", _b20_bz2.open)]:
+        path = tmp_path / f"g.edgelist{suffix}"
+        with opener(path, "wb") as f:
+            f.write(text)
+        for p in [path, str(path)]:
+            assert _b20_outcome(lambda backend: nx.read_edgelist(p, backend=backend))
+            assert _b20_outcome(lambda backend: nx.read_weighted_edgelist(
+                p, data=None, backend=backend) if False else nx.read_adjlist(p, backend=backend))
+
+            def from_handle(backend):
+                with opener(path, "rb") as f:
+                    return nx.read_edgelist(f, backend=backend)
+
+            assert _b20_outcome(from_handle)
+    # Text-mode handles fall back; reading resumes where the file was.
+    path = tmp_path / "g.edgelist"
+
+    def text_handle(backend):
+        with open(path, encoding="utf-8") as f:
+            return nx.read_edgelist(f, backend=backend)
+
+    assert not _b20_outcome(text_handle)
+
+    def resumed(backend):
+        f = _b20_io.BytesIO(b"junk line\n1 2\n2 3 {'w': [1]}\n")
+        f.seek(10)
+        return nx.read_edgelist(f, backend=backend), f.tell()
+
+    assert not _b20_outcome(lambda backend: resumed(backend)[0])
+    # Encodings: rustnx decodes UTF-8, ASCII and Latin-1 itself.
+    data = "é ÿ {'c': 'è'}\n".encode
+    for encoding in ["utf-8", "UTF8", "latin-1", "ascii", "utf-16", "utf-8-sig", "nope", 3]:
+        try:
+            raw = data(encoding if encoding in ("utf-8", "latin-1", "utf-16", "utf-8-sig") else "utf-8")
+        except (LookupError, TypeError):
+            raw = b"a b\n"
+        _b20_outcome(lambda backend: nx.read_edgelist(
+            _b20_io.BytesIO(raw), encoding=encoding, backend=backend))
+    # Invalid UTF-8 raises the same error after the fallback.
+    assert not _b20_outcome(lambda backend: nx.read_edgelist(
+        _b20_io.BytesIO(b"1 2\n\xff 3\n"), backend=backend))
+
+
+def test_batch20_fallback_rewinds_files():
+    # rustnx declines this file (a list value), so NetworkX must read it from
+    # where the file was, under backend_priority.
+    raw = b"skip\n1 2 {'w': 1}\n2 3 {'w': [1]}\n"
+    old = nx.config.backend_priority.generators
+    nx.config.backend_priority.generators = ["rustnx"]
+    try:
+        f = _b20_io.BytesIO(raw)
+        f.seek(5)
+        G = nx.read_edgelist(f)
+    finally:
+        nx.config.backend_priority.generators = old
+    f = _b20_io.BytesIO(raw)
+    f.seek(5)
+    assert _b20_state(G) == _b20_state(nx.read_edgelist(f, backend="networkx"))
+
+
+def _b20_leda_text(G, rng):
+    nodes = list(G)
+    index = {v: i + 1 for i, v in enumerate(nodes)}
+    lines = ["#header", "LEDA.GRAPH", "string", "int", "-1" if G.is_directed() else "-2"]
+    lines += ["#nodes", str(len(nodes))]
+    lines += [rng.choice(["|{%s}|", "|{%s}|  ", "%s" if v else "|{%s}|"]) % v for v in nodes]
+    lines += ["#edges", str(G.number_of_edges())]
+    lines += [f"{index[u]} {index[v]} 0 |{{{rng.choice(['', 'x', '12', 'long_label', '\u00e9t\u00e9'])}}}|"
+              for u, v in G.edges()]
+    return lines
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch20_leda(seed, directed):
+    rng = random.Random(seed)
+    G = graph_for(seed, directed)
+    G = nx.relabel_nodes(G, {v: f"v{v}" for v in G})
+    if seed % 5 == 0 and len(G):
+        G = nx.relabel_nodes(G, {list(G)[0]: ""})  # no label: the node's number
+    lines = _b20_leda_text(G, rng)
+    text = "\n".join(lines)
+    assert _b20_outcome(lambda backend: nx.parse_leda(text, backend=backend))
+    assert _b20_outcome(lambda backend: nx.parse_leda(lines, backend=backend))
+    assert _b20_outcome(lambda backend: nx.parse_leda(iter(lines), backend=backend))
+    assert _b20_outcome(lambda backend: nx.read_leda(
+        _b20_io.BytesIO(text.encode()), backend=backend))
+    # Damaged files: missing lines, bad numbers, bad node indices.
+    for _ in range(5):
+        broken = list(lines)
+        i = rng.randrange(len(broken))
+        choice = rng.random()
+        if choice < 0.4:
+            del broken[i]
+        elif choice < 0.7:
+            broken[i] = rng.choice(["x", "0 9 0 |{}|", "1 1 0", "99 1 0 |{a}|", "-1", ""])
+        else:
+            broken = broken[:i]
+        _b20_outcome(lambda backend: nx.parse_leda(broken, backend=backend))
+
+
+def test_batch20_pajek_cases():
+    cases = [
+        '*network x\n*vertices 3\n1 "a b" 0.1 0.2 box ic Red\n2 b\n3 c\n*edges\n1 2 2.5\n2 3\n1 2 1 c red\n',
+        "*Network\n*Vertices 2\n1 a\n2 b\n*Arcs\n1 2\n2 1 x\n1 2 1 k v\n",
+        "*vertices 2\n1 a 0.5 junk box\n2 'b c'\n*arcs\n1 2 \"3\"\n",
+        "*vertices 2\n1 a\n2 b\n*edges\n1 3\n3 1 1.5\n  \n1\n",
+        "*vertices 2\n1 a\n2 a\n*edges\n1 2\n",
+        "*vertices 1\n1 a\n*vertices 1\n1 b\n*edges\n1 1\n",
+        "*edges\n1 2\n",  # no *vertices
+        "*edges\n\n",
+        "*vertices 2\n1 a\n2 b\n*matrix\n0 1\n1 0\n",
+        "*vertices 3\n1 a\n2 b\n",  # too few vertex lines
+        "*vertices x\n", "*vertices 2 3\n", "*vertices 1\n1\n",
+        '*vertices 1\n1 "unclosed\n', "*vertices 1\n1 a\\\n", '*vertices 1\n1 "a\\"b" 1 2 s\n',
+        "*vertices 1\n1 a\\ b\n*edges\n1 1 1 key 3\n", "*vertices 1\n1 a\n*edges\n1 1 1 self x\n",
+        "*vertices 1\n1 a 1 2 s id 9 x y\n", "*network  two words  \n",
+        "*vertices 1\n1 a 1_0 2 s\n", "*vertices 1\n1 a inf -nan s\n",
+        "*İ\n", "*networK\n*vertices 1\n1 é\n",
+        "*vertices 2\r\n1 a\r\n2 b\r\n*edges\r\n1 2 3\r\n",
+    ]
+    for text in cases:
+        _b20_outcome(lambda backend: nx.parse_pajek(text, backend=backend))
+        _b20_outcome(lambda backend: nx.parse_pajek(text.split("\n"), backend=backend))
+        _b20_outcome(lambda backend: nx.read_pajek(
+            _b20_io.BytesIO(text.encode()), backend=backend))
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(20))
+def test_batch20_pajek(seed, directed):
+    G = _b20_attr_graph(seed, directed, multigraph=seed % 2 == 1)
+    rng = random.Random(seed)
+    for v, d in G.nodes(data=True):
+        if rng.random() < 0.5:
+            d.update(x=rng.random(), y=rng.choice([1, 2.5]), shape="box")
+    for *_, d in G.edges(data=True):
+        for key in [k for k in d if k != "weight"]:
+            d[key] = str(d[key]).replace('"', "").replace("'", "")
+        if "weight" in d and not isinstance(d["weight"], (int, float)):
+            del d["weight"]
+    text = "\n".join(nx.generate_pajek(G))
+    assert _b20_outcome(lambda backend: nx.parse_pajek(text, backend=backend))
+    assert _b20_outcome(lambda backend: nx.read_pajek(
+        _b20_io.BytesIO(text.encode()), backend=backend))
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_batch20_graph6_sparse6(seed):
+    rng = random.Random(seed)
+    G = nx.convert_node_labels_to_integers(graph_for(seed, False))
+    G.remove_edges_from(nx.selfloop_edges(G))
+    for header in [False, True]:
+        g6 = nx.to_graph6_bytes(G, header=header)
+        for data in [g6, g6.rstrip(b"\n"), g6 + b"\n", g6[:-2], g6[:-1] + b"\x00"]:
+            _b20_outcome(lambda backend: nx.from_graph6_bytes(data, backend=backend))
+        s6 = nx.to_sparse6_bytes(G, header=header)
+        for data in [s6, s6.rstrip(b"\n"), s6[:-2], b">>sparse6<<" + s6[-3:]]:
+            _b20_outcome(lambda backend: nx.from_sparse6_bytes(data, backend=backend))
+    assert _b20_outcome(lambda backend: nx.from_graph6_bytes(
+        nx.to_graph6_bytes(G, header=False).rstrip(b"\n"), backend=backend))
+    assert _b20_outcome(lambda backend: nx.from_sparse6_bytes(
+        nx.to_sparse6_bytes(G, header=False).rstrip(b"\n"), backend=backend))
+    # Parallel edges and self-loops make sparse6 return a MultiGraph.
+    M = nx.MultiGraph(G)
+    for _ in range(rng.randint(0, 4)):
+        if len(G):
+            M.add_edge(rng.choice(list(G)), rng.choice(list(G)))
+    s6 = nx.to_sparse6_bytes(M, header=False).rstrip(b"\n")
+    assert _b20_outcome(lambda backend: nx.from_sparse6_bytes(s6, backend=backend))
+    # Files: one graph per line, blank lines skipped, whitespace stripped.
+    graphs = [nx.convert_node_labels_to_integers(graph_for(seed + k, False)) for k in range(3)]
+    for H in graphs:
+        H.remove_edges_from(nx.selfloop_edges(H))
+    for writer, reader in [(nx.to_graph6_bytes, nx.read_graph6),
+                           (nx.to_sparse6_bytes, nx.read_sparse6)]:
+        chunks = [writer(H, header=rng.random() < 0.5) for H in graphs]
+        for raw in [chunks[0], b"".join(chunks), b"\n \x0b".join(chunks) + b"\n\n", b"", b"\n"]:
+            _b20_outcome(lambda backend: reader(_b20_io.BytesIO(raw), backend=backend))
+
+
+def test_batch20_graph6_errors():
+    for data in [b"", b"\n", b"A", b"A_a", b"@", b"~", b"~?", b"~~", b">>graph6<<", b"A_\n\n",
+                 b"A\x7f", b"B_ ", "A_", bytearray(b"A_")]:
+        _b20_outcome(lambda backend: nx.from_graph6_bytes(data, backend=backend))
+    for data in [b"", b":", b"A", b":A", b":A_", b":~", b":~~", b":@", b":A\x00", b">>sparse6<<",
+                 b":Fa@x^", b":Fa@x^\n", ":A_", bytearray(b":A_")]:
+        _b20_outcome(lambda backend: nx.from_sparse6_bytes(data, backend=backend))

@@ -226,6 +226,12 @@ SECTIONS = [
         "complement", "power", "difference", "symmetric_difference", "is_kl_connected",
         "kl_connected_subgraph",
     ]),
+    ("Reading and parsing", [
+        "parse_edgelist", "read_edgelist", "read_weighted_edgelist", "bipartite_parse_edgelist",
+        "bipartite_read_edgelist", "parse_adjlist", "read_adjlist", "parse_multiline_adjlist",
+        "read_multiline_adjlist", "parse_leda", "read_leda", "parse_pajek", "read_pajek",
+        "from_graph6_bytes", "read_graph6", "from_sparse6_bytes", "read_sparse6",
+    ]),
 ]
 
 FLOWNOTE = "Capacities (and the flow values) can be ints or floats, mixed or missing (infinite): every value, its type and the order of every float addition are NetworkX's."
@@ -657,6 +663,36 @@ SUBMODULE.update({
         "one_edge_augmentation", "unconstrained_one_edge_augmentation", "bridge_augmentation",
         "unconstrained_bridge_augmentation",
     ]
+})
+
+
+# Batch 20: readers and parsers.
+READ = "Reads a binary file or path (`.gz` and `.bz2` too) decoded as UTF-8, ASCII or Latin-1; other encodings, text-mode files and anything rustnx declines are read by NetworkX from the same position."
+PARSE = "Lines as a list or tuple of `str`, or an iterator (read once; if rustnx declines, NetworkX's code runs on the same lines)."
+CREATE = " `create_using`: `None` or a plain NetworkX graph class or instance."
+LITERAL = " `data=True` handles flat dicts of `str`, `int`, `float`, `bool` and `None` values; other edge data falls back."
+NOTES.update({
+    "parse_edgelist": PARSE + CREATE + LITERAL + " `nodetype` and typed `data`: `int`, `float` or `str`.",
+    "read_edgelist": READ + CREATE + LITERAL,
+    "read_weighted_edgelist": READ + CREATE,
+    "bipartite_parse_edgelist": PARSE + CREATE + LITERAL,
+    "bipartite_read_edgelist": READ + CREATE + LITERAL,
+    "parse_adjlist": PARSE + CREATE + " `nodetype`: `int`, `float` or `str`.",
+    "read_adjlist": READ + CREATE,
+    "parse_multiline_adjlist": "Iterators only (NetworkX calls `next(lines)`, so lists fail there); see `parse_edgelist`." + CREATE + LITERAL,
+    "read_multiline_adjlist": READ + CREATE + LITERAL,
+    "parse_leda": PARSE + " A `str` is split at newlines as in NetworkX.",
+    "read_leda": READ,
+    "parse_pajek": PARSE + " A `str` is split at newlines as in NetworkX. Replays `shlex.split` (quotes and escapes); `*matrix` sections fall back.",
+    "read_pajek": READ + " `*matrix` sections fall back.",
+    "from_graph6_bytes": "`bytes` input; follows the installed NetworkX on trailing newlines (ignored from 3.5).",
+    "read_graph6": READ.split(" decoded")[0] + "; one graph or a list, as in NetworkX.",
+    "from_sparse6_bytes": "`bytes` input. Returns a `MultiGraph` when there are parallel edges, as NetworkX does.",
+    "read_sparse6": READ.split(" decoded")[0] + "; one graph or a list, as in NetworkX.",
+})
+QUALIFIED.update({
+    "bipartite_parse_edgelist": "nx.bipartite.parse_edgelist",
+    "bipartite_read_edgelist": "nx.bipartite.read_edgelist",
 })
 
 

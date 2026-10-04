@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 384 NetworkX functions. Call them as usual (for
+rustnx implements 401 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -620,6 +620,28 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.symmetric_difference` | `H` | no | NetworkX | Takes two graphs. Plain `Graph` and `DiGraph` results; subclasses fall back. |
 | `nx.is_kl_connected` | `k`, `l`, `low_memory` | no | rustnx | `low_memory=True` falls back (its searches run on subgraph views ordered by a set). |
 | `nx.kl_connected_subgraph` | `k`, `l`, `low_memory`, `same_as_graph` | no | rustnx | `low_memory=True` falls back. Returns a deep copy of the original graph without the rejected edges. |
+
+### Reading and parsing
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.parse_edgelist` | `lines`, `comments`, `delimiter`, `create_using`, `nodetype`, `data` | no | rustnx | Lines as a list or tuple of `str`, or an iterator (read once; if rustnx declines, NetworkX's code runs on the same lines). `create_using`: `None` or a plain NetworkX graph class or instance. `data=True` handles flat dicts of `str`, `int`, `float`, `bool` and `None` values; other edge data falls back. `nodetype` and typed `data`: `int`, `float` or `str`. |
+| `nx.read_edgelist` | `path`, `comments`, `delimiter`, `create_using`, `nodetype`, `data`, `edgetype`, `encoding` | no | rustnx | Reads a binary file or path (`.gz` and `.bz2` too) decoded as UTF-8, ASCII or Latin-1; other encodings, text-mode files and anything rustnx declines are read by NetworkX from the same position. `create_using`: `None` or a plain NetworkX graph class or instance. `data=True` handles flat dicts of `str`, `int`, `float`, `bool` and `None` values; other edge data falls back. |
+| `nx.read_weighted_edgelist` | `path`, `comments`, `delimiter`, `create_using`, `nodetype`, `encoding` | no | rustnx | Reads a binary file or path (`.gz` and `.bz2` too) decoded as UTF-8, ASCII or Latin-1; other encodings, text-mode files and anything rustnx declines are read by NetworkX from the same position. `create_using`: `None` or a plain NetworkX graph class or instance. |
+| `nx.bipartite.parse_edgelist` | `lines`, `comments`, `delimiter`, `create_using`, `nodetype`, `data` | no | rustnx | Lines as a list or tuple of `str`, or an iterator (read once; if rustnx declines, NetworkX's code runs on the same lines). `create_using`: `None` or a plain NetworkX graph class or instance. `data=True` handles flat dicts of `str`, `int`, `float`, `bool` and `None` values; other edge data falls back. |
+| `nx.bipartite.read_edgelist` | `path`, `comments`, `delimiter`, `create_using`, `nodetype`, `data`, `edgetype`, `encoding` | no | rustnx | Reads a binary file or path (`.gz` and `.bz2` too) decoded as UTF-8, ASCII or Latin-1; other encodings, text-mode files and anything rustnx declines are read by NetworkX from the same position. `create_using`: `None` or a plain NetworkX graph class or instance. `data=True` handles flat dicts of `str`, `int`, `float`, `bool` and `None` values; other edge data falls back. |
+| `nx.parse_adjlist` | `lines`, `comments`, `delimiter`, `create_using`, `nodetype` | no | rustnx | Lines as a list or tuple of `str`, or an iterator (read once; if rustnx declines, NetworkX's code runs on the same lines). `create_using`: `None` or a plain NetworkX graph class or instance. `nodetype`: `int`, `float` or `str`. |
+| `nx.read_adjlist` | `path`, `comments`, `delimiter`, `create_using`, `nodetype`, `encoding` | no | rustnx | Reads a binary file or path (`.gz` and `.bz2` too) decoded as UTF-8, ASCII or Latin-1; other encodings, text-mode files and anything rustnx declines are read by NetworkX from the same position. `create_using`: `None` or a plain NetworkX graph class or instance. |
+| `nx.parse_multiline_adjlist` | `lines`, `comments`, `delimiter`, `create_using`, `nodetype`, `edgetype` | no | rustnx | Iterators only (NetworkX calls `next(lines)`, so lists fail there); see `parse_edgelist`. `create_using`: `None` or a plain NetworkX graph class or instance. `data=True` handles flat dicts of `str`, `int`, `float`, `bool` and `None` values; other edge data falls back. |
+| `nx.read_multiline_adjlist` | `path`, `comments`, `delimiter`, `create_using`, `nodetype`, `edgetype`, `encoding` | no | rustnx | Reads a binary file or path (`.gz` and `.bz2` too) decoded as UTF-8, ASCII or Latin-1; other encodings, text-mode files and anything rustnx declines are read by NetworkX from the same position. `create_using`: `None` or a plain NetworkX graph class or instance. `data=True` handles flat dicts of `str`, `int`, `float`, `bool` and `None` values; other edge data falls back. |
+| `nx.parse_leda` | `lines` | no | rustnx | Lines as a list or tuple of `str`, or an iterator (read once; if rustnx declines, NetworkX's code runs on the same lines). A `str` is split at newlines as in NetworkX. |
+| `nx.read_leda` | `path`, `encoding` | no | rustnx | Reads a binary file or path (`.gz` and `.bz2` too) decoded as UTF-8, ASCII or Latin-1; other encodings, text-mode files and anything rustnx declines are read by NetworkX from the same position. |
+| `nx.parse_pajek` | `lines` | no | rustnx | Lines as a list or tuple of `str`, or an iterator (read once; if rustnx declines, NetworkX's code runs on the same lines). A `str` is split at newlines as in NetworkX. Replays `shlex.split` (quotes and escapes); `*matrix` sections fall back. |
+| `nx.read_pajek` | `path`, `encoding` | no | rustnx | Reads a binary file or path (`.gz` and `.bz2` too) decoded as UTF-8, ASCII or Latin-1; other encodings, text-mode files and anything rustnx declines are read by NetworkX from the same position. `*matrix` sections fall back. |
+| `nx.from_graph6_bytes` | `bytes_in` | no | rustnx | `bytes` input; follows the installed NetworkX on trailing newlines (ignored from 3.5). |
+| `nx.read_graph6` | `path` | no | rustnx | Reads a binary file or path (`.gz` and `.bz2` too); one graph or a list, as in NetworkX. |
+| `nx.from_sparse6_bytes` | `string` | no | rustnx | `bytes` input. Returns a `MultiGraph` when there are parallel edges, as NetworkX does. |
+| `nx.read_sparse6` | `path` | no | rustnx | Reads a binary file or path (`.gz` and `.bz2` too); one graph or a list, as in NetworkX. |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 
