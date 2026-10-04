@@ -4793,14 +4793,16 @@ def tree_centroid(G):
 _LCA_BATCH = 4096
 
 
-def _lca_by_sets(base, v, w):
+def _lca_by_sets(G, base, v, w, cache):
     """NetworkX's own walk for a pair with several lowest common ancestors:
-    it starts from the first element of a set intersection."""
-    a = nx.ancestors(base, v, backend="networkx")
-    a.add(v)
-    b = nx.ancestors(base, w, backend="networkx")
-    b.add(w)
-    common = a & b
+    it starts from the first element of a set intersection. The ancestor
+    sets are built as NetworkX builds them (``ancestors`` gives the same
+    set order), and cached per node as NetworkX does."""
+    for x in (v, w):
+        if x not in cache:
+            cache[x] = ancestors(G, x)
+            cache[x].add(x)
+    common = cache[v] & cache[w]
     ancestor = next(iter(common))
     while True:
         successor = None
@@ -4847,12 +4849,13 @@ def all_pairs_lowest_common_ancestor(G, pairs=None):
                 yield [p for p, _ in chunk], [q for _, q in chunk]
 
     def produce():
+        cache = {}
         for us, vs in batches():
             for u, v, r in zip(us, vs, lca.query(us, vs)):
                 if r == -1:
                     continue
                 a, b = nodes[u], nodes[v]
-                yield (a, b), (nodes[r] if r >= 0 else _lca_by_sets(base, a, b))
+                yield (a, b), (nodes[r] if r >= 0 else _lca_by_sets(G, base, a, b, cache))
 
     return _guarded(G, produce)
 
