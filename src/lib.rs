@@ -1948,37 +1948,45 @@ impl CoreGraph {
     // --- Batch 9: planarity, chordal graphs and graph classes ---
 
     /// NetworkX's left-right planarity test: `(planar, embedding, depth)`.
-    /// The embedding (if `embed` and planar) is each node's first
+    /// `embed` 0 leaves the embedding out; 1 gives each node's first
     /// half-edges in order, then the `(kind, a, b, ref)` calls of the
     /// depth-first phase (kind 0: `add_half_edge_first(a, b)`, 1:
-    /// `ccw=ref`, 2: `cw=ref`). `depth` bounds the recursive variant's
+    /// `ccw=ref`, 2: `cw=ref`); 2 gives the dicts those calls build (see
+    /// `graph_classes::Layout`). `depth` bounds the recursive variant's
     /// recursion.
-    #[allow(clippy::type_complexity)]
-    fn planarity(
-        &self,
-        py: Python<'_>,
-        embed: bool,
-    ) -> PyResult<(bool, Option<(Vec<Vec<u32>>, Vec<(u8, u32, u32, u32)>)>, usize)> {
+    fn planarity<'py>(&self, py: Python<'py>, embed: u8) -> PyResult<Bound<'py, PyTuple>> {
         // The embedding is always built: NetworkX builds it for a planar
         // graph even when only the answer is wanted (`is_planar`).
         let result = py.detach(|| {
             let adj = graph_classes::planarity_graph(&self.succ, self.n, self.directed);
-            graph_classes::lr_planarity(&adj, true)
+            let result = graph_classes::lr_planarity(&adj, true)?;
+            let layout = match (&result.embedding, embed) {
+                (Some(emb), 2) => Some(graph_classes::embedding_layout(self.n, emb)?),
+                _ => None,
+            };
+            Ok::<_, graph_classes::Bail>((result, layout))
         });
-        let result = result.map_err(|_| planarity_bail())?;
-        let embedding = result.embedding.filter(|_| embed).map(|emb| {
-            let calls = emb
-                .calls
-                .into_iter()
-                .map(|call| match call {
-                    graph_classes::HalfEdge::First(a, b) => (0, a, b, 0),
-                    graph_classes::HalfEdge::Ccw(a, b, r) => (1, a, b, r),
-                    graph_classes::HalfEdge::Cw(a, b, r) => (2, a, b, r),
-                })
-                .collect();
-            (emb.ordered, calls)
-        });
-        Ok((result.planar, embedding, result.depth))
+        let (result, layout) = result.map_err(|_| planarity_bail())?;
+        let embedding: Py<PyAny> = match (result.embedding, layout) {
+            (_, Some(l)) => (l.offsets, l.target, l.cw, l.ccw, l.ccw_first, l.pred_offsets, l.pred)
+                .into_pyobject(py)?
+                .into_any()
+                .unbind(),
+            (Some(emb), None) if embed == 1 => {
+                let calls: Vec<(u8, u32, u32, u32)> = emb
+                    .calls
+                    .into_iter()
+                    .map(|call| match call {
+                        graph_classes::HalfEdge::First(a, b) => (0, a, b, 0),
+                        graph_classes::HalfEdge::Ccw(a, b, r) => (1, a, b, r),
+                        graph_classes::HalfEdge::Cw(a, b, r) => (2, a, b, r),
+                    })
+                    .collect();
+                (emb.ordered, calls).into_pyobject(py)?.into_any().unbind()
+            }
+            _ => py.None(),
+        };
+        (result.planar, embedding, result.depth).into_pyobject(py)
     }
 
     /// NetworkX's `get_counterexample`: the edges it adds to the

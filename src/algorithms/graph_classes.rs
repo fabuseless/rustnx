@@ -563,6 +563,185 @@ impl<'a> Lr<'a> {
     }
 }
 
+/// The `PlanarEmbedding` the half-edge calls build, as its dicts: for each
+/// node, its out-half-edges in `_succ` order as `(target, cw, ccw,
+/// ccw_first)` (whether the data dict's first key is "ccw"), and for each
+/// node its in-half-edges in `_pred` order, as indices into the flattened
+/// out-half-edges.
+pub struct Layout {
+    pub offsets: Vec<usize>,
+    pub target: Vec<u32>,
+    pub cw: Vec<u32>,
+    pub ccw: Vec<u32>,
+    pub ccw_first: Vec<bool>,
+    pub pred_offsets: Vec<usize>,
+    pub pred: Vec<u32>,
+}
+
+struct HalfEdgeState {
+    start: u32,
+    end: u32,
+    cw: u32,
+    ccw: u32,
+    ccw_first: bool,
+    stamp: u64,
+}
+
+/// Replays `PlanarEmbedding.add_half_edge` (NetworkX 3.4 to 3.7): a node's
+/// last `_succ` key is its leftmost neighbor, kept there by moving it back
+/// to the end after each insertion. Calls NetworkX would reject bail out.
+struct EmbeddingBuilder {
+    edges: Vec<HalfEdgeState>,
+    index: PairMapDirected,
+    last: Vec<u32>,
+    pred: Vec<Vec<u32>>,
+    clock: u64,
+}
+
+type PairMapDirected = HashMap<u64, u32, BuildHasherDefault<PairHasher>>;
+
+#[inline]
+fn directed_key(u: u32, v: u32) -> u64 {
+    ((u as u64) << 32) | v as u64
+}
+
+impl EmbeddingBuilder {
+    fn new(n: usize) -> Self {
+        EmbeddingBuilder {
+            edges: Vec::new(),
+            index: PairMapDirected::default(),
+            last: vec![NONE; n],
+            pred: vec![Vec::new(); n],
+            clock: 0,
+        }
+    }
+
+    fn find(&self, start: u32, end: u32) -> Result<usize, Bail> {
+        self.index.get(&directed_key(start, end)).map(|&h| h as usize).ok_or(Bail)
+    }
+
+    fn tick(&mut self) -> u64 {
+        self.clock += 1;
+        self.clock
+    }
+
+    fn create(&mut self, start: u32, end: u32, cw: u32, ccw: u32, ccw_first: bool) -> Result<(), Bail> {
+        let h = self.edges.len() as u32;
+        if self.index.insert(directed_key(start, end), h).is_some() {
+            return Err(Bail); // NetworkX would update the existing half-edge
+        }
+        let stamp = self.tick();
+        self.edges.push(HalfEdgeState {
+            start,
+            end,
+            cw,
+            ccw,
+            ccw_first,
+            stamp,
+        });
+        self.pred[end as usize].push(h);
+        self.last[start as usize] = end;
+        Ok(())
+    }
+
+    fn add(&mut self, start: u32, end: u32, cw: u32, ccw: u32) -> Result<(), Bail> {
+        let leftmost = self.last[start as usize];
+        if leftmost == NONE {
+            if cw != NONE || ccw != NONE {
+                return Err(Bail);
+            }
+            return self.create(start, end, end, end, true);
+        }
+        let move_leftmost = if cw != NONE {
+            if ccw != NONE {
+                return Err(Bail);
+            }
+            let reference = self.find(start, cw)?;
+            let ref_ccw = self.edges[reference].ccw;
+            self.create(start, end, cw, ref_ccw, false)?;
+            let other = self.find(start, ref_ccw)?;
+            self.edges[other].cw = end;
+            self.edges[reference].ccw = end;
+            cw != leftmost
+        } else if ccw != NONE {
+            let reference = self.find(start, ccw)?;
+            let ref_cw = self.edges[reference].cw;
+            self.create(start, end, ref_cw, ccw, false)?;
+            let other = self.find(start, ref_cw)?;
+            self.edges[other].ccw = end;
+            self.edges[reference].cw = end;
+            true
+        } else {
+            return Err(Bail);
+        };
+        if move_leftmost {
+            let h = self.find(start, leftmost)?;
+            self.edges[h].stamp = self.tick();
+            self.last[start as usize] = leftmost;
+        }
+        Ok(())
+    }
+
+    fn add_first(&mut self, start: u32, end: u32) -> Result<(), Bail> {
+        let leftmost = self.last[start as usize];
+        self.add(start, end, leftmost, NONE)
+    }
+
+    fn finish(self, n: usize) -> Layout {
+        let mut rows: Vec<Vec<u32>> = vec![Vec::new(); n];
+        for (h, e) in self.edges.iter().enumerate() {
+            rows[e.start as usize].push(h as u32);
+        }
+        let mut position = vec![0u32; self.edges.len()];
+        let mut layout = Layout {
+            offsets: vec![0],
+            target: Vec::with_capacity(self.edges.len()),
+            cw: Vec::with_capacity(self.edges.len()),
+            ccw: Vec::with_capacity(self.edges.len()),
+            ccw_first: Vec::with_capacity(self.edges.len()),
+            pred_offsets: vec![0],
+            pred: Vec::with_capacity(self.edges.len()),
+        };
+        for row in rows.iter_mut() {
+            row.sort_unstable_by_key(|&h| self.edges[h as usize].stamp);
+            for &h in row.iter() {
+                let e = &self.edges[h as usize];
+                position[h as usize] = layout.target.len() as u32;
+                layout.target.push(e.end);
+                layout.cw.push(e.cw);
+                layout.ccw.push(e.ccw);
+                layout.ccw_first.push(e.ccw_first);
+            }
+            layout.offsets.push(layout.target.len());
+        }
+        for row in &self.pred {
+            layout.pred.extend(row.iter().map(|&h| position[h as usize]));
+            layout.pred_offsets.push(layout.pred.len());
+        }
+        layout
+    }
+}
+
+/// The dicts of the `PlanarEmbedding` that `embedding`'s calls build.
+pub fn embedding_layout(n: usize, embedding: &Embedding) -> Result<Layout, Bail> {
+    let mut builder = EmbeddingBuilder::new(n);
+    for (v, row) in embedding.ordered.iter().enumerate() {
+        let mut previous = NONE;
+        for &w in row {
+            builder.add(v as u32, w, NONE, previous)?;
+            previous = w;
+        }
+    }
+    for call in &embedding.calls {
+        match *call {
+            HalfEdge::First(a, b) => builder.add_first(a, b)?,
+            HalfEdge::Ccw(a, b, r) => builder.add(a, b, NONE, r)?,
+            HalfEdge::Cw(a, b, r) => builder.add(a, b, r, NONE)?,
+        }
+    }
+    Ok(builder.finish(n))
+}
+
 /// NetworkX's left-right planarity test on a simple undirected adjacency
 /// (`planarity_graph`), with the embedding if asked for and planar.
 pub fn lr_planarity(adj: &[Vec<u32>], embed: bool) -> Result<Planarity, Bail> {

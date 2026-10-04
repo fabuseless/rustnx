@@ -4363,6 +4363,55 @@ def _replay_embedding(G, ordered, calls):
     return embedding
 
 
+def _embedding_from_layout(G, layout):
+    """The same ``PlanarEmbedding``, with its dicts filled in directly from
+    the state rustnx computed for those calls (much faster)."""
+    offsets, targets, cws, ccws, ccw_first, pred_offsets, preds = layout
+    nodes = G._nodes
+    embedding = nx.PlanarEmbedding()
+    embedding.add_nodes_from(nodes)
+    succ = embedding._succ
+    pred = embedding._pred
+    dicts = [
+        {"ccw": nodes[b], "cw": nodes[a]} if first else {"cw": nodes[a], "ccw": nodes[b]}
+        for a, b, first in zip(cws, ccws, ccw_first)
+    ]
+    heads = [nodes[w] for w in targets]
+    tails = []
+    for i, v in enumerate(nodes):
+        begin, end = offsets[i], offsets[i + 1]
+        if begin != end:
+            succ[v].update(zip(heads[begin:end], dicts[begin:end]))
+            tails.extend([v] * (end - begin))
+    for i, w in enumerate(nodes):
+        begin, end = pred_offsets[i], pred_offsets[i + 1]
+        if begin != end:
+            pred[w].update((tails[p], dicts[p]) for p in preds[begin:end])
+    return embedding
+
+
+@functools.cache
+def _embedding_layout_matches():
+    """Whether filling the embedding's dicts directly gives what NetworkX's
+    ``add_half_edge`` calls give (checked once on a small graph with
+    reordered neighbors, in case a NetworkX release changes them)."""
+    from .graph import from_networkx
+
+    H = nx.Graph()
+    H.add_nodes_from([5, 2, 7, 0, 3, 6, 1, 4, 8])
+    H.add_edges_from([(1, 2), (0, 1), (2, 3), (3, 4), (4, 0), (5, 0), (5, 1), (5, 2), (5, 3),
+                      (5, 4), (6, 0), (6, 1), (7, 3), (8, 7), (2, 4)])
+    G = from_networkx(H, {})
+    calls = G._core.planarity(1)[1]
+    layout = G._core.planarity(2)[1]
+
+    def state(E):
+        return ([(u, v, list(d.items())) for u, v, d in E.edges(data=True)],
+                [(v, list(E._pred[v])) for v in E])
+
+    return state(_replay_embedding(G, *calls)) == state(_embedding_from_layout(G, layout))
+
+
 def _check_recursion(depth):
     """The recursive planarity functions recurse once per level of the DFS
     tree (and of ``ref`` chains); decline graphs where NetworkX might hit
@@ -4389,10 +4438,13 @@ def _counterexample(G, recursive):
 
 
 def _check_planarity(G, counterexample, recursive):
-    planar, embedding, depth = G._core.planarity(True)
+    direct = _embedding_layout_matches()
+    planar, embedding, depth = G._core.planarity(2 if direct else 1)
     if recursive:
         _check_recursion(depth)
     if planar:
+        if direct:
+            return True, _embedding_from_layout(G, embedding)
         return True, _replay_embedding(G, *embedding)
     if counterexample:
         return False, _counterexample(G, recursive)
@@ -4400,7 +4452,7 @@ def _check_planarity(G, counterexample, recursive):
 
 
 def is_planar(G):
-    return G._core.planarity(False)[0]
+    return G._core.planarity(0)[0]
 
 
 def check_planarity(G, counterexample=False):

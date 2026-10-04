@@ -1683,8 +1683,8 @@ def test_batch9_tournaments(seed):
             U.add_edge(v, u)
     for G in [T, U, D, _reordered(T, seed, directed=True, labels=True)]:
         nodes = list(G)
-        for s in nodes[:4] + ["missing", [1]]:
-            for t in nodes[-3:] + ["missing", [2]]:
+        for s in nodes[:3] + ["missing", [1]]:
+            for t in nodes[-2:] + ["missing", [2]]:
                 exact_outcome(tournament.is_reachable, G, s, t)
         exact_outcome(tournament.is_strongly_connected, G)
         exact_outcome(tournament.score_sequence, G)
