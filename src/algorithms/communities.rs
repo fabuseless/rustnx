@@ -13,6 +13,7 @@ use rayon::prelude::*;
 
 use super::centrality_more::{in_source_order, Spt};
 use super::directed::strongly_connected_components;
+pub use super::pyrandom::Mt19937;
 use super::spectral::py_sum;
 use super::traversal::DijkstraState;
 use crate::graph::Csr;
@@ -1336,87 +1337,6 @@ impl EditableGraph {
 }
 
 // --- Label propagation with CPython's random numbers --------------------------------
-
-/// CPython's Mersenne Twister (`random.Random`), from its `getstate()`.
-pub struct Mt19937 {
-    mt: [u32; 624],
-    index: usize,
-}
-
-impl Mt19937 {
-    /// From the 625 ints of `getstate()[1]`.
-    pub fn from_state(state: &[u32]) -> Option<Self> {
-        if state.len() != 625 || state[624] > 624 {
-            return None;
-        }
-        let mut mt = [0u32; 624];
-        mt.copy_from_slice(&state[..624]);
-        Some(Mt19937 {
-            mt,
-            index: state[624] as usize,
-        })
-    }
-
-    pub fn state(&self) -> Vec<u32> {
-        let mut s = self.mt.to_vec();
-        s.push(self.index as u32);
-        s
-    }
-
-    fn genrand_uint32(&mut self) -> u32 {
-        const N: usize = 624;
-        const M: usize = 397;
-        const MATRIX_A: u32 = 0x9908_b0df;
-        const UPPER: u32 = 0x8000_0000;
-        const LOWER: u32 = 0x7fff_ffff;
-        let mag01 = [0u32, MATRIX_A];
-        if self.index >= N {
-            let mt = &mut self.mt;
-            for kk in 0..N - M {
-                let y = (mt[kk] & UPPER) | (mt[kk + 1] & LOWER);
-                mt[kk] = mt[kk + M] ^ (y >> 1) ^ mag01[(y & 1) as usize];
-            }
-            for kk in N - M..N - 1 {
-                let y = (mt[kk] & UPPER) | (mt[kk + 1] & LOWER);
-                mt[kk] = mt[kk + M - N] ^ (y >> 1) ^ mag01[(y & 1) as usize];
-            }
-            let y = (mt[N - 1] & UPPER) | (mt[0] & LOWER);
-            mt[N - 1] = mt[M - 1] ^ (y >> 1) ^ mag01[(y & 1) as usize];
-            self.index = 0;
-        }
-        let mut y = self.mt[self.index];
-        self.index += 1;
-        y ^= y >> 11;
-        y ^= (y << 7) & 0x9d2c_5680;
-        y ^= (y << 15) & 0xefc6_0000;
-        y ^= y >> 18;
-        y
-    }
-
-    /// `Random._randbelow_with_getrandbits(n)` for `1 <= n < 2^32`.
-    fn randbelow(&mut self, n: usize) -> usize {
-        let k = usize::BITS - n.leading_zeros();
-        loop {
-            let r = (self.genrand_uint32() >> (32 - k)) as usize;
-            if r < n {
-                return r;
-            }
-        }
-    }
-
-    /// `Random.shuffle`.
-    pub fn shuffle<T>(&mut self, x: &mut [T]) {
-        for i in (1..x.len()).rev() {
-            let j = self.randbelow(i + 1);
-            x.swap(i, j);
-        }
-    }
-
-    /// `Random.choice` (non-empty `seq`).
-    fn choice<T: Copy>(&mut self, seq: &[T]) -> T {
-        seq[self.randbelow(seq.len())]
-    }
-}
 
 /// Label frequencies in first-seen order (`Counter` / `defaultdict` order).
 struct Freq {
