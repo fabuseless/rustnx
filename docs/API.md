@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 267 NetworkX functions. Call them as usual (for
+rustnx implements 291 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -443,6 +443,40 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `As `nx.bipartite.closeness_centrality`. Bit-for-bit identical; parallel searches.` | `nodes`, `normalized` | yes | rustnx |  |
 | `A one-shot iterator of nodes, and nodes not in the graph, fall back.` | `nodes` | yes | rustnx |  |
 | `NetworkX 3.7+.` | `nodes` | no | rustnx |  |
+
+### Communities
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.community.modularity` | `communities`, `weight`, `resolution` | no | NetworkX | Bit-for-bit identical: sums follow `set(community)` order. Weights must be all ints or all floats. A non-partition, and an edgeless graph on NetworkX 3.4, fall back (to raise NetworkX's error). |
+| `nx.community.overlapping_modularity` | `communities`, `weight`, `resolution` | no | NetworkX | NetworkX 3.7+. Bit-for-bit identical: sums follow `set(community)` order. Weights must be all ints or all floats. |
+| `nx.community.partition_quality` | `partition` | no | NetworkX | Counts in Rust. |
+| `nx.community.is_partition` | `communities` | no | NetworkX |  |
+| `nx.community.is_cover` | `communities` | no | NetworkX | NetworkX 3.7+. |
+| `nx.community.quality.intra_community_edges` | `partition` | no | NetworkX | Blocks that NetworkX rejects (unhashable nodes) fall back. |
+| `nx.community.quality.inter_community_edges` | `partition` | no | rustnx | Linear time (NetworkX checks every pair of blocks). Iterator partitions fall back. |
+| `nx.community.quality.inter_community_non_edges` | `partition` | no | rustnx | Linear time (NetworkX builds the complement graph). Iterator partitions fall back. |
+| `nx.community.greedy_modularity_communities` | `weight`, `resolution`, `cutoff`, `best_n` | no | rustnx | Replays NetworkX's mapped-heap merges (ties by node order: int or str labels only) and its frozenset unions, so communities iterate alike. Weights must be all ints or all floats. |
+| `nx.community.naive_greedy_modularity_communities` | `resolution`, `weight` | no | rustnx | Unit or integer weights (float sums would follow frozenset order: those fall back). Incremental modularity, added in NetworkX's order. |
+| `nx.community.girvan_newman` | `most_valuable_edge` | no | rustnx | Lazy, like NetworkX. Exact edge betweenness (sources added in order) on NetworkX's rebuilt copy of G, so the same edge is removed on ties. `most_valuable_edge` and 2-tuple node labels fall back. |
+| `nx.community.edge_betweenness_partition` | `number_of_sets`, `weight` | no | rustnx | Exact edge betweenness (sources added in order) on NetworkX's rebuilt copy of G, so the same edge is removed on ties. 2-tuple node labels and `None` weights fall back. |
+| `nx.community.asyn_lpa_communities` | `weight`, `seed` | no | NetworkX | Replays CPython's Mersenne Twister, so a `random.Random` seed (or `seed=None`, the global generator) gives NetworkX's exact draws and leaves the generator in the same state; NumPy seeds fall back. |
+| `nx.community.fast_label_propagation_communities` | `weight`, `seed` | no | NetworkX | Replays CPython's Mersenne Twister, so a `random.Random` seed (or `seed=None`, the global generator) gives NetworkX's exact draws and leaves the generator in the same state; NumPy seeds fall back. |
+| `nx.community.asyn_fluidc` | `k`, `max_iter`, `seed` | no | rustnx | Replays CPython's Mersenne Twister, so a `random.Random` seed (or `seed=None`, the global generator) gives NetworkX's exact draws and leaves the generator in the same state; NumPy seeds fall back. Follows each version's loop limit. |
+
+### Efficiency, vitality and distance indices
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.efficiency` | `u`, `v` | yes | NetworkX |  |
+| `nx.global_efficiency` | none | yes | rustnx | Parallel BFS; `1 / d` added in NetworkX's order. |
+| `nx.local_efficiency` | none | yes | rustnx | Parallel. Visits each neighborhood in the order of NetworkX's subgraph view (a Python set's order for small neighborhoods), so sums match bit for bit. |
+| `nx.closeness_vitality` | `node`, `weight`, `wiener_index` | yes | rustnx | Parallel. Wiener indices summed in NetworkX's order. Weights must be non-negative and all ints or all floats. |
+| `nx.gutman_index` | `weight` | no | rustnx | Parallel. Weights must be non-negative and all ints or all floats. |
+| `nx.schultz_index` | `weight` | no | rustnx | Parallel. Weights must be non-negative and all ints or all floats. |
+| `nx.hyper_wiener_index` | `weight` | no | rustnx | NetworkX 3.6+. Parallel. Unweighted or integer weights (float squares fall back). |
+| `nx.flow_hierarchy` | `weight` | no | NetworkX | Unweighted or integer weights. |
+| `nx.voronoi_cells` | `center_nodes`, `weight` | yes | NetworkX | Multi-source Dijkstra in Rust. |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 

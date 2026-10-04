@@ -354,6 +354,26 @@ def algorithm_calls(H, directed):
             calls["tournament_sc"] = lambda G, b: nx.tournament.is_strongly_connected(G, backend=b)
         if src is not None:
             calls["is_reachable"] = lambda G, b: nx.tournament.is_reachable(G, src, nodes[-1], backend=b)
+    # Batch 15: communities, efficiency and structural holes.
+    halves = [set(nodes[::2]), set(nodes[1::2])]
+    calls["modularity"] = lambda G, b: nx.community.modularity(G, halves, backend=b)
+    calls["partition_quality"] = lambda G, b: nx.community.partition_quality(G, halves, backend=b)
+    calls["greedy_modularity"] = lambda G, b: [
+        list(c) for c in nx.community.greedy_modularity_communities(G, weight="weight", backend=b)
+    ]
+    calls["asyn_lpa"] = lambda G, b: [
+        list(c) for c in nx.community.asyn_lpa_communities(G, seed=1, backend=b)
+    ]
+    calls["closeness_vitality"] = lambda G, b: list(nx.closeness_vitality(G, weight="weight", backend=b).items())
+    if directed:
+        calls["flow_hierarchy"] = lambda G, b: nx.flow_hierarchy(G, backend=b)
+    else:
+        calls["global_efficiency"] = lambda G, b: nx.global_efficiency(G, backend=b)
+        calls["local_efficiency"] = lambda G, b: nx.local_efficiency(G, backend=b)
+        calls["gutman_index"] = lambda G, b: nx.gutman_index(G, weight="weight", backend=b)
+        calls["edge_betweenness_partition"] = lambda G, b: [
+            list(c) for c in nx.community.edge_betweenness_partition(G, 2, backend=b)
+        ] if len(nodes) >= 2 else None
     return calls
 
 
@@ -441,10 +461,10 @@ def test_unimplemented_functions_fall_back_with_enable():
         nx.config.backend_priority.algos = []
         nx.config.fallback_to_nx = False
         with pytest.raises(NotImplementedError):
-            nx.flow_hierarchy(G)
+            nx.trophic_levels(G)
         rustnx.enable()
         assert nx.config.backend_priority.algos[0] == "rustnx"
-        assert nx.flow_hierarchy(G) == 1.0
+        assert nx.trophic_levels(G) == {0: 1.0, 1: 2.0, 2: 3.0}
     finally:
         nx.config.backend_priority.algos, nx.config.fallback_to_nx = old
 
