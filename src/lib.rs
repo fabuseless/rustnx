@@ -2697,6 +2697,14 @@ fn _digraphical(ins: &Bound<'_, PyList>, outs: &Bound<'_, PyList>) -> Option<boo
     matching::is_digraphical(&int_values(ins)?, &int_values(outs)?)
 }
 
+/// Whether every item of `seq` is a Python int (or bool): then
+/// `make_list_of_ints` leaves the list as it is.
+#[pyfunction]
+fn _plain_int_list(seq: &Bound<'_, PyList>) -> bool {
+    seq.iter()
+        .all(|item| item.cast::<pyo3::types::PyInt>().is_ok())
+}
+
 fn int_values(seq: &Bound<'_, PyList>) -> Option<Vec<i64>> {
     seq.iter()
         .map(|item| {
@@ -2745,5 +2753,6 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(_py_sum, m)?)?;
     m.add_function(wrap_pyfunction!(_degree_sequence_test, m)?)?;
     m.add_function(wrap_pyfunction!(_digraphical, m)?)?;
+    m.add_function(wrap_pyfunction!(_plain_int_list, m)?)?;
     Ok(())
 }
