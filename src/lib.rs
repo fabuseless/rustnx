@@ -18,8 +18,8 @@ use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
     bipartite, centrality, centrality_more, cluster, cores_more, dag, directed, distance,
-    graph_classes, isomorphism, leftovers, matching, paths, spectral, structure, structure_more,
-    trees_more,
+    graph_classes, isomorphism, leftovers, matching, measures, paths, spectral, structure,
+    structure_more, trees_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -3190,6 +3190,219 @@ impl CoreGraph {
         py.detach(|| bipartite::butterflies(&self.succ, self.n, &degree))
     }
 
+    // --- Batch 14: assortativity, link prediction and reciprocity ---
+
+    /// A scorer for link prediction pairs (see `measures::LinkMode`; `mode`
+    /// 0 counts, 1 communities, 2 sums of `table[degree]`), holding the
+    /// per-node data once for all batches of pairs.
+    #[pyo3(signature = (mode, hashes=None, table=None, classes=None, compensated=false))]
+    fn link_scorer(
+        slf: Bound<'_, Self>,
+        mode: u8,
+        hashes: Option<Vec<i64>>,
+        table: Option<Vec<f64>>,
+        classes: Option<Vec<i64>>,
+        compensated: bool,
+    ) -> PyResult<LinkScorer> {
+        let g = slf.get();
+        let degree = g.degrees();
+        let max_deg = degree.iter().copied().max().unwrap_or(0);
+        let hashes = hashes.unwrap_or_else(|| vec![0; g.n]);
+        let table = table.unwrap_or_default();
+        let mode = match mode {
+            0 => measures::LinkMode::Counts,
+            1 => measures::LinkMode::Community,
+            2 if table.len() > max_deg => measures::LinkMode::Sum,
+            _ => return Err(PyValueError::new_err("bad link scorer mode or table")),
+        };
+        if hashes.len() != g.n || classes.as_ref().is_some_and(|c| c.len() != g.n) {
+            return Err(PyValueError::new_err("per-node data has the wrong length"));
+        }
+        Ok(LinkScorer {
+            graph: slf.unbind(),
+            mode,
+            hashes,
+            degree,
+            table,
+            classes,
+            compensated,
+        })
+    }
+
+    /// `list(G._adj[u].keys() & G._adj[v].keys() - {u, v})` per pair, as
+    /// rustnx's replay of CPython's set table orders it.
+    fn common_neighbors_in_set_order(
+        &self,
+        us: Vec<u32>,
+        vs: Vec<u32>,
+        hashes: Vec<i64>,
+    ) -> PyResult<Vec<Vec<u32>>> {
+        self.check_pairs(&us, &vs)?;
+        if hashes.len() != self.n {
+            return Err(PyValueError::new_err("hashes has the wrong length"));
+        }
+        Ok(measures::common_neighbors_in_set_order(
+            &self.succ, self.n, &hashes, &us, &vs,
+        ))
+    }
+
+    /// Unweighted distance per pair, -1 if unreachable.
+    fn pair_distances(&self, py: Python<'_>, us: Vec<u32>, vs: Vec<u32>) -> PyResult<Vec<i64>> {
+        self.check_pairs(&us, &vs)?;
+        Ok(py.detach(|| measures::pair_distances(&self.succ, self.n, &us, &vs)))
+    }
+
+    /// Integer degrees of one kind (0 `G.degree`, 1 out, 2 in), summing an
+    /// integer edge attribute when `weight` is given.
+    #[pyo3(signature = (kind, weight=None))]
+    fn kind_degrees(&self, kind: u8, weight: Option<&str>) -> PyResult<Vec<i64>> {
+        let n = self.n;
+        let w_out = self.weight_slice(weight, false)?;
+        let out = measures::row_sums(&self.succ, n, w_out);
+        Ok(match (kind, self.directed) {
+            (1, true) => out,
+            (2, true) => measures::row_sums(self.adj(true), n, self.weight_slice(weight, true)?),
+            (0, true) => {
+                let ins = measures::row_sums(self.adj(true), n, self.weight_slice(weight, true)?);
+                out.iter().zip(ins).map(|(a, b)| a + b).collect()
+            }
+            (0, false) => (0..n)
+                .map(|v| {
+                    // A self-loop counts twice.
+                    let own = self
+                        .succ
+                        .range(v)
+                        .find(|&e| self.succ.targets[e] as usize == v)
+                        .map_or(0, |e| w_out.map_or(1, |w| w[e] as i64));
+                    out[v] + own
+                })
+                .collect(),
+            _ => return Err(PyValueError::new_err("bad degree kind")),
+        })
+    }
+
+    /// Pairs of `node_degree_xy`/`node_attribute_xy` as node positions.
+    #[pyo3(signature = (order, nbr_mask=None))]
+    fn xy_pairs(
+        &self,
+        order: Vec<u32>,
+        nbr_mask: Option<Vec<bool>>,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        self.sources_or_all(Some(order.clone()))?;
+        if nbr_mask.as_ref().is_some_and(|m| m.len() != self.n) {
+            return Err(PyValueError::new_err("mask has the wrong length"));
+        }
+        Ok(measures::xy_pairs(&self.succ, &order, nbr_mask.as_deref()))
+    }
+
+    /// NetworkX's `mixing_dict` over the `xy_pairs` stream, with per-node
+    /// x and y classes: `(number of pairs, [(class, node, [(class, node,
+    /// count)])])` in insertion order.
+    #[pyo3(signature = (order, xcls, ycls, nbr_mask=None))]
+    fn mixing(
+        &self,
+        py: Python<'_>,
+        order: Vec<u32>,
+        xcls: Vec<i64>,
+        ycls: Vec<i64>,
+        nbr_mask: Option<Vec<bool>>,
+    ) -> PyResult<(u64, Vec<measures::MixingRow>)> {
+        self.sources_or_all(Some(order.clone()))?;
+        if xcls.len() != self.n
+            || ycls.len() != self.n
+            || nbr_mask.as_ref().is_some_and(|m| m.len() != self.n)
+        {
+            return Err(PyValueError::new_err("per-node data has the wrong length"));
+        }
+        Ok(py.detach(|| measures::mixing(&self.succ, &order, nbr_mask.as_deref(), &xcls, &ycls)))
+    }
+
+    /// `average_neighbor_degree` numerators and source degrees for `nodes`
+    /// (kinds as in `kind_degrees`; the source kind picks the rows).
+    #[pyo3(signature = (nodes, source, target, weight=None))]
+    fn neighbor_degree_terms(
+        &self,
+        nodes: Vec<u32>,
+        source: u8,
+        target: u8,
+        weight: Option<&str>,
+    ) -> PyResult<Vec<(i64, i64)>> {
+        let nodes = self.sources_or_all(Some(nodes))?;
+        let target_degree = self.kind_degrees(target, None)?;
+        let source_degree = self.kind_degrees(source, weight)?;
+        let mut rows = Vec::new();
+        if !self.directed || source != 2 {
+            rows.push((&self.succ, self.weight_slice(weight, false)?));
+        }
+        if self.directed && source != 1 {
+            rows.push((self.adj(true), self.weight_slice(weight, true)?));
+        }
+        measures::neighbor_degree_terms(&rows, &target_degree, &source_degree, &nodes)
+            .ok_or_else(|| PyNotImplementedError::new_err("integer overflow"))
+    }
+
+    /// `average_degree_connectivity` sums per source degree, in first-seen
+    /// order: `(degrees, neighbor degree sums, weighted degree sums)`.
+    #[pyo3(signature = (nodes, source, target, weight=None))]
+    #[allow(clippy::type_complexity)]
+    fn degree_connectivity(
+        &self,
+        nodes: Vec<u32>,
+        source: u8,
+        target: u8,
+        weight: Option<&str>,
+    ) -> PyResult<(Vec<i64>, Vec<i64>, Vec<i64>)> {
+        let nodes = self.sources_or_all(Some(nodes))?;
+        let k_degree = self.kind_degrees(source, None)?;
+        let target_degree = self.kind_degrees(target, None)?;
+        let weighted_source = self.kind_degrees(source, weight)?;
+        // Neighbors: predecessors for "in", else successors (NetworkX's
+        // `G.neighbors` for "in+out").
+        let reverse = self.directed && source == 2;
+        measures::degree_connectivity(
+            self.adj(reverse),
+            self.weight_slice(weight, reverse)?,
+            &k_degree,
+            &target_degree,
+            &weighted_source,
+            &nodes,
+        )
+        .ok_or_else(|| PyNotImplementedError::new_err("integer overflow"))
+    }
+
+    /// `(len(pred & succ), len(pred) + len(succ))` per node (directed).
+    fn reciprocity_counts(&self, nodes: Vec<u32>) -> PyResult<Vec<(u64, u64)>> {
+        let nodes = self.sources_or_all(Some(nodes))?;
+        Ok(measures::reciprocity_counts(
+            &self.succ,
+            self.adj(true),
+            self.n,
+            &nodes,
+        ))
+    }
+
+    /// Directed edges `u -> v` (u != v) whose reverse edge exists.
+    fn reciprocated_edges(&self, py: Python<'_>) -> u64 {
+        py.detach(|| measures::reciprocated_edges(&self.succ, self.n))
+    }
+
+    /// `(nk, ek)` per degree, for `rich_club_coefficient`.
+    fn rich_club_counts(&self) -> Vec<(u64, u64)> {
+        let degree = self.degrees();
+        measures::rich_club_counts(&self.succ, self.n, &degree)
+    }
+
+    /// `sum(G.degree(u) * G.degree(v) for u, v in G.edges())`.
+    fn s_metric_sum(&self, py: Python<'_>) -> u128 {
+        let degree = self.degrees();
+        py.detach(|| measures::s_metric(&self.succ, self.n, self.directed, &degree))
+    }
+
+    /// Rows of the adjacency matrix to the power `k` (wrapping int64).
+    fn walk_counts(&self, py: Python<'_>, k: u64) -> Vec<Vec<i64>> {
+        py.detach(|| measures::walk_counts(&self.succ, self.n, k))
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -3501,6 +3714,17 @@ impl CoreGraph {
             flags[v as usize] = true;
         }
         Ok(flags)
+    }
+
+    /// Equal-length lists of valid node positions.
+    fn check_pairs(&self, us: &[u32], vs: &[u32]) -> PyResult<()> {
+        if us.len() != vs.len() {
+            return Err(PyValueError::new_err("pair lists differ in length"));
+        }
+        for &v in us.iter().chain(vs) {
+            self.check_index(v as usize)?;
+        }
+        Ok(())
     }
 
     fn check_index(&self, v: usize) -> PyResult<()> {
@@ -3978,6 +4202,44 @@ fn unzip3(items: Vec<(u32, u32, u8)>) -> (Vec<u32>, Vec<u32>, Vec<u8>) {
     (us, vs, labels)
 }
 
+/// Link prediction scores for batches of pairs (`CoreGraph.link_scorer`).
+#[pyclass(module = "rustnx._core", frozen)]
+pub struct LinkScorer {
+    graph: Py<CoreGraph>,
+    mode: measures::LinkMode,
+    hashes: Vec<i64>,
+    degree: Vec<usize>,
+    table: Vec<f64>,
+    classes: Option<Vec<i64>>,
+    compensated: bool,
+}
+
+#[pymethods]
+impl LinkScorer {
+    /// `(codes, a, b, f, w)` per pair; see `measures::code`.
+    #[allow(clippy::type_complexity)]
+    fn scores(
+        &self,
+        py: Python<'_>,
+        us: Vec<u32>,
+        vs: Vec<u32>,
+    ) -> PyResult<(Vec<u8>, Vec<i64>, Vec<i64>, Vec<f64>, Vec<u32>)> {
+        let g = self.graph.get();
+        g.check_pairs(&us, &vs)?;
+        let inp = measures::LinkInput {
+            adj: &g.succ,
+            n: g.n,
+            hashes: &self.hashes,
+            degree: &self.degree,
+            table: &self.table,
+            classes: self.classes.as_deref(),
+            compensated: self.compensated,
+        };
+        let out = py.detach(|| measures::link_scores(&inp, self.mode, &us, &vs));
+        Ok((out.codes, out.a, out.b, out.f, out.w))
+    }
+}
+
 /// CPython's float `sum()` (exposed for tests).
 #[pyfunction]
 fn _py_sum(values: Vec<f64>, compensated: bool) -> f64 {
@@ -3989,6 +4251,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CoreGraph>()?;
     m.add_class::<AllPaths>()?;
     m.add_class::<PredPaths>()?;
+    m.add_class::<LinkScorer>()?;
     m.add_class::<AllTopoSorts>()?;
     m.add_class::<ClosureDag>()?;
     m.add_class::<RootLeafPaths>()?;
