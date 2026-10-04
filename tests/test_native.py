@@ -11,6 +11,7 @@ import random
 import warnings
 
 import networkx as nx
+from networkx.algorithms.coloring.equitable_coloring import is_coloring
 import pytest
 
 import rustnx
@@ -162,6 +163,18 @@ def algorithm_calls(H, directed):
         "is_forest": lambda G, b: nx.is_forest(G, backend=b),
         "dfs_postorder": lambda G, b: list(nx.dfs_postorder_nodes(G, backend=b)),
         "dfs_successors": lambda G, b: list(nx.dfs_successors(G, backend=b).items()),
+        "k_shell": lambda G, b: sorted(map(str, nx.k_shell(G, backend=b).edges)),
+        "k_truss": lambda G, b: list(nx.k_truss(G, 3, backend=b).edges),
+        "onion_layers": lambda G, b: list(nx.onion_layers(G, backend=b).items()),
+        "square_clustering": lambda G, b: list(nx.square_clustering(G, backend=b).items()),
+        "generalized_degree": lambda G, b: [
+            (k, list(v.items())) for k, v in nx.generalized_degree(G, backend=b).items()
+        ],
+        "harmonic_diameter": lambda G, b: nx.harmonic_diameter(G, backend=b),
+        "barycenter": lambda G, b: nx.barycenter(G, backend=b),
+        "is_distance_regular": lambda G, b: nx.is_distance_regular(G, backend=b),
+        "dsatur": lambda G, b: list(nx.greedy_color(G, "DSATUR", backend=b).items()),
+        "is_coloring": lambda G, b: is_coloring(G, {v: i % 2 for i, v in enumerate(G)}, backend=b),
     }
     if src is not None:
         calls["bfs"] = lambda G, b: nx.single_source_shortest_path_length(G, src, backend=b)

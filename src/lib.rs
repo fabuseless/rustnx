@@ -17,7 +17,8 @@ use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
-    centrality, centrality_more, cluster, dag, directed, distance, paths, spectral, structure,
+    centrality, centrality_more, cluster, cores_more, dag, directed, distance, paths, spectral,
+    structure,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -1475,6 +1476,184 @@ impl CoreGraph {
             k: set_v.len(),
             rev_reach,
         })
+    }
+
+    // --- Batch 5: cores, clustering, distance and coloring ---
+
+    /// `nx.onion_layers` as `(nodes, layers)` in NetworkX's dict order, or
+    /// `None` if the graph has self-loops.
+    fn onion_layers(&self, py: Python<'_>) -> Option<(Vec<u32>, Vec<u32>)> {
+        py.detach(|| {
+            if structure::has_self_loops(&self.succ, self.n) {
+                None
+            } else {
+                Some(
+                    cores_more::onion_layers(&self.succ, self.n)
+                        .into_iter()
+                        .unzip(),
+                )
+            }
+        })
+    }
+
+    /// `nx.k_truss`: edges to drop as `(us, vs)`, whether each node is
+    /// kept and whether each arc (CSR order) is, or `None` if the graph has
+    /// self-loops.
+    #[allow(clippy::type_complexity)]
+    fn k_truss(
+        &self,
+        py: Python<'_>,
+        need: u64,
+    ) -> Option<(Vec<u32>, Vec<u32>, Vec<bool>, Vec<bool>)> {
+        py.detach(|| {
+            if structure::has_self_loops(&self.succ, self.n) {
+                return None;
+            }
+            let (dropped, keep, arcs) = cores_more::k_truss(&self.succ, self.n, need);
+            let (us, vs) = dropped.into_iter().unzip();
+            Some((us, vs, keep, arcs))
+        })
+    }
+
+    /// Nodes of `nx.k_corona` for core numbers `core`.
+    fn k_corona(&self, py: Python<'_>, core: Vec<u32>, k: u32) -> PyResult<Vec<u32>> {
+        if core.len() != self.n {
+            return Err(PyValueError::new_err("one core number per node"));
+        }
+        Ok(py.detach(|| cores_more::k_corona(&self.succ, &core, k)))
+    }
+
+    /// `square_clustering` `(squares, potential)` per node (see
+    /// `cores_more::square_clustering`).
+    #[pyo3(signature = (nodes, old))]
+    fn square_clustering(
+        &self,
+        py: Python<'_>,
+        nodes: Option<Vec<u32>>,
+        old: bool,
+    ) -> PyResult<Vec<(i64, i64)>> {
+        let nodes = self.sources_or_all(nodes)?;
+        Ok(py.detach(|| cores_more::square_clustering(&self.succ, self.n, &nodes, old)))
+    }
+
+    /// `generalized_degree` counts (see `cores_more::generalized_degree`).
+    fn generalized_degree(
+        &self,
+        py: Python<'_>,
+        ws: Vec<u32>,
+        ends: Vec<u32>,
+    ) -> PyResult<Vec<u32>> {
+        let ws = self.sources_or_all(Some(ws))?;
+        if ends.windows(2).any(|w| w[0] > w[1])
+            || ends.last().is_some_and(|&e| e as usize > ws.len())
+        {
+            return Err(PyValueError::new_err("bad group ends"));
+        }
+        Ok(py.detach(|| cores_more::generalized_degree(&self.succ, self.n, &ws, &ends)))
+    }
+
+    /// `nx.all_triangles` groups (see `cores_more::all_triangles`), for
+    /// `nbunch` (all nodes, with their positions as ids, if `None`).
+    #[allow(clippy::type_complexity)]
+    fn all_triangles(
+        &self,
+        py: Python<'_>,
+        nbunch: Option<Vec<u32>>,
+    ) -> PyResult<(Vec<(u32, u32, u32, u32)>, Vec<u32>, Vec<bool>)> {
+        let all = nbunch.is_none();
+        let nbunch = self.sources_or_all(nbunch)?;
+        Ok(py.detach(|| {
+            let ids = if all {
+                (0..self.n as i64).collect()
+            } else {
+                cores_more::triangle_ids(&self.succ, self.n, &nbunch)
+            };
+            cores_more::all_triangles(&self.succ, self.n, &nbunch, &ids)
+        }))
+    }
+
+    /// `nx.intersection_array`: `(0, b, c)`, or `(1, ..)` / `(2, ..)` for
+    /// NetworkX's two error messages (with and without the final period).
+    #[pyo3(signature = (pairs_once, bound))]
+    fn intersection_array(
+        &self,
+        py: Python<'_>,
+        pairs_once: bool,
+        bound: f64,
+    ) -> (u8, Vec<u32>, Vec<u32>) {
+        match py.detach(|| cores_more::intersection_array(&self.succ, self.n, pairs_once, bound)) {
+            cores_more::Intersection::Ok(b, c) => (0, b, c),
+            cores_more::Intersection::NotRegular => (1, vec![], vec![]),
+            cores_more::Intersection::Inconsistent => (2, vec![], vec![]),
+        }
+    }
+
+    /// `nx.tree.centroid` of a tree (the caller checks it is one).
+    fn tree_centroid(&self, py: Python<'_>) -> Vec<u32> {
+        if self.n == 0 {
+            return vec![];
+        }
+        py.detach(|| cores_more::tree_centroid(&self.succ, self.n))
+    }
+
+    /// `harmonic_diameter`'s sum of inverse distances and whether any term
+    /// was added. Raises ValueError on a negative cycle.
+    #[pyo3(signature = (weight=None))]
+    fn harmonic_sum(&self, py: Python<'_>, weight: Option<&str>) -> PyResult<(f64, bool)> {
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| cores_more::harmonic_sum(&self.succ, self.n, w))?)
+    }
+
+    /// Per source `(reached, Python sum of its distances)`, for `centroid`,
+    /// and whether a negative cycle stopped the later sources.
+    #[pyo3(signature = (weight, compensated))]
+    #[allow(clippy::type_complexity)]
+    fn distance_sums(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+        compensated: bool,
+    ) -> PyResult<(Vec<(usize, f64)>, bool)> {
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| cores_more::distance_sums(&self.succ, self.n, w, compensated)))
+    }
+
+    /// `greedy_color`'s colors for nodes processed in `order`.
+    fn greedy_with_order(&self, py: Python<'_>, order: Vec<u32>) -> PyResult<Vec<u32>> {
+        let order = self.sources_or_all(Some(order))?;
+        Ok(py.detach(|| cores_more::greedy_with_order(&self.succ, self.n, &order)))
+    }
+
+    /// `greedy_color` (saturation_largest_first): order and colors.
+    fn dsatur(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
+        let degree = self.degrees();
+        py.detach(|| cores_more::dsatur(&self.succ, self.n, &degree))
+    }
+
+    /// `strategy_connected_sequential` order from each component's source.
+    fn connected_sequential(
+        &self,
+        py: Python<'_>,
+        sources: Vec<u32>,
+        dfs: bool,
+    ) -> PyResult<Vec<u32>> {
+        let sources = self.sources_or_all(Some(sources))?;
+        Ok(py.detach(|| cores_more::connected_sequential(&self.succ, self.n, &sources, dfs)))
+    }
+
+    /// `is_coloring` for color ids per node (negative: not colored):
+    /// `(result, None)`, or `(False, node)` for the node NetworkX's lookup
+    /// fails on.
+    fn is_coloring(&self, py: Python<'_>, ids: Vec<i64>) -> PyResult<(bool, Option<u32>)> {
+        if ids.len() != self.n {
+            return Err(PyValueError::new_err("one color id per node"));
+        }
+        Ok(
+            match py.detach(|| cores_more::is_coloring(&self.succ, self.n, self.directed, &ids)) {
+                Ok(ok) => (ok, None),
+                Err(node) => (false, Some(node)),
+            },
+        )
     }
 
     /// `greedy_color` (largest_first): processing order and each node's color.

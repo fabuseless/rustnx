@@ -79,9 +79,18 @@ SECTIONS = [
         "transitive_closure_dag", "transitive_reduction", "is_aperiodic",
         "v_structures", "root_to_leaf_paths", "dag_to_branching",
     ]),
-    ("Clustering", ["triangles", "clustering", "average_clustering", "transitivity"]),
+    ("Clustering", [
+        "triangles", "clustering", "average_clustering", "transitivity",
+        "square_clustering", "generalized_degree", "all_triangles",
+    ]),
     ("Cores, coloring and communities", [
-        "core_number", "k_core", "is_bipartite", "greedy_color", "label_propagation_communities",
+        "core_number", "k_core", "k_shell", "k_crust", "k_corona", "k_truss", "onion_layers",
+        "is_bipartite", "greedy_color", "is_coloring", "is_equitable",
+        "label_propagation_communities",
+    ]),
+    ("Distance-regular graphs and other distance measures", [
+        "centroid", "barycenter", "harmonic_diameter",
+        "is_distance_regular", "intersection_array", "is_strongly_regular",
     ]),
     ("Traversal", [
         "bfs_edges", "bfs_tree", "bfs_predecessors", "bfs_successors", "bfs_layers",
@@ -167,7 +176,22 @@ NOTES = {
     "average_clustering": "Unweighted; `weight` falls back. Bit-for-bit identical.",
     "transitivity": "Bit-for-bit identical.",
     "k_core": "Builds the subgraph in NetworkX, so only the core numbers get faster.",
-    "greedy_color": "Only the default `largest_first` strategy without `interchange`; others fall back.",
+    "greedy_color": "Strategies `largest_first`, `saturation_largest_first` (`DSATUR`), `random_sequential` (draws from the global `random` state, as NetworkX does) and `connected_sequential` (`_bfs`, `_dfs`). `smallest_last`, `independent_set`, callables and `interchange` fall back.",
+    "k_shell": "Builds the subgraph in NetworkX, so only the core numbers get faster.",
+    "k_crust": "Builds the subgraph in NetworkX, so only the core numbers get faster.",
+    "k_corona": "Builds the subgraph in NetworkX. A non-integer `k` falls back.",
+    "k_truss": "Peels edges in Rust; the result is NetworkX's `G.copy()` with the dropped edges and nodes removed.",
+    "square_clustering": "Bit-for-bit identical. Follows the installed NetworkX's formula (3.4 differs from 3.5+ on self-loops and directed graphs).",
+    "generalized_degree": "Builds each neighbor set in Python, as NetworkX does, so the `Counter` keys come in the same order.",
+    "all_triangles": "NetworkX 3.7+. Generator. Rebuilds Python's intersection sets where several triangles share an edge, for NetworkX's yield order. Graph views fall back.",
+    "centroid": "NetworkX 3.7+ (`barycenter` before). Weighted sums are added in NetworkX's order; unweighted trees take NetworkX's tree path. `attr` and `sp` fall back.",
+    "barycenter": "NetworkX 3.4 and 3.5 (`centroid` from 3.7). Weighted sums are added in NetworkX's order. `attr` and `sp` fall back.",
+    "harmonic_diameter": "Inverse distances are added in NetworkX's order. `sp` falls back; `weight` needs NetworkX 3.5+.",
+    "intersection_array": "Follows the installed NetworkX's checks (3.7+ rejects long cycles early) and error messages.",
+    "is_distance_regular": "Follows the installed NetworkX's checks.",
+    "is_strongly_regular": "Follows the installed NetworkX's checks.",
+    "is_coloring": "A coloring that isn't a `dict` of int, str or float colors falls back.",
+    "is_equitable": "A coloring that isn't a `dict` of int, str or float colors falls back.",
     "bfs_edges": "`sort_neighbors` falls back.",
     "bfs_tree": "`sort_neighbors` falls back.",
     "dfs_edges": "`sort_neighbors` falls back.",
@@ -208,6 +232,8 @@ DAG_ONLY = {"v_structures", "root_to_leaf_paths", "has_cycle"}
 def location(name):
     if name in DAG_ONLY:
         return "nx.dag"
+    if name in ("is_coloring", "is_equitable"):
+        return "nx.algorithms.coloring.equitable_coloring"
     return "nx.community" if name == "label_propagation_communities" else "nx"
 
 

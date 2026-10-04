@@ -6,11 +6,12 @@ makes NetworkX fall back to its own implementation.
 """
 
 import functools
-from collections import defaultdict
+from collections import Counter, defaultdict
 import inspect
 from itertools import chain
 import math
 import operator
+import random
 import sys
 import warnings
 
@@ -28,6 +29,7 @@ __all__ = [
     "all_pairs_shortest_path_length",
     "all_shortest_paths",
     "all_topological_sorts",
+    "all_triangles",
     "ancestors",
     "articulation_points",
     "astar_path",
@@ -35,6 +37,7 @@ __all__ = [
     "attracting_components",
     "average_clustering",
     "average_shortest_path_length",
+    "barycenter",
     "bellman_ford_path",
     "bellman_ford_path_length",
     "bellman_ford_predecessor_and_distance",
@@ -51,6 +54,7 @@ __all__ = [
     "bidirectional_dijkstra",
     "bidirectional_shortest_path",
     "center",
+    "centroid",
     "closeness_centrality",
     "clustering",
     "condensation",
@@ -82,6 +86,7 @@ __all__ = [
     "edge_load_centrality",
     "eigenvector_centrality",
     "find_negative_cycle",
+    "generalized_degree",
     "generic_bfs_edges",
     "global_reaching_centrality",
     "greedy_color",
@@ -91,21 +96,31 @@ __all__ = [
     "group_in_degree_centrality",
     "group_out_degree_centrality",
     "harmonic_centrality",
+    "harmonic_diameter",
     "has_cycle",
     "has_path",
     "in_degree_centrality",
+    "intersection_array",
     "is_aperiodic",
     "is_attracting_component",
     "is_biconnected",
     "is_bipartite",
+    "is_coloring",
     "is_connected",
     "is_directed_acyclic_graph",
+    "is_distance_regular",
+    "is_equitable",
     "is_forest",
     "is_semiconnected",
     "is_strongly_connected",
+    "is_strongly_regular",
     "is_tree",
     "is_weakly_connected",
     "k_core",
+    "k_corona",
+    "k_crust",
+    "k_shell",
+    "k_truss",
     "katz_centrality",
     "kosaraju_strongly_connected_components",
     "label_propagation_communities",
@@ -125,6 +140,7 @@ __all__ = [
     "number_connected_components",
     "number_strongly_connected_components",
     "number_weakly_connected_components",
+    "onion_layers",
     "out_degree_centrality",
     "pagerank",
     "percolation_centrality",
@@ -146,6 +162,7 @@ __all__ = [
     "single_source_shortest_path_length",
     "single_target_shortest_path",
     "single_target_shortest_path_length",
+    "square_clustering",
     "strongly_connected_components",
     "topological_generations",
     "topological_sort",
@@ -1558,9 +1575,9 @@ def all_shortest_paths(G, source, target, weight=None, method="dijkstra"):
 def greedy_color(G, strategy="largest_first", interchange=False):
     if len(G) == 0:
         return {}
-    if not isinstance(strategy, str) or strategy != "largest_first" or interchange:
-        raise NotImplementedError("rustnx implements the largest_first strategy only")
-    order, colors = G._core.greedy_color()
+    if not isinstance(strategy, str) or interchange:
+        raise NotImplementedError("rustnx implements string strategies without interchange")
+    order, colors = _greedy_order(G, strategy)
     nodes = G._nodes
     return {nodes[i]: colors[i] for i in order}
 
@@ -3498,3 +3515,407 @@ def prominent_group(G, k, weight=None, C=None, endpoints=False, normalized=True,
     max_GBC = float(f"{max_GBC:.2f}")
     nodes = G._nodes
     return max_GBC, [nodes[i] for i in group]
+
+
+# --- Batch 5: cores, clustering, distance and coloring ----------------------------
+
+
+def _base_and_core(G, core_number):
+    """The NetworkX graph to build a core subgraph from, and core numbers.
+    The subgraph is built in NetworkX from the same node generator as
+    NetworkX's, so its node set and order are the same."""
+    base = _networkx_graph(G)
+    core = globals()["core_number"](G) if core_number is None else core_number
+    return base, core
+
+
+def k_shell(G, k=None, core_number=None):
+    base, core = _base_and_core(G, core_number)
+    if k is None:
+        k = max(core.values())
+    return base.subgraph(v for v in core if core[v] == k).copy()
+
+
+def k_crust(G, k=None, core_number=None):
+    base, core = _base_and_core(G, core_number)
+    if k is None:
+        # One less than the other core subgraphs' default.
+        k = max(core.values()) - 1
+    return base.subgraph(v for v in core if core[v] <= k).copy()
+
+
+def _integral(k):
+    """``k`` as an int if it is an integer number, else ``None``."""
+    if isinstance(k, float):
+        return int(k) if k.is_integer() else None
+    try:
+        return operator.index(k)
+    except TypeError:
+        return None
+
+
+def k_corona(G, k, core_number=None):
+    base = _networkx_graph(G)
+    if core_number is not None:
+        # NetworkX's own filter, on the caller's core numbers.
+        c = core_number
+        if k is None:
+            k = max(c.values())
+        return base.subgraph(
+            v for v in c if c[v] == k and k == sum(1 for w in base[v] if c[w] >= k)
+        ).copy()
+    core = G._core.core_number()
+    if core is None:
+        globals()["core_number"](G)  # raises NetworkX's self-loop error
+    if k is None:
+        k = max(dict(zip(G._nodes, core)).values())  # NetworkX's error if empty
+    kk = _integral(k)
+    if kk is None:
+        raise NotImplementedError("rustnx needs an integer k")
+    nodes = G._nodes
+    positions = G._core.k_corona(core, kk) if 0 <= kk < 2**32 else []
+    return base.subgraph(nodes[i] for i in positions).copy()
+
+
+_SELF_LOOPS_MESSAGE = (
+    "Input graph has self loops which is not permitted; "
+    "Consider using G.remove_edges_from(nx.selfloop_edges(G))."
+)
+
+
+def _truss_support(k):
+    """Smallest triangle count an edge needs to stay: NetworkX drops edges
+    with ``len(common neighbors) < k - 2``."""
+    if isinstance(k, float):
+        if math.isnan(k):
+            return 0  # every comparison with NaN is false: nothing is dropped
+        t = k - 2
+        if t == math.inf:
+            return 2**63
+        return 0 if t == -math.inf else max(0, math.ceil(t))
+    try:
+        k = operator.index(k)
+    except TypeError:
+        raise NotImplementedError("rustnx needs an int or float k") from None
+    return min(max(0, k - 2), 2**63)
+
+
+def k_truss(G, k):
+    _undirected_only(G)
+    need = _truss_support(k)
+    result = G._core.k_truss(need)
+    if result is None:
+        raise nx.NetworkXNotImplemented(_SELF_LOOPS_MESSAGE)
+    base = _networkx_graph(G)
+    us, vs, keep, arcs = result
+    nodes = G._nodes
+    if type(base) is nx.Graph and type(base._adj) is dict:
+        # NetworkX removes edges and isolated nodes from `G.copy()`. Taking
+        # `copy`'s own steps for only what survives gives the same dicts in
+        # the same order, without the copy and removals.
+        H = nx.Graph()
+        H.graph.update(base.graph)
+        H.add_nodes_from((n, d.copy()) for (n, d), kept in zip(base._node.items(), keep) if kept)
+        alive = iter(arcs)
+        H.add_edges_from(
+            (u, v, d.copy()) for u, nbrs in base._adj.items() for v, d in nbrs.items() if next(alive)
+        )
+        return H
+    # Otherwise remove the dropped edges and nodes from a copy: removals
+    # leave the copy's dicts in order.
+    H = base.copy()
+    H.remove_edges_from(zip([nodes[u] for u in us], [nodes[v] for v in vs]))
+    H.remove_nodes_from([v for v, kept in zip(nodes, keep) if not kept])
+    return H
+
+
+def onion_layers(G):
+    _undirected_only(G)
+    result = G._core.onion_layers()
+    if result is None:
+        raise nx.NetworkXNotImplemented(
+            "Input graph contains self loops which is not permitted; "
+            "Consider using G.remove_edges_from(nx.selfloop_edges(G))."
+        )
+    order, layers = result
+    nodes = G._nodes
+    return dict(zip([nodes[i] for i in order], layers))
+
+
+def _nbunch_positions(G, nodes):
+    """``(single, positions)`` for a NetworkX ``nodes`` argument: whether it
+    names one node, and the positions ``G.nbunch_iter(nodes)`` visits (each
+    once, first occurrence first), or ``None`` for all nodes."""
+    if nodes is None:
+        return False, None
+    if nodes in G:
+        return True, [G._index[nodes]]
+    try:
+        iter(nodes)
+    except TypeError:
+        raise NotImplementedError("NetworkX raises its own error here") from None
+    return False, _node_subset(G, nodes)
+
+
+@functools.cache
+def _square_clustering_by_pairs():
+    """Whether the installed NetworkX (3.4) counts squares over pairs of
+    neighbors including self-loops; 3.5+ count them through two-hop
+    neighbors, ignoring self-loops, and give different values."""
+    H = nx.Graph([(0, 1), (1, 2), (2, 0), (0, 0)])
+    return nx.square_clustering(H, backend="networkx")[0] == 2
+
+
+def square_clustering(G, nodes=None):
+    single, positions = _nbunch_positions(G, nodes)
+    old = _square_clustering_by_pairs()
+    counts = G._core.square_clustering(positions, old)
+    # 3.4 keeps the (int) square count where the potential isn't positive.
+    values = [
+        squares / potential if potential > 0 else (squares if old else 0)
+        for squares, potential in counts
+    ]
+    return _per_node(G, positions, values, single)
+
+
+def generalized_degree(G, nodes=None):
+    _undirected_only(G)
+    single, positions = _nbunch_positions(G, nodes)
+    base = _networkx_graph(G)
+    adj = base.adj
+    index = G._index
+    vlist = G._nodes if positions is None else [G._nodes[i] for i in positions]
+    # Counter keys come in the order NetworkX meets them, iterating the set
+    # `set(G[v]) - {v}`; building the same set gives the same order.
+    ws = []
+    ends = []
+    for v in vlist:
+        ws.extend([index[w] for w in set(adj[v]) - {v}])
+        ends.append(len(ws))
+    counts = G._core.generalized_degree(ws, ends)
+    degrees = []
+    begin = 0
+    for end in ends:
+        degrees.append(Counter(counts[begin:end]))
+        begin = end
+    return _per_node(G, positions, degrees, single)
+
+
+def all_triangles(G, nbunch=None):
+    _undirected_only(G)
+    base = _networkx_graph(G)
+    if not isinstance(base._adj, dict):
+        # Views compute `v_nbrs & u_nbrs` with Python's Set mixin, which
+        # builds the set in a different order.
+        raise NotImplementedError("rustnx needs a graph, not a view")
+    if nbunch is None:
+        positions = None
+    else:
+        _, positions = _nbunch_positions(G, nbunch)
+
+    def produce():
+        groups, ws, qualify = G._core.all_triangles(positions)
+        nodes = G._nodes
+        for u, v, start, end in groups:
+            nu, nv = nodes[u], nodes[v]
+            picked = [i for i in range(start, end) if qualify[i]]
+            if len(picked) == 1:
+                yield nu, nv, nodes[ws[picked[0]]]
+                continue
+            # NetworkX yields from the set `v_nbrs & u_nbrs`: rebuild it, in
+            # the order CPython inserts into it, to iterate it the same way.
+            members = [nodes[i] for i in ws[start:end]]
+            keep = dict(zip(members, qualify[start:end]))
+            for w in set(members):
+                if keep[w]:
+                    yield nu, nv, w
+
+    return _traversal(G, produce)
+
+
+@functools.cache
+def _centroid_tree_shortcut():
+    """Whether the installed NetworkX's ``centroid`` (3.7+; ``barycenter``
+    before) hands unweighted undirected trees to ``nx.tree.centroid``, which
+    orders its result differently (and rejects the null graph)."""
+    try:
+        nx.barycenter(nx.Graph(), backend="networkx")
+    except nx.NetworkXPointlessConcept:
+        return True
+    return False
+
+
+def centroid(G, weight=None):
+    nodes = G._nodes
+    if weight is None and not G.is_directed() and _centroid_tree_shortcut():
+        if is_tree(G):  # raises NetworkX's error for the null graph
+            return [nodes[i] for i in G._core.tree_centroid()]
+    n = len(G)
+    if weight is None:
+        sums = [(reached, total) for reached, total, _ in G._core.bfs_stats(None)]
+        failed, all_int = False, True
+    else:
+        weight, all_int, _ = _check_weight(G, weight, distances=True)
+        sums, failed = G._core.distance_sums(weight, _COMPENSATED_SUM)
+    smallest, centroid_vertices = float("inf"), []
+    for v, (reached, total) in zip(nodes, sums):
+        if reached < n:
+            raise nx.NetworkXNoPath(
+                f"Input graph {_networkx_graph(G)} is disconnected, so every induced "
+                "subgraph has infinite barycentricity."
+            )
+        barycentricity = int(total) if all_int else total
+        if barycentricity < smallest:
+            smallest = barycentricity
+            centroid_vertices = [v]
+        elif barycentricity == smallest:
+            centroid_vertices.append(v)
+    if failed:
+        raise ValueError(*_NEGATIVE_CYCLE)
+    return centroid_vertices
+
+
+def barycenter(G, weight=None):
+    # NetworkX 3.4 and 3.5 name `centroid` this way.
+    return centroid(G, weight)
+
+
+def harmonic_diameter(G, weight=None):
+    if weight is not None:
+        # Mixed int and float distances give the same 1/d either way.
+        weight, _, _ = _check_weight(G, weight)
+    total, added = G._core.harmonic_sum(weight)
+    order = len(G)
+    if added and total != 0:
+        return order * (order - 1) / total
+    if order > 1:
+        return math.inf
+    return math.nan
+
+
+@functools.cache
+def _intersection_pairs_once():
+    """Whether the installed NetworkX (3.7+) checks connectivity first,
+    visits each unordered pair once and gives up when the diameter passes
+    ``8 log2(n) / 3``. That rejects long cycles, which 3.4 and 3.5 accept."""
+    # NetworkX's own code, not a dispatched call: `is_distance_regular`
+    # would dispatch `intersection_array` back here while probing.
+    try:
+        nx.intersection_array.orig_func(nx.cycle_graph(40))
+    except nx.NetworkXError:
+        return True
+    return False
+
+
+def intersection_array(G):
+    _undirected_only(G)
+    if len(G) == 0:
+        raise nx.NetworkXPointlessConcept("Graph has no nodes.")
+    bound = (8 * math.log(len(G), 2)) / 3
+    code, b, c = G._core.intersection_array(_intersection_pairs_once(), bound)
+    if code == 1:
+        raise nx.NetworkXError("Graph is not distance regular.")
+    if code == 2:
+        raise nx.NetworkXError("Graph is not distance regular")
+    return b, c
+
+
+def is_distance_regular(G):
+    try:
+        intersection_array(G)
+        return True
+    except nx.NetworkXError:
+        return False
+
+
+def is_strongly_regular(G):
+    _undirected_only(G)
+    try:
+        b, _ = intersection_array(G)
+    except nx.NetworkXError:
+        return False
+    # A distance-regular graph's diameter is the length of its arrays.
+    return len(b) == 2
+
+
+_MISSING = object()
+
+
+def _color_ids(G, coloring):
+    """Per node, an id that is equal exactly when the colors compare
+    equal (-1 for nodes without a color)."""
+    if type(coloring) is not dict:
+        raise NotImplementedError("rustnx needs the coloring as a dict")
+    ids = {}
+    out = []
+    get = coloring.get
+    for v in G._nodes:
+        c = get(v, _MISSING)
+        if c is _MISSING:
+            out.append(-1)
+            continue
+        t = type(c)
+        # Equal dict keys must mean `==`, which NaN and custom types break.
+        if not (t is int or t is str or t is bool or (t is float and c == c)):
+            raise NotImplementedError("rustnx supports int, str and float colors")
+        out.append(ids.setdefault(c, len(ids)))
+    return out
+
+
+def is_coloring(G, coloring):
+    ok, missing = G._core.is_coloring(_color_ids(G, coloring))
+    if missing is not None:
+        raise KeyError(G._nodes[missing])
+    return ok
+
+
+def is_equitable(G, coloring, num_colors=None):
+    if not is_coloring(G, coloring):
+        return False
+    # The rest is NetworkX's own code: it only reads the coloring.
+    color_set_size = defaultdict(int)
+    for color in coloring.values():
+        color_set_size[color] += 1
+    if num_colors is not None:
+        for color in range(num_colors):
+            if color not in color_set_size:
+                color_set_size[color] = 0
+    all_set_sizes = set(color_set_size.values())
+    if len(all_set_sizes) == 0 and num_colors is None:
+        return True
+    elif len(all_set_sizes) == 1:
+        return True
+    elif len(all_set_sizes) == 2:
+        a, b = list(all_set_sizes)
+        return abs(a - b) <= 1
+    else:
+        return False
+
+
+def _greedy_order(G, strategy):
+    """``(order, colors)`` for a ``greedy_color`` strategy rustnx matches."""
+    core = G._core
+    if strategy == "largest_first":
+        return core.greedy_color()
+    if strategy in ("saturation_largest_first", "DSATUR"):
+        return core.dsatur()
+    if strategy == "random_sequential":
+        # NetworkX shuffles `list(G)` with the global `random` instance (no
+        # seed reaches the strategy); shuffling positions draws the same
+        # numbers and gives the same permutation.
+        order = list(range(len(G)))
+        random._inst.shuffle(order)
+        return order, core.greedy_with_order(order)
+    if strategy in ("connected_sequential", "connected_sequential_bfs", "connected_sequential_dfs"):
+        _undirected_only(G)
+        nodes = G._nodes
+        index = G._index
+        # Each component's source is `arbitrary_element` of NetworkX's
+        # component set, built here in the same order.
+        sources = [
+            index[next(iter({nodes[i] for i in comp}))] for comp in core.connected_components()
+        ]
+        order = core.connected_sequential(sources, strategy.endswith("_dfs"))
+        return order, core.greedy_with_order(order)
+    # smallest_last and independent_set pick nodes from sets (hash order).
+    raise NotImplementedError(f"rustnx does not implement the {strategy} strategy")
