@@ -3530,6 +3530,96 @@ impl CoreGraph {
         }))
     }
 
+    /// `fast_label_propagation_communities`: final labels and the
+    /// generator's new state. Directed graphs need exact in-edge order.
+    #[allow(clippy::type_complexity)]
+    fn fast_label_propagation(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+        state: Vec<u32>,
+    ) -> PyResult<Option<(Vec<u32>, Vec<u32>)>> {
+        let w = self.weight_slice(weight, false)?;
+        let pred = if self.directed {
+            Some(self.reverse_exact_order(weight)?)
+        } else {
+            None
+        };
+        Ok(py.detach(|| {
+            let mut rng = communities::Mt19937::from_state(&state)?;
+            let labels = communities::fast_label_propagation(&self.succ, pred, self.n, w, &mut rng);
+            Some((labels, rng.state()))
+        }))
+    }
+
+    /// `asyn_fluidc`: each node's community (`None`: unassigned), the order
+    /// nodes joined NetworkX's dict, and the generator's new state. `None`
+    /// where NetworkX would fail or for a bad state.
+    #[allow(clippy::type_complexity)]
+    fn asyn_fluidc(
+        &self,
+        py: Python<'_>,
+        k: usize,
+        max_iter: i64,
+        legacy: bool,
+        state: Vec<u32>,
+    ) -> Option<(Vec<Option<u32>>, Vec<u32>, Vec<u32>)> {
+        if k == 0 || k > self.n {
+            return None;
+        }
+        py.detach(|| {
+            let mut rng = communities::Mt19937::from_state(&state)?;
+            let (com, order) =
+                communities::asyn_fluidc(&self.succ, self.n, k, max_iter, legacy, &mut rng)?;
+            let com = com
+                .into_iter()
+                .map(|c| (c != u32::MAX).then_some(c))
+                .collect();
+            Some((com, order, rng.state()))
+        })
+    }
+
+    /// `overlapping_modularity`'s sums (see `communities::overlap_stats`).
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::type_complexity)]
+    fn overlap_stats(
+        &self,
+        py: Python<'_>,
+        flat: Vec<u32>,
+        ends: Vec<usize>,
+        membership: Vec<u64>,
+        weight: Option<&str>,
+        float: bool,
+        compensated: bool,
+    ) -> PyResult<(Py<PyAny>, Vec<(f64, f64)>)> {
+        self.check_flat(&flat, &ends)?;
+        if membership.len() != self.n {
+            return Err(PyValueError::new_err("one count per node expected"));
+        }
+        let w = self.weight_slice(weight, false)?;
+        if float && w.is_none() {
+            return Err(PyValueError::new_err("float sums need a weight"));
+        }
+        if !float && communities::degrees_int(&self.succ, self.n, w).is_none() {
+            return Err(PyNotImplementedError::new_err(
+                "integer weights are too large",
+            ));
+        }
+        let (total, per) = py.detach(|| {
+            communities::overlap_stats(
+                &self.succ,
+                self.n,
+                w,
+                float,
+                compensated,
+                &membership,
+                &flat,
+                &ends,
+            )
+        });
+        Ok((num_object(py, total)?, per))
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();

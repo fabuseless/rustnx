@@ -1499,3 +1499,217 @@ pub fn asyn_lpa(succ: &Csr, n: usize, weights: Option<&[f64]>, rng: &mut Mt19937
         }
     }
 }
+
+/// `fast_label_propagation_communities`: each node's final label.
+/// `pred` (directed graphs) is in NetworkX's `G._pred` order:
+/// `all_neighbors` lists predecessors first.
+pub fn fast_label_propagation(
+    succ: &Csr,
+    pred: Option<(&Csr, Option<&[f64]>)>,
+    n: usize,
+    weights: Option<&[f64]>,
+    rng: &mut Mt19937,
+) -> Vec<u32> {
+    let mut queue: Vec<u32> = (0..n as u32).collect();
+    rng.shuffle(&mut queue);
+    let mut queue: std::collections::VecDeque<u32> = queue.into();
+    let mut in_queue = vec![true; n];
+    let mut comms: Vec<u32> = (0..n as u32).collect();
+    let mut freq = Freq::new(n);
+    let mut nbrs: Vec<u32> = Vec::new();
+    while let Some(node) = queue.pop_front() {
+        let node = node as usize;
+        in_queue[node] = false;
+        // `all_neighbors`: predecessors, then successors.
+        nbrs.clear();
+        if let Some((p, _)) = pred {
+            nbrs.extend_from_slice(p.neighbors(node));
+        }
+        nbrs.extend_from_slice(succ.neighbors(node));
+        if nbrs.is_empty() {
+            continue; // isolated: `G.degree(node) == 0`
+        }
+        match weights {
+            None => {
+                for &v in &nbrs {
+                    freq.add(comms[v as usize], 1.0);
+                }
+            }
+            Some(w) => {
+                // `G.edges(node)`, then `G.in_edges(node)` if directed.
+                for e in succ.range(node) {
+                    freq.add(comms[succ.targets[e] as usize], w[e]);
+                }
+                if let Some((p, pw)) = pred {
+                    let pw = pw.expect("weights given");
+                    for e in p.range(node) {
+                        freq.add(comms[p.targets[e] as usize], pw[e]);
+                    }
+                }
+            }
+        }
+        let best = freq.best();
+        freq.clear();
+        let comm = rng.choice(&best);
+        if comms[node] != comm {
+            comms[node] = comm;
+            for &v in &nbrs {
+                let vi = v as usize;
+                if comms[vi] != comm && !in_queue[vi] {
+                    queue.push_back(v);
+                    in_queue[vi] = true;
+                }
+            }
+        }
+    }
+    comms
+}
+
+/// `asyn_fluidc`: each node's community (`UNSET`: none) and the order in
+/// which nodes entered NetworkX's `communities` dict. `legacy`: NetworkX
+/// before 3.6, which checks `iter_count > max_iter` after each round
+/// instead of looping while `iter_count < max_iter`. `None` if a community
+/// would empty out (NetworkX would divide by zero).
+pub fn asyn_fluidc(
+    adj: &Csr,
+    n: usize,
+    k: usize,
+    max_iter: i64,
+    legacy: bool,
+    rng: &mut Mt19937,
+) -> Option<(Vec<u32>, Vec<u32>)> {
+    let mut vertices: Vec<u32> = (0..n as u32).collect();
+    rng.shuffle(&mut vertices);
+    let mut com = vec![UNSET; n];
+    let mut order: Vec<u32> = Vec::with_capacity(n);
+    let mut density = vec![1.0f64; k];
+    let mut count = vec![1i64; k];
+    for (i, &v) in vertices[..k].iter().enumerate() {
+        com[v as usize] = i as u32;
+        order.push(v);
+    }
+    let mut freq = Freq::new(k);
+    let mut iter_count = 0i64;
+    let mut cont = true;
+    while cont && (legacy || iter_count < max_iter) {
+        cont = false;
+        iter_count += 1;
+        let mut vertices: Vec<u32> = (0..n as u32).collect();
+        rng.shuffle(&mut vertices);
+        for &vertex in &vertices {
+            let vertex = vertex as usize;
+            let own = com[vertex];
+            if own != UNSET {
+                freq.add(own, density[own as usize]);
+            }
+            for &v in adj.neighbors(vertex) {
+                let c = com[v as usize];
+                if c != UNSET {
+                    freq.add(c, density[c as usize]);
+                }
+            }
+            if freq.labels.is_empty() {
+                continue;
+            }
+            let max = freq
+                .counts
+                .iter()
+                .copied()
+                .fold(f64::NEG_INFINITY, f64::max);
+            let best: Vec<u32> = freq
+                .labels
+                .iter()
+                .zip(&freq.counts)
+                .filter(|&(_, &f)| (max - f) < 0.0001)
+                .map(|(&c, _)| c)
+                .collect();
+            freq.clear();
+            if own != UNSET && best.contains(&own) {
+                continue;
+            }
+            cont = true;
+            let new = rng.choice(&best);
+            if own != UNSET {
+                count[own as usize] -= 1;
+                if count[own as usize] == 0 {
+                    return None;
+                }
+                density[own as usize] = 1.0 / count[own as usize] as f64;
+            } else {
+                order.push(vertex as u32);
+            }
+            com[vertex] = new;
+            count[new as usize] += 1;
+            density[new as usize] = 1.0 / count[new as usize] as f64;
+        }
+        if legacy && iter_count > max_iter {
+            break;
+        }
+    }
+    Some((com, order))
+}
+
+/// `overlapping_modularity`'s sums: the degree total and, per community
+/// (positions in `set(community)` order), the overlap-discounted edge
+/// weight and degree sums. `membership[v]`: how many communities hold v.
+#[allow(clippy::too_many_arguments)]
+pub fn overlap_stats(
+    adj: &Csr,
+    n: usize,
+    weights: Option<&[f64]>,
+    float: bool,
+    compensated: bool,
+    membership: &[u64],
+    flat: &[u32],
+    ends: &[usize],
+) -> (Num, Vec<(f64, f64)>) {
+    let deg: Vec<f64> = if float {
+        degrees_float(adj, n, weights.expect("float weights"), compensated)
+    } else {
+        degrees_int(adj, n, weights)
+            .expect("checked weights")
+            .into_iter()
+            .map(|d| d as f64)
+            .collect()
+    };
+    let total = if float {
+        Num::Float(py_sum(deg.iter().copied(), compensated))
+    } else {
+        Num::Int(deg.iter().map(|&d| d as i128).sum())
+    };
+    let mut in_comm = vec![false; n];
+    let mut done = vec![false; n];
+    let mut per = Vec::with_capacity(ends.len());
+    let mut begin = 0;
+    for &end in ends {
+        let comm = &flat[begin..end];
+        for &v in comm {
+            in_comm[v as usize] = true;
+        }
+        let mut terms = Vec::new();
+        for &u in comm {
+            let u = u as usize;
+            for e in adj.range(u) {
+                let v = adj.targets[e] as usize;
+                if in_comm[v] && !done[v] {
+                    let wt = weights.map_or(1.0, |w| w[e]);
+                    terms.push(wt / (membership[u] * membership[v]) as f64);
+                }
+            }
+            done[u] = true;
+        }
+        let l = py_sum(terms.into_iter(), compensated);
+        let k = py_sum(
+            comm.iter()
+                .map(|&u| deg[u as usize] / membership[u as usize] as f64),
+            compensated,
+        );
+        per.push((l, k));
+        for &v in comm {
+            in_comm[v as usize] = false;
+            done[v as usize] = false;
+        }
+        begin = end;
+    }
+    (total, per)
+}

@@ -43,6 +43,7 @@ __all__ = [
     "articulation_points",
     "astar_path",
     "astar_path_length",
+    "asyn_fluidc",
     "asyn_lpa_communities",
     "attracting_components",
     "average_clustering",
@@ -118,6 +119,7 @@ __all__ = [
     "eulerian_circuit",
     "eulerian_path",
     "fast_could_be_isomorphic",
+    "fast_label_propagation_communities",
     "faster_could_be_isomorphic",
     "find_cycle",
     "find_minimal_d_separator",
@@ -255,6 +257,7 @@ __all__ = [
     "number_weakly_connected_components",
     "onion_layers",
     "out_degree_centrality",
+    "overlapping_modularity",
     "pagerank",
     "partition_quality",
     "partition_spanning_tree",
@@ -7140,3 +7143,98 @@ def asyn_lpa_communities(G, weight=None, seed=None):
     return _computed_on_first_next(
         G, compute, lambda H: nx.community.asyn_lpa_communities(H, weight, seed, backend="networkx")
     )
+
+
+def fast_label_propagation_communities(G, *, weight=None, seed=None):
+    if type(seed) is not random.Random:
+        raise NotImplementedError("rustnx replays random.Random generators only")
+    if weight is not None:
+        weight, _, has_hidden = _check_weight(G, weight)
+        if has_hidden:
+            raise NotImplementedError("rustnx does not support None edge weights here")
+    if G.is_directed():
+        G._ensure_exact_pred()  # `all_neighbors` lists predecessors first
+
+    def compute():
+        version, internal, gauss = seed.getstate()
+        found = G._core.fast_label_propagation(weight, list(internal))
+        if found is None:
+            raise RuntimeError("unexpected random.Random state")
+        labels, internal = found
+        seed.setstate((version, tuple(internal), gauss))
+        yield from nx.utils.groups(dict(zip(G._nodes, labels))).values()
+
+    return _computed_on_first_next(
+        G,
+        compute,
+        lambda H: nx.community.fast_label_propagation_communities(
+            H, weight=weight, seed=seed, backend="networkx"
+        ),
+    )
+
+
+@functools.cache
+def _fluidc_legacy():
+    """Whether ``asyn_fluidc`` is NetworkX 3.5's or older: it loops while
+    ``cont``, breaking once ``iter_count > max_iter``, and accepts any
+    ``max_iter``. ``None`` if unrecognized."""
+    try:
+        source = inspect.getsource(nx.community.asyn_fluidc.orig_func)
+    except (AttributeError, OSError, TypeError):
+        return None
+    if "while cont and iter_count < max_iter:" in source and "must be greater than 0" in source:
+        return False
+    if "if iter_count > max_iter:" in source:
+        return True
+    return None
+
+
+def asyn_fluidc(G, k, max_iter=100, seed=None):
+    _undirected_only(G)
+    if not isinstance(k, int):
+        raise nx.NetworkXError("k must be an integer.")
+    if not k > 0:
+        raise nx.NetworkXError("k must be greater than 0.")
+    if not is_connected(G):
+        raise nx.NetworkXError("Fluid Communities require connected Graphs.")
+    if len(G) < k:
+        raise nx.NetworkXError("k cannot be bigger than the number of nodes.")
+    legacy = _fluidc_legacy()
+    if legacy is None:
+        raise NotImplementedError("unrecognized NetworkX asyn_fluidc")
+    if not legacy and max_iter <= 0:
+        msg = f"{max_iter=} must be greater than 0"
+        raise ValueError(msg)
+    if type(seed) is not random.Random or type(k) is not int or type(max_iter) is not int:
+        raise NotImplementedError("rustnx needs int arguments and a random.Random seed")
+    version, internal, gauss = seed.getstate()
+    found = G._core.asyn_fluidc(k, max(min(max_iter, 2**62), -(2**62)), legacy, list(internal))
+    if found is None:
+        raise NotImplementedError("NetworkX's loop fails here")
+    com, order, internal = found
+    seed.setstate((version, tuple(internal), gauss))
+    nodes = G._nodes
+    return iter(nx.utils.groups({nodes[v]: com[v] for v in order}).values())
+
+
+def overlapping_modularity(G, communities, *, weight="weight", resolution=1):
+    _undirected_only(G)
+    if not isinstance(communities, list):
+        communities = list(communities)
+    if not is_cover(G, communities):
+        raise nx.NetworkXError("`communities` is not a valid cover of the nodes of G")
+    index = G._index
+    membership = [0] * len(G)
+    for community in communities:
+        for node in community:
+            i = index.get(node) if node in G else None
+            if i is None:
+                # NetworkX raises KeyError when it reaches the node's degree.
+                raise NotImplementedError("a community holds a node not in G")
+            membership[i] += 1
+    weight, float_mode = _modularity_weight(G, weight)
+    flat, ends = _set_positions(G, communities)
+    deg_sum, per = G._core.overlap_stats(flat, ends, membership, weight, float_mode, _COMPENSATED_SUM)
+    if deg_sum == 0:
+        return 0.0
+    return sum([2 * l_c / deg_sum - resolution * (k_c / deg_sum) ** 2 for l_c, k_c in per])
