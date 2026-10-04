@@ -4966,3 +4966,24 @@ def test_batch16_runs_in_rust():
         calls.append(lambda: _b16_densest(G, 5, method="greedy++", backend="rustnx"))
     for call in calls:
         call()
+
+
+# --- Fixes found while integrating batches 12 to 16 ------------------------------
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_float_distance_totals_follow_python_sum(seed):
+    # Python 3.12+ sums floats with compensated summation; random float
+    # weights make the last bits depend on it (0.5, 1.25, ... sum exactly).
+    rng = random.Random(seed)
+    G = nx.connected_watts_strogatz_graph(30, 4, 0.3, seed=seed)
+    for u, v in G.edges:
+        G[u][v]["weight"] = rng.random()
+    exact_outcome(nx.wiener_index, G, weight="weight")
+    exact_outcome(nx.average_shortest_path_length, G, weight="weight")
+    exact_outcome(nx.closeness_centrality, G, distance="weight")
+    D = nx.DiGraph(G)
+    for u, v in D.edges:
+        D[u][v]["weight"] = rng.random()
+    exact_outcome(nx.wiener_index, D, weight="weight")
+    exact_outcome(nx.closeness_centrality, D, distance="weight")

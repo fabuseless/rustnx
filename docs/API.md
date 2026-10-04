@@ -54,9 +54,9 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 
 | Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
 |---|---|---|---|---|
-| `Computed in batches when iteration starts, as NetworkX does.` | none | no | rustnx |  |
-| ``nodes=None` (the dict follows `find_cliques`' set order) and `cliques` fall back, as do directed graphs and nodes not in G.` | `nodes`, `cliques`, `separate_nodes` | no | rustnx |  |
-| `Node weights are read from the NetworkX graph; native graphs support `weight=None` only.` | `weight` | no | rustnx |  |
+| `nx.enumerate_all_cliques` | none | no | rustnx | Computed in batches when iteration starts, as NetworkX does. |
+| `nx.node_clique_number` | `nodes`, `cliques`, `separate_nodes` | no | rustnx | `nodes=None` (the dict follows `find_cliques`' set order) and `cliques` fall back, as do directed graphs and nodes not in G. |
+| `nx.max_weight_clique` | `weight` | no | rustnx | Node weights are read from the NetworkX graph; native graphs support `weight=None` only. |
 
 ### Centrality
 
@@ -71,7 +71,7 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.harmonic_centrality` | `nbunch`, `distance`, `sources` | yes | rustnx | Bit-for-bit identical. A small `nbunch` with many `sources` falls back. |
 | `nx.eigenvector_centrality` | `max_iter`, `tol`, `nstart`, `weight` | no | rustnx | Bit-for-bit identical. `nstart` must give a value for every node. |
 | `nx.katz_centrality` | `alpha`, `beta`, `max_iter`, `tol`, `nstart`, `normalized`, `weight` | no | rustnx | Bit-for-bit identical. `nstart` and a per-node `beta` fall back. |
-| `nx.pagerank` | `alpha`, `personalization`, `max_iter`, `tol`, `nstart`, `weight`, `dangling` | no | rustnx | Parallel on large graphs. `None` weights fall back. |
+| `nx.pagerank` | `alpha`, `personalization`, `max_iter`, `tol`, `nstart`, `weight`, `dangling` | no | rustnx | Parallel on large graphs. Matches NetworkX to about 1e-16 (NetworkX computes it with SciPy sparse arithmetic). `None` weights fall back. |
 
 ### Centrality: subsets, groups and more
 
@@ -376,73 +376,73 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 
 | Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
 |---|---|---|---|---|
-| `A `nodelist` that is one node or an iterator falls back.` | `nodelist` | no | NetworkX |  |
-| `Arguments other than nodes and sets of nodes (lists, for example) fall back.` | `x`, `y`, `z` | no | NetworkX |  |
-| `Arguments other than nodes and sets of nodes (lists, for example) fall back.` | `x`, `y`, `z`, `included`, `restricted` | no | rustnx |  |
-| `Arguments other than nodes and sets of nodes fall back, as do nodes equal to but of a different type than G's. The set iterates in NetworkX's order.` | `x`, `y`, `included`, `restricted` | no | rustnx |  |
+| `nx.triadic_census` | `nodelist` | no | NetworkX | A `nodelist` that is one node or an iterator falls back. |
+| `nx.is_d_separator` | `x`, `y`, `z` | no | NetworkX | Arguments other than nodes and sets of nodes (lists, for example) fall back. |
+| `nx.is_minimal_d_separator` | `x`, `y`, `z`, `included`, `restricted` | no | rustnx | Arguments other than nodes and sets of nodes (lists, for example) fall back. |
+| `nx.find_minimal_d_separator` | `x`, `y`, `included`, `restricted` | no | rustnx | Arguments other than nodes and sets of nodes fall back, as do nodes equal to but of a different type than G's. The set iterates in NetworkX's order. |
 
 ### Degree sequences
 
 | Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
 |---|---|---|---|---|
-| `Takes a sequence, not a graph: runs in rustnx with `backend="rustnx"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.` | `sequence`, `method` | no | rustnx |  |
-| `Takes a sequence, not a graph: runs in rustnx with `backend="rustnx"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.` | `in_sequence`, `out_sequence` | no | rustnx |  |
-| `Takes a sequence, not a graph: runs in rustnx with `backend="rustnx"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.` | `sequence` | no | rustnx |  |
-| `Takes a sequence, not a graph: runs in rustnx with `backend="rustnx"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.` | `sequence` | no | rustnx |  |
-| `Takes a sequence, not a graph: runs in rustnx with `backend="rustnx"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.` | `deg_sequence` | no | rustnx |  |
-| `Takes a sequence, not a graph: runs in rustnx with `backend="rustnx"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code.` | `deg_sequence` | no | rustnx |  |
+| `nx.is_graphical` | `sequence`, `method` | no | rustnx | Takes a sequence, not a graph: runs in rustnx with `backend="rustnx"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code. |
+| `nx.is_digraphical` | `in_sequence`, `out_sequence` | no | rustnx | Takes a sequence, not a graph: runs in rustnx with `backend="rustnx"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code. |
+| `nx.is_multigraphical` | `sequence` | no | rustnx | Takes a sequence, not a graph: runs in rustnx with `backend="rustnx"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code. |
+| `nx.is_pseudographical` | `sequence` | no | rustnx | Takes a sequence, not a graph: runs in rustnx with `backend="rustnx"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code. |
+| `nx.is_valid_degree_sequence_erdos_gallai` | `deg_sequence` | no | rustnx | Takes a sequence, not a graph: runs in rustnx with `backend="rustnx"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code. |
+| `nx.is_valid_degree_sequence_havel_hakimi` | `deg_sequence` | no | rustnx | Takes a sequence, not a graph: runs in rustnx with `backend="rustnx"` or `nx.config.backend_priority`. Ints beyond 64 bits run NetworkX's code. |
 
 ### Boundaries and dominating sets
 
 | Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
 |---|---|---|---|---|
-| `The set iterates in NetworkX's order.` | `nbunch1`, `nbunch2` | yes | NetworkX |  |
-| ``data` falls back.` | `nbunch1`, `nbunch2`, `data`, `keys`, `default` | no | NetworkX |  |
+| `nx.node_boundary` | `nbunch1`, `nbunch2` | yes | NetworkX | The set iterates in NetworkX's order. |
+| `nx.edge_boundary` | `nbunch1`, `nbunch2`, `data`, `keys`, `default` | no | NetworkX | `data` falls back. |
 | `nx.is_dominating_set` | `nbunch` | yes | NetworkX |  |
-| `NetworkX 3.5 and newer. The set iterates in NetworkX's order.` | none | no | NetworkX |  |
-| `NetworkX 3.5 and newer.` | `nbunch` | no | NetworkX |  |
+| `nx.connected_dominating_set` | none | no | NetworkX | NetworkX 3.5 and newer. The set iterates in NetworkX's order. |
+| `nx.is_connected_dominating_set` | `nbunch` | no | NetworkX | NetworkX 3.5 and newer. |
 
 ### Matching and covers
 
 | Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
 |---|---|---|---|---|
-| `The set iterates in NetworkX's order.` | none | no | NetworkX |  |
-| `Integer weights beyond 2**49 in magnitude fall back. The set (and each pair's orientation) is NetworkX's.` | `maxcardinality`, `weight` | no | rustnx |  |
-| `Integer weights beyond 2**49 in magnitude fall back. The set (and each pair's orientation) is NetworkX's.` | `weight` | no | rustnx |  |
+| `nx.maximal_matching` | none | no | NetworkX | The set iterates in NetworkX's order. |
+| `nx.max_weight_matching` | `maxcardinality`, `weight` | no | rustnx | Integer weights beyond 2**49 in magnitude fall back. The set (and each pair's orientation) is NetworkX's. |
+| `nx.min_weight_matching` | `weight` | no | rustnx | Integer weights beyond 2**49 in magnitude fall back. The set (and each pair's orientation) is NetworkX's. |
 | `nx.is_matching` | `matching` | yes | NetworkX |  |
 | `nx.is_maximal_matching` | `matching` | no | NetworkX |  |
 | `nx.is_perfect_matching` | `matching` | yes | NetworkX |  |
-| ``matching_algorithm` falls back. The set iterates in NetworkX's order.` | `matching_algorithm` | no | rustnx |  |
+| `nx.min_edge_cover` | `matching_algorithm` | no | rustnx | `matching_algorithm` falls back. The set iterates in NetworkX's order. |
 
 ### Isomorphism and graph hashing
 
 | Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
 |---|---|---|---|---|
-| `Takes two graphs. Follows the installed NetworkX's checks (3.5+ stops at the first property that differs, which decides whether directed graphs raise). Multigraphs fall back.` | `G1`, `G2`, `properties` | no | rustnx |  |
-| `Takes two graphs. As `could_be_isomorphic` (3.7+ stops at the first property that differs).` | `G1`, `G2` | no | rustnx |  |
-| `Takes two graphs.` | `G1`, `G2` | no | NetworkX |  |
-| `Takes two graphs. A yes/no answer, so an exact matcher in Rust (with color refinement) gives NetworkX's result without running VF2. `node_match`, `edge_match` and multigraphs fall back.` | `G1`, `G2` | no | rustnx |  |
-| `Takes two graphs. Node labels are read from the NetworkX graphs. Empty graphs give `False`, as in NetworkX. A directed and an undirected graph fall back before NetworkX 3.7.` | `FG`, `SG`, `node_label`, `default_label` | no | rustnx |  |
-| `NetworkX 3.7+. Takes two graphs (the second is the smaller). Node labels are read from the NetworkX graphs.` | `FG`, `SG`, `node_label`, `default_label` | no | rustnx |  |
-| `NetworkX 3.7+. Takes two graphs (the second is the smaller). Node labels are read from the NetworkX graphs.` | `FG`, `SG`, `node_label`, `default_label` | no | rustnx |  |
-| `Takes two trees. Follows the installed NetworkX's child order and errors (3.4 asserts; its recursive walk means very deep trees fall back there). A directed `t2` falls back.` | `t1`, `t2` | no | rustnx |  |
-| `As `tree_isomorphism`. Directed trees and roots not in the trees fall back.` | `t1`, `root1`, `t2`, `root2` | no | rustnx |  |
-| `Builds the combined tree in NetworkX from Rust searches. Roots not in the graphs fall back.` | `t1`, `root1`, `t2`, `root2` | no | NetworkX |  |
-| `BLAKE2b in Rust, parallel; same hashes as NetworkX's `hashlib`, for the installed version (3.5 changed them), with the same warnings. Node and edge attribute labels are read from the NetworkX graph; non-ASCII labels, non-str attribute names and an unusual `digest_size` fall back.` | `edge_attr`, `node_attr`, `iterations`, `digest_size` | no | rustnx |  |
-| `As `weisfeiler_lehman_graph_hash`.` | `edge_attr`, `node_attr`, `iterations`, `digest_size`, `include_initial_labels` | no | rustnx |  |
+| `nx.could_be_isomorphic` | `G1`, `G2`, `properties` | no | rustnx | Takes two graphs. Follows the installed NetworkX's checks (3.5+ stops at the first property that differs, which decides whether directed graphs raise). Multigraphs fall back. |
+| `nx.fast_could_be_isomorphic` | `G1`, `G2` | no | rustnx | Takes two graphs. As `could_be_isomorphic` (3.7+ stops at the first property that differs). |
+| `nx.faster_could_be_isomorphic` | `G1`, `G2` | no | NetworkX | Takes two graphs. |
+| `nx.is_isomorphic` | `G1`, `G2` | no | rustnx | Takes two graphs. A yes/no answer, so an exact matcher in Rust (with color refinement) gives NetworkX's result without running VF2. `node_match`, `edge_match` and multigraphs fall back. |
+| `nx.vf2pp_is_isomorphic` | `FG`, `SG`, `node_label`, `default_label` | no | rustnx | Takes two graphs. Node labels are read from the NetworkX graphs. Empty graphs give `False`, as in NetworkX. A directed and an undirected graph fall back before NetworkX 3.7. |
+| `nx.vf2pp_subgraph_is_isomorphic` | `FG`, `SG`, `node_label`, `default_label` | no | rustnx | NetworkX 3.7+. Takes two graphs (the second is the smaller). Node labels are read from the NetworkX graphs. |
+| `nx.vf2pp_is_monomorphic` | `FG`, `SG`, `node_label`, `default_label` | no | rustnx | NetworkX 3.7+. Takes two graphs (the second is the smaller). Node labels are read from the NetworkX graphs. |
+| `nx.isomorphism.tree_isomorphism` | `t1`, `t2` | no | rustnx | Takes two trees. Follows the installed NetworkX's child order and errors (3.4 asserts; its recursive walk means very deep trees fall back there). A directed `t2` falls back. |
+| `nx.isomorphism.rooted_tree_isomorphism` | `t1`, `root1`, `t2`, `root2` | no | rustnx | As `tree_isomorphism`. Directed trees and roots not in the trees fall back. |
+| `networkx.algorithms.isomorphism.tree_isomorphism.root_trees` | `t1`, `root1`, `t2`, `root2` | no | NetworkX | Builds the combined tree in NetworkX from Rust searches. Roots not in the graphs fall back. |
+| `nx.weisfeiler_lehman_graph_hash` | `edge_attr`, `node_attr`, `iterations`, `digest_size` | no | rustnx | BLAKE2b in Rust, parallel; same hashes as NetworkX's `hashlib`, for the installed version (3.5 changed them), with the same warnings. Node and edge attribute labels are read from the NetworkX graph; non-ASCII labels, non-str attribute names and an unusual `digest_size` fall back. |
+| `nx.weisfeiler_lehman_subgraph_hashes` | `edge_attr`, `node_attr`, `iterations`, `digest_size`, `include_initial_labels` | no | rustnx | As `weisfeiler_lehman_graph_hash`. |
 
 ### Bipartite graphs
 
 | Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
 |---|---|---|---|---|
-| `Directed graphs visit predecessors in NetworkX's order.` | none | yes | NetworkX |  |
-| `Sets are filled in NetworkX's order, so they iterate the same way.` | `top_nodes` | yes | NetworkX |  |
-| `Directed graphs raise as in NetworkX.` | `nodes` | yes | NetworkX |  |
-| `Also `nx.bipartite.maximum_matching`. Follows NetworkX's search order (its `left` set's iteration order), so it finds the same matching. Directed graphs, `top_nodes` not in the graph or with neighbors among themselves, and augmenting paths deep enough to approach Python's recursion limit fall back.` | `top_nodes` | yes | rustnx |  |
-| `Parallel. Builds the cover with NetworkX's set operations. Directed graphs, multigraphs and `top_nodes` not in the graph fall back.` | `matching`, `top_nodes` | no | rustnx |  |
-| `As `nx.bipartite.closeness_centrality`. Bit-for-bit identical; parallel searches.` | `nodes`, `normalized` | yes | rustnx |  |
-| `A one-shot iterator of nodes, and nodes not in the graph, fall back.` | `nodes` | yes | rustnx |  |
-| `NetworkX 3.7+.` | `nodes` | no | rustnx |  |
+| `nx.bipartite.color` | none | yes | NetworkX | Directed graphs visit predecessors in NetworkX's order. |
+| `nx.bipartite.sets` | `top_nodes` | yes | NetworkX | Sets are filled in NetworkX's order, so they iterate the same way. |
+| `nx.bipartite.is_bipartite_node_set` | `nodes` | yes | NetworkX | Directed graphs raise as in NetworkX. |
+| `nx.bipartite.hopcroft_karp_matching` | `top_nodes` | yes | rustnx | Also `nx.bipartite.maximum_matching`. Follows NetworkX's search order (its `left` set's iteration order), so it finds the same matching. Directed graphs, `top_nodes` not in the graph or with neighbors among themselves, and augmenting paths deep enough to approach Python's recursion limit fall back. |
+| `nx.bipartite.to_vertex_cover` | `matching`, `top_nodes` | no | rustnx | Parallel. Builds the cover with NetworkX's set operations. Directed graphs, multigraphs and `top_nodes` not in the graph fall back. |
+| `nx.bipartite_closeness_centrality` | `nodes`, `normalized` | yes | rustnx | As `nx.bipartite.closeness_centrality`. Bit-for-bit identical; parallel searches. |
+| `nx.bipartite.node_redundancy` | `nodes` | yes | rustnx | A one-shot iterator of nodes, and nodes not in the graph, fall back. |
+| `nx.bipartite.butterflies` | `nodes` | no | rustnx | NetworkX 3.7+. |
 
 ### Flows
 
@@ -551,11 +551,11 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 
 | Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
 |---|---|---|---|---|
-| `Undirected graphs with `nodes` fall back (NetworkX raises `AttributeError`).` | `nodes` | no | NetworkX |  |
+| `nx.reciprocity` | `nodes` | no | NetworkX | Undirected graphs with `nodes` fall back (NetworkX raises `AttributeError`). |
 | `nx.overall_reciprocity` | none | no | NetworkX |  |
-| ``normalized=False` only: normalizing uses random edge swaps, so the default falls back.` | `normalized`, `Q`, `seed` | no | NetworkX |  |
+| `nx.rich_club_coefficient` | `normalized`, `Q`, `seed` | no | NetworkX | `normalized=False` only: normalizing uses random edge swaps, so the default falls back. |
 | `nx.s_metric` | none | no | NetworkX |  |
-| `Exact int64 arithmetic (wrapping on overflow as NumPy and SciPy do). Graphs without edges (NetworkX returns floats) and walks longer than 100 fall back.` | `walk_length` | no | rustnx |  |
+| `nx.number_of_walks` | `walk_length` | no | rustnx | Exact int64 arithmetic (wrapping on overflow as NumPy and SciPy do). Graphs without edges (NetworkX returns floats) and walks longer than 100 fall back. |
 
 ### Communities
 

@@ -123,15 +123,20 @@ type SourceDists = (usize, f64, Vec<f64>);
 /// in order, each source's distances in pop order, one running total), so
 /// float results match exactly. It is `None` if any source hit a negative
 /// cycle; per-source results say which.
+/// The total of all distances follows Python's `sum()` over NetworkX's
+/// sequence (sources in order, each in Dijkstra pop order): compensated
+/// (Neumaier) summation from Python 3.12 when `compensated` is set.
 pub fn dijkstra_stats(
     adj: &Csr,
     n: usize,
     weights: &[f64],
     sources: &[u32],
+    compensated: bool,
 ) -> (Vec<Result<DijkstraStats, NegativeCycle>>, Option<f64>) {
     const CHUNK: usize = 64;
     let mut stats = Vec::with_capacity(sources.len());
     let mut total = Some(0.0f64);
+    let mut correction = 0.0f64;
     for chunk in sources.chunks(CHUNK * rayon::current_num_threads().max(1)) {
         let results: Vec<Result<SourceDists, NegativeCycle>> = chunk
             .par_iter()
@@ -152,9 +157,19 @@ pub fn dijkstra_stats(
         for r in results {
             match r {
                 Ok((reached, max, dists)) => {
-                    if let Some(t) = total.as_mut() {
+                    if let Some(s) = total.as_mut() {
                         for d in dists {
-                            *t += d;
+                            if compensated {
+                                let t = *s + d;
+                                if s.abs() >= d.abs() {
+                                    correction += (*s - t) + d;
+                                } else {
+                                    correction += (d - t) + *s;
+                                }
+                                *s = t;
+                            } else {
+                                *s += d;
+                            }
                         }
                     }
                     stats.push(Ok(DijkstraStats { reached, max }));
@@ -164,6 +179,11 @@ pub fn dijkstra_stats(
                     stats.push(Err(e));
                 }
             }
+        }
+    }
+    if let Some(s) = total.as_mut() {
+        if correction != 0.0 && correction.is_finite() {
+            *s += correction;
         }
     }
     (stats, total)

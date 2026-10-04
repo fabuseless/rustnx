@@ -256,13 +256,14 @@ impl CoreGraph {
         }))
     }
 
-    #[pyo3(signature = (distance=None, wf_improved=true, sources=None))]
+    #[pyo3(signature = (distance=None, wf_improved=true, sources=None, compensated=false))]
     fn closeness(
         &self,
         py: Python<'_>,
         distance: Option<&str>,
         wf_improved: bool,
         sources: Option<Vec<u32>>,
+        compensated: bool,
     ) -> PyResult<Vec<f64>> {
         // NetworkX runs closeness on `G.reverse()` for directed graphs.
         let (adj, w) = self.reverse_exact(distance)?;
@@ -270,7 +271,8 @@ impl CoreGraph {
         for &s in &sources {
             self.check_index(s as usize)?;
         }
-        Ok(py.detach(|| centrality::closeness(adj, self.n, w, wf_improved, &sources))?)
+        Ok(py
+            .detach(|| centrality::closeness(adj, self.n, w, wf_improved, &sources, compensated))?)
     }
 
     /// PageRank scores in node order, or `None` if it didn't converge.
@@ -331,20 +333,22 @@ impl CoreGraph {
 
     /// Per source `(reached, max distance)` or `None` on a negative cycle,
     /// plus the NetworkX-ordered sum of all distances (`None` on any error).
-    #[pyo3(signature = (weight, sources=None))]
+    #[pyo3(signature = (weight, sources=None, compensated=false))]
     #[allow(clippy::type_complexity)]
     fn dijkstra_stats(
         &self,
         py: Python<'_>,
         weight: &str,
         sources: Option<Vec<u32>>,
+        compensated: bool,
     ) -> PyResult<(Vec<Option<(usize, f64)>>, Option<f64>)> {
         let w = self
             .weight_slice(Some(weight), false)?
             .expect("weight given");
         let sources = self.sources_or_all(sources)?;
         Ok(py.detach(|| {
-            let (stats, total) = distance::dijkstra_stats(&self.succ, self.n, w, &sources);
+            let (stats, total) =
+                distance::dijkstra_stats(&self.succ, self.n, w, &sources, compensated);
             let stats = stats
                 .into_iter()
                 .map(|r| r.ok().map(|s| (s.reached, s.max)))

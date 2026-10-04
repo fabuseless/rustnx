@@ -656,7 +656,7 @@ def closeness_centrality(G, u=None, distance=None, wf_improved=True):
     if G.is_directed() and distance is not None:
         # Tie order on the reversed graph affects the float sums.
         G._ensure_exact_pred()
-    values = G._core.closeness(distance, bool(wf_improved), sources)
+    values = G._core.closeness(distance, bool(wf_improved), sources, _COMPENSATED_SUM)
     if u is not None:
         return values[0]
     return dict(zip(G._nodes, values))
@@ -948,7 +948,7 @@ def _distance_total(G, weight):
     if weight is None:
         return sum(total for _, total, _ in G._core.bfs_stats(None))
     weight, all_int, _ = _check_weight(G, weight, distances=True)
-    stats, total = G._core.dijkstra_stats(weight, None)
+    stats, total = G._core.dijkstra_stats(weight, None, _COMPENSATED_SUM)
     if total is None:
         raise ValueError(*_NEGATIVE_CYCLE)
     return int(total) if all_int else total
