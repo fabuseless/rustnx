@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 405 NetworkX functions. Call them as usual (for
+rustnx implements 407 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -646,6 +646,8 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.readwrite.json_graph.adjacency_graph` | `data`, `directed`, `multigraph`, `attrs` | no | rustnx | Replays NetworkX's `add_node` / `add_edge` calls on the same objects. Nodes and keys must be `str`, `int`, `float`, `bool`, or tuples of those; plain `dict` and `list` input only; anything else falls back. |
 | `nx.readwrite.json_graph.cytoscape_graph` | `data`, `name`, `ident` | no | rustnx | Replays NetworkX's `add_node` / `add_edge` calls on the same objects. Nodes and keys must be `str`, `int`, `float`, `bool`, or tuples of those; plain `dict` and `list` input only; anything else falls back. |
 | `nx.readwrite.json_graph.tree_graph` | `data`, `ident`, `children` | no | rustnx | Replays NetworkX's `add_node` / `add_edge` calls on the same objects. Nodes and keys must be `str`, `int`, `float`, `bool`, or tuples of those; plain `dict` and `list` input only; anything else falls back. Trees deeper than 200 levels fall back (NetworkX recurses per level). |
+| `nx.parse_gml` | `lines`, `label`, `destringizer` | no | rustnx | Lines as a list or tuple of `str`, or an iterator (read once; if rustnx declines, NetworkX's code runs on the same lines). A `str` is split at line boundaries as in NetworkX. `destringizer=None` only. Node ids, labels and keys must be ints, floats, strings or `()`; edges must name a node by its id's own type. Named character references other than `&amp;`, `&lt;`, `&gt;` and `&quot;`, and ints beyond 64 bits, fall back. |
+| `nx.read_gml` | `path`, `label`, `destringizer` | no | rustnx | Reads a binary file or path (`.gz` and `.bz2` too) decoded as ASCII; other encodings, text-mode files and anything rustnx declines are read by NetworkX from the same position. `destringizer=None` only. Node ids, labels and keys must be ints, floats, strings or `()`; edges must name a node by its id's own type. Named character references other than `&amp;`, `&lt;`, `&gt;` and `&quot;`, and ints beyond 64 bits, fall back. |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 

@@ -5664,3 +5664,136 @@ def test_batch20_json_edge_cases():
     ]
     for data in cases:
         _b20_outcome(lambda backend: tree(data, backend=backend))
+
+
+def _b20_gml_graph(seed, directed, multigraph):
+    rng = random.Random(seed)
+    G = _b20_attr_graph(seed, directed, multigraph)
+    for _, d in G.nodes(data=True):
+        if rng.random() < 0.5:
+            d.update(rng.choice([
+                {"w": 1.5}, {"s": "café \"q\" & <x>"}, {"l": [1, 2.5, "x"]},
+                {"d": {"k": 1, "n": {"m": "x"}}}, {"e": ()}, {"f": []}, {"big": 10**30},
+                {"inf": float("inf"), "ninf": float("-inf")}, {"one": [7]},
+            ]))
+    for *_, d in G.edges(data=True):
+        for k in list(d):
+            if d[k] is None or isinstance(d[k], bool):
+                d[k] = str(d[k])
+    if multigraph:
+        for u, v in list(G.edges())[:3]:
+            G.add_edge(u, v, key=rng.choice(["k", 9, 2.5]))
+    G.graph.update(name=f"g{seed}", tags=["a", "b"])
+    return G
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch20_gml(seed, directed):
+    G = _b20_gml_graph(seed, directed, multigraph=seed % 2 == 1)
+    text = "\n".join(nx.generate_gml(G))
+    for label in ["label", "id", None]:
+        assert _b20_outcome(lambda backend: nx.parse_gml(text, label=label, backend=backend))
+        lines = text.split("\n")
+        assert _b20_outcome(lambda backend: nx.parse_gml(lines, label=label, backend=backend))
+        assert _b20_outcome(lambda backend: nx.parse_gml(
+            iter([line + "\n" for line in lines]), label=label, backend=backend))
+        assert _b20_outcome(lambda backend: nx.read_gml(
+            _b20_io.BytesIO(text.encode()), label=label, backend=backend))
+    # Labels other than "label" (this one is unique: the node's own id).
+    H = nx.relabel_nodes(G, {v: i for i, v in enumerate(G)})
+    for v, d in H.nodes(data=True):
+        d["name"] = f"n{v}"
+    text = "\n".join(nx.generate_gml(H))
+    assert _b20_outcome(lambda backend: nx.parse_gml(text, label="name", backend=backend))
+    _b20_outcome(lambda backend: nx.parse_gml(text, label="missing", backend=backend))
+    _b20_outcome(lambda backend: nx.parse_gml(text, destringizer=nx.readwrite.gml.literal_destringizer,
+                                              backend=backend))
+
+
+_B20_GML_TOKENS = [
+    "graph", "[", "]", "node", "edge", "id", "label", "source", "target", "key", "directed",
+    "multigraph", "1", "0", "-2", "1.5", "+INF", "-INF", "INF", "NAN", "-INFe5", "1e5", "1.",
+    ".5", "5.e3", "1.5x", '"s"', '"()"', '"[]"', '"&#65;&amp;"', '"&nbsp;"', '"&#55296;"',
+    '"&#99999999;"', '"&#x41;"', '"a', 'b"', "# c", " ", "é", "\t", "abc_9",
+    "_networkx_list_start", '"_networkx_list_start"', "+", "99999999999999999999", "self",
+]
+
+
+@pytest.mark.parametrize("seed", range(150))
+def test_batch20_gml_tokens(seed):
+    rng = random.Random(seed)
+    lines = []
+    for _ in range(rng.randint(0, 12)):
+        lines.append(" ".join(rng.choice(_B20_GML_TOKENS) for _ in range(rng.randint(0, 6))))
+    # Mostly well-formed graphs with odd values.
+    body = []
+    n = rng.randint(0, 5)
+    for i in range(n):
+        body.append(f"node [ id {rng.choice([i, i, str(i), f'{i}.0'])} label \"{rng.choice('abcde')}\" "
+                    f"{rng.choice(_B20_GML_TOKENS[3:])} {rng.choice(_B20_GML_TOKENS[12:])} ]")
+    for _ in range(rng.randint(0, 6)):
+        if n:
+            body.append(f"edge [ source {rng.randrange(n)} target {rng.randrange(n)} "
+                        f"{rng.choice(['', 'key 1', 'key 1.0', 'key \"k\"', 'w 2'])} ]")
+    header = rng.choice(["", "directed 1", "multigraph 1", "directed 1 multigraph 1", "multigraph 0"])
+    texts = ["\n".join(lines), f"graph [ {header}\n" + "\n".join(body) + "\n]",
+             "graph [\n" + "\n".join(lines) + "\n]"]
+    for text in texts:
+        for label in ["label", "id"]:
+            _b20_outcome(lambda backend: nx.parse_gml(text, label=label, backend=backend))
+            _b20_outcome(lambda backend: nx.parse_gml(text.split("\n"), label=label, backend=backend))
+
+
+def test_batch20_gml_cases():
+    cases = [
+        'graph [ node [ id 1 label "a\n  b" ] ]',  # a string over two lines
+        'graph [ node [ id 1 label "a\n  b\n c" ] ]',
+        'graph [ node [ id 1 label "a\n\n c" ] ]',
+        'graph [ node [ id 1 label "a" x "b\nc" ] ]',
+        'graph [ node [ id 1 label "open\n',
+        "graph [ node [ id abc label def ] edge [ source abc target abc ] ]",
+        "graph [ node [ id 1 ] node [ id 1.0 ] ]",
+        "graph [ node [ id 1 label 2 ] node [ id 2 label 2.0 ] ]",
+        "graph [ node [ id 1 ] edge [ source 1 target 2 ] ]",
+        "graph [ node [ id 1 ] edge [ source 1.0 target 1 ] ]",
+        "graph [ node [ id 1 ] edge [ source 1 target 1 ] edge [ source 1 target 1 ] ]",
+        "graph [ multigraph 1 node [ id 1 ] edge [ source 1 target 1 ] edge [ source 1 target 1 key 0 ] ]",
+        "graph [ multigraph 1 node [ id 1 ] edge [ source 1 target 1 key 1 ] edge [ source 1 target 1 ] edge [ source 1 target 1 ] ]",
+        "graph [ multigraph 1 node [ id 1 ] edge [ source 1 target 1 key NAN ] edge [ source 1 target 1 key NAN ] ]",
+        "graph [ multigraph 1 node [ id 1 ] edge [ source 1 target 1 key [ a 1 ] ] ]",
+        "graph [ node [ id 1 node_for_adding 2 ] ]",
+        "graph [ node [ id 1 ] edge [ source 1 target 1 u_of_edge 2 ] ]",
+        "graph [ node [ id [ a 1 ] ] ]",
+        'graph [ node [ id "()" label "x" ] ]',
+        'graph [ node [ id 1 label "[]" ] ]',
+        "graph [ node [ id 1 x NAN y INF z -INF w +INF ] ]",
+        "graph [ node [ id 1 x -INFe5 ] ]",
+        "graph [ node [ id 1 x 1e5 ] ]",
+        "graph [ node [ id 1 x 99999999999999999999 ] ]",
+        'graph [ node [ id 1 l "_networkx_list_start" l 2 ] node [ id 2 l "_networkx_list_start" ] ]',
+        'graph [ name "&amp;&lt;&gt;&quot;&#65;&#x42;&#99999999;&#; & &x41; &nbsp;" ]',
+        'graph [ name "&#55296;" ]',
+        "graph [ directed 1 directed 0 ]",
+        'graph [ directed "" multigraph 0.0 ]',
+        "graph [ ] graph [ ]",
+        "graph 5", "", "node [ id 1 ]", "graph [ node 5 ]", "graph [ ] ]", "graph [",
+        "graph [ id ] ]", "graph [ x ]",
+        "Creator \"me\"\ngraph [ node [ id 0 ] ]",
+        "graph [ node [ id 0 ] ]",
+        "graph [ node [ id 0 label \"café\" ] ]",
+        "graph [ né 1 ]",
+        "graph [ node [ id 0 ] ]\r\n# trailing\r\n",
+        "graph [ node [ id 0 ] ]\x0bgraph",
+        "graph [ x" + " [ y" * 150 + " ]" * 151,
+    ]
+    for text in cases:
+        for label in ["label", "id", None]:
+            _b20_outcome(lambda backend: nx.parse_gml(text, label=label, backend=backend))
+            _b20_outcome(lambda backend: nx.parse_gml(text.split("\n"), label=label, backend=backend))
+            _b20_outcome(lambda backend: nx.read_gml(
+                _b20_io.BytesIO(text.encode()), label=label, backend=backend))
+    # List items: one trailing newline is dropped; another one inside raises.
+    for lines in [["graph [ ]\n"], ["graph [\n", "]\n\n"], ["graph [ ]\r\n"], [b"graph [ ]"],
+                  ("graph [ ]",), ["graph [ ", 3, "]"]]:
+        _b20_outcome(lambda backend: nx.parse_gml(lines, backend=backend))

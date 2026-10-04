@@ -231,7 +231,8 @@ SECTIONS = [
         "bipartite_read_edgelist", "parse_adjlist", "read_adjlist", "parse_multiline_adjlist",
         "read_multiline_adjlist", "parse_leda", "read_leda", "parse_pajek", "read_pajek",
         "from_graph6_bytes", "read_graph6", "from_sparse6_bytes", "read_sparse6",
-        "node_link_graph", "adjacency_graph", "cytoscape_graph", "tree_graph",
+        "node_link_graph", "adjacency_graph", "cytoscape_graph", "tree_graph", "parse_gml",
+        "read_gml",
     ]),
 ]
 
@@ -697,6 +698,11 @@ NOTES.update({
     "adjacency_graph": JSON,
     "cytoscape_graph": JSON,
     "tree_graph": JSON + " Trees deeper than 200 levels fall back (NetworkX recurses per level).",
+})
+GML = "`destringizer=None` only. Node ids, labels and keys must be ints, floats, strings or `()`; edges must name a node by its id's own type. Named character references other than `&amp;`, `&lt;`, `&gt;` and `&quot;`, and ints beyond 64 bits, fall back."
+NOTES.update({
+    "parse_gml": PARSE + " A `str` is split at line boundaries as in NetworkX. " + GML,
+    "read_gml": READ.replace("decoded as UTF-8, ASCII or Latin-1", "decoded as ASCII") + " " + GML,
 })
 SUBMODULE.update({
     name: "nx.readwrite.json_graph"

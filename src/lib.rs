@@ -4897,6 +4897,31 @@ impl CoreGraph {
         Ok(Some(graphs))
     }
 
+    /// `parse_gml` / `read_gml` with `destringizer=None`: the new graph, or
+    /// None where NetworkX must run instead. `mode` as for
+    /// `readwrite::gml_lines` (lists are mode 0, single strings 1 or 3).
+    #[staticmethod]
+    #[pyo3(signature = (lines, mode, label))]
+    fn rw_gml<'py>(
+        py: Python<'py>,
+        lines: &Bound<'py, PyAny>,
+        mode: u8,
+        label: Option<&str>,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        let Some(items) = readwrite::string_items(lines, mode.min(1)) else {
+            return Ok(None);
+        };
+        let Some(strs) = readwrite::gml_lines(&items, mode) else {
+            return Ok(None);
+        };
+        let Some(parsed) = py.detach(|| readwrite::gml(&strs, label)) else {
+            return Ok(None);
+        };
+        let graph = readwrite::new_nx_graph(py, parsed.class.0, parsed.class.1)?;
+        readwrite::apply(py, &parsed, &graph)?;
+        Ok(Some(graph))
+    }
+
     /// The loops of `node_link_graph` into the new, empty graph `graph`.
     /// False (leaving `graph` partly built) where NetworkX must run instead.
     #[staticmethod]

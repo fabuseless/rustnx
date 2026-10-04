@@ -343,6 +343,7 @@ __all__ = [
     "pagerank",
     "parse_adjlist",
     "parse_edgelist",
+    "parse_gml",
     "parse_leda",
     "parse_multiline_adjlist",
     "parse_pajek",
@@ -361,6 +362,7 @@ __all__ = [
     "randomized_partitioning",
     "read_adjlist",
     "read_edgelist",
+    "read_gml",
     "read_graph6",
     "read_leda",
     "read_multiline_adjlist",
@@ -10247,3 +10249,25 @@ def tree_graph(data, ident="id", children="children"):
     if not _core.CoreGraph.rw_tree(graph, data, ident, children):
         raise NotImplementedError("NetworkX builds this graph")
     return graph
+
+
+def _rw_gml_args(label, destringizer):
+    if destringizer is not None:
+        raise NotImplementedError("rustnx parses GML without a destringizer")
+    if label is not None and type(label) is not str:
+        raise NotImplementedError("rustnx needs a str label")
+    return lambda lines, mode: _core.CoreGraph.rw_gml(lines, mode, label)
+
+
+def parse_gml(lines, label="label", destringizer=None):
+    parse = _rw_gml_args(label, destringizer)
+    if type(lines) is str:
+        G = parse(lines, 3)
+        if G is None:
+            raise NotImplementedError("NetworkX parses this text")
+        return G
+    return _rw_parse("parse_gml", lines, parse, label=label, destringizer=destringizer)
+
+
+def read_gml(path, label="label", destringizer=None):
+    return _rw_read(path, "ascii", _rw_gml_args(label, destringizer))

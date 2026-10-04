@@ -20,6 +20,10 @@ pub enum Val {
     Int(i64),
     Float(f64),
     Str(String),
+    /// GML's nested values: lists, dicts and `()`.
+    List(Vec<Val>),
+    Dict(Vec<(String, Val)>),
+    EmptyTuple,
 }
 
 /// One `add_node(n, **attrs)` or `add_edge(u, v, **attrs)` call; attribute
@@ -28,6 +32,9 @@ pub enum Val {
 pub enum Op {
     Node(u32, Vec<(u32, Val)>),
     Edge(u32, u32, Vec<(u32, Val)>),
+    /// `add_edge(u, v, key, **attrs)` on a multigraph, with a key not yet
+    /// used between `u` and `v`.
+    KeyedEdge(u32, u32, Val, Vec<(u32, Val)>),
 }
 
 #[derive(Debug, Default)]
@@ -41,6 +48,8 @@ pub struct Parsed {
     pub class: (bool, bool),
     /// `G.graph["name"]`, if the format sets it.
     pub name: Option<String>,
+    /// Other `G.graph` items, in order.
+    pub graph_attrs: Vec<(u32, Val)>,
 }
 
 #[derive(Hash, PartialEq, Eq)]
@@ -1056,6 +1065,602 @@ pub fn sparse6(bytes: &[u8]) -> Option<Parsed> {
     Some(b.parsed)
 }
 
+// --- GML ------------------------------------------------------------------------
+
+/// `str.splitlines()`.
+fn py_splitlines(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut it = s.char_indices().peekable();
+    while let Some((i, c)) = it.next() {
+        let boundary = matches!(
+            c,
+            '\n' | '\r'
+                | '\x0b'
+                | '\x0c'
+                | '\x1c'
+                | '\x1d'
+                | '\x1e'
+                | '\u{85}'
+                | '\u{2028}'
+                | '\u{2029}'
+        );
+        if boundary {
+            out.push(&s[start..i]);
+            let mut end = i + c.len_utf8();
+            if c == '\r' {
+                if let Some(&(j, '\n')) = it.peek() {
+                    it.next();
+                    end = j + 1;
+                }
+            }
+            start = end;
+        }
+    }
+    if start < s.len() {
+        out.push(&s[start..]);
+    }
+    out
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Tok {
+    Key(String),
+    Real(f64),
+    Int(i64),
+    /// A string literal's text, without the quotes.
+    Str(String),
+    Open,
+    Close,
+    Eof,
+}
+
+/// The tokens of one (joined) line, as `parse_gml_lines`'s regular
+/// expression finds them; `None` where it can't tokenize (NetworkX raises).
+fn gml_tokens(line: &str, out: &mut Vec<Tok>) -> Option<()> {
+    let b = line.as_bytes();
+    let mut pos = 0;
+    let digits = |mut i: usize| {
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+        }
+        i
+    };
+    while pos < b.len() {
+        let c = b[pos];
+        if c.is_ascii_alphabetic() {
+            // [A-Za-z][0-9A-Za-z_]*\b: a non-ASCII letter or digit next would
+            // break the \b; such a line can't be tokenized anyway.
+            let mut end = pos + 1;
+            while end < b.len() && (b[end].is_ascii_alphanumeric() || b[end] == b'_') {
+                end += 1;
+            }
+            if let Some(next) = line[end..].chars().next() {
+                if !next.is_ascii() && !py_isspace(next) {
+                    return None;
+                }
+            }
+            out.push(Tok::Key(line[pos..end].to_string()));
+            pos = end;
+            continue;
+        }
+        if c == b'+' || c == b'-' || c == b'.' || c.is_ascii_digit() {
+            // Reals: [+-]?(?:[0-9]*\.[0-9]+|[0-9]+\.[0-9]*|INF)(?:[Ee][+-]?[0-9]+)?
+            let start = if c == b'+' || c == b'-' { pos + 1 } else { pos };
+            let int_end = digits(start);
+            let mut mantissa_end = None;
+            if int_end < b.len() && b[int_end] == b'.' {
+                let frac_end = digits(int_end + 1);
+                if frac_end > int_end + 1 || int_end > start {
+                    mantissa_end = Some(frac_end);
+                }
+            }
+            let inf = b[start..].starts_with(b"INF");
+            if mantissa_end.is_none() && inf {
+                mantissa_end = Some(start + 3);
+            }
+            if let Some(m) = mantissa_end {
+                let mut end = m;
+                if end < b.len() && (b[end] == b'e' || b[end] == b'E') {
+                    let mut j = end + 1;
+                    if j < b.len() && (b[j] == b'+' || b[j] == b'-') {
+                        j += 1;
+                    }
+                    let k = digits(j);
+                    if k > j {
+                        end = k;
+                    }
+                }
+                let text = &line[pos..end];
+                let value = if inf && mantissa_end == Some(start + 3) {
+                    // float("+INFe5") raises.
+                    if end != start + 3 {
+                        return None;
+                    }
+                    if c == b'-' {
+                        f64::NEG_INFINITY
+                    } else {
+                        f64::INFINITY
+                    }
+                } else {
+                    text.parse::<f64>().ok()?
+                };
+                out.push(Tok::Real(value));
+                pos = end;
+                continue;
+            }
+            // Ints: [+-]?[0-9]+
+            if int_end > start {
+                out.push(Tok::Int(line[pos..int_end].parse::<i64>().ok()?));
+                pos = int_end;
+                continue;
+            }
+            return None;
+        }
+        match c {
+            b'"' => {
+                let close = line[pos + 1..].find('"')? + pos + 1;
+                out.push(Tok::Str(line[pos + 1..close].to_string()));
+                pos = close + 1;
+            }
+            b'[' => {
+                out.push(Tok::Open);
+                pos += 1;
+            }
+            b']' => {
+                out.push(Tok::Close);
+                pos += 1;
+            }
+            b'#' => pos = b.len(),
+            _ => {
+                let mut end = pos;
+                for ch in line[pos..].chars() {
+                    if !py_isspace(ch) {
+                        break;
+                    }
+                    end += ch.len_utf8();
+                }
+                if end == pos {
+                    return None;
+                }
+                pos = end;
+            }
+        }
+    }
+    Some(())
+}
+
+/// `tokenize()` over all lines, including NetworkX's joining of string
+/// values that span lines.
+fn gml_tokenize(lines: &[&str]) -> Option<Vec<Tok>> {
+    let mut out = Vec::new();
+    let mut multilines: Vec<String> = Vec::new();
+    for &raw in lines {
+        let joined;
+        let mut line = raw;
+        if !multilines.is_empty() {
+            multilines.push(py_strip(line).to_string());
+            if !line.ends_with('"') {
+                // line[-1] raises for an empty line.
+                line.chars().last()?;
+                continue;
+            }
+            joined = multilines.join(" ");
+            multilines.clear();
+            line = &joined;
+        } else if line.matches('"').count() == 1 {
+            let stripped = py_strip(line);
+            if !stripped.starts_with('"') && !stripped.ends_with('"') {
+                multilines.push(line.trim_end_matches(py_isspace).to_string());
+                continue;
+            }
+        }
+        gml_tokens(line, &mut out)?;
+    }
+    out.push(Tok::Eof);
+    Some(out)
+}
+
+/// gml's `unescape`: numeric character references, and the named ones
+/// `escape` and common writers produce. `None` for other named references
+/// (whose handling needs the whole HTML entity table) and lone surrogates.
+fn gml_unescape(text: &str) -> Option<String> {
+    if !text.contains('&') {
+        return Some(text.to_string());
+    }
+    let mut out = String::with_capacity(text.len());
+    let b = text.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] != b'&' {
+            let ch = text[i..].chars().next()?;
+            out.push(ch);
+            i += ch.len_utf8();
+            continue;
+        }
+        // &(?:[0-9A-Za-z]+|#(?:[0-9]+|x[0-9A-Fa-f]+));
+        let rest = &b[i + 1..];
+        let name_len = rest
+            .iter()
+            .take_while(|c| c.is_ascii_alphanumeric())
+            .count();
+        if name_len > 0 && rest.get(name_len) == Some(&b';') {
+            let name = &text[i + 1..i + 1 + name_len];
+            let ch = match name {
+                "amp" => '&',
+                "lt" => '<',
+                "gt" => '>',
+                "quot" => '"',
+                _ => return None,
+            };
+            out.push(ch);
+            i += name_len + 2;
+            continue;
+        }
+        if rest.first() == Some(&b'#') {
+            let (radix, start) = if rest.get(1) == Some(&b'x') {
+                (16, 2)
+            } else {
+                (10, 1)
+            };
+            let n = rest[start..]
+                .iter()
+                .take_while(|c| {
+                    if radix == 16 {
+                        c.is_ascii_hexdigit()
+                    } else {
+                        c.is_ascii_digit()
+                    }
+                })
+                .count();
+            if n > 0 && rest.get(start + n) == Some(&b';') {
+                let digits = &text[i + 1 + start..i + 1 + start + n];
+                let end = i + 1 + start + n + 1;
+                match u32::from_str_radix(digits, radix)
+                    .ok()
+                    .filter(|&c| c <= 0x10FFFF)
+                {
+                    // chr() of a surrogate gives a str Rust can't hold.
+                    Some(code) => out.push(char::from_u32(code)?),
+                    // chr() raises: the reference is left as it is.
+                    None => out.push_str(&text[i..end]),
+                }
+                i = end;
+                continue;
+            }
+        }
+        out.push('&');
+        i += 1;
+    }
+    Some(out)
+}
+
+/// A GML dict: keys in first-seen order, each with its values.
+type GmlDict = Vec<(String, Val)>;
+
+/// Nesting deeper than this falls back: NetworkX parses dicts recursively.
+const GML_DEPTH_LIMIT: usize = 100;
+
+struct GmlParser {
+    toks: Vec<Tok>,
+    pos: usize,
+}
+
+impl GmlParser {
+    fn cur(&self) -> &Tok {
+        &self.toks[self.pos]
+    }
+
+    fn advance(&mut self) -> Option<()> {
+        // next(tokens) after the EOF token raises StopIteration.
+        if self.pos + 1 >= self.toks.len() {
+            return None;
+        }
+        self.pos += 1;
+        Some(())
+    }
+
+    /// `parse_kv`, then `clean_dict_value` on each key's values.
+    fn kv(&mut self, depth: usize) -> Option<GmlDict> {
+        if depth > GML_DEPTH_LIMIT {
+            return None;
+        }
+        let mut entries: Vec<(String, Vec<Val>)> = Vec::new();
+        while let Tok::Key(key) = self.cur().clone() {
+            self.advance()?;
+            let value = match self.cur().clone() {
+                Tok::Real(f) => {
+                    self.advance()?;
+                    Val::Float(f)
+                }
+                Tok::Int(i) => {
+                    self.advance()?;
+                    Val::Int(i)
+                }
+                Tok::Str(raw) => {
+                    let text = gml_unescape(&raw)?;
+                    self.advance()?;
+                    match text.as_str() {
+                        "()" => Val::EmptyTuple,
+                        "[]" => Val::List(Vec::new()),
+                        _ => Val::Str(text),
+                    }
+                }
+                Tok::Open => {
+                    self.advance()?;
+                    let d = self.kv(depth + 1)?;
+                    if *self.cur() != Tok::Close {
+                        return None;
+                    }
+                    self.advance()?;
+                    Val::Dict(d)
+                }
+                Tok::Key(word) => {
+                    if matches!(key.as_str(), "id" | "label" | "source" | "target") {
+                        self.advance()?;
+                        Val::Str(word)
+                    } else if word == "NAN" || word == "INF" {
+                        self.advance()?;
+                        Val::Float(if word == "NAN" {
+                            f64::NAN
+                        } else {
+                            f64::INFINITY
+                        })
+                    } else {
+                        return None;
+                    }
+                }
+                Tok::Close | Tok::Eof => return None,
+            };
+            match entries.iter_mut().find(|(k, _)| *k == key) {
+                Some((_, values)) => values.push(value),
+                None => entries.push((key, vec![value])),
+            }
+        }
+        Some(
+            entries
+                .into_iter()
+                .map(|(k, mut values)| {
+                    let v = if values.len() == 1 {
+                        values.pop().expect("one value")
+                    } else if values[0] == Val::Str("_networkx_list_start".into()) {
+                        Val::List(values.split_off(1))
+                    } else {
+                        Val::List(values)
+                    };
+                    (k, v)
+                })
+                .collect(),
+        )
+    }
+}
+
+/// Python truthiness of a parsed value.
+fn truthy(v: &Val) -> bool {
+    match v {
+        Val::None => false,
+        Val::Bool(b) => *b,
+        Val::Int(i) => *i != 0,
+        Val::Float(f) => *f != 0.0,
+        Val::Str(s) => !s.is_empty(),
+        Val::List(l) => !l.is_empty(),
+        Val::Dict(d) => !d.is_empty(),
+        Val::EmptyTuple => false,
+    }
+}
+
+/// `a == b` in Python, for hashable parsed values (None if either isn't).
+fn py_eq(a: &Val, b: &Val) -> Option<bool> {
+    Some(match (a, b) {
+        (Val::Int(x), Val::Int(y)) => x == y,
+        (Val::Float(x), Val::Float(y)) => x == y,
+        (Val::Int(i), Val::Float(f)) | (Val::Float(f), Val::Int(i)) => {
+            // Exact comparison, as Python does for int and float.
+            f.fract() == 0.0 && *f >= -9.3e18 && *f <= 9.3e18 && (*f as i128) == (*i as i128)
+        }
+        (Val::Str(x), Val::Str(y)) => x == y,
+        (Val::EmptyTuple, Val::EmptyTuple) => true,
+        (Val::List(_) | Val::Dict(_), _) | (_, Val::List(_) | Val::Dict(_)) => return None,
+        _ => false,
+    })
+}
+
+/// Same value and type (and sign of zero): NetworkX would use this very
+/// object, so the result can't tell them apart.
+fn identical(a: &Val, b: &Val) -> bool {
+    match (a, b) {
+        (Val::Float(x), Val::Float(y)) => x.to_bits() == y.to_bits(),
+        _ => a == b,
+    }
+}
+
+fn pop_key(d: &mut GmlDict, key: &str) -> Option<Val> {
+    let i = d.iter().position(|(k, _)| k == key)?;
+    Some(d.remove(i).1)
+}
+
+/// The nodes or edges of the graph dict: a list of dicts, or one dict.
+fn gml_items(v: Option<Val>) -> Option<Vec<GmlDict>> {
+    match v {
+        None => Some(Vec::new()),
+        Some(Val::Dict(d)) => Some(vec![d]),
+        Some(Val::List(items)) => items
+            .into_iter()
+            .map(|item| match item {
+                Val::Dict(d) => Some(d),
+                _ => None,
+            })
+            .collect(),
+        Some(_) => None,
+    }
+}
+
+/// `parse_gml_lines(lines, label, None)`: the operations building the result
+/// (after `relabel_nodes` when `label` names a node attribute).
+pub fn gml(lines: &[&str], label: Option<&str>) -> Option<Parsed> {
+    let mut p = GmlParser {
+        toks: gml_tokenize(lines)?,
+        pos: 0,
+    };
+    let mut top = p.kv(0)?;
+    if *p.cur() != Tok::Eof {
+        return None;
+    }
+    let Val::Dict(mut graph) = pop_key(&mut top, "graph")? else {
+        return None;
+    };
+    let directed = pop_key(&mut graph, "directed").is_some_and(|v| truthy(&v));
+    let multigraph = pop_key(&mut graph, "multigraph").is_some_and(|v| truthy(&v));
+    let nodes = gml_items(pop_key(&mut graph, "node"))?;
+    let edges = gml_items(pop_key(&mut graph, "edge"))?;
+    let mut b = Builder::default();
+    b.parsed.class = (multigraph, directed);
+    for (k, v) in graph {
+        let k = b.key(&k);
+        b.parsed.graph_attrs.push((k, v));
+    }
+    let relabel = label.filter(|&l| l != "id");
+    // Node ids (and labels): hashable, and no two equal.
+    let mut ids: Vec<Val> = Vec::new();
+    let mut labels: Vec<Val> = Vec::new();
+    let mut node_attrs = Vec::new();
+    for mut node in nodes {
+        let id = pop_key(&mut node, "id")?;
+        for other in &ids {
+            if py_eq(&id, other)? {
+                return None;
+            }
+        }
+        if let Some(label) = relabel {
+            let node_label = pop_key(&mut node, label)?;
+            for other in &labels {
+                if py_eq(&node_label, other)? {
+                    return None;
+                }
+            }
+            py_eq(&node_label, &node_label)?; // unhashable: NetworkX raises
+            labels.push(node_label);
+        }
+        if py_eq(&id, &id).is_none() {
+            return None;
+        }
+        let mut attrs = Vec::with_capacity(node.len());
+        for (k, v) in node {
+            if reserved_kwarg(&k, false, true) {
+                return None;
+            }
+            attrs.push((b.key(&k), v));
+        }
+        ids.push(id);
+        node_attrs.push(attrs);
+    }
+    let n = ids.len();
+    let index_of = |v: &Val| -> Option<u32> {
+        // `source in G`, then the edge's own object in G's rows: only the
+        // node's own id (same type) is replayed exactly.
+        let i = ids.iter().position(|id| py_eq(v, id) == Some(true))?;
+        if identical(v, &ids[i]) {
+            Some(i as u32)
+        } else {
+            None
+        }
+    };
+    // G's rows: neighbor order, and each pair's (key, attrs) in key order.
+    let mut rows: Vec<Vec<u32>> = vec![Vec::new(); n];
+    let mut pair_edges: HashMap<(u32, u32), Vec<(Val, Vec<(u32, Val)>)>> = HashMap::new();
+    let pair = |u: u32, v: u32| if directed || u <= v { (u, v) } else { (v, u) };
+    for mut edge in edges {
+        let s = index_of(&pop_key(&mut edge, "source")?)?;
+        let t = index_of(&pop_key(&mut edge, "target")?)?;
+        let key = if multigraph {
+            pop_key(&mut edge, "key")
+        } else {
+            None
+        };
+        let mut attrs = Vec::with_capacity(edge.len());
+        for (k, v) in edge {
+            if reserved_kwarg(&k, multigraph, false) {
+                return None;
+            }
+            attrs.push((b.key(&k), v));
+        }
+        let existing = pair_edges.entry(pair(s, t)).or_default();
+        if existing.is_empty() {
+            rows[s as usize].push(t);
+            if s != t && !directed {
+                rows[t as usize].push(s);
+            }
+        }
+        let key = if !multigraph {
+            if !existing.is_empty() {
+                return None; // "is duplicated"
+            }
+            Val::None
+        } else if let Some(key) = key {
+            py_eq(&key, &key)?; // unhashable: NetworkX raises
+            for (other, _) in existing.iter() {
+                if py_eq(&key, other)? {
+                    return None; // "is duplicated"
+                }
+            }
+            key
+        } else {
+            // new_edge_key(): len(keydict), then the next unused.
+            let mut next = existing.len() as i64;
+            while existing
+                .iter()
+                .any(|(k, _)| py_eq(k, &Val::Int(next)) == Some(true))
+            {
+                next += 1;
+            }
+            Val::Int(next)
+        };
+        existing.push((key, attrs));
+        if relabel.is_none() {
+            let (k, attrs) = existing.last().expect("just pushed").clone();
+            b.parsed.ops.push(if multigraph {
+                Op::KeyedEdge(s, t, k, attrs)
+            } else {
+                Op::Edge(s, t, attrs)
+            });
+        }
+    }
+    b.parsed.nodes = match relabel {
+        None => ids,
+        Some(_) => labels,
+    };
+    let mut ops: Vec<Op> = node_attrs
+        .into_iter()
+        .enumerate()
+        .map(|(i, attrs)| Op::Node(i as u32, attrs))
+        .collect();
+    if relabel.is_some() {
+        // relabel_nodes(G, mapping) adds G.edges(keys=True, data=True) in
+        // order: rows in node order, each undirected pair from the end seen
+        // first.
+        let mut seen = vec![false; n];
+        for u in 0..n as u32 {
+            for &v in &rows[u as usize] {
+                if !directed && seen[v as usize] {
+                    continue;
+                }
+                for (k, attrs) in &pair_edges[&pair(u, v)] {
+                    ops.push(if multigraph {
+                        Op::KeyedEdge(u, v, k.clone(), attrs.clone())
+                    } else {
+                        Op::Edge(u, v, attrs.clone())
+                    });
+                }
+            }
+            seen[u as usize] = true;
+        }
+    } else {
+        ops.append(&mut b.parsed.ops);
+    }
+    b.parsed.ops = ops;
+    Some(b.finish())
+}
+
 // --- applying the operations to a NetworkX graph (with the GIL) ------------------
 
 fn to_py<'py>(py: Python<'py>, v: &Val) -> PyResult<Bound<'py, PyAny>> {
@@ -1065,6 +1670,21 @@ fn to_py<'py>(py: Python<'py>, v: &Val) -> PyResult<Bound<'py, PyAny>> {
         Val::Int(i) => i.into_pyobject(py)?.into_any(),
         Val::Float(f) => PyFloat::new(py, *f).into_any(),
         Val::Str(s) => PyString::new(py, s).into_any(),
+        Val::List(items) => {
+            let items = items
+                .iter()
+                .map(|v| to_py(py, v))
+                .collect::<PyResult<Vec<_>>>()?;
+            pyo3::types::PyList::new(py, items)?.into_any()
+        }
+        Val::Dict(items) => {
+            let d = PyDict::new(py);
+            for (k, v) in items {
+                d.set_item(k, to_py(py, v)?)?;
+            }
+            d.into_any()
+        }
+        Val::EmptyTuple => pyo3::types::PyTuple::empty(py).into_any(),
     })
 }
 
@@ -1163,7 +1783,11 @@ pub fn apply<'py>(py: Python<'py>, parsed: &Parsed, g: &Bound<'py, PyAny>) -> Py
                 t.ensure(py, i)?;
                 fill(t.attr_of[i].as_ref().expect("node added"), attrs)?;
             }
-            Op::Edge(u, v, attrs) => {
+            Op::Edge(u, v, attrs) | Op::KeyedEdge(u, v, _, attrs) => {
+                let key = match op {
+                    Op::KeyedEdge(_, _, key, _) => Some(to_py(py, key)?),
+                    _ => None,
+                };
                 let (u, v) = (*u as usize, *v as usize);
                 t.ensure(py, u)?;
                 t.ensure(py, v)?;
@@ -1184,17 +1808,25 @@ pub fn apply<'py>(py: Python<'py>, parsed: &Parsed, g: &Bound<'py, PyAny>) -> Py
                     fill(&d, attrs)?;
                     match existing {
                         Some(keydict) => {
-                            // new_edge_key(): len(keydict), then the next unused.
                             let keydict = keydict.cast::<PyDict>()?;
-                            let mut key = keydict.len();
-                            while keydict.contains(key)? {
-                                key += 1;
+                            match &key {
+                                Some(key) => keydict.set_item(key, &d)?,
+                                None => {
+                                    // new_edge_key(): len(keydict), then the next unused.
+                                    let mut key = keydict.len();
+                                    while keydict.contains(key)? {
+                                        key += 1;
+                                    }
+                                    keydict.set_item(key, &d)?;
+                                }
                             }
-                            keydict.set_item(key, &d)?;
                         }
                         None => {
                             let keydict = PyDict::new(py);
-                            keydict.set_item(0, &d)?;
+                            match &key {
+                                Some(key) => keydict.set_item(key, &d)?,
+                                None => keydict.set_item(0, &d)?,
+                            }
                             succ.set_item(&t.objs[v], &keydict)?;
                             t.back(v).set_item(&t.objs[u], &keydict)?;
                         }
@@ -1205,6 +1837,12 @@ pub fn apply<'py>(py: Python<'py>, parsed: &Parsed, g: &Bound<'py, PyAny>) -> Py
     }
     if let Some(name) = &parsed.name {
         g.getattr("graph")?.set_item("name", name)?;
+    }
+    if !parsed.graph_attrs.is_empty() {
+        let graph = g.getattr("graph")?;
+        for (k, v) in &parsed.graph_attrs {
+            graph.set_item(&keys[*k as usize], to_py(py, v)?)?;
+        }
     }
     Ok(())
 }
@@ -1222,6 +1860,32 @@ pub fn string_items<'py>(lines: &Bound<'py, PyAny>, mode: u8) -> Option<Vec<Boun
     } else {
         Some(vec![lines.cast_exact::<PyString>().ok()?.clone()])
     }
+}
+
+/// `parse_gml`'s lines: list items lose one trailing "\n" (and may not
+/// contain another), a file's text is split at "\n" (`mode` 1), a `str` at
+/// every line boundary (`mode` 3).
+pub fn gml_lines<'a>(items: &'a [Bound<'_, PyString>], mode: u8) -> Option<Vec<&'a str>> {
+    use pyo3::types::PyStringMethods;
+    let mut out = Vec::new();
+    for item in items {
+        let s = item.to_str().ok()?;
+        match mode {
+            0 => {
+                let line = s.strip_suffix('\n').unwrap_or(s);
+                if line.contains('\n') {
+                    return None;
+                }
+                out.push(line);
+            }
+            1 => out.extend(
+                s.split_inclusive('\n')
+                    .map(|l| l.strip_suffix('\n').unwrap_or(l)),
+            ),
+            _ => out.extend(py_splitlines(s)),
+        }
+    }
+    Some(out)
 }
 
 /// The lines of `string_items`: list items as they are, a file's text split
