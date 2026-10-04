@@ -62,9 +62,14 @@ SECTIONS = [
         "is_strongly_connected", "weakly_connected_components",
         "number_weakly_connected_components", "is_weakly_connected",
         "attracting_components", "number_attracting_components", "is_attracting_component",
+        "kosaraju_strongly_connected_components", "condensation", "is_semiconnected",
     ]),
     ("Directed acyclic graphs", [
         "topological_sort", "topological_generations", "is_directed_acyclic_graph",
+        "has_cycle", "lexicographical_topological_sort", "all_topological_sorts",
+        "dag_longest_path", "dag_longest_path_length", "transitive_closure",
+        "transitive_closure_dag", "transitive_reduction", "is_aperiodic",
+        "v_structures", "root_to_leaf_paths", "dag_to_branching",
     ]),
     ("Clustering", ["triangles", "clustering", "average_clustering", "transitivity"]),
     ("Cores, coloring and communities", [
@@ -74,6 +79,7 @@ SECTIONS = [
         "bfs_edges", "bfs_tree", "bfs_predecessors", "bfs_successors", "bfs_layers",
         "descendants_at_distance", "dfs_edges", "dfs_tree", "dfs_preorder_nodes",
         "dfs_postorder_nodes", "dfs_predecessors", "dfs_successors",
+        "generic_bfs_edges", "bfs_labeled_edges", "dfs_labeled_edges", "edge_bfs", "edge_dfs",
     ]),
     ("Trees", ["is_tree", "is_forest"]),
     ("Spanning trees", [
@@ -154,10 +160,31 @@ NOTES = {
     "maximum_spanning_edges": "Kruskal; Prim and Borůvka fall back. Yields the graph's own edge data dicts.",
     "minimum_spanning_tree": "Kruskal; Prim and Borůvka fall back.",
     "maximum_spanning_tree": "Kruskal; Prim and Borůvka fall back.",
+    "lexicographical_topological_sort": "`key` falls back, and so do nodes that aren't all ints and floats (no NaN) or all strings.",
+    "all_topological_sorts": "Sorts are generated lazily.",
+    "dag_longest_path": "`topo_order` falls back, and so do `None` weights and a `default_weight` other than the one the graph was converted with.",
+    "dag_longest_path_length": "As `dag_longest_path`. Lengths are summed in Python from the edge data, as in NetworkX.",
+    "transitive_closure": "Builds the closure in NetworkX from Rust searches; edges are added in NetworkX's order (including set iteration order).",
+    "transitive_closure_dag": "`topo_order` falls back. Builds the closure in NetworkX, adding edges in NetworkX's order (including set iteration order).",
+    "transitive_reduction": "Kept edges are added in NetworkX's (set iteration) order.",
+    "is_aperiodic": "On NetworkX 3.4, graphs not reachable from their first node fall back (NetworkX recurses in set order).",
+    "v_structures": "Generator.",
+    "root_to_leaf_paths": "Paths are generated lazily. Undirected graphs fall back.",
+    "generic_bfs_edges": "`neighbors` falls back.",
+    "dfs_labeled_edges": "`sort_neighbors` falls back.",
+    "edge_bfs": "A `source` that is neither a node nor a list, tuple, set or dict of hashable nodes falls back.",
+    "edge_dfs": "A `source` that is neither a node nor a list, tuple, set or dict of hashable nodes falls back.",
+    "kosaraju_strongly_connected_components": "Component sets are filled in the installed NetworkX's order.",
+    "condensation": "`scc` falls back. Member sets follow `strongly_connected_components`' order.",
 }
+
+# Functions NetworkX only exposes under `nx.dag`.
+DAG_ONLY = {"v_structures", "root_to_leaf_paths", "has_cycle"}
 
 
 def location(name):
+    if name in DAG_ONLY:
+        return "nx.dag"
     return "nx.community" if name == "label_propagation_communities" else "nx"
 
 

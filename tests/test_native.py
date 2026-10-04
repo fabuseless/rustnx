@@ -197,6 +197,11 @@ def algorithm_calls(H, directed):
         calls["neg_cycle"] = lambda G, b: nx.negative_edge_cycle(G, backend=b)
         calls["astar"] = lambda G, b: nx.astar_path_length(G, src, dst, backend=b)
         calls["target_length"] = lambda G, b: target_lengths(G, src, b)
+        calls["bfs_labeled"] = lambda G, b: list(nx.bfs_labeled_edges(G, src, backend=b))
+        calls["dfs_labeled"] = lambda G, b: list(nx.dfs_labeled_edges(G, src, backend=b))
+        calls["generic_bfs"] = lambda G, b: list(nx.generic_bfs_edges(G, src, backend=b))
+        calls["edge_bfs"] = lambda G, b: list(nx.edge_bfs(G, src, backend=b))
+        calls["edge_dfs"] = lambda G, b: list(nx.edge_dfs(G, src, backend=b))
     if directed:
         calls["scc"] = lambda G, b: list(nx.strongly_connected_components(G, backend=b))
         calls["wcc"] = lambda G, b: list(nx.weakly_connected_components(G, backend=b))
@@ -204,6 +209,19 @@ def algorithm_calls(H, directed):
         calls["dag"] = lambda G, b: nx.is_directed_acyclic_graph(G, backend=b)
         calls["attracting"] = lambda G, b: list(nx.attracting_components(G, backend=b))
         calls["in_degree_centrality"] = lambda G, b: list(nx.in_degree_centrality(G, backend=b).items())
+        calls["kosaraju"] = lambda G, b: list(nx.kosaraju_strongly_connected_components(G, backend=b))
+        calls["condensation"] = lambda G, b: (
+            lambda C: (list(C.nodes(data=True)), list(C.edges), C.graph)
+        )(nx.condensation(G, backend=b))
+        calls["semiconnected"] = lambda G, b: nx.is_semiconnected(G, backend=b)
+        calls["has_cycle"] = lambda G, b: nx.dag.has_cycle(G, backend=b)
+        calls["v_structures"] = lambda G, b: list(nx.dag.v_structures(G, backend=b))
+        calls["longest_path"] = lambda G, b: nx.dag_longest_path(G, backend=b)
+        calls["longest_path_length"] = lambda G, b: nx.dag_longest_path_length(G, backend=b)
+        calls["reduction"] = lambda G, b: list(nx.transitive_reduction(G, backend=b).edges)
+        calls["closure"] = lambda G, b: list(nx.transitive_closure(G, backend=b).edges(data=True))
+        calls["edge_bfs_ignore"] = lambda G, b: list(nx.edge_bfs(G, orientation="ignore", backend=b))
+        calls["edge_dfs_reverse"] = lambda G, b: list(nx.edge_dfs(G, orientation="reverse", backend=b))
     else:
         calls["cc"] = lambda G, b: list(nx.connected_components(G, backend=b))
         calls["mst"] = lambda G, b: [(u, v) for u, v in nx.minimum_spanning_edges(G, data=False, backend=b)]
