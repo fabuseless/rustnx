@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 384 NetworkX functions. Call them as usual (for
+rustnx implements 405 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -620,6 +620,32 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.symmetric_difference` | `H` | no | NetworkX | Takes two graphs. Plain `Graph` and `DiGraph` results; subclasses fall back. |
 | `nx.is_kl_connected` | `k`, `l`, `low_memory` | no | rustnx | `low_memory=True` falls back (its searches run on subgraph views ordered by a set). |
 | `nx.kl_connected_subgraph` | `k`, `l`, `low_memory`, `same_as_graph` | no | rustnx | `low_memory=True` falls back. Returns a deep copy of the original graph without the rejected edges. |
+
+### Matrices and conversion
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.to_scipy_sparse_array` | `nodelist`, `dtype`, `weight`, `format` | no | NetworkX | Rust builds the COO coordinates in NetworkX's edge order; SciPy assembles the array exactly as for NetworkX (same dtype, format and index arrays). A `nodelist` that isn't a list, or names missing or repeated nodes, falls back. Weights other than plain ints and floats, `dtype`s that NumPy would convert differently from a list (narrower ints), and a `nodelist` under half the nodes with a format other than CSR or CSC (NetworkX's subgraph then iterates in set order) fall back. |
+| `nx.adjacency_matrix` | `nodelist`, `dtype`, `weight`, `format` | no | NetworkX | As `to_scipy_sparse_array`. |
+| `nx.laplacian_matrix` | `nodelist`, `weight` | no | NetworkX | The adjacency matrix as `to_scipy_sparse_array`, then NetworkX's own SciPy arithmetic for the installed version (3.6 changed how the degree matrix is built). |
+| `nx.incidence_matrix` | `nodelist`, `edgelist`, `oriented`, `weight`, `dtype` | no | NetworkX | Builds the CSR arrays of NetworkX's LIL matrix in Rust (zero weights stay unstored). `edgelist`, `dtype` other than float64, and endpoints missing from `nodelist` fall back. |
+| `nx.to_numpy_array` | `nodelist`, `dtype`, `order`, `multigraph_weight`, `weight`, `nonedge` | no | NetworkX | Entries from Rust, assigned with NumPy as NetworkX does. A `nodelist` that isn't a list, or names missing or repeated nodes, falls back. Structured dtypes, `None` weights, and result dtypes other than float64 (or int64 with int weights) fall back. |
+| `nx.bipartite.biadjacency_matrix` | `row_order`, `column_order`, `dtype`, `weight`, `format` | no | NetworkX | Rust builds the COO coordinates in NetworkX's edge order; SciPy assembles the array exactly as for NetworkX (same dtype, format and index arrays). A `row_order` that isn't a list or tuple falls back. |
+| `nx.to_dict_of_lists` | `nodelist` | no | NetworkX | Neighbor objects come from the graph's own adjacency dicts. A `nodelist` that isn't a list, tuple, set or dict, or names missing nodes, falls back. |
+| `nx.number_of_selfloops` | none | no | NetworkX | Dispatchable from NetworkX 3.5 on. |
+| `nx.is_empty` | none | no | NetworkX | Dispatchable from NetworkX 3.5 on. |
+| `nx.is_weighted` | `edge`, `weight` | no | NetworkX | Reads the original graph's edge data in Rust. Dispatchable from NetworkX 3.5 on; native graphs fall back. |
+| `nx.is_negatively_weighted` | `edge`, `weight` | no | NetworkX | `None` weights and `weight=None` fall back. |
+| `nx.get_node_attributes` | `name`, `default` | no | NetworkX | Reads the original graph's node data in Rust. Dispatchable from NetworkX 3.5 on. |
+| `nx.get_edge_attributes` | `name`, `default` | no | NetworkX | Reads the original graph's edge data in Rust (values of any type). Dispatchable from NetworkX 3.5 on; native graphs fall back. |
+| `nx.relabel_nodes` | `mapping`, `copy` | no | NetworkX | Fills the new graph's dicts from Rust, row by row in the order NetworkX's `add_edges_from` does. `copy=False` (it changes the input), labels that collide, `None` or unhashable labels, mappings that are neither dicts nor callables, multigraphs and graph subclasses fall back. |
+| `nx.convert_node_labels_to_integers` | `first_label`, `ordering`, `label_attribute` | no | NetworkX | Through `relabel_nodes`. |
+| `nx.from_dict_of_lists` | `d`, `create_using` | no | rustnx | Fills the new graph's dicts from Rust as `add_edges_from` does. Runs with `backend="rustnx"` or when rustnx is listed in `nx.config.backend_priority.generators`. `create_using` other than `None`, `nx.Graph` or `nx.DiGraph` falls back. |
+| `nx.from_dict_of_dicts` | `d`, `create_using`, `multigraph_input` | no | rustnx | As `from_dict_of_lists`; `multigraph_input` and non-dict data fall back. Runs with `backend="rustnx"` or when rustnx is listed in `nx.config.backend_priority.generators`. `create_using` other than `None`, `nx.Graph` or `nx.DiGraph` falls back. |
+| `nx.from_edgelist` | `edgelist`, `create_using` | no | rustnx | As `from_dict_of_lists`; one-shot iterators and edges other than 2-tuples and 3-tuples with a dict fall back. Runs with `backend="rustnx"` or when rustnx is listed in `nx.config.backend_priority.generators`. `create_using` other than `None`, `nx.Graph` or `nx.DiGraph` falls back. |
+| `nx.from_numpy_array` | `A`, `parallel_edges`, `create_using`, `edge_attr`, `nodelist`, `nonedge` | no | rustnx | Edge positions and values from NumPy, the graph filled from Rust. Long double, string and structured dtypes fall back. Runs with `backend="rustnx"` or when rustnx is listed in `nx.config.backend_priority.generators`. `create_using` other than `None`, `nx.Graph` or `nx.DiGraph` falls back. |
+| `nx.from_scipy_sparse_array` | `A`, `parallel_edges`, `create_using`, `edge_attribute` | no | rustnx | Edges in NetworkX's order for each format; DOK arrays fall back. Runs with `backend="rustnx"` or when rustnx is listed in `nx.config.backend_priority.generators`. `create_using` other than `None`, `nx.Graph` or `nx.DiGraph` falls back. |
+| `nx.bipartite.from_biadjacency_matrix` | `A`, `create_using`, `edge_attribute`, `row_order`, `column_order` | no | rustnx | As `from_scipy_sparse_array`; `row_order` and `column_order` (NetworkX 3.7) fall back. Runs with `backend="rustnx"` or when rustnx is listed in `nx.config.backend_priority.generators`. `create_using` other than `None`, `nx.Graph` or `nx.DiGraph` falls back. |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 

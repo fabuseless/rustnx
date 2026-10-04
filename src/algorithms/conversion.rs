@@ -134,6 +134,9 @@ pub fn dense_entries(succ: &Csr, n: usize, map: &[i64], w: Option<&[f64]>) -> Co
     out
 }
 
+/// CSR arrays `(indptr, indices, data)` and the number of columns.
+pub type IncidenceCsr = (Vec<i64>, Vec<i64>, Vec<f64>, usize);
+
 /// `incidence_matrix` as the CSR arrays of the LIL matrix NetworkX fills:
 /// one column per edge of `G.edges()`, entries at the endpoints' rows
 /// (`map`), `-wt` at the tail when `oriented`. Self-loops leave their
@@ -148,7 +151,7 @@ pub fn incidence_csr(
     map: &[i64],
     w: Option<&[f64]>,
     oriented: bool,
-) -> Result<(Vec<i64>, Vec<i64>, Vec<f64>, usize), (u32, u32)> {
+) -> Result<IncidenceCsr, (u32, u32)> {
     // Entries (row, column, value), in column order.
     let mut entries: Vec<(i64, i64, f64)> = Vec::new();
     let mut column = 0i64;
