@@ -17,8 +17,8 @@ use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
-    centrality, centrality_more, cluster, cores_more, dag, directed, distance, paths, spectral,
-    structure, structure_more,
+    centrality, centrality_more, cluster, cores_more, dag, directed, distance, matching, paths,
+    spectral, structure, structure_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -1941,6 +1941,207 @@ impl CoreGraph {
         Ok(py.detach(|| structure_more::prufer(&self.succ, self.n, &pos, &degree)))
     }
 
+    // --- Batch 10: triads, d-separation, degree sequences and matching ---
+
+    /// `nx.triadic_census` counts in `TRIAD_NAMES` order, over `nodeset`
+    /// (all nodes if `None`).
+    #[pyo3(signature = (nodeset=None))]
+    fn triadic_census(&self, py: Python<'_>, nodeset: Option<Vec<u32>>) -> PyResult<Vec<i128>> {
+        let nodeset = self.sources_or_all(nodeset)?;
+        let pred = self.adj(true);
+        Ok(py.detach(|| matching::triadic_census(&self.succ, pred, self.n, &nodeset).to_vec()))
+    }
+
+    /// `nx.is_d_separator` on a DAG, after NetworkX's input checks.
+    fn is_d_separator(&self, py: Python<'_>, x: Vec<u32>, y: Vec<u32>, z: Vec<u32>) -> PyResult<bool> {
+        self.membership(&x)?;
+        self.membership(&y)?;
+        self.membership(&z)?;
+        let pred = self.adj(true);
+        Ok(py.detach(|| matching::is_d_separator(&self.succ, pred, self.n, &x, &y, &z)))
+    }
+
+    /// `nx.ancestors` of each of `nodes`, each in its set's insertion order
+    /// (needs exact in-edge order).
+    fn ancestor_lists(&self, py: Python<'_>, nodes: Vec<u32>) -> PyResult<Vec<Vec<u32>>> {
+        self.membership(&nodes)?;
+        let pred = self.reverse_exact_order(None)?.0;
+        Ok(py.detach(|| {
+            let mut seen = Vec::new();
+            nodes
+                .iter()
+                .enumerate()
+                .map(|(i, &v)| matching::ancestors_in_order(pred, self.n, v, &mut seen, i as u32))
+                .collect()
+        }))
+    }
+
+    /// `_reachable(G, x, a, z)` of `networkx.algorithms.d_separation`, with
+    /// `a` the nodes in `nodeset` and their ancestors: the nodes of
+    /// `processed` in order (needs exact in-edge order).
+    fn d_reachable(
+        &self,
+        py: Python<'_>,
+        x: Vec<u32>,
+        nodeset: Vec<u32>,
+        z: Vec<u32>,
+    ) -> PyResult<Vec<u32>> {
+        self.membership(&x)?;
+        let in_z = self.membership(&z)?;
+        self.membership(&nodeset)?;
+        let pred = self.reverse_exact_order(None)?.0;
+        let transposed = self.adj(true);
+        Ok(py.detach(|| {
+            let anc = matching::closure_mask(transposed, self.n, &nodeset);
+            matching::d_reachable(&self.succ, pred, self.n, &x, &anc, &in_z)
+        }))
+    }
+
+    /// `nx.is_minimal_d_separator` on a DAG, after its input checks.
+    fn is_minimal_d_separator(
+        &self,
+        py: Python<'_>,
+        x: Vec<u32>,
+        y: Vec<u32>,
+        z: Vec<u32>,
+        included: Vec<u32>,
+    ) -> PyResult<bool> {
+        for nodes in [&x, &y, &z, &included] {
+            self.membership(nodes)?;
+        }
+        let pred = self.adj(true);
+        Ok(py.detach(|| {
+            matching::is_minimal_d_separator(&self.succ, pred, self.n, &x, &y, &z, &included)
+        }))
+    }
+
+    /// Successors of `nodes`, each once, first occurrence first.
+    fn neighbor_union(&self, py: Python<'_>, nodes: Vec<u32>) -> PyResult<Vec<u32>> {
+        self.membership(&nodes)?;
+        Ok(py.detach(|| matching::neighbor_union(&self.succ, self.n, &nodes)))
+    }
+
+    /// `nx.edge_boundary` without data: `(index into order, neighbor)`.
+    #[pyo3(signature = (order, nset2=None))]
+    fn edge_boundary(
+        &self,
+        py: Python<'_>,
+        order: Vec<u32>,
+        nset2: Option<Vec<u32>>,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        self.membership(&order)?;
+        if let Some(s) = &nset2 {
+            self.membership(s)?;
+        }
+        Ok(py.detach(|| {
+            matching::edge_boundary(&self.succ, self.n, self.directed, &order, nset2.as_deref())
+                .into_iter()
+                .unzip()
+        }))
+    }
+
+    /// Index of the first pair where `nx.is_matching` returns False.
+    fn first_matching_failure(&self, us: Vec<u32>, vs: Vec<u32>) -> PyResult<Option<usize>> {
+        self.membership(&us)?;
+        self.membership(&vs)?;
+        Ok(matching::first_matching_failure(&self.succ, self.n, &us, &vs))
+    }
+
+    /// Whether an edge (not a self-loop) has neither end in `matched`.
+    fn has_unmatched_edge(&self, py: Python<'_>, matched: Vec<u32>) -> PyResult<bool> {
+        self.membership(&matched)?;
+        Ok(py.detach(|| matching::has_unmatched_edge(&self.succ, self.n, &matched)))
+    }
+
+    /// `nx.maximal_matching`: chosen edges in order.
+    fn maximal_matching(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
+        py.detach(|| matching::maximal_matching(&self.succ, self.n).into_iter().unzip())
+    }
+
+    /// `nx.max_weight_matching` (or, with `inverted`, `min_weight_matching`)
+    /// as matching pairs in set-insertion order. `None` if integer weights
+    /// are too large for f64 arithmetic to match Python's exact ints.
+    #[pyo3(signature = (weight=None, maxcardinality=false, inverted=false))]
+    fn max_weight_matching(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+        maxcardinality: bool,
+        inverted: bool,
+    ) -> PyResult<Option<(Vec<u32>, Vec<u32>)>> {
+        let w = self.weight_slice(weight, false)?;
+        let any_int = weight
+            .and_then(|a| self.weights.get(a))
+            .is_none_or(|x| x.any_int);
+        if any_int && w.is_some_and(|w| w.iter().any(|x| x.abs() > (1u64 << 49) as f64)) {
+            return Ok(None);
+        }
+        Ok(Some(py.detach(|| {
+            if inverted {
+                let (g, nodes) = matching::inverted_graph(&self.succ, self.n, w);
+                matching::max_weight_matching(&g, true)
+                    .into_iter()
+                    .map(|(u, v)| (nodes[u as usize], nodes[v as usize]))
+                    .unzip()
+            } else {
+                let g = matching::WeightedAdj::from_csr(&self.succ, w);
+                matching::max_weight_matching(&g, maxcardinality)
+                    .into_iter()
+                    .unzip()
+            }
+        })))
+    }
+
+    /// Whether `nodes` and their successors cover every node.
+    fn is_dominating(&self, py: Python<'_>, nodes: Vec<u32>) -> PyResult<bool> {
+        self.membership(&nodes)?;
+        Ok(py.detach(|| matching::is_dominating(&self.succ, self.n, &nodes)))
+    }
+
+    /// Whether the subgraph induced by `nodes` (non-empty) is connected.
+    fn induced_connected(&self, py: Python<'_>, nodes: Vec<u32>) -> PyResult<bool> {
+        self.membership(&nodes)?;
+        if nodes.is_empty() {
+            return Err(PyValueError::new_err("nodes must not be empty"));
+        }
+        Ok(py.detach(|| matching::induced_connected(&self.succ, self.n, &nodes)))
+    }
+
+    /// `nx.connected_dominating_set` (connected, two or more nodes): nodes
+    /// in the order they join.
+    fn connected_dominating_set(&self, py: Python<'_>) -> PyResult<Vec<u32>> {
+        let degree = self.degrees();
+        py.detach(|| matching::connected_dominating_set(&self.succ, self.n, &degree))
+            .ok_or_else(|| PyIndexError::new_err("index out of range"))
+    }
+
+    /// `nx.enumerate_all_cliques` as a resumable queue.
+    fn all_cliques(&self, py: Python<'_>) -> CliqueQueue {
+        CliqueQueue(py.detach(|| matching::AllCliques::new(&self.succ, self.n)))
+    }
+
+    /// `nx.node_clique_number` for each of `nodes`.
+    fn node_clique_numbers(&self, py: Python<'_>, nodes: Vec<u32>) -> PyResult<Vec<u32>> {
+        self.membership(&nodes)?;
+        Ok(py.detach(|| matching::node_clique_numbers(&self.succ, self.n, &nodes)))
+    }
+
+    /// `nx.max_weight_clique` with integer node weights (`None`: all 1):
+    /// the clique and its weight.
+    #[pyo3(signature = (weights=None))]
+    fn max_weight_clique(&self, py: Python<'_>, weights: Option<Vec<i64>>) -> PyResult<(Vec<u32>, i64)> {
+        let weights = weights.unwrap_or_else(|| vec![1; self.n]);
+        if weights.len() != self.n {
+            return Err(PyValueError::new_err("one weight per node"));
+        }
+        let total: i128 = weights.iter().filter(|&&w| w > 0).map(|&w| w as i128).sum();
+        if total > (1i128 << 62) {
+            return Err(PyNotImplementedError::new_err("node weights are too large"));
+        }
+        let degree = self.degrees();
+        Ok(py.detach(|| matching::MaxWeightClique::run(&self.succ, self.n, &weights, &degree)))
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -2443,6 +2644,71 @@ impl RootLeafPaths {
     }
 }
 
+/// `nx.enumerate_all_cliques`'s queue (batch 10).
+#[pyclass(module = "rustnx._core")]
+pub struct CliqueQueue(matching::AllCliques);
+
+#[pymethods]
+impl CliqueQueue {
+    /// Up to `limit` more cliques, as lists of the objects in `nodes`.
+    fn next_batch<'py>(
+        &mut self,
+        py: Python<'py>,
+        nodes: &Bound<'py, PyList>,
+        limit: usize,
+    ) -> PyResult<Bound<'py, PyList>> {
+        let batch = py.detach(|| self.0.next_batch(limit));
+        let objects: Vec<Bound<'py, PyAny>> = nodes.iter().collect();
+        if batch.iter().flatten().any(|&v| v as usize >= objects.len()) {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        let out = PyList::empty(py);
+        for clique in batch {
+            out.append(PyList::new(py, clique.iter().map(|&v| &objects[v as usize]))?)?;
+        }
+        Ok(out)
+    }
+}
+
+/// A degree-sequence test (batch 10) on a list of Python ints: `kind` is
+/// `"hh"`, `"eg"`, `"multi"` or `"pseudo"`. `None` unless every item is an
+/// int (or bool) that fits in 64 bits.
+#[pyfunction]
+fn _degree_sequence_test(kind: &str, seq: &Bound<'_, PyList>) -> PyResult<Option<bool>> {
+    let Some(values) = int_values(seq) else {
+        return Ok(None);
+    };
+    Ok(Some(match kind {
+        "hh" => matching::is_valid_degree_sequence_havel_hakimi(&values),
+        "eg" => matching::is_valid_degree_sequence_erdos_gallai(&values),
+        "multi" => matching::is_multigraphical(&values),
+        "pseudo" => {
+            let sum: i128 = values.iter().map(|&d| d as i128).sum();
+            sum % 2 == 0 && values.iter().min().is_none_or(|&d| d >= 0)
+        }
+        _ => return Err(PyValueError::new_err("unknown degree sequence test")),
+    }))
+}
+
+/// `nx.is_digraphical` on two lists of Python ints (`None` as above, or
+/// where NetworkX would allocate a huge list).
+#[pyfunction]
+fn _digraphical(ins: &Bound<'_, PyList>, outs: &Bound<'_, PyList>) -> Option<bool> {
+    matching::is_digraphical(&int_values(ins)?, &int_values(outs)?)
+}
+
+fn int_values(seq: &Bound<'_, PyList>) -> Option<Vec<i64>> {
+    seq.iter()
+        .map(|item| {
+            if item.cast::<pyo3::types::PyInt>().is_ok() {
+                item.extract::<i64>().ok()
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 fn unzip3(items: Vec<(u32, u32, u8)>) -> (Vec<u32>, Vec<u32>, Vec<u8>) {
     let mut us = Vec::with_capacity(items.len());
     let mut vs = Vec::with_capacity(items.len());
@@ -2470,11 +2736,14 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ClosureDag>()?;
     m.add_class::<RootLeafPaths>()?;
     m.add_class::<GroupPre>()?;
+    m.add_class::<CliqueQueue>()?;
     m.add_function(wrap_pyfunction!(graph::build_graph, m)?)?;
     m.add_function(wrap_pyfunction!(serialize::_core_graph_from_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(native::build_native, m)?)?;
     m.add_function(wrap_pyfunction!(native::build_native_arrays, m)?)?;
     m.add_function(wrap_pyfunction!(rx::build_rx, m)?)?;
     m.add_function(wrap_pyfunction!(_py_sum, m)?)?;
+    m.add_function(wrap_pyfunction!(_degree_sequence_test, m)?)?;
+    m.add_function(wrap_pyfunction!(_digraphical, m)?)?;
     Ok(())
 }
