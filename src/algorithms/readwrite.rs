@@ -1335,6 +1335,9 @@ fn gml_unescape(text: &str) -> Option<String> {
     Some(out)
 }
 
+/// Attribute (key index, value) pairs.
+type Attrs = Vec<(u32, Val)>;
+
 /// A GML dict: keys in first-seen order, each with its values.
 type GmlDict = Vec<(String, Val)>;
 
@@ -1541,9 +1544,7 @@ pub fn gml(lines: &[&str], label: Option<&str>) -> Option<Parsed> {
             py_eq(&node_label, &node_label)?; // unhashable: NetworkX raises
             labels.push(node_label);
         }
-        if py_eq(&id, &id).is_none() {
-            return None;
-        }
+        py_eq(&id, &id)?; // unhashable: NetworkX raises
         let mut attrs = Vec::with_capacity(node.len());
         for (k, v) in node {
             if reserved_kwarg(&k, false, true) {
@@ -1567,7 +1568,7 @@ pub fn gml(lines: &[&str], label: Option<&str>) -> Option<Parsed> {
     };
     // G's rows: neighbor order, and each pair's (key, attrs) in key order.
     let mut rows: Vec<Vec<u32>> = vec![Vec::new(); n];
-    let mut pair_edges: HashMap<(u32, u32), Vec<(Val, Vec<(u32, Val)>)>> = HashMap::new();
+    let mut pair_edges: HashMap<(u32, u32), Vec<(Val, Attrs)>> = HashMap::new();
     let pair = |u: u32, v: u32| if directed || u <= v { (u, v) } else { (v, u) };
     for mut edge in edges {
         let s = index_of(&pop_key(&mut edge, "source")?)?;
@@ -2391,5 +2392,28 @@ mod tests {
         assert!(lower_starts_with("*Vertices 3", "*vertices"));
         assert!(lower_starts_with("*networ\u{212a}", "*network"));
         assert!(!lower_starts_with("*net", "*network"));
+    }
+
+    #[test]
+    fn shlex_and_gml_strings() {
+        let split = |s: &str| shlex_split(s).map(|v| v.join("|"));
+        assert_eq!(
+            split(r#"1 "a b" c\ d 'e"f' "g\"h\i" x""y"#).as_deref(),
+            Some(r#"1|a b|c d|e"f|g"h\i|xy"#)
+        );
+        assert_eq!(split(r#"a "" b"#).as_deref(), Some("a||b"));
+        assert_eq!(split(r#"a "b"#), None);
+        assert_eq!(split("a\\"), None);
+        assert_eq!(
+            gml_unescape("&#65;&amp;&#x42;&#99999999;&#;& x").as_deref(),
+            Some("A&B&#99999999;&#;& x")
+        );
+        assert_eq!(gml_unescape("&nbsp;"), None);
+        assert_eq!(gml_unescape("&#55296;"), None);
+        assert_eq!(
+            py_splitlines("a\r\nb\rc\x0bd\n\ne\n"),
+            vec!["a", "b", "c", "d", "", "e"]
+        );
+        assert_eq!(py_bytes_strip(b"\x0b a \x0c\n"), b"a");
     }
 }
