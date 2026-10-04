@@ -17,9 +17,9 @@ use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
-    bipartite, centrality, centrality_more, cluster, cores_more, dag, directed, distance,
-    graph_classes, isomorphism, leftovers, matching, paths, spectral, structure, structure_more,
-    trees_more,
+    approximation, bipartite, centrality, centrality_more, cluster, cores_more, dag, directed,
+    distance, graph_classes, isomorphism, leftovers, matching, paths, spectral, structure,
+    structure_more, trees_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -3190,6 +3190,195 @@ impl CoreGraph {
         py.detach(|| bipartite::butterflies(&self.succ, self.n, &degree))
     }
 
+    // --- Batch 16: approximation algorithms and graph operations ---
+
+    /// `min_weighted_vertex_cover`'s cover in insertion order. `costs` are
+    /// the node weights (`None`: all 1); `None` if one isn't a Python int
+    /// or float, or int arithmetic would leave `i64`.
+    #[pyo3(signature = (costs=None))]
+    fn local_ratio_cover(
+        &self,
+        py: Python<'_>,
+        costs: Option<Vec<Bound<'_, PyAny>>>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let costs = match costs {
+            None => vec![trees_more::Num::Int(1); self.n],
+            Some(values) => {
+                if values.len() != self.n {
+                    return Err(PyValueError::new_err("one cost per node"));
+                }
+                let mut out = Vec::with_capacity(self.n);
+                for value in &values {
+                    match py_num(value) {
+                        Some(x) => out.push(x),
+                        None => return Ok(None),
+                    }
+                }
+                out
+            }
+        };
+        Ok(
+            py.detach(|| {
+                approximation::local_ratio_cover(&self.succ, self.n, self.directed, costs)
+            }),
+        )
+    }
+
+    /// `min_weighted_dominating_set`'s nodes in insertion order.
+    #[pyo3(signature = (weights, uncovered_rule))]
+    fn min_weighted_dominating(
+        &self,
+        py: Python<'_>,
+        weights: Option<Vec<f64>>,
+        uncovered_rule: bool,
+    ) -> PyResult<Vec<u32>> {
+        if weights.as_ref().is_some_and(|w| w.len() != self.n) {
+            return Err(PyValueError::new_err("one weight per node"));
+        }
+        Ok(py.detach(|| {
+            approximation::min_weighted_dominating(
+                &self.succ,
+                self.n,
+                weights.as_deref(),
+                uncovered_rule,
+            )
+        }))
+    }
+
+    /// Whether every node is adjacent to all others (self-loops aside).
+    fn is_complete(&self) -> bool {
+        approximation::is_complete(&self.succ, self.n)
+    }
+
+    /// `greedy_tsp` from `source`: `(0, cycle)`, or `(1, [])` if G isn't
+    /// complete, or `(2, [])` on a tie between nearest nodes.
+    fn greedy_tsp(&self, py: Python<'_>, weight: &str, source: usize) -> PyResult<(u8, Vec<u32>)> {
+        self.check_index(source)?;
+        let w = self
+            .weight_slice(Some(weight), false)?
+            .expect("an attribute");
+        Ok(py.detach(
+            || match approximation::greedy_tsp(&self.succ, w, self.n, source) {
+                Ok(cycle) => (0, cycle),
+                Err(approximation::TspError::NotComplete) => (1, Vec::new()),
+                Err(approximation::TspError::Tie) => (2, Vec::new()),
+            },
+        ))
+    }
+
+    /// The tour state of `simulated_annealing_tsp` and
+    /// `threshold_accepting_tsp`; `nodes[k]` is the position of
+    /// `init_cycle[k]`. The caller checked that G is complete.
+    fn tsp_tour(
+        &self,
+        weight: &str,
+        nodes: Vec<u32>,
+        ints: bool,
+        compensated: bool,
+    ) -> PyResult<TspTour> {
+        for &v in &nodes {
+            self.check_index(v as usize)?;
+        }
+        let w = self
+            .weight_slice(Some(weight), false)?
+            .expect("an attribute");
+        Ok(TspTour(approximation::Tour::new(
+            &self.succ,
+            w,
+            self.n,
+            nodes,
+            ints,
+            compensated,
+        )))
+    }
+
+    /// The nodes `treewidth_decomp` eliminates with the min fill-in heuristic.
+    fn min_fill_in_order(&self, py: Python<'_>) -> Vec<u32> {
+        py.detach(|| approximation::min_fill_in_order(&self.succ, self.n))
+    }
+
+    /// `approximate_diameter`'s two sweeps from `source`, or `None` if the
+    /// graph isn't (strongly) connected.
+    fn two_sweep(&self, py: Python<'_>, source: usize) -> PyResult<Option<u32>> {
+        self.check_index(source)?;
+        let pred = if self.directed {
+            Some(self.adj(true))
+        } else {
+            None
+        };
+        Ok(py.detach(|| approximation::two_sweep(&self.succ, pred, self.n, source).ok()))
+    }
+
+    /// `one_exchange`'s state, starting from the nodes with `side` set.
+    /// The caller checked that the weights are ints.
+    #[pyo3(signature = (side, weight=None))]
+    fn max_cut(&self, side: Vec<bool>, weight: Option<&str>) -> PyResult<MaxCutState> {
+        if side.len() != self.n {
+            return Err(PyValueError::new_err("one side per node"));
+        }
+        let w = match self.weight_slice(weight, false)? {
+            Some(w) => w.iter().map(|&x| x as i64).collect(),
+            None => vec![1; self.succ.targets.len()],
+        };
+        Ok(MaxCutState(approximation::MaxCut::new(&self.succ, w, side)))
+    }
+
+    /// `cut_size` between the nodes with `side` set and the rest (int weights).
+    #[pyo3(signature = (side, weight=None))]
+    fn cut_value(&self, py: Python<'_>, side: Vec<bool>, weight: Option<&str>) -> PyResult<i128> {
+        if side.len() != self.n {
+            return Err(PyValueError::new_err("one side per node"));
+        }
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| approximation::cut_value(&self.succ, w, &side)))
+    }
+
+    /// Edges `is_kl_connected` rejects for path count `limit`, in edge order
+    /// (only the first with `first_only`). Directed graphs need the exact
+    /// predecessor order loaded.
+    fn kl_rejected(
+        &self,
+        py: Python<'_>,
+        limit: u64,
+        first_only: bool,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        let pred = self.path_adj(None, true)?.0;
+        Ok(py.detach(|| {
+            approximation::kl_rejected(&self.succ, pred, self.n, self.directed, limit, first_only)
+                .into_iter()
+                .unzip()
+        }))
+    }
+
+    /// `complement`'s edges in the order NetworkX adds them.
+    fn complement_edges(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
+        py.detach(|| approximation::complement_edges(&self.succ, self.n, self.directed))
+    }
+
+    /// `power(G, k)`'s edges in the order NetworkX adds them.
+    fn power_edges(&self, py: Python<'_>, k: usize) -> (Vec<u32>, Vec<u32>) {
+        py.detach(|| approximation::power_edges(&self.succ, self.n, k))
+    }
+
+    /// Edges of this graph, in `G.edges()` order, that `other` lacks;
+    /// `map[v]` is node `v`'s position in `other`.
+    fn edges_missing_from(
+        &self,
+        py: Python<'_>,
+        other: &Bound<'_, CoreGraph>,
+        map: Vec<u32>,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        let other = other.get();
+        if map.len() != self.n || map.iter().any(|&h| h as usize >= other.n) {
+            return Err(PyValueError::new_err(
+                "map must give a node of other per node",
+            ));
+        }
+        Ok(py.detach(|| {
+            approximation::edges_missing_from(&self.succ, self.n, self.directed, &other.succ, &map)
+        }))
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -3721,6 +3910,117 @@ impl CliqueQueue {
     }
 }
 
+// --- Batch 16: approximation algorithms and graph operations ---
+
+/// The cycle of `simulated_annealing_tsp` / `threshold_accepting_tsp`.
+#[pyclass(module = "rustnx._core")]
+pub struct TspTour(approximation::Tour);
+
+fn tour_cost<'py>(py: Python<'py>, cost: approximation::Cost) -> PyResult<Bound<'py, PyAny>> {
+    Ok(match cost {
+        approximation::Cost::Int(x) => x.into_pyobject(py)?.into_any(),
+        approximation::Cost::Float(x) => PyFloat::new(py, x).into_any(),
+    })
+}
+
+#[pymethods]
+impl TspTour {
+    /// The current cycle's cost, as NetworkX's `sum()` gives it.
+    fn cost<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        tour_cost(py, self.0.cost())
+    }
+
+    /// Apply the move (0: swap two nodes, 1: move one node) for the sampled
+    /// indices, and return the new cost.
+    fn step<'py>(
+        &mut self,
+        py: Python<'py>,
+        kind: u8,
+        a: usize,
+        b: usize,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        if !self.0.apply(kind, a, b) {
+            return Err(PyIndexError::new_err("move index out of range"));
+        }
+        tour_cost(py, self.0.cost())
+    }
+
+    fn save_best(&mut self) {
+        self.0.save_best();
+    }
+
+    /// Indices into `init_cycle` of the best cycle saved.
+    fn best(&self) -> Vec<u32> {
+        self.0.best()
+    }
+}
+
+/// `one_exchange`'s cut state.
+#[pyclass(module = "rustnx._core")]
+pub struct MaxCutState(approximation::MaxCut);
+
+#[pymethods]
+impl MaxCutState {
+    fn cut(&self) -> i128 {
+        self.0.cut()
+    }
+
+    /// The first node in `order` whose switch gives the largest cut, and
+    /// that cut.
+    fn best(&self, py: Python<'_>, order: Vec<u32>) -> PyResult<Option<(u32, i128)>> {
+        let state = &self.0;
+        match py.detach(|| state.best(&order)) {
+            Some(found) => Ok(Some(found)),
+            None if order.is_empty() => Ok(None),
+            None => Err(PyIndexError::new_err("node index out of range")),
+        }
+    }
+
+    fn switch(&mut self, v: usize) -> PyResult<()> {
+        if v >= self.0.len() {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        self.0.switch(v);
+        Ok(())
+    }
+}
+
+/// Add edges `(nodes[u], nodes[v])` to a new NetworkX graph's adjacency
+/// dicts as `add_edges_from` would (batch 16): one shared empty attribute
+/// dict per edge, and edges already present left as they are. `pred_rows`
+/// are a directed graph's `_pred` dicts.
+#[pyfunction]
+#[pyo3(signature = (succ_rows, pred_rows, nodes, us, vs))]
+fn _add_plain_edges(
+    succ_rows: Vec<Bound<'_, PyDict>>,
+    pred_rows: Option<Vec<Bound<'_, PyDict>>>,
+    nodes: Vec<Bound<'_, PyAny>>,
+    us: Vec<u32>,
+    vs: Vec<u32>,
+) -> PyResult<()> {
+    let n = nodes.len();
+    if succ_rows.len() != n
+        || pred_rows.as_ref().is_some_and(|p| p.len() != n)
+        || us.len() != vs.len()
+        || us.iter().chain(&vs).any(|&v| v as usize >= n)
+    {
+        return Err(PyValueError::new_err("rows, nodes and edges must agree"));
+    }
+    for (&u, &v) in us.iter().zip(&vs) {
+        let (u, v) = (u as usize, v as usize);
+        if succ_rows[u].contains(&nodes[v])? {
+            continue;
+        }
+        let data = PyDict::new(succ_rows[u].py());
+        succ_rows[u].set_item(&nodes[v], &data)?;
+        match &pred_rows {
+            Some(pred) => pred[v].set_item(&nodes[u], &data)?,
+            None => succ_rows[v].set_item(&nodes[u], &data)?,
+        }
+    }
+    Ok(())
+}
+
 /// A degree-sequence test (batch 10) on a list of Python ints: `kind` is
 /// `"hh"`, `"eg"`, `"multi"` or `"pseudo"`. `None` unless every item is an
 /// int (or bool) that fits in 64 bits.
@@ -4001,6 +4301,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<TreeLca>()?;
     m.add_class::<Boruvka>()?;
     m.add_class::<CliqueQueue>()?;
+    m.add_class::<TspTour>()?;
+    m.add_class::<MaxCutState>()?;
     m.add_function(wrap_pyfunction!(graph::build_graph, m)?)?;
     m.add_function(wrap_pyfunction!(serialize::_core_graph_from_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(native::build_native, m)?)?;
@@ -4010,5 +4312,6 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(_degree_sequence_test, m)?)?;
     m.add_function(wrap_pyfunction!(_digraphical, m)?)?;
     m.add_function(wrap_pyfunction!(_plain_int_list, m)?)?;
+    m.add_function(wrap_pyfunction!(_add_plain_edges, m)?)?;
     Ok(())
 }
