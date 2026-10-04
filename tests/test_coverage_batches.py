@@ -4987,3 +4987,233 @@ def test_float_distance_totals_follow_python_sum(seed):
         D[u][v]["weight"] = rng.random()
     exact_outcome(nx.wiener_index, D, weight="weight")
     exact_outcome(nx.closeness_centrality, D, distance="weight")
+
+
+# --- Batch 17: deterministic generators -------------------------------------------
+
+_B17_CLASSES = [None, nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph]
+
+
+def _b17_func(name):
+    return getattr(nx.utils.backends, "_registered_algorithms", {}).get(name)
+
+
+def _b17_snapshot(G):
+    """Everything about a generated graph, with types: class, graph dict,
+    node order and attributes, every row's order and data (keys for
+    multigraphs), and that both rows of an edge share one data dict."""
+    def rows(adj):
+        return [(repr(u), [(repr(v), repr(d)) for v, d in row.items()]) for u, row in adj.items()]
+
+    out = [type(G).__name__, repr(list(G.graph.items()))]
+    out.append([(repr(n), repr(list(d.items()))) for n, d in G._node.items()])
+    out.append(rows(G._adj))
+    if G.is_directed():
+        out.append(rows(G._pred))
+        assert all(G._pred[v][u] is d for u, row in G._succ.items() for v, d in row.items())
+    else:
+        assert all(G._adj[v][u] is d for u, row in G._adj.items() for v, d in row.items())
+    return out
+
+
+def _b17_outcome(call):
+    try:
+        return ("ok", _b17_snapshot(call()))
+    except Exception as exc:
+        return (type(exc), str(exc))
+
+
+def _b17_check(name, *args, **kwargs):
+    """rustnx's result (or, if it hands the call to NetworkX, the result
+    through `backend_priority.generators`) equals NetworkX's in every respect."""
+    func = _b17_func(name)
+    if func is None:
+        return None  # e.g. generalized_petersen_graph before NetworkX 3.6
+    ref = _b17_outcome(lambda: func(*args, backend="networkx", **kwargs))
+    ours = _b17_outcome(lambda: func(*args, backend="rustnx", **kwargs))
+    if ours[0] is NotImplementedError:
+        old = nx.config.backend_priority.generators
+        nx.config.backend_priority.generators = ["rustnx"]
+        try:
+            ours = _b17_outcome(lambda: func(*args, **kwargs))
+        finally:
+            nx.config.backend_priority.generators = old
+    assert ours == ref, (name, args, kwargs)
+    return ref
+
+
+_B17_NODES = [0, 1, 2, 3, 4, 7, -1, [3, "a", (1, 2)], "xyz", range(2, 6), (5,), [1, 1, 2], [[1]]]
+
+
+@pytest.mark.parametrize("create_using", _B17_CLASSES)
+@pytest.mark.parametrize(
+    "name",
+    ["empty_graph", "complete_graph", "cycle_graph", "path_graph", "star_graph", "wheel_graph"],
+)
+def test_batch17_nodes_or_number(name, create_using):
+    for n in _B17_NODES:
+        _b17_check(name, n, create_using=create_using)
+    _b17_check(name, 5, create_using=5)  # not a graph: TypeError
+    _b17_check(name, 2.5)
+    _b17_check(name, True)
+
+
+def test_batch17_empty_graph_default():
+    for default in [nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph, nx.OrderedGraph if hasattr(nx, "OrderedGraph") else nx.Graph]:
+        _b17_check("empty_graph", 3, default=default)
+        _b17_check("empty_graph", 3, nx.Graph, default=default)
+
+
+@pytest.mark.parametrize("create_using", _B17_CLASSES)
+def test_batch17_one_int(create_using):
+    for n in [-2, -1, 0, 1, 2, 3, 5, 8]:
+        for name in ["ladder_graph", "circular_ladder_graph", "binomial_tree", "dorogovtsev_goltsev_mendes_graph"]:
+            _b17_check(name, n, create_using=create_using)
+        _b17_check("paley_graph", 3 * n + 1, create_using=create_using)
+        _b17_check("LCF_graph", 2 * n, [3, -3], 2, create_using=create_using)
+        _b17_check("LCF_graph", 2 * n, [5, -5, 0, 17], n, create_using=create_using)
+        _b17_check("LCF_graph", 2 * n, [], 4, create_using=create_using)
+    _b17_check("LCF_graph", 14, (5, -5), 7, create_using=create_using)
+    _b17_check("binomial_tree", 1.0, create_using=create_using)
+
+
+@pytest.mark.parametrize("create_using", _B17_CLASSES)
+def test_batch17_two_ints(create_using):
+    names = [
+        "lollipop_graph", "barbell_graph", "tadpole_graph", "full_rary_tree", "balanced_tree",
+        "complete_bipartite_graph", "grid_2d_graph", "generalized_petersen_graph",
+    ]
+    for m in [-1, 0, 1, 2, 3, 4, 6]:
+        for n in [-1, 0, 1, 2, 3, 5]:
+            for name in names:
+                _b17_check(name, m, n, create_using=create_using)
+            for periodic in [True, (True, False), [False, True], (1, 0), (True,)]:
+                _b17_check("grid_2d_graph", m, n, periodic=periodic, create_using=create_using)
+            for kind in ["hexagonal", "triangular"]:
+                for with_positions in [True, False]:
+                    _b17_check(f"{kind}_lattice_graph", m, n, with_positions=with_positions, create_using=create_using)
+                _b17_check(f"{kind}_lattice_graph", m, n, periodic=True, create_using=create_using)
+    _b17_check("grid_2d_graph", [5, "a", 1], "xy", create_using=create_using)
+    _b17_check("grid_2d_graph", range(3), [(0, 1), None], periodic=True, create_using=create_using)
+    _b17_check("lollipop_graph", [1, 2, 3], 4, create_using=create_using)
+    _b17_check("tadpole_graph", 4, "ab", create_using=create_using)
+    _b17_check("complete_bipartite_graph", [1, 2], [3], create_using=create_using)
+
+
+@pytest.mark.parametrize("create_using", _B17_CLASSES)
+def test_batch17_circulant(create_using):
+    for n in [-1, 0, 1, 2, 5, 8, 9]:
+        for offsets in [[1], [1, 2], [2, 3, 7], [-1, 0], [], (4, 1), range(1, 3)]:
+            _b17_check("circulant_graph", n, offsets, create_using=create_using)
+    _b17_check("circulant_graph", 6, [1.0], create_using=create_using)
+
+
+def test_batch17_pairs_without_create_using():
+    for m in [-1, 0, 1, 2, 3, 4, 5]:
+        for n in [-1, 0, 1, 2, 3, 4, 5]:
+            for name in [
+                "caveman_graph", "connected_caveman_graph", "ring_of_cliques",
+                "windmill_graph", "turan_graph", "kneser_graph",
+            ]:
+                _b17_check(name, m, n)
+    for n in range(1, 13):
+        for k in range(1, 6):
+            _b17_check("kneser_graph", n, k)
+    for n in [-1, 0, 1, 2, 3, 4, 5]:
+        _b17_check("sudoku_graph", n)
+        _b17_check("mycielski_graph", n)
+        _b17_check("hypercube_graph", n)
+    _b17_check("sudoku_graph")
+    for sizes in [(), (0,), (1, 2), (3, 0, 2), (2, 2, 2, 1), (1, -1), ([1, 2], [3])]:
+        _b17_check("complete_multipartite_graph", *sizes)
+    for p in [5, 13, 17, 97, 101]:
+        for create_using in _B17_CLASSES:
+            _b17_check("paley_graph", p, create_using=create_using)
+
+
+def test_batch17_grid_graph():
+    for dim in [[], [3], [2, 3], [3, 1, 2], [2, 2, 2, 2], [[1, 5, 3], 2], [1], [0, 3], [-1, 2], (2, 4), [range(2, 5), (7, 0)], [[1, 1], 2], [["a", "b"], 2]]:
+        for periodic in [False, True, 1, [True, False, True, False], (False, True, False, True), [True]]:
+            _b17_check("grid_graph", dim, periodic=periodic)
+
+
+def test_batch17_create_using_instances():
+    def make(cls):
+        H = cls(name="old")
+        H.add_edge("x", "y", w=1)
+        H.nodes["x"]["c"] = 2
+        return H
+
+    calls = [
+        ("complete_graph", (5,)), ("path_graph", (4,)), ("star_graph", (3,)), ("wheel_graph", (5,)),
+        ("ladder_graph", (3,)), ("circulant_graph", (7, [1, 2])), ("grid_2d_graph", (3, 4)),
+        ("LCF_graph", (6, [3], 6)), ("LCF_graph", (0, [3], 6)), ("paley_graph", (13,)),
+        ("complete_bipartite_graph", (2, 3)), ("dorogovtsev_goltsev_mendes_graph", (2,)),
+        ("hexagonal_lattice_graph", (2, 3)), ("triangular_lattice_graph", (3, 3)),
+        ("generalized_petersen_graph", (5, 2)), ("empty_graph", ([1, "a"],)),
+    ]
+    for name, args in calls:
+        func = _b17_func(name)
+        if func is None:
+            continue
+        for cls in [nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph]:
+            results = []
+            for backend in ["networkx", "rustnx"]:
+                H = make(cls)
+                try:
+                    try:
+                        R = func(*args, create_using=H, backend=backend)
+                    except NotImplementedError:
+                        # Falls back before touching the instance.
+                        assert _b17_snapshot(H) == _b17_snapshot(make(cls))
+                        with nx.config.backend_priority(generators=["rustnx"]):
+                            R = func(*args, create_using=H)
+                    assert R is H
+                    results.append(("ok", _b17_snapshot(H)))
+                except nx.NetworkXError as exc:
+                    results.append((type(exc), str(exc), _b17_snapshot(H)))
+            assert results[0] == results[1], (name, cls)
+
+
+def test_batch17_backend_priority(monkeypatch):
+    from rustnx import interface
+
+    calls = []
+    real = interface.path_graph
+    monkeypatch.setattr(interface, "path_graph", lambda *a, **kw: calls.append(1) or real(*a, **kw))
+    with nx.config.backend_priority(generators=["rustnx"]):
+        G = nx.path_graph(5)
+        assert calls
+        assert _b17_snapshot(G) == _b17_snapshot(nx.path_graph(5, backend="networkx"))
+        # An iterator falls back before it is consumed.
+        G = nx.path_graph(iter("abc"))
+        assert list(G) == ["a", "b", "c"]
+        for name, args in [("circulant_graph", (6, [1, 2])), ("LCF_graph", (14, [5, -5], 7))]:
+            func = _b17_func(name)
+            expected = _b17_outcome(lambda: func(args[0], iter(args[1]), *args[2:], backend="networkx"))
+            assert _b17_outcome(lambda: func(args[0], iter(args[1]), *args[2:])) == expected
+    calls.clear()
+    nx.path_graph(5)
+    assert not calls  # generators need backend_priority.generators
+
+
+def test_batch17_runs_in_rust():
+    calls = [
+        ("empty_graph", (5,)), ("complete_graph", (5,)), ("cycle_graph", (5,)),
+        ("path_graph", (5,)), ("star_graph", (5,)), ("wheel_graph", (5,)),
+        ("ladder_graph", (5,)), ("circular_ladder_graph", (5,)), ("lollipop_graph", (4, 3)),
+        ("barbell_graph", (4, 3)), ("tadpole_graph", (4, 3)), ("full_rary_tree", (3, 20)),
+        ("balanced_tree", (2, 4)), ("binomial_tree", (4,)), ("complete_bipartite_graph", (3, 4)),
+        ("complete_multipartite_graph", (2, 3, 4)), ("turan_graph", (10, 3)),
+        ("grid_2d_graph", (3, 4)), ("grid_graph", ([2, 3, 4],)), ("hypercube_graph", (4,)),
+        ("hexagonal_lattice_graph", (3, 4)), ("triangular_lattice_graph", (3, 4)),
+        ("circulant_graph", (10, [1, 3])), ("caveman_graph", (3, 4)),
+        ("connected_caveman_graph", (3, 4)), ("ring_of_cliques", (3, 4)),
+        ("windmill_graph", (3, 4)), ("sudoku_graph", (2,)), ("LCF_graph", (14, [5, -5], 7)),
+        ("generalized_petersen_graph", (5, 2)), ("dorogovtsev_goltsev_mendes_graph", (3,)),
+        ("mycielski_graph", (4,)), ("paley_graph", (13,)), ("kneser_graph", (5, 2)),
+    ]
+    for name, args in calls:
+        func = _b17_func(name)
+        if func is not None:
+            func(*args, backend="rustnx")
