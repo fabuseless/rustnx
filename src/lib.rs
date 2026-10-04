@@ -19,7 +19,8 @@ use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
     approximation, bipartite, centrality, centrality_more, cluster, communities, connectivity,
     cores_more, dag, directed, distance, flow, graph_classes, isomorphism, leftovers, matching,
-    measures, paths, pyset, spectral, structure, structure_more, trees_more,
+    measures, paths, pyrandom, pyset, random_generators, spectral, structure, structure_more,
+    trees_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -4699,6 +4700,407 @@ impl CoreGraph {
         }))
     }
 
+    // --- Batch 18: random generators ---
+
+    /// Replays `random.Random` calls (`pyrandom::replay`) from `state`, for
+    /// the tests: each result as a float, an int, a list of ints or `None`.
+    #[staticmethod]
+    fn pyrandom_replay<'py>(
+        py: Python<'py>,
+        state: Vec<u32>,
+        ops: Vec<(u8, i64, i64)>,
+    ) -> PyResult<Option<(Vec<Bound<'py, PyAny>>, Vec<u32>)>> {
+        let Some(mut rng) = pyrandom::Mt19937::from_state(&state) else {
+            return Ok(None);
+        };
+        let draws = pyrandom::replay(&mut rng, &ops);
+        let mut out = Vec::with_capacity(draws.len());
+        for d in draws {
+            out.push(match d {
+                pyrandom::Draw::Float(x) => x.into_pyobject(py)?.into_any(),
+                pyrandom::Draw::Int(x) => x.into_pyobject(py)?.into_any(),
+                pyrandom::Draw::Ints(x) => PyList::new(py, x)?.into_any(),
+                pyrandom::Draw::Unsupported => py.None().into_bound(py),
+            });
+        }
+        Ok(Some((out, rng.state())))
+    }
+
+    /// `complete_graph(n)` (directed or not) into the empty graph `g`.
+    #[staticmethod]
+    fn rg_complete(py: Python<'_>, n: usize, g: &Bound<'_, PyAny>) -> PyResult<()> {
+        let directed = g.call_method0("is_directed")?.is_truthy()?;
+        let b = py.detach(|| random_generators::complete(n, directed));
+        fill_generated(py, &b, g, None)
+    }
+
+    /// The nodes `0..n` and no edges, into `g`.
+    #[staticmethod]
+    fn rg_empty(n: usize, g: &Bound<'_, PyAny>) -> PyResult<()> {
+        let directed = g.call_method0("is_directed")?.is_truthy()?;
+        fill_generated(g.py(), &random_generators::Built::new(n, directed), g, None)
+    }
+
+    /// `gnp_random_graph` (`fast`: `fast_gnp_random_graph`) for `0 < p < 1`
+    /// into `g`; the generator's new state, or `None` to let NetworkX run.
+    #[staticmethod]
+    fn rg_gnp(
+        py: Python<'_>,
+        n: usize,
+        p: f64,
+        fast: bool,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let directed = g.call_method0("is_directed")?.is_truthy()?;
+        rg_run(py, &state, g, None, |rng| {
+            if fast {
+                random_generators::fast_gnp(n, p, directed, rng)
+            } else {
+                Some(random_generators::gnp(n, p, directed, rng))
+            }
+        })
+    }
+
+    /// `gnm_random_graph` (`dense`: `dense_gnm_random_graph`) for `m` below
+    /// the number of possible edges.
+    #[staticmethod]
+    fn rg_gnm(
+        py: Python<'_>,
+        n: usize,
+        m: u64,
+        dense: bool,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let directed = g.call_method0("is_directed")?.is_truthy()?;
+        rg_run(py, &state, g, None, |rng| {
+            Some(if dense {
+                random_generators::dense_gnm(n, m, rng)
+            } else {
+                random_generators::gnm(n, m, directed, rng)
+            })
+        })
+    }
+
+    /// `barabasi_albert_graph` (`m2 == 0`) or `dual_barabasi_albert_graph`
+    /// with the default initial graph.
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    fn rg_barabasi_albert(
+        py: Python<'_>,
+        n: usize,
+        m1: usize,
+        m2: usize,
+        p: f64,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        rg_run(py, &state, g, None, |rng| {
+            Some(if m2 == 0 {
+                random_generators::barabasi_albert(n, m1, rng)
+            } else {
+                random_generators::dual_barabasi_albert(n, m1, m2, p, rng)
+            })
+        })
+    }
+
+    /// `extended_barabasi_albert_graph`.
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    fn rg_extended_barabasi_albert(
+        py: Python<'_>,
+        n: usize,
+        m: usize,
+        p: f64,
+        q: f64,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        rg_run(py, &state, g, None, |rng| {
+            random_generators::extended_barabasi_albert(n, m, p, q, rng)
+        })
+    }
+
+    /// `watts_strogatz_graph` (kind 0), `newman_watts_strogatz_graph` (1)
+    /// or `connected_watts_strogatz_graph` (2, with `tries`) for `k < n`.
+    /// Returns `(found, state)`; `found` is false when every try of kind 2
+    /// fails (NetworkX then raises).
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    fn rg_watts_strogatz(
+        py: Python<'_>,
+        kind: u8,
+        n: usize,
+        k: usize,
+        p: f64,
+        tries: u64,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<(bool, Vec<u32>)>> {
+        let Some(mut rng) = pyrandom::Mt19937::from_state(&state) else {
+            return Ok(None);
+        };
+        let built = py.detach(|| match kind {
+            0 => random_generators::watts_strogatz(n, k, p, &mut rng).map(Some),
+            1 => Some(Some(random_generators::newman_watts_strogatz(
+                n, k, p, &mut rng,
+            ))),
+            _ => random_generators::connected_watts_strogatz(n, k, p, tries, &mut rng),
+        });
+        match built {
+            None => Ok(None),
+            Some(None) => Ok(Some((false, rng.state()))),
+            Some(Some(b)) => {
+                fill_generated(py, &b, g, None)?;
+                Ok(Some((true, rng.state())))
+            }
+        }
+    }
+
+    /// `powerlaw_cluster_graph` (`1 <= m <= n`).
+    #[staticmethod]
+    fn rg_powerlaw_cluster(
+        py: Python<'_>,
+        n: usize,
+        m: usize,
+        p: f64,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        rg_run(py, &state, g, None, |rng| {
+            Some(random_generators::powerlaw_cluster(n, m, p, rng))
+        })
+    }
+
+    /// `random_regular_graph` (`0 < d < n`, `n * d` even).
+    #[staticmethod]
+    fn rg_random_regular(
+        py: Python<'_>,
+        d: usize,
+        n: usize,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        rg_run(py, &state, g, None, |rng| {
+            Some(random_generators::random_regular(d, n, rng))
+        })
+    }
+
+    /// `gn_graph` (kind 0, `cumulative`: NetworkX 3.6's distribution),
+    /// `gnr_graph` (1, with `p`) or `gnc_graph` (2), for `n >= 2`.
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    fn rg_growing_network(
+        py: Python<'_>,
+        kind: u8,
+        n: usize,
+        p: f64,
+        cumulative: bool,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        rg_run(py, &state, g, None, |rng| match kind {
+            0 => random_generators::gn(n, cumulative, rng),
+            1 => Some(random_generators::gnr(n, p, rng)),
+            _ => Some(random_generators::gnc(n, rng)),
+        })
+    }
+
+    /// `random_uniform_k_out_graph`.
+    #[staticmethod]
+    fn rg_uniform_k_out(
+        py: Python<'_>,
+        n: usize,
+        k: usize,
+        self_loops: bool,
+        with_replacement: bool,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        rg_run(py, &state, g, None, |rng| {
+            let rows = random_generators::uniform_k_out(n, k, self_loops, with_replacement, rng)?;
+            let mut b = random_generators::Built::new(n, true);
+            for (u, row) in rows.into_iter().enumerate() {
+                for v in row {
+                    b.push_edge(u as u32, v);
+                }
+            }
+            Some(b)
+        })
+    }
+
+    /// `random_lobster_graph` (`0 <= n < 2^52`, `p1, p2 < 1`).
+    #[staticmethod]
+    fn rg_lobster(
+        py: Python<'_>,
+        n: u64,
+        p1: f64,
+        p2: f64,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        rg_run(py, &state, g, None, |rng| {
+            Some(random_generators::lobster(n, p1, p2, rng))
+        })
+    }
+
+    /// `random_tournament(n)`.
+    #[staticmethod]
+    fn rg_tournament(
+        py: Python<'_>,
+        n: usize,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        rg_run(py, &state, g, None, |rng| {
+            Some(random_generators::tournament(n, rng))
+        })
+    }
+
+    /// `stochastic_block_model` with nodes `0..` grouped in `parts` (each
+    /// in its set's order) and the `block` attribute values `blocks`.
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    fn rg_stochastic_block_model<'py>(
+        py: Python<'py>,
+        parts: Vec<Vec<u32>>,
+        p: Vec<Vec<f64>>,
+        directed: bool,
+        selfloops: bool,
+        sparse: bool,
+        legacy: bool,
+        state: Vec<u32>,
+        g: &Bound<'py, PyAny>,
+        block_key: &Bound<'py, PyAny>,
+        blocks: &Bound<'py, PyList>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let n: usize = parts.iter().map(Vec::len).sum();
+        let nb = parts.len();
+        if p.len() != nb
+            || p.iter().any(|row| row.len() != nb)
+            || blocks.len() != n
+            || parts.iter().flatten().any(|&v| v as usize >= n)
+        {
+            return Err(PyValueError::new_err("inconsistent block model"));
+        }
+        rg_run(py, &state, g, Some((block_key, blocks)), |rng| {
+            let mut b = random_generators::stochastic_block_model(
+                &parts, &p, directed, selfloops, sparse, legacy, rng,
+            )?;
+            b.order = Some(parts.iter().flatten().copied().collect());
+            Some(b)
+        })
+    }
+
+    /// `random_geometric_graph` with drawn positions: `dim` draws per node,
+    /// then the pairs within `radius`. Fills `g` (node attribute `pos_key`,
+    /// each a list) and returns the new state; `None` to let NetworkX run.
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    fn rg_geometric<'py>(
+        py: Python<'py>,
+        n: usize,
+        radius: f64,
+        dim: usize,
+        p: f64,
+        state: Vec<u32>,
+        g: &Bound<'py, PyAny>,
+        pos_key: &Bound<'py, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let Some(mut rng) = pyrandom::Mt19937::from_state(&state) else {
+            return Ok(None);
+        };
+        let found = py.detach(|| {
+            let coords: Vec<f64> = (0..n * dim).map(|_| rng.random()).collect();
+            let pairs = random_generators::geometric_pairs(&coords, dim, radius, p)?;
+            Some((coords, random_generators::from_pairs(n, &pairs)))
+        });
+        let Some((coords, b)) = found else {
+            return Ok(None);
+        };
+        let pos = PyList::empty(py);
+        for row in coords.chunks(dim.max(1)).take(n) {
+            pos.append(PyList::new(py, row)?)?;
+        }
+        if dim == 0 {
+            for _ in 0..n {
+                pos.append(PyList::empty(py))?;
+            }
+        }
+        fill_generated(py, &b, g, Some((pos_key, &pos)))?;
+        Ok(Some(rng.state()))
+    }
+
+    /// `waxman_graph` with the default metric over the rectangle with
+    /// corner `(x0, y0)` and sides `(dx, dy)`; `l`: the given `L`.
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    fn rg_waxman<'py>(
+        py: Python<'py>,
+        n: usize,
+        beta: f64,
+        alpha: f64,
+        l: Option<f64>,
+        domain: (f64, f64, f64, f64),
+        state: Vec<u32>,
+        g: &Bound<'py, PyAny>,
+        pos_key: &Bound<'py, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let Some(mut rng) = pyrandom::Mt19937::from_state(&state) else {
+            return Ok(None);
+        };
+        let (x0, dx, y0, dy) = domain;
+        let found =
+            py.detach(|| random_generators::waxman(n, beta, alpha, l, x0, dx, y0, dy, &mut rng));
+        let Some((coords, b)) = found else {
+            return Ok(None);
+        };
+        let pos = PyList::empty(py);
+        for xy in coords.chunks(2) {
+            pos.append(PyTuple::new(py, xy)?)?;
+        }
+        fill_generated(py, &b, g, Some((pos_key, &pos)))?;
+        Ok(Some(rng.state()))
+    }
+
+    /// Bipartite `random_graph` (`gnmk == false`, `0 < p < 1`) or
+    /// `gnmk_random_graph` (`k` edges, `bottom`: NetworkX's bottom list),
+    /// with the `bipartite` attribute values `labels`.
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    fn rg_bipartite<'py>(
+        py: Python<'py>,
+        n: usize,
+        m: usize,
+        p: f64,
+        k: u64,
+        bottom: Option<Vec<u32>>,
+        state: Vec<u32>,
+        g: &Bound<'py, PyAny>,
+        label_key: &Bound<'py, PyAny>,
+        labels: &Bound<'py, PyList>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        if labels.len() != n + m
+            || bottom
+                .as_ref()
+                .is_some_and(|b| b.is_empty() || b.iter().any(|&v| v as usize >= n + m))
+        {
+            return Err(PyValueError::new_err("inconsistent bipartite sets"));
+        }
+        let directed = g.call_method0("is_directed")?.is_truthy()?;
+        rg_run(
+            py,
+            &state,
+            g,
+            Some((label_key, labels)),
+            |rng| match &bottom {
+                None => random_generators::bipartite_random(n, m, p, directed, rng),
+                Some(bottom) => Some(random_generators::gnmk(n, bottom, k, directed, rng)),
+            },
+        )
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -6117,6 +6519,145 @@ fn _set_sum_ints_compensated(on: bool) {
 #[pyfunction]
 fn _py_sum(values: Vec<f64>, compensated: bool) -> f64 {
     spectral::py_sum(values.into_iter(), compensated)
+}
+
+// --- Batch 18: random generators (helpers) ---
+
+/// Runs a seeded generator from `random.Random` state `state` without the
+/// GIL, then fills the empty NetworkX graph `g`; the new state, or `None`
+/// (bad state, or the generator can't follow NetworkX) with `g` untouched.
+fn rg_run<'py>(
+    py: Python<'py>,
+    state: &[u32],
+    g: &Bound<'py, PyAny>,
+    node_attr: Option<(&Bound<'py, PyAny>, &Bound<'py, PyList>)>,
+    generate: impl FnOnce(&mut pyrandom::Mt19937) -> Option<random_generators::Built> + Send,
+) -> PyResult<Option<Vec<u32>>> {
+    let Some(mut rng) = pyrandom::Mt19937::from_state(state) else {
+        return Ok(None);
+    };
+    let Some(b) = py.detach(|| generate(&mut rng)) else {
+        return Ok(None);
+    };
+    fill_generated(py, &b, g, node_attr)?;
+    Ok(Some(rng.state()))
+}
+
+/// Fills the empty NetworkX graph `g` (any of the four classes) with the
+/// nodes and adjacency rows of `b`, as NetworkX's `add_node`/`add_edge`
+/// calls leave them: nodes in `b`'s order, each row in insertion order,
+/// one data dict per edge shared by both rows that hold it, and for
+/// multigraphs a key dict per node pair with keys `0, 1, ...`. Node `u`'s
+/// data is `{key: values[u]}` with `node_attr`, else `{}`.
+fn fill_generated<'py>(
+    py: Python<'py>,
+    b: &random_generators::Built,
+    g: &Bound<'py, PyAny>,
+    node_attr: Option<(&Bound<'py, PyAny>, &Bound<'py, PyList>)>,
+) -> PyResult<()> {
+    let n = b.n();
+    let nodes: Vec<Bound<'py, PyAny>> = (0..n as u64)
+        .map(|i| PyInt::new(py, i).into_any())
+        .collect();
+    let node_dict = g
+        .getattr(pyo3::intern!(py, "_node"))?
+        .cast_into::<PyDict>()?;
+    let adj = g
+        .getattr(pyo3::intern!(py, "_adj"))?
+        .cast_into::<PyDict>()?;
+    let multi = g
+        .call_method0(pyo3::intern!(py, "is_multigraph"))?
+        .is_truthy()?;
+    let pred = match &b.pred {
+        Some(_) => Some(
+            g.getattr(pyo3::intern!(py, "_pred"))?
+                .cast_into::<PyDict>()?,
+        ),
+        None => None,
+    };
+    if !node_dict.is_empty() || !adj.is_empty() {
+        return Err(PyValueError::new_err("the graph to fill is not empty"));
+    }
+    if let Some((_, values)) = node_attr {
+        if values.len() != n {
+            return Err(PyValueError::new_err("one attribute value per node"));
+        }
+    }
+    let all: Vec<u32>;
+    let order: &[u32] = match &b.order {
+        Some(order) => order,
+        None => {
+            all = (0..n as u32).collect();
+            &all
+        }
+    };
+    let rows: Vec<Bound<'py, PyDict>> = (0..n).map(|_| PyDict::new(py)).collect();
+    let pred_rows: Vec<Bound<'py, PyDict>> = match pred {
+        Some(_) => (0..n).map(|_| PyDict::new(py)).collect(),
+        None => Vec::new(),
+    };
+    for &u in order {
+        let u = u as usize;
+        let data = PyDict::new(py);
+        if let Some((key, values)) = node_attr {
+            data.set_item(key, values.get_item(u)?)?;
+        }
+        node_dict.set_item(&nodes[u], data)?;
+        adj.set_item(&nodes[u], &rows[u])?;
+        if let Some(pred) = &pred {
+            pred.set_item(&nodes[u], &pred_rows[u])?;
+        }
+    }
+    let new_edge = || -> PyResult<Bound<'py, PyAny>> {
+        if multi {
+            let keys = PyDict::new(py);
+            keys.set_item(0, PyDict::new(py))?;
+            Ok(keys.into_any())
+        } else {
+            Ok(PyDict::new(py).into_any())
+        }
+    };
+    for u in 0..n {
+        let row = &rows[u];
+        for &v in &b.succ[u] {
+            let target = &nodes[v as usize];
+            if b.pred.is_none() && (v as usize) < u {
+                // Row `v` is complete: share its dict for this edge.
+                if !multi || !row.contains(target)? {
+                    let data = rows[v as usize]
+                        .get_item(&nodes[u])?
+                        .ok_or_else(|| PyValueError::new_err("asymmetric rows"))?;
+                    row.set_item(target, data)?;
+                }
+                continue;
+            }
+            if multi {
+                if let Some(keys) = row.get_item(target)? {
+                    // A parallel edge: the next key (keys are 0, 1, ...).
+                    let keys = keys.cast_into::<PyDict>()?;
+                    keys.set_item(keys.len(), PyDict::new(py))?;
+                    continue;
+                }
+            }
+            row.set_item(target, new_edge()?)?;
+        }
+    }
+    if let Some(pred) = &b.pred {
+        for (v, sources) in pred.iter().enumerate() {
+            let row = &pred_rows[v];
+            for &u in sources {
+                let source = &nodes[u as usize];
+                if multi && row.contains(source)? {
+                    continue;
+                }
+                let data = rows[u as usize]
+                    .get_item(&nodes[v])?
+                    .ok_or_else(|| PyValueError::new_err("rows disagree"))?;
+                row.set_item(source, data)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 #[pymodule(gil_used = false)]

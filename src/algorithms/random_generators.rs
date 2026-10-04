@@ -11,7 +11,7 @@
 //! (an empty `choice`, a zero `log`) or where rustnx can't be sure to
 //! match (a float within rounding error of a threshold).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use super::pyrandom::Mt19937;
 use super::pyset::PySet;
@@ -737,13 +737,23 @@ fn regular_try(d: usize, n: usize, rng: &mut Mt19937) -> Option<Vec<(u32, u32)>>
         for &(s, _) in &potential {
             slot[s as usize] = u32::MAX;
         }
-        // `_suitable`: some pair of the leftover nodes isn't an edge yet.
+        // `_suitable`, quirk included: the inner loop swaps `s1` with the
+        // smaller node, so `s1` becomes the running minimum and the loop
+        // may run past the outer node (only `s1 == s2` stops it).
         if !potential.is_empty() {
-            let suitable = potential.iter().enumerate().any(|(i, &(s1, _))| {
-                potential[..i].iter().any(|&(s2, _)| {
+            let suitable = potential.iter().any(|&(x, _)| {
+                let mut s1 = x;
+                for &(s2, _) in &potential {
+                    if s1 == s2 {
+                        break;
+                    }
                     let (a, b) = (s1.min(s2), s1.max(s2));
-                    !members.contains(&(a, b))
-                })
+                    s1 = a;
+                    if !members.contains(&(a, b)) {
+                        return true;
+                    }
+                }
+                false
             });
             if !suitable {
                 return None;
@@ -813,6 +823,10 @@ pub fn gn(n: usize, cumulative: bool, rng: &mut Mt19937) -> Option<Built> {
                 }
                 c = next;
                 i += 1;
+            }
+            if i == len {
+                // NetworkX would add a node past the end, then fail.
+                return None;
             }
             i
         };
@@ -891,9 +905,10 @@ pub fn uniform_k_out(
     Some(rows)
 }
 
-/// `random_lobster_graph` (`p1, p2 < 1`) for a spine of `llen` nodes,
-/// drawn by the caller.
-pub fn lobster(llen: usize, p1: f64, p2: f64, rng: &mut Mt19937) -> Built {
+/// `random_lobster_graph` (`0 <= n < 2^52`, `p1, p2 < 1`).
+pub fn lobster(n: u64, p1: f64, p2: f64, rng: &mut Mt19937) -> Built {
+    // `int(2 * seed.random() * n + 0.5)`
+    let llen = (2.0 * rng.random() * n as f64 + 0.5) as usize;
     let mut b = path(llen);
     let mut current = llen as i64 - 1;
     for v in 0..llen as u32 {
@@ -1253,8 +1268,3 @@ pub fn waxman(
     }
     Some((pos, b))
 }
-
-/// Edge-data sharing for building the dicts: for each undirected edge,
-/// the first row to name it creates the data dict and the other reuses
-/// it. Keys are `(min, max)` positions.
-pub type PendingEdges<T> = HashMap<(u32, u32), T>;
