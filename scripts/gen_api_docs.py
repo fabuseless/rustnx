@@ -112,6 +112,12 @@ SECTIONS = [
         "is_eulerian", "has_eulerian_path", "is_semieulerian", "eulerian_circuit",
         "eulerian_path", "cycle_basis", "find_cycle", "girth",
     ]),
+    ("Planarity and graph classes", [
+        "is_planar", "check_planarity", "check_planarity_recursive", "get_counterexample",
+        "get_counterexample_recursive", "is_chordal", "chordal_graph_treewidth",
+        "complete_to_chordal_graph", "is_at_free",
+    ]),
+    ("Tournaments", ["is_reachable", "tournament_is_strongly_connected", "score_sequence"]),
 ]
 
 LENGTHS = "Falls back when weights mix ints and floats (NetworkX's length types then depend on the path)."
@@ -245,6 +251,23 @@ NOTES = {
     "has_eulerian_path": "A `source` not in the graph falls back.",
     "cycle_basis": "A `root` not in the graph falls back.",
     "find_cycle": "A `source` that isn't one node of the graph, and invalid orientations on directed graphs, fall back.",
+    "check_planarity": "Builds the same `PlanarEmbedding` (same half-edge calls) or counterexample.",
+    "check_planarity_recursive": "Graphs deep enough that NetworkX might reach the recursion limit fall back.",
+    "get_counterexample_recursive": "Graphs deep enough that NetworkX might reach the recursion limit fall back.",
+    "is_chordal": "Self-loops fall back (NetworkX's outcome then depends on set order).",
+    "chordal_graph_treewidth": "Self-loops and the null graph (whose result differs by version) fall back.",
+    "complete_to_chordal_graph": "Self-loops fall back. Chords are added in NetworkX's (set iteration) order.",
+    "is_reachable": "Unhashable nodes fall back.",
+}
+
+# Functions NetworkX exposes only in a submodule, or under another name.
+QUALIFIED = {
+    "check_planarity_recursive": "nx.algorithms.planarity.check_planarity_recursive",
+    "get_counterexample": "nx.algorithms.planarity.get_counterexample",
+    "get_counterexample_recursive": "nx.algorithms.planarity.get_counterexample_recursive",
+    "is_reachable": "nx.tournament.is_reachable",
+    "tournament_is_strongly_connected": "nx.tournament.is_strongly_connected",
+    "score_sequence": "nx.tournament.score_sequence",
 }
 
 # Functions NetworkX only exposes under `nx.dag`.
@@ -304,7 +327,8 @@ def render():
         for name in names:
             multi = "yes" if name in interface.MULTIGRAPH_FUNCTIONS else "no"
             small = "NetworkX" if name in interface._LINEAR_TIME else "rustnx"
-            out.append(f"| `{location(name)}.{name}` | {parameters(name)} | {multi} | {small} | {NOTES.get(name, '')} |")
+            qualified = QUALIFIED.get(name, f"{location(name)}.{name}")
+            out.append(f"| `{qualified}` | {parameters(name)} | {multi} | {small} | {NOTES.get(name, '')} |")
         out.append("")
 
     classes = [n for n in rx.__all__ if n in ("PyGraph", "PyDiGraph")]

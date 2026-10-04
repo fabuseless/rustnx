@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 179 NetworkX functions. Call them as usual (for
+rustnx implements 191 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -290,6 +290,28 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.cycle_basis` | `root` | no | NetworkX | A `root` not in the graph falls back. |
 | `nx.find_cycle` | `source`, `orientation` | no | NetworkX | A `source` that isn't one node of the graph, and invalid orientations on directed graphs, fall back. |
 | `nx.girth` | none | no | rustnx |  |
+
+### Planarity and graph classes
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.is_planar` | none | no | NetworkX |  |
+| `nx.check_planarity` | `counterexample` | no | NetworkX | Builds the same `PlanarEmbedding` (same half-edge calls) or counterexample. |
+| `nx.algorithms.planarity.check_planarity_recursive` | `counterexample` | no | NetworkX | Graphs deep enough that NetworkX might reach the recursion limit fall back. |
+| `nx.algorithms.planarity.get_counterexample` | none | no | rustnx |  |
+| `nx.algorithms.planarity.get_counterexample_recursive` | none | no | rustnx | Graphs deep enough that NetworkX might reach the recursion limit fall back. |
+| `nx.is_chordal` | none | no | NetworkX | Self-loops fall back (NetworkX's outcome then depends on set order). |
+| `nx.chordal_graph_treewidth` | none | no | NetworkX | Self-loops and the null graph (whose result differs by version) fall back. |
+| `nx.complete_to_chordal_graph` | none | no | rustnx | Self-loops fall back. Chords are added in NetworkX's (set iteration) order. |
+| `nx.is_at_free` | none | no | rustnx |  |
+
+### Tournaments
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.tournament.is_reachable` | `s`, `t` | no | rustnx | Unhashable nodes fall back. |
+| `nx.tournament.is_strongly_connected` | none | no | rustnx |  |
+| `nx.tournament.score_sequence` | none | no | NetworkX |  |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 
