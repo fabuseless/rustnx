@@ -1070,3 +1070,276 @@ pub fn tournament_strongly_connected(succ: &Csr, n: usize) -> bool {
         size < n && is_closed(succ, n, &mark, tag, size)
     })
 }
+
+// --- Perfect graphs ------------------------------------------------------------
+
+/// Adjacency for the chordless cycle search: G without its self-loop nodes,
+/// or G's complement.
+trait Adjacency {
+    fn n(&self) -> usize;
+    /// Neighbors of v among the nodes `alive` marks.
+    fn neighbors(&self, v: u32, alive: &[bool], out: &mut Vec<u32>);
+    fn adjacent(&self, u: u32, v: u32) -> bool;
+}
+
+/// G's simple graph (`chordless_cycles` drops nodes with self-loops),
+/// with sorted rows for membership tests.
+struct Sparse {
+    rows: Vec<Vec<u32>>,
+}
+
+impl Adjacency for Sparse {
+    fn n(&self) -> usize {
+        self.rows.len()
+    }
+
+    fn neighbors(&self, v: u32, alive: &[bool], out: &mut Vec<u32>) {
+        out.clear();
+        out.extend(self.rows[v as usize].iter().copied().filter(|&w| alive[w as usize]));
+    }
+
+    fn adjacent(&self, u: u32, v: u32) -> bool {
+        self.rows[u as usize].binary_search(&v).is_ok()
+    }
+}
+
+/// G's complement as bit rows.
+struct Dense {
+    n: usize,
+    words: usize,
+    bits: Vec<u64>,
+}
+
+impl Adjacency for Dense {
+    fn n(&self) -> usize {
+        self.n
+    }
+
+    fn neighbors(&self, v: u32, alive: &[bool], out: &mut Vec<u32>) {
+        out.clear();
+        let row = &self.bits[v as usize * self.words..(v as usize + 1) * self.words];
+        for (k, &word) in row.iter().enumerate() {
+            let mut word = word;
+            while word != 0 {
+                let w = (k * 64 + word.trailing_zeros() as usize) as u32;
+                word &= word - 1;
+                if alive[w as usize] {
+                    out.push(w);
+                }
+            }
+        }
+    }
+
+    fn adjacent(&self, u: u32, v: u32) -> bool {
+        let v = v as usize;
+        self.bits[u as usize * self.words + v / 64] >> (v % 64) & 1 == 1
+    }
+}
+
+/// Node sets of the biconnected components (more than 2 nodes) of the
+/// subgraph on `alive`, by Tarjan's algorithm.
+fn biconnected_sets<A: Adjacency>(g: &A, alive: &[bool], nodes: &[u32]) -> Vec<Vec<u32>> {
+    let n = g.n();
+    let mut disc = vec![0u32; n];
+    let mut low = vec![0u32; n];
+    let mut clock = 0u32;
+    let mut sets = Vec::new();
+    let mut edge_stack: Vec<(u32, u32)> = Vec::new();
+    let mut in_set = vec![false; n];
+    // DFS frames: (node, parent, neighbors, next index)
+    let mut frames: Vec<(u32, u32, Vec<u32>, usize)> = Vec::new();
+    for &root in nodes {
+        if disc[root as usize] != 0 {
+            continue;
+        }
+        clock += 1;
+        disc[root as usize] = clock;
+        low[root as usize] = clock;
+        let mut nbrs = Vec::new();
+        g.neighbors(root, alive, &mut nbrs);
+        frames.push((root, NONE, nbrs, 0));
+        while let Some(frame) = frames.last_mut() {
+            let (v, parent) = (frame.0, frame.1);
+            if frame.3 < frame.2.len() {
+                let w = frame.2[frame.3];
+                frame.3 += 1;
+                let wi = w as usize;
+                if disc[wi] == 0 {
+                    edge_stack.push((v, w));
+                    clock += 1;
+                    disc[wi] = clock;
+                    low[wi] = clock;
+                    let mut nbrs = Vec::new();
+                    g.neighbors(w, alive, &mut nbrs);
+                    frames.push((w, v, nbrs, 0));
+                } else if w != parent && disc[wi] < disc[v as usize] {
+                    edge_stack.push((v, w));
+                    low[v as usize] = low[v as usize].min(disc[wi]);
+                }
+                continue;
+            }
+            frames.pop();
+            if parent == NONE {
+                continue;
+            }
+            let (p, vi) = (parent as usize, v as usize);
+            low[p] = low[p].min(low[vi]);
+            if low[vi] >= disc[p] {
+                // Pop the component's edges.
+                let mut set = Vec::new();
+                while let Some((a, b)) = edge_stack.pop() {
+                    for x in [a, b] {
+                        if !in_set[x as usize] {
+                            in_set[x as usize] = true;
+                            set.push(x);
+                        }
+                    }
+                    if (a, b) == (parent, v) {
+                        break;
+                    }
+                }
+                for &x in &set {
+                    in_set[x as usize] = false;
+                }
+                if set.len() > 2 {
+                    sets.push(set);
+                }
+            }
+        }
+    }
+    sets
+}
+
+/// Whether `chordless_cycles` would yield a cycle of odd length 5 or more
+/// (a hole), searching as it does: in each biconnected component, from
+/// every stem (u, v, w) at one node v, then without v.
+fn has_odd_hole<A: Adjacency>(g: &A, present: &[bool]) -> bool {
+    let n = g.n();
+    let nodes: Vec<u32> = (0..n as u32).filter(|&v| present[v as usize]).collect();
+    let mut alive = present.to_vec();
+    let mut components = biconnected_sets(g, &alive, &nodes);
+    alive.fill(false);
+    let mut blocked = vec![0i32; n];
+    let mut nv = Vec::new();
+    while let Some(c) = components.pop() {
+        for &x in &c {
+            alive[x as usize] = true;
+        }
+        let v = c[0];
+        g.neighbors(v, &alive, &mut nv);
+        for i in 0..nv.len() {
+            for j in i + 1..nv.len() {
+                let (u, w) = (nv[i], nv[j]);
+                if !g.adjacent(w, u) && odd_hole_from(g, &alive, &mut blocked, [u, v, w]) {
+                    return true;
+                }
+            }
+        }
+        alive[v as usize] = false;
+        let rest: Vec<u32> = c[1..].to_vec();
+        components.extend(biconnected_sets(g, &alive, &rest));
+        for &x in &c {
+            alive[x as usize] = false;
+        }
+    }
+    false
+}
+
+/// `_chordless_cycle_search` from a stem, stopping at an odd hole.
+fn odd_hole_from<A: Adjacency>(g: &A, alive: &[bool], blocked: &mut [i32], stem: [u32; 3]) -> bool {
+    let [target, v, w0] = stem;
+    let mut nbrs = Vec::new();
+    let mut lists: Vec<Vec<u32>> = Vec::new();
+    let bump = |x: u32, delta: i32, blocked: &mut [i32], nbrs: &mut Vec<u32>| {
+        g.neighbors(x, alive, nbrs);
+        for &y in nbrs.iter() {
+            blocked[y as usize] += delta;
+        }
+    };
+    blocked[v as usize] = 1;
+    bump(v, 1, blocked, &mut nbrs);
+    bump(w0, 1, blocked, &mut nbrs);
+    let mut path = vec![target, v, w0];
+    let mut first = Vec::new();
+    g.neighbors(w0, alive, &mut first);
+    lists.push(first);
+    let mut next = vec![0usize];
+    let mut found = false;
+    'outer: while let Some(top) = lists.last() {
+        let k = lists.len() - 1;
+        while next[k] < top.len() {
+            let x = top[next[k]];
+            next[k] += 1;
+            if blocked[x as usize] != 1 {
+                continue;
+            }
+            if g.adjacent(x, target) {
+                let len = path.len() + 1;
+                if len >= 5 && len % 2 == 1 {
+                    found = true;
+                    break 'outer;
+                }
+                continue;
+            }
+            bump(x, 1, blocked, &mut nbrs);
+            path.push(x);
+            let mut row = Vec::new();
+            g.neighbors(x, alive, &mut row);
+            lists.push(row);
+            next.push(0);
+            continue 'outer;
+        }
+        lists.pop();
+        next.pop();
+        let x = path.pop().unwrap();
+        bump(x, -1, blocked, &mut nbrs);
+    }
+    // Undo what is still counted, leaving `blocked` all zero.
+    while path.len() > 2 {
+        let x = path.pop().unwrap();
+        bump(x, -1, blocked, &mut nbrs);
+    }
+    bump(v, -1, blocked, &mut nbrs);
+    blocked[v as usize] -= 1;
+    found
+}
+
+/// `nx.is_perfect_graph` on a simple undirected adjacency (self-loops
+/// allowed): no odd hole in G (nodes with self-loops left out, as
+/// `chordless_cycles` does) and none in its complement. `None` if the
+/// complement doesn't fit in memory.
+pub fn is_perfect(adj: &Csr, n: usize) -> Option<bool> {
+    let looped: Vec<bool> = (0..n).map(|v| adj.neighbors(v).contains(&(v as u32))).collect();
+    let rows: Vec<Vec<u32>> = (0..n)
+        .map(|v| {
+            let mut row: Vec<u32> = if looped[v] {
+                Vec::new()
+            } else {
+                adj.neighbors(v).iter().copied().filter(|&w| !looped[w as usize]).collect()
+            };
+            row.sort_unstable();
+            row.dedup();
+            row
+        })
+        .collect();
+    let present: Vec<bool> = looped.iter().map(|&l| !l).collect();
+    if has_odd_hole(&Sparse { rows }, &present) {
+        return Some(false);
+    }
+    let words = n.div_ceil(64);
+    let mut bits: Vec<u64> = Vec::new();
+    bits.try_reserve_exact(n.checked_mul(words)?).ok()?;
+    bits.resize(n * words, 0);
+    for v in 0..n {
+        let row = &mut bits[v * words..(v + 1) * words];
+        for (k, word) in row.iter_mut().enumerate() {
+            *word = if (k + 1) * 64 <= n { !0 } else { (1u64 << (n - k * 64)) - 1 };
+        }
+        row[v / 64] &= !(1u64 << (v % 64));
+        for &w in adj.neighbors(v) {
+            let w = w as usize;
+            row[w / 64] &= !(1u64 << (w % 64));
+        }
+    }
+    Some(!has_odd_hole(&Dense { n, words, bits }, &vec![true; n]))
+}

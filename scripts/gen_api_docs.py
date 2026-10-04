@@ -115,7 +115,7 @@ SECTIONS = [
     ("Planarity and graph classes", [
         "is_planar", "check_planarity", "check_planarity_recursive", "get_counterexample",
         "get_counterexample_recursive", "is_chordal", "chordal_graph_treewidth",
-        "complete_to_chordal_graph", "is_at_free",
+        "complete_to_chordal_graph", "is_at_free", "is_perfect_graph",
     ]),
     ("Tournaments", ["is_reachable", "tournament_is_strongly_connected", "score_sequence"]),
 ]
@@ -258,6 +258,7 @@ NOTES = {
     "chordal_graph_treewidth": "Self-loops and the null graph (whose result differs by version) fall back.",
     "complete_to_chordal_graph": "Self-loops fall back. Chords are added in NetworkX's (set iteration) order.",
     "is_reachable": "Unhashable nodes fall back.",
+    "is_perfect_graph": "NetworkX 3.7 and later.",
 }
 
 # Functions NetworkX exposes only in a submodule, or under another name.

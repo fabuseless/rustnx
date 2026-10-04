@@ -134,6 +134,7 @@ __all__ = [
     "is_eulerian",
     "is_forest",
     "is_k_regular",
+    "is_perfect_graph",
     "is_planar",
     "is_reachable",
     "is_regular",
@@ -4545,3 +4546,9 @@ def tournament_is_strongly_connected(G):
 def score_sequence(G):
     _directed_only(G)
     return G._core.sorted_out_degrees()
+
+
+def is_perfect_graph(G):
+    # NetworkX checks the graph type inside the dispatched function.
+    _undirected_only(G)
+    return G._core.is_perfect()

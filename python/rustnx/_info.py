@@ -120,6 +120,7 @@ FUNCTIONS = {
     "is_eulerian": {},
     "is_forest": {},
     "is_k_regular": {},
+    "is_perfect_graph": {},
     "is_planar": {},
     "is_reachable": {},
     "is_regular": {},

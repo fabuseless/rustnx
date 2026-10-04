@@ -1667,6 +1667,28 @@ def test_batch9_chordal_and_at_free(seed):
         exact_outcome(func, graph_for(seed, True))
 
 
+@nx_has("is_perfect_graph")
+@pytest.mark.parametrize("seed", range(60))
+def test_batch9_perfect_graphs(seed):
+    rng = random.Random(seed)
+    # Small graphs: NetworkX enumerates every chordless cycle of G and of
+    # its complement for a perfect graph.
+    G = graph_for(seed, False)
+    G = G.subgraph(list(G)[:16]).copy()
+    C = _chordal_graph(seed)
+    C = C.subgraph(list(C)[:16]).copy()
+    graphs = [G, C, nx.cycle_graph(5 + seed % 4), nx.complement(nx.cycle_graph(5 + seed % 4)),
+              nx.grid_2d_graph(2 + seed % 3, 3), _interval_graph(seed).subgraph(range(0, 50, 3)).copy(),
+              nx.bipartite.random_graph(rng.randint(1, 8), rng.randint(1, 8), 0.4, seed=seed)]
+    # An odd hole through a node with a self-loop doesn't count in G.
+    L = nx.cycle_graph(7)
+    L.add_edge(0, 0)
+    graphs.append(L)
+    for H in graphs:
+        exact_outcome(nx.is_perfect_graph, H)
+    exact_outcome(nx.is_perfect_graph, graph_for(seed, True))
+
+
 @pytest.mark.parametrize("seed", range(30))
 def test_batch9_tournaments(seed):
     rng = random.Random(seed)

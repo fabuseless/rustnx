@@ -2037,6 +2037,12 @@ impl CoreGraph {
         Ok(py.detach(|| graph_classes::tournament_reachable(&self.succ, self.n, s, t)))
     }
 
+    /// `nx.is_perfect_graph` on an undirected graph.
+    fn is_perfect(&self, py: Python<'_>) -> PyResult<bool> {
+        py.detach(|| graph_classes::is_perfect(&self.succ, self.n))
+            .ok_or_else(|| PyNotImplementedError::new_err("graph too large for is_perfect_graph"))
+    }
+
     /// Out-degrees in increasing order (`nx.tournament.score_sequence`).
     fn sorted_out_degrees(&self) -> Vec<usize> {
         let mut degrees: Vec<usize> = (0..self.n).map(|v| self.succ.neighbors(v).len()).collect();

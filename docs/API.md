@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 191 NetworkX functions. Call them as usual (for
+rustnx implements 192 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -304,6 +304,7 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.chordal_graph_treewidth` | none | no | NetworkX | Self-loops and the null graph (whose result differs by version) fall back. |
 | `nx.complete_to_chordal_graph` | none | no | rustnx | Self-loops fall back. Chords are added in NetworkX's (set iteration) order. |
 | `nx.is_at_free` | none | no | rustnx |  |
+| `nx.is_perfect_graph` | none | no | rustnx | NetworkX 3.7 and later. |
 
 ### Tournaments
 
