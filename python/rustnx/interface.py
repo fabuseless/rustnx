@@ -455,6 +455,9 @@ def can_run(name, args, kwargs):
     if unsupported:
         return f"unsupported arguments: {', '.join(unsupported)}"
     G = arguments.get("G")
+    if G is not None and not hasattr(G, "is_multigraph"):
+        # e.g. NetworkX's own tests call is_partition(G.nodes(), ...)
+        return "the graph argument is not a graph"
     if G is not None and G.is_multigraph() and name not in MULTIGRAPH_FUNCTIONS:
         return "multigraphs are not supported by this function"
     for param in _WEIGHT_PARAMS:
