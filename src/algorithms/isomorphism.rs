@@ -112,8 +112,7 @@ pub fn blake2b_hex(data: &[u8], outlen: usize) -> String {
 /// neighbors (successors, or predecessors) and the prefix put before each
 /// neighbor's label (one string for all, or one per edge).
 pub struct WlGroup<'a> {
-    /// Per node, `(neighbor, edge index)` pairs.
-    pub rows: Vec<Vec<(u32, u32)>>,
+    pub rows: Rows,
     pub prefix: WlPrefix<'a>,
 }
 
@@ -122,23 +121,51 @@ pub enum WlPrefix<'a> {
     PerEdge(&'a [String]),
 }
 
+/// Per node, `(neighbor, edge index)` pairs, stored flat.
+pub struct Rows {
+    offsets: Vec<usize>,
+    entries: Vec<(u32, u32)>,
+}
+
+impl Rows {
+    fn row(&self, v: usize) -> &[(u32, u32)] {
+        &self.entries[self.offsets[v]..self.offsets[v + 1]]
+    }
+}
+
 /// Neighbor rows of `adj` with the index of each entry (its edge id).
-pub fn rows_with_ids(adj: &Csr, n: usize) -> Vec<Vec<(u32, u32)>> {
-    (0..n)
-        .map(|v| adj.range(v).map(|e| (adj.targets[e], e as u32)).collect())
-        .collect()
+pub fn rows_with_ids(adj: &Csr, n: usize) -> Rows {
+    Rows {
+        offsets: adj.offsets[..=n].to_vec(),
+        entries: adj
+            .targets
+            .iter()
+            .enumerate()
+            .map(|(e, &w)| (w, e as u32))
+            .collect(),
+    }
 }
 
 /// Predecessor rows built from `succ`, each entry carrying the id of the
 /// edge in `succ`. Their order doesn't matter: WL sorts the labels.
-pub fn pred_rows_with_ids(succ: &Csr, n: usize) -> Vec<Vec<(u32, u32)>> {
-    let mut rows = vec![Vec::new(); n];
+pub fn pred_rows_with_ids(succ: &Csr, n: usize) -> Rows {
+    let mut offsets = vec![0usize; n + 1];
+    for &w in &succ.targets {
+        offsets[w as usize + 1] += 1;
+    }
+    for v in 0..n {
+        offsets[v + 1] += offsets[v];
+    }
+    let mut fill = offsets.clone();
+    let mut entries = vec![(0u32, 0u32); succ.targets.len()];
     for u in 0..n {
         for e in succ.range(u) {
-            rows[succ.targets[e] as usize].push((u as u32, e as u32));
+            let w = succ.targets[e] as usize;
+            entries[fill[w]] = (u as u32, e as u32);
+            fill[w] += 1;
         }
     }
-    rows
+    Rows { offsets, entries }
 }
 
 /// One WL step, as NetworkX's `_neighborhood_aggregate*` and `_hash_label`:
@@ -149,7 +176,7 @@ pub fn wl_step(labels: &[String], groups: &[WlGroup], digest_size: usize) -> Vec
         .map(|v| {
             let mut text = labels[v].clone();
             for group in groups {
-                let row = &group.rows[v];
+                let row = group.rows.row(v);
                 match group.prefix {
                     WlPrefix::Same(prefix) => {
                         // A shared prefix keeps the order of the labels.
@@ -268,7 +295,10 @@ fn bron_kerbosch(
         .iter()
         .chain(x.iter())
         .copied()
-        .max_by_key(|&u| intersect(&nbrs[u as usize], &p).len())
+        .max_by_key(|&u| {
+            let row = &nbrs[u as usize];
+            p.iter().filter(|w| row.binary_search(w).is_ok()).count()
+        })
         .unwrap();
     let skip = &nbrs[pivot as usize];
     let mut p = p;

@@ -4621,5 +4621,5 @@ def weisfeiler_lehman_subgraph_hashes(
         initial += 1
     if not initial and not steps:
         return {}
-    per_node = G._core.wl_hashes(labels, edge_text, split, steps, digest_size, initial)[1]
+    per_node = G._core.wl_hashes(labels, edge_text, split, steps, digest_size, initial, True)[1]
     return dict(zip(G._nodes, per_node))

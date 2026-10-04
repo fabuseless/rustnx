@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 179 NetworkX functions. Call them as usual (for
+rustnx implements 191 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -290,6 +290,23 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.cycle_basis` | `root` | no | NetworkX | A `root` not in the graph falls back. |
 | `nx.find_cycle` | `source`, `orientation` | no | NetworkX | A `source` that isn't one node of the graph, and invalid orientations on directed graphs, fall back. |
 | `nx.girth` | none | no | rustnx |  |
+
+### Isomorphism and graph hashing
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.could_be_isomorphic` | `G2`, `properties` | no | rustnx | Takes two graphs. Follows the installed NetworkX's checks (3.5+ stops at the first property that differs, which decides whether directed graphs raise). Multigraphs fall back. |
+| `nx.fast_could_be_isomorphic` | `G2` | no | rustnx | Takes two graphs. As `could_be_isomorphic` (3.7+ stops at the first property that differs). |
+| `nx.faster_could_be_isomorphic` | `G2` | no | NetworkX | Takes two graphs. |
+| `nx.is_isomorphic` | `G2` | no | rustnx | Takes two graphs. A yes/no answer, so an exact matcher in Rust (with color refinement) gives NetworkX's result without running VF2. `node_match`, `edge_match` and multigraphs fall back. |
+| `nx.vf2pp_is_isomorphic` | `SG`, `node_label`, `default_label` | no | rustnx | Takes two graphs. Node labels are read from the NetworkX graphs. Empty graphs give `False`, as in NetworkX. A directed and an undirected graph fall back before NetworkX 3.7. |
+| `nx.vf2pp_subgraph_is_isomorphic` | `SG`, `node_label`, `default_label` | no | rustnx | NetworkX 3.7+. Takes two graphs (the second is the smaller). Node labels are read from the NetworkX graphs. |
+| `nx.vf2pp_is_monomorphic` | `SG`, `node_label`, `default_label` | no | rustnx | NetworkX 3.7+. Takes two graphs (the second is the smaller). Node labels are read from the NetworkX graphs. |
+| `nx.isomorphism.tree_isomorphism` | `t2` | no | rustnx | Takes two trees. Follows the installed NetworkX's child order and errors (3.4 asserts; its recursive walk means very deep trees fall back there). A directed `t2` falls back. |
+| `nx.isomorphism.rooted_tree_isomorphism` | `root1`, `t2`, `root2` | no | rustnx | As `tree_isomorphism`. Directed trees and roots not in the trees fall back. |
+| `networkx.algorithms.isomorphism.tree_isomorphism.root_trees` | `root1`, `t2`, `root2` | no | NetworkX | Builds the combined tree in NetworkX from Rust searches. Roots not in the graphs fall back. |
+| `nx.weisfeiler_lehman_graph_hash` | `edge_attr`, `node_attr`, `iterations`, `digest_size` | no | rustnx | BLAKE2b in Rust, parallel; same hashes as NetworkX's `hashlib`, for the installed version (3.5 changed them), with the same warnings. Node and edge attribute labels are read from the NetworkX graph; non-ASCII labels, non-str attribute names and an unusual `digest_size` fall back. |
+| `nx.weisfeiler_lehman_subgraph_hashes` | `edge_attr`, `node_attr`, `iterations`, `digest_size`, `include_initial_labels` | no | rustnx | As `weisfeiler_lehman_graph_hash`. |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 

@@ -237,6 +237,28 @@ def algorithm_calls(H, directed):
     calls["edge_load"] = lambda G, b: list(nx.edge_load_centrality(G, backend=b).items())
     calls["percolation"] = lambda G, b: list(nx.percolation_centrality(G, backend=b).items())
     calls["voterank"] = lambda G, b: nx.voterank(G, backend=b)
+    calls["is_isomorphic"] = lambda G, b: nx.is_isomorphic(G, G, backend=b)
+    calls["vf2pp_is_isomorphic"] = lambda G, b: nx.vf2pp_is_isomorphic(G, G, node_label="x", backend=b)
+    calls["faster_could_be"] = lambda G, b: nx.faster_could_be_isomorphic(G, G, backend=b)
+    calls["could_be"] = lambda G, b: nx.could_be_isomorphic(G, G, backend=b)
+
+    def quiet(func):  # Weisfeiler-Lehman hashes warn about changes in 3.5
+        def run(*args, **kwargs):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                return func(*args, **kwargs)
+        return run
+
+    calls["wl_hash"] = lambda G, b: quiet(nx.weisfeiler_lehman_graph_hash)(G, backend=b)
+    calls["wl_subgraph_hashes"] = lambda G, b: list(
+        quiet(nx.weisfeiler_lehman_subgraph_hashes)(G, iterations=2, backend=b).items()
+    )
+    if not directed:
+        calls["tree_isomorphism"] = lambda G, b: nx.isomorphism.tree_isomorphism(G, G, backend=b)
+        if src is not None:
+            calls["rooted_tree_isomorphism"] = lambda G, b: nx.isomorphism.rooted_tree_isomorphism(
+                G, src, G, src, backend=b
+            )
     if directed:
         calls["scc"] = lambda G, b: list(nx.strongly_connected_components(G, backend=b))
         calls["wcc"] = lambda G, b: list(nx.weakly_connected_components(G, backend=b))

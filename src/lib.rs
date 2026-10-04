@@ -1943,13 +1943,14 @@ impl CoreGraph {
 
     // --- Batch 11: isomorphism and graph hashing ---
 
-    /// Weisfeiler-Lehman steps from the initial `labels`: each step's
-    /// labels, per node (`history`), or the final graph hash. `edge_text`
+    /// Weisfeiler-Lehman steps from the initial `labels`: the graph hash,
+    /// or with `per_node` each node's hashed labels (after
+    /// `initial_hashes` copies of its hashed initial label). `edge_text`
     /// holds `str(G[u][v][edge_attr])` per `succ` entry; `split` is
     /// NetworkX 3.5+'s directed aggregation (successors then predecessors,
     /// prefixed `s_`/`p_` without edge text).
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (labels, edge_text, split, steps, digest_size, initial_hashes=0))]
+    #[pyo3(signature = (labels, edge_text, split, steps, digest_size, initial_hashes=0, per_node=false))]
     fn wl_hashes(
         &self,
         py: Python<'_>,
@@ -1959,6 +1960,7 @@ impl CoreGraph {
         steps: usize,
         digest_size: usize,
         initial_hashes: usize,
+        per_node: bool,
     ) -> PyResult<(String, Vec<Vec<String>>)> {
         if labels.len() != self.n || !(1..=64).contains(&digest_size) {
             return Err(PyValueError::new_err("bad labels or digest size"));
@@ -1999,26 +2001,32 @@ impl CoreGraph {
                     .par_iter()
                     .map(|l| isomorphism::blake2b_hex(l.as_bytes(), digest_size))
                     .collect();
-                for _ in 0..initial_hashes {
+                for _ in 1..initial_hashes {
                     history.push(first.clone());
                 }
+                history.push(first);
             }
-            let mut current = labels;
-            let mut steps_out = Vec::with_capacity(steps);
-            for _ in 0..steps {
-                current = isomorphism::wl_step(&current, &groups, digest_size);
-                steps_out.push(current.clone());
+            let start = history.len();
+            for i in 0..steps {
+                let previous = if i == 0 {
+                    &labels
+                } else {
+                    &history[history.len() - 1]
+                };
+                let next = isomorphism::wl_step(previous, &groups, digest_size);
+                history.push(next);
             }
-            let graph_hash = isomorphism::blake2b_hex(
-                isomorphism::wl_counts_text(&steps_out).as_bytes(),
-                digest_size,
-            );
-            history.extend(steps_out);
+            if !per_node {
+                let text = isomorphism::wl_counts_text(&history[start..]);
+                let graph_hash = isomorphism::blake2b_hex(text.as_bytes(), digest_size);
+                return (graph_hash, Vec::new());
+            }
             // Per node, its labels across steps.
             let per_node: Vec<Vec<String>> = (0..n)
+                .into_par_iter()
                 .map(|v| history.iter().map(|step| step[v].clone()).collect())
                 .collect();
-            (graph_hash, per_node)
+            (String::new(), per_node)
         }))
     }
 
