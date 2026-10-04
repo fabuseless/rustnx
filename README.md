@@ -162,13 +162,30 @@ NetworkX, is in [docs/API.md](docs/API.md).
 | `bfs_tree`, `dfs_tree` | Same trees as NetworkX. |
 | `minimum_spanning_edges`, `maximum_spanning_edges`, `minimum_spanning_tree`, `maximum_spanning_tree` | Kruskal's algorithm (the default), with the same edges in the same order, ties included; yields the graph's own edge data dicts. Prim and Borůvka run in NetworkX. |
 | `all_shortest_paths` | Unweighted and Dijkstra. Paths are generated lazily in Rust, in NetworkX's order (which differs before 3.7 when zero-weight cycles exist). |
-| `greedy_color`, `label_propagation_communities` | `greedy_color` with the default `largest_first` strategy; other strategies run in NetworkX. |
+| `greedy_color`, `label_propagation_communities` | `greedy_color` with the `largest_first`, DSATUR, connected-sequential and random-sequential strategies; `smallest_last`, `independent_set`, callable strategies and `interchange` run in NetworkX. |
 | `degree_centrality`, `in_degree_centrality`, `out_degree_centrality` | Same values as NetworkX. |
 | `node_connected_component`, `articulation_points`, `biconnected_components`, `biconnected_component_edges`, `is_biconnected` | Same order as NetworkX, including the order inside each returned set. |
 | `attracting_components`, `number_attracting_components`, `is_attracting_component` | Same components in the same order as NetworkX. |
 | `bfs_predecessors`, `bfs_successors`, `bfs_layers`, `descendants_at_distance` | Same order as NetworkX, including each version's first layer in `bfs_layers` and the 3.7 deprecation warning of `bfs_predecessors`. |
 | `dfs_postorder_nodes`, `dfs_predecessors`, `dfs_successors` | Same order as NetworkX, with `depth_limit`. `sort_neighbors` runs in NetworkX. |
 | `is_tree`, `is_forest` | Same results and errors as NetworkX. |
+| `multi_source_dijkstra`, `multi_source_dijkstra_path`, `multi_source_dijkstra_path_length`, `dijkstra_predecessor_and_distance`, `predecessor`, `single_target_shortest_path_length`, `single_source_all_shortest_paths`, `all_pairs_all_shortest_paths` | Same paths, predecessor lists and order as each NetworkX version (the 3.4 iterator of `single_target_shortest_path_length` included). |
+| `bellman_ford_path`, `bellman_ford_path_length`, `single_source_bellman_ford`, `single_source_bellman_ford_path`, `single_source_bellman_ford_path_length`, `bellman_ford_predecessor_and_distance`, `all_pairs_bellman_ford_path`, `all_pairs_bellman_ford_path_length`, `negative_edge_cycle`, `find_negative_cycle` | NetworkX's queue-based Bellman-Ford, with the same negative-cycle detection and the same cycle found. `None` weights run in NetworkX. |
+| `astar_path`, `astar_path_length` | Without a `heuristic`; a heuristic runs in NetworkX. |
+| `dag_longest_path`, `dag_longest_path_length`, `lexicographical_topological_sort`, `all_topological_sorts`, `nx.dag.has_cycle`, `is_aperiodic`, `nx.dag.v_structures`, `nx.dag.root_to_leaf_paths`, `dag_to_branching` | Same order as NetworkX. `topo_order` and `key` arguments run in NetworkX. |
+| `transitive_closure`, `transitive_closure_dag`, `transitive_reduction`, `condensation` | Same graphs as NetworkX, including node and edge order and the set order inside `condensation`'s members. |
+| `generic_bfs_edges`, `bfs_labeled_edges`, `dfs_labeled_edges`, `edge_bfs`, `edge_dfs` | Same order as NetworkX. Callable arguments run in NetworkX. |
+| `kosaraju_strongly_connected_components`, `is_semiconnected` | Same components in the same order as each NetworkX version. |
+| `betweenness_centrality_subset`, `edge_betweenness_centrality_subset`, `load_centrality` (`newman_betweenness_centrality`), `edge_load_centrality`, `percolation_centrality` | Parallel, and **bit-for-bit identical** to NetworkX. Load centrality needs all-int or all-str node labels. |
+| `group_betweenness_centrality`, `group_closeness_centrality`, `group_degree_centrality`, `group_in_degree_centrality`, `group_out_degree_centrality`, `prominent_group` | Follow each NetworkX version's algorithm (group betweenness changed in 3.7). `prominent_group` needs pandas, like NetworkX. |
+| `local_reaching_centrality`, `global_reaching_centrality`, `voterank`, `dispersion` | **Bit-for-bit identical.** `dispersion` runs in Rust for undirected graphs without self-loops. |
+| `k_shell`, `k_crust`, `k_corona`, `k_truss`, `onion_layers` | Same subgraphs and errors as NetworkX; the subgraphs are built from the original graph. |
+| `square_clustering`, `generalized_degree`, `all_triangles` | **Bit-for-bit identical**, following the installed NetworkX's formula (square clustering changed in 3.5). |
+| `centroid` (`barycenter` before 3.7), `harmonic_diameter`, `is_distance_regular`, `intersection_array`, `is_strongly_regular` | Same results and errors as each NetworkX version. |
+| `is_coloring`, `is_equitable` | Same results as NetworkX. |
+| `is_arborescence`, `is_branching`, `to_prufer_sequence`, `kruskal_mst_edges` | Same results as NetworkX. |
+| `bridges`, `has_bridges`, `local_bridges`, `chain_decomposition`, `isolates`, `number_of_isolates`, `is_regular`, `is_k_regular`, `is_tournament`, `immediate_dominators`, `dominance_frontiers` | Same order as each NetworkX version (dominators changed in 3.7). `bridges` with a `root` runs in NetworkX. |
+| `is_eulerian`, `has_eulerian_path`, `is_semieulerian`, `eulerian_circuit`, `eulerian_path`, `cycle_basis`, `find_cycle`, `girth` | Same circuits, cycles and order as NetworkX. |
 
 The rest of NetworkX's functions run in NetworkX. [docs/COVERAGE.md](docs/COVERAGE.md)
 lists every function NetworkX lets a backend implement and which ones rustnx
@@ -180,7 +197,8 @@ does.
 code sees a multigraph only through its neighbors and, for weights, the
 minimum over parallel edges: components, traversals, the shortest path
 family, betweenness, closeness and harmonic centrality, the distance measures,
-biconnected and attracting components, and `is_bipartite`. Other functions (for example `pagerank`, which sums
+biconnected and attracting components, `is_bipartite`, and most of the
+functions added in the coverage batches (`docs/API.md` lists which). Other functions (for example `pagerank`, which sums
 parallel weights, or degree-based ones) run in NetworkX.
 
 ## Benchmarks

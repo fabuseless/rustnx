@@ -266,6 +266,7 @@ def location(name):
 
 def parameters(name):
     params = list(inspect.signature(getattr(algorithms, name)).parameters)[1:]  # drop G
+    params = [p for p in params if not p.startswith("_")]  # internal keywords
     return ", ".join(f"`{p}`" for p in params) or "none"
 
 

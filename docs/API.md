@@ -73,7 +73,7 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.single_source_shortest_path` | `source`, `cutoff` | yes | NetworkX |  |
 | `nx.single_target_shortest_path` | `target`, `cutoff` | yes | NetworkX |  |
 | `nx.bidirectional_shortest_path` | `source`, `target` | yes | NetworkX |  |
-| `nx.single_source_dijkstra` | `source`, `target`, `cutoff`, `weight`, `_lengths` | yes | NetworkX | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). The paths dict follows the installed NetworkX's order. |
+| `nx.single_source_dijkstra` | `source`, `target`, `cutoff`, `weight` | yes | NetworkX | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). The paths dict follows the installed NetworkX's order. |
 | `nx.single_source_dijkstra_path` | `source`, `cutoff`, `weight` | yes | NetworkX | The paths dict follows the installed NetworkX's order. |
 | `nx.dijkstra_path` | `source`, `target`, `weight` | yes | NetworkX |  |
 | `nx.bidirectional_dijkstra` | `source`, `target`, `weight` | yes | NetworkX | Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). |
