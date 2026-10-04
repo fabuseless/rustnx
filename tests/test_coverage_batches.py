@@ -5732,10 +5732,11 @@ def test_batch20_gml_tokens(seed):
     for i in range(n):
         body.append(f"node [ id {rng.choice([i, i, str(i), f'{i}.0'])} label \"{rng.choice('abcde')}\" "
                     f"{rng.choice(_B20_GML_TOKENS[3:])} {rng.choice(_B20_GML_TOKENS[12:])} ]")
+    extras = ["", "key 1", "key 1.0", 'key "k"', "w 2"]
     for _ in range(rng.randint(0, 6)):
         if n:
             body.append(f"edge [ source {rng.randrange(n)} target {rng.randrange(n)} "
-                        f"{rng.choice(['', 'key 1', 'key 1.0', 'key \"k\"', 'w 2'])} ]")
+                        f"{rng.choice(extras)} ]")
     header = rng.choice(["", "directed 1", "multigraph 1", "directed 1 multigraph 1", "multigraph 0"])
     texts = ["\n".join(lines), f"graph [ {header}\n" + "\n".join(body) + "\n]",
              "graph [\n" + "\n".join(lines) + "\n]"]
