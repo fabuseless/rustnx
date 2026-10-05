@@ -7303,7 +7303,7 @@ fn _replay_sets(
     for &(op, s, k) in &ops {
         let key_ok = match op {
             0 | 1 => (k as usize) < hashes.len(),
-            3 => (k as usize) < nsets,
+            3 | 5..=10 => (k as usize) < nsets,
             _ => true,
         };
         if s as usize >= nsets || !key_ok {

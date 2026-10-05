@@ -20,6 +20,8 @@ pub struct PySet {
     keys: Vec<u32>,
     fill: usize,
     used: usize,
+    /// Where `set.pop` starts looking (`so->finger`).
+    finger: usize,
 }
 
 impl Default for PySet {
@@ -28,6 +30,7 @@ impl Default for PySet {
             keys: vec![EMPTY; SET_MINSIZE],
             fill: 0,
             used: 0,
+            finger: 0,
         }
     }
 }
@@ -280,7 +283,9 @@ pub fn merge_sets(sets: &mut [PySet], dst: usize, src: usize, hashes: &[i64]) {
 
 /// Replays set operations for the runtime check that `PySet` matches the
 /// running interpreter: `(op, set, key)` with op 0 add, 1 discard, 2 clear,
-/// 3 update set from set `key`. After each op, the first element of the
+/// 3 update set from set `key`; batch 25's operations: 4 pop (records the
+/// popped element), 5 `s = s & k`, 6 `s = s - k`, 7 `s = s.copy()`, 8
+/// `s -= k`, 9 `s &= k`, 10 `s = s | k`. After each op, the first element of the
 /// set operated on (or -1); at the end, every set's elements in order.
 pub fn replay_sets(
     hashes: &[i64],
@@ -297,9 +302,140 @@ pub fn replay_sets(
                 sets[s].discard(k, hashes);
             }
             2 => sets[s].clear(),
-            _ => merge_sets(&mut sets, s, k as usize, hashes),
+            3 => merge_sets(&mut sets, s, k as usize, hashes),
+            4 => {
+                firsts.push(sets[s].pop().map_or(-1, |v| v as i64));
+                continue;
+            }
+            5 => sets[s] = sets[s].intersection(&sets[k as usize], hashes),
+            6 => sets[s] = sets[s].difference(&sets[k as usize], hashes),
+            7 => sets[s] = sets[s].copy(hashes),
+            8 => {
+                if s == k as usize {
+                    sets[s].clear(); // `set_clear_internal` leaves the finger
+                } else {
+                    let other = sets[k as usize].clone();
+                    sets[s].difference_update(&other, hashes);
+                }
+            }
+            9 => {
+                let finger = sets[s].finger;
+                sets[s] = sets[s].intersection(&sets[k as usize], hashes);
+                sets[s].finger = finger;
+            }
+            _ => sets[s] = sets[s].union(&sets[k as usize], hashes),
         }
         firsts.push(sets[s].first().map_or(-1, |v| v as i64));
     }
     (firsts, sets.iter().map(|s| s.iter().collect()).collect())
+}
+
+// --- Batch 25: set algebra (`&`, `-`, `|`, `copy`, `pop`, ...) ---
+
+impl PySet {
+    /// `set(iterable)` for an iterable that is neither a set nor an exact
+    /// dict (a list, a generator, a graph, an `AtlasView`): one `add` each.
+    pub fn from_iter(keys: impl IntoIterator<Item = u32>, hashes: &[i64]) -> Self {
+        let mut s = PySet::default();
+        for k in keys {
+            s.add(k, hashes);
+        }
+        s
+    }
+
+    /// `s.copy()` / `set(s)` (`set_merge` into a new set).
+    pub fn copy(&self, hashes: &[i64]) -> Self {
+        let mut s = PySet::default();
+        s.merge(self, hashes);
+        s
+    }
+
+    /// `self & other` (`set_intersection`): iterates the smaller set (the
+    /// right operand on a tie), adding the elements the other holds.
+    pub fn intersection(&self, other: &PySet, hashes: &[i64]) -> Self {
+        if std::ptr::eq(self, other) {
+            return self.copy(hashes);
+        }
+        let (small, big) = if other.used > self.used {
+            (self, other)
+        } else {
+            (other, self)
+        };
+        let mut s = PySet::default();
+        for k in small.iter() {
+            if big.contains(k, hashes) {
+                s.add(k, hashes);
+            }
+        }
+        s
+    }
+
+    /// `self &= other`: the intersection's table, keeping this set's
+    /// `pop` finger (`set_swap_bodies` leaves it).
+    pub fn intersection_update(&mut self, other: &PySet, hashes: &[i64]) {
+        let finger = self.finger;
+        *self = self.intersection(other, hashes);
+        self.finger = finger;
+    }
+
+    /// `self - other` (`set_difference`) with `other` a set: a copy with
+    /// `other`'s elements discarded if this set is over four times larger,
+    /// else the elements `other` lacks, added in order to a new set.
+    pub fn difference(&self, other: &PySet, hashes: &[i64]) -> Self {
+        if (self.used >> 2) > other.used {
+            let mut s = self.copy(hashes);
+            s.difference_update(other, hashes);
+            return s;
+        }
+        let mut s = PySet::default();
+        for k in self.iter() {
+            if !other.contains(k, hashes) {
+                s.add(k, hashes);
+            }
+        }
+        s
+    }
+
+    /// `self -= other` for another set (`set_difference_update_internal`).
+    pub fn difference_update(&mut self, other: &PySet, hashes: &[i64]) {
+        self.discard_all(other.iter(), hashes);
+    }
+
+    /// `self.difference_update(iterable)` for a non-set iterable: discard
+    /// each, then purge many dummies.
+    pub fn discard_all(&mut self, keys: impl IntoIterator<Item = u32>, hashes: &[i64]) {
+        for k in keys {
+            self.discard(k, hashes);
+        }
+        self.after_difference_update(hashes);
+    }
+
+    /// `self | other` (`set_union`: a copy, then `update`).
+    pub fn union(&self, other: &PySet, hashes: &[i64]) -> Self {
+        let mut s = self.copy(hashes);
+        if !std::ptr::eq(self, other) {
+            s.merge(other, hashes);
+        }
+        s
+    }
+
+    /// `set.pop()`: the first element at or after the finger, wrapping.
+    pub fn pop(&mut self) -> Option<u32> {
+        if self.used == 0 {
+            return None;
+        }
+        let mask = self.mask();
+        let mut i = self.finger & mask;
+        while self.keys[i] == EMPTY || self.keys[i] == DUMMY {
+            i += 1;
+            if i > mask {
+                i = 0;
+            }
+        }
+        let key = self.keys[i];
+        self.keys[i] = DUMMY;
+        self.used -= 1;
+        self.finger = i + 1;
+        Some(key)
+    }
 }
