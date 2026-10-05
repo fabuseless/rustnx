@@ -20,7 +20,7 @@ use algorithms::{
     approximation, bipartite, centrality, centrality_more, cluster, communities, connectivity,
     conversion, cores_more, dag, directed, distance, flow, generators, graph_classes, isomorphism,
     leftovers, matching, measures, nxdicts, operators, paths, pyrandom, pyset, random_generators,
-    readwrite, spectral, structure, structure_more, trees_more,
+    readwrite, spectral, structure, structure_more, transforms, trees_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -5844,6 +5844,93 @@ impl CoreGraph {
         operators::bipartite_degree_centrality(self, index, top, bottom, s_top, s_bottom)
     }
 
+    // --- Batch 24: generators and transforms ---
+
+    /// `prefix_tree(paths)` / `prefix_tree_recursive(paths)` into the empty
+    /// DiGraph given by its dicts; returns the longest path's length.
+    #[staticmethod]
+    fn b24_prefix_tree<'py>(
+        py: Python<'py>,
+        paths: &Bound<'py, PyAny>,
+        node: &Bound<'py, PyDict>,
+        succ: &Bound<'py, PyDict>,
+        pred: &Bound<'py, PyDict>,
+    ) -> PyResult<usize> {
+        transforms::prefix_tree(py, paths, node, succ, pred)
+    }
+
+    /// The edges `interval_graph` adds, as `(us, vs)` positions.
+    #[staticmethod]
+    fn b24_interval_edges(py: Python<'_>, lo: Vec<f64>, hi: Vec<f64>) -> (Vec<u32>, Vec<u32>) {
+        py.detach(|| transforms::interval_edges(&lo, &hi))
+    }
+
+    /// The edges `visibility_graph` adds (the path first).
+    #[staticmethod]
+    fn b24_visibility_edges(py: Python<'_>, values: Vec<f64>) -> (Vec<u32>, Vec<u32>) {
+        py.detach(|| transforms::visibility_edges(&values))
+    }
+
+    /// `_unlabeled_trees(order)`, or `None` if it doesn't fit in 128 bits.
+    #[staticmethod]
+    fn b24_count_trees(order: usize) -> Option<u128> {
+        transforms::unlabeled_trees(order)
+    }
+
+    /// `mycielskian`'s loop on the integer-labelled graph given by its dicts.
+    #[staticmethod]
+    fn b24_mycielskian<'py>(
+        py: Python<'py>,
+        node: &Bound<'py, PyDict>,
+        adj: &Bound<'py, PyDict>,
+        iterations: usize,
+    ) -> PyResult<()> {
+        transforms::mycielskian(py, node, adj, iterations)
+    }
+
+    /// `stochastic_graph(G)` into `H` (see `transforms::stochastic`).
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    fn b24_stochastic<'py>(
+        py: Python<'py>,
+        g_node: &Bound<'py, PyDict>,
+        g_succ: &Bound<'py, PyDict>,
+        weight: &Bound<'py, PyAny>,
+        h_node: &Bound<'py, PyDict>,
+        h_succ: &Bound<'py, PyDict>,
+        h_pred: &Bound<'py, PyDict>,
+        compensated: bool,
+    ) -> PyResult<()> {
+        transforms::stochastic(
+            py,
+            g_node,
+            g_succ,
+            weight,
+            h_node,
+            h_succ,
+            h_pred,
+            compensated,
+        )
+    }
+
+    /// `inverse_line_graph`'s partition of the nodes into cells (positions),
+    /// raising NetworkX's errors.
+    fn b24_inverse_line_partition(
+        &self,
+        py: Python<'_>,
+        hashes: Option<Vec<i64>>,
+    ) -> PyResult<Vec<Vec<u32>>> {
+        let found = py.detach(|| transforms::inverse_line_partition(self, hashes.as_deref()));
+        found.map_err(|e| transforms::line_error(py, e).unwrap_or_else(|err| err))
+    }
+
+    /// The result edges of `inverse_line_graph` (see
+    /// `transforms::inverse_line_edges`).
+    #[staticmethod]
+    fn b24_inverse_line_edges(cells_of: Vec<Vec<u32>>) -> (Vec<u32>, Vec<u32>) {
+        transforms::inverse_line_edges(&cells_of)
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -7392,10 +7479,51 @@ fn fill_generated<'py>(
     })
 }
 
+// --- Batch 24: generators and transforms ---
+
+/// NetworkX's `nonisomorphic_trees` loop, one tree at a time.
+#[pyclass(module = "rustnx._core")]
+struct B24NonisoTrees(std::sync::Mutex<transforms::NonisoTrees>);
+
+#[pymethods]
+impl B24NonisoTrees {
+    #[new]
+    fn new(order: usize) -> Self {
+        B24NonisoTrees(std::sync::Mutex::new(transforms::NonisoTrees::new(order)))
+    }
+
+    /// Writes the next tree into the empty `nx.Graph` given by its dicts;
+    /// false when there are no more.
+    fn fill_next<'py>(
+        &self,
+        py: Python<'py>,
+        node: &Bound<'py, PyDict>,
+        adj: &Bound<'py, PyDict>,
+    ) -> PyResult<bool> {
+        let layout = self
+            .0
+            .lock()
+            .map_err(|_| PyValueError::new_err("iterator state poisoned"))?
+            .next_layout();
+        let Some(layout) = layout else {
+            return Ok(false);
+        };
+        let sim = transforms::layout_to_sim(&layout);
+        let labels = (0..sim.capacity())
+            .map(|v| Ok(Some(v.into_pyobject(py)?.into_any())))
+            .collect::<PyResult<Vec<_>>>()?;
+        let dicts = nxdicts::NxDicts::new(node.clone(), adj.clone(), None);
+        nxdicts::write_sim(&dicts, &sim, &labels, |_, _| Ok(()))?;
+        Ok(true)
+    }
+}
+
 #[pymodule(gil_used = false)]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CoreGraph>()?;
     m.add_class::<operators::OpView>()?;
+    m.add_class::<B24NonisoTrees>()?;
+    m.add_function(wrap_pyfunction!(transforms::_b24_modular_product, m)?)?;
     m.add_function(wrap_pyfunction!(operators::_op_join, m)?)?;
     m.add_function(wrap_pyfunction!(operators::_op_pred_combinations, m)?)?;
     m.add_function(wrap_pyfunction!(operators::_op_product, m)?)?;

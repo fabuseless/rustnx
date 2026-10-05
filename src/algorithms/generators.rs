@@ -802,7 +802,7 @@ pub fn build(
         "grid" => grid(lists, &p[..lists.len()])?,
         "hexagonal" => hexagonal(int(0)?, int(1)?, p[2] != 0, directed, multigraph)?,
         "triangular" => triangular(int(0)?, int(1)?, p[2] != 0, directed, multigraph)?,
-        _ => return None,
+        _ => return super::transforms::build(kind, p, lists, directed, multigraph),
     })
 }
 
