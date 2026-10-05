@@ -10061,7 +10061,8 @@ def incidence_matrix(G, nodelist=None, edgelist=None, oriented=False, weight=Non
         raise NotImplementedError("rustnx does not support edgelist")
     if dtype is not None:
         try:
-            plain_float = np.dtype(dtype) == np.float64
+            # `.char`, not `==`: long double equals float64 where it is 64-bit.
+            plain_float = np.dtype(dtype).char == "d"
         except TypeError:
             plain_float = False
         if not plain_float:
@@ -10121,7 +10122,7 @@ def to_numpy_array(
     if A.dtype.names:
         raise NotImplementedError("rustnx does not support structured dtypes")
     all_int = _b19_weight_kind(G, weight, plain=False)
-    if A.dtype == np.float64:
+    if A.dtype.char == "d":  # not `==`: long double can equal float64
         as_int = False
     elif A.dtype == np.int64 and all_int:
         as_int = True
@@ -10407,7 +10408,11 @@ def from_numpy_array(
     dt = A.dtype
     # `tolist()` gives what NetworkX's `python_type(A[u, v])` does for these
     # (not for long doubles, strings or structured types).
-    if not (dt.kind in "iub" or dt in (np.float16, np.float32, np.float64, np.complex64, np.complex128)):
+    # Long doubles compare equal to float64 (and complex128) on platforms
+    # where they are 64-bit, but NetworkX keeps them as `np.longdouble`.
+    if dt.char in "gG" or not (
+        dt.kind in "iub" or dt in (np.float16, np.float32, np.float64, np.complex64, np.complex128)
+    ):
         raise NotImplementedError("rustnx does not support this dtype")
     if type(nonedge) not in (int, float, bool):
         raise NotImplementedError("rustnx needs a number as nonedge")
