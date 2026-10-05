@@ -11,6 +11,7 @@ pub mod dag;
 pub mod directed;
 pub mod distance;
 pub mod flow;
+pub mod generators;
 pub mod graph_classes;
 pub mod isomorphism;
 pub mod leftovers;

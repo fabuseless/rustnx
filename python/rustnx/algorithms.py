@@ -26,6 +26,7 @@ from networkx.algorithms import matching as _nx_matching
 from . import _core
 
 __all__ = [
+    "LCF_graph",
     "adamic_adar_index",
     "adjacency_matrix",
     "all_pairs_all_shortest_paths",
@@ -61,6 +62,8 @@ __all__ = [
     "average_neighbor_degree",
     "average_node_connectivity",
     "average_shortest_path_length",
+    "balanced_tree",
+    "barbell_graph",
     "barycenter",
     "bellman_ford_path",
     "bellman_ford_path_length",
@@ -78,6 +81,7 @@ __all__ = [
     "biconnected_components",
     "bidirectional_dijkstra",
     "bidirectional_shortest_path",
+    "binomial_tree",
     "bipartite_closeness_centrality",
     "boruvka_mst_edges",
     "boundary_expansion",
@@ -89,12 +93,15 @@ __all__ = [
     "build_flow_dict",
     "build_residual_network",
     "butterflies",
+    "caveman_graph",
     "center",
     "centroid",
     "chain_decomposition",
     "check_planarity",
     "check_planarity_recursive",
     "chordal_graph_treewidth",
+    "circulant_graph",
+    "circular_ladder_graph",
     "closeness_centrality",
     "closeness_vitality",
     "clustering",
@@ -102,9 +109,13 @@ __all__ = [
     "color",
     "common_neighbor_centrality",
     "complement",
+    "complete_bipartite_graph",
+    "complete_graph",
+    "complete_multipartite_graph",
     "complete_to_chordal_graph",
     "condensation",
     "conductance",
+    "connected_caveman_graph",
     "connected_components",
     "connected_dominating_set",
     "convert_node_labels_to_integers",
@@ -113,6 +124,7 @@ __all__ = [
     "could_be_isomorphic",
     "cut_size",
     "cycle_basis",
+    "cycle_graph",
     "dag_longest_path",
     "dag_longest_path_length",
     "dag_to_branching",
@@ -139,6 +151,7 @@ __all__ = [
     "dinitz",
     "dispersion",
     "dominance_frontiers",
+    "dorogovtsev_goltsev_mendes_graph",
     "eccentricity",
     "edge_betweenness_centrality",
     "edge_betweenness_centrality_subset",
@@ -153,6 +166,7 @@ __all__ = [
     "edmonds_karp",
     "efficiency",
     "eigenvector_centrality",
+    "empty_graph",
     "enumerate_all_cliques",
     "eulerian_circuit",
     "eulerian_path",
@@ -175,7 +189,9 @@ __all__ = [
     "from_numpy_array",
     "from_prufer_sequence",
     "from_scipy_sparse_array",
+    "full_rary_tree",
     "generalized_degree",
+    "generalized_petersen_graph",
     "generic_bfs_edges",
     "get_counterexample",
     "get_counterexample_recursive",
@@ -191,6 +207,8 @@ __all__ = [
     "greedy_color",
     "greedy_modularity_communities",
     "greedy_tsp",
+    "grid_2d_graph",
+    "grid_graph",
     "group_betweenness_centrality",
     "group_closeness_centrality",
     "group_degree_centrality",
@@ -203,8 +221,10 @@ __all__ = [
     "has_cycle",
     "has_eulerian_path",
     "has_path",
+    "hexagonal_lattice_graph",
     "hopcroft_karp_matching",
     "hyper_wiener_index",
+    "hypercube_graph",
     "immediate_dominators",
     "in_degree_centrality",
     "incidence_matrix",
@@ -275,9 +295,11 @@ __all__ = [
     "k_truss",
     "katz_centrality",
     "kl_connected_subgraph",
+    "kneser_graph",
     "kosaraju_strongly_connected_components",
     "kruskal_mst_edges",
     "label_propagation_communities",
+    "ladder_graph",
     "laplacian_matrix",
     "lexicographical_topological_sort",
     "local_bridges",
@@ -285,6 +307,7 @@ __all__ = [
     "local_efficiency",
     "local_node_connectivity",
     "local_reaching_centrality",
+    "lollipop_graph",
     "lowest_common_ancestor",
     "max_flow_min_cost",
     "max_weight_clique",
@@ -321,6 +344,7 @@ __all__ = [
     "multi_source_dijkstra",
     "multi_source_dijkstra_path",
     "multi_source_dijkstra_path_length",
+    "mycielski_graph",
     "naive_greedy_modularity_communities",
     "negative_edge_cycle",
     "network_simplex",
@@ -350,8 +374,10 @@ __all__ = [
     "overall_reciprocity",
     "overlapping_modularity",
     "pagerank",
+    "paley_graph",
     "partition_quality",
     "partition_spanning_tree",
+    "path_graph",
     "percolation_centrality",
     "periphery",
     "power",
@@ -367,6 +393,7 @@ __all__ = [
     "relabel_nodes",
     "resource_allocation_index",
     "rich_club_coefficient",
+    "ring_of_cliques",
     "root_to_leaf_paths",
     "root_trees",
     "rooted_tree_isomorphism",
@@ -391,10 +418,13 @@ __all__ = [
     "single_target_shortest_path",
     "single_target_shortest_path_length",
     "square_clustering",
+    "star_graph",
     "steiner_tree",
     "stoer_wagner",
     "strongly_connected_components",
+    "sudoku_graph",
     "symmetric_difference",
+    "tadpole_graph",
     "threshold_accepting_tsp",
     "to_dict_of_lists",
     "to_nested_tuple",
@@ -416,6 +446,8 @@ __all__ = [
     "treewidth_min_fill_in",
     "triadic_census",
     "triangles",
+    "triangular_lattice_graph",
+    "turan_graph",
     "unconstrained_bridge_augmentation",
     "unconstrained_one_edge_augmentation",
     "v_structures",
@@ -428,7 +460,9 @@ __all__ = [
     "weakly_connected_components",
     "weisfeiler_lehman_graph_hash",
     "weisfeiler_lehman_subgraph_hashes",
+    "wheel_graph",
     "wiener_index",
+    "windmill_graph",
     "within_inter_cluster",
 ]
 
@@ -10327,3 +10361,477 @@ def from_biadjacency_matrix(A, create_using=None, edge_attribute="weight", *, ro
     _b19_fill(G, "nodes", range(n, n + m), {"bipartite": 1})
     _b19_fill_weighted(G, us, vs, None, edge_attribute, values)
     return G
+
+
+# --- Batch 17: deterministic generators ----------------------------------------
+
+# Generators take no graph, so NetworkX hands them to rustnx only with
+# `backend="rustnx"` or `nx.config.backend_priority.generators`. Rust replays
+# NetworkX's `add_node` / `add_edge` / `remove_*` calls on a model of the
+# graph's dicts (`src/algorithms/generators.rs`) and writes `G._node`,
+# `G._adj` (and `G._pred`) in one pass, so the result is a plain NetworkX
+# graph equal to NetworkX's in node order, every row's order, attribute
+# dicts and multigraph keys.
+
+_GEN_CLASSES = (nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph)
+_GEN_CONTAINERS = (list, tuple, range, str)
+_GEN_INT_LIMIT = 2**62
+
+
+def _gen_int(x):
+    """``x`` if it is a plain int rustnx can pass to Rust."""
+    if type(x) is not int or not -_GEN_INT_LIMIT < x < _GEN_INT_LIMIT:
+        raise NotImplementedError("rustnx needs int arguments here")
+    return x
+
+
+def _gen_ints(values):
+    if type(values) not in (list, tuple, range):
+        # An iterator would be used up before NetworkX falls back.
+        raise NotImplementedError("rustnx needs a list of ints here")
+    return [_gen_int(x) for x in values]
+
+
+def _gen_nodes(n):
+    """``nodes_or_number``: ``(count, labels)``, with ``labels`` None for an
+    int (the nodes ``range(n)``)."""
+    if type(n) is int:
+        if n < 0:
+            raise nx.NetworkXError(f"Negative number of nodes not valid: {n}")
+        return _gen_int(n), None
+    if type(n) not in _GEN_CONTAINERS:
+        raise NotImplementedError("rustnx needs an int or a list of nodes here")
+    nodes = list(n)
+    try:
+        distinct = len(dict.fromkeys(nodes)) == len(nodes)
+    except TypeError:
+        distinct = False
+    if not distinct:
+        # Repeated nodes give a different edge structure; unhashable ones raise.
+        raise NotImplementedError("rustnx needs distinct, hashable nodes")
+    return len(nodes), nodes
+
+
+def _gen_target(create_using, default=nx.Graph):
+    """``empty_graph``'s ``create_using`` handling: ``(cls, instance)``."""
+    if create_using is None:
+        cls, instance = default, None
+    elif isinstance(create_using, type):
+        cls, instance = create_using, None
+    elif not hasattr(create_using, "adj"):
+        raise TypeError("create_using is not a valid NetworkX graph type or instance")
+    else:
+        cls, instance = type(create_using), create_using
+    if cls not in _GEN_CLASSES:
+        raise NotImplementedError("rustnx builds plain NetworkX graph classes only")
+    return cls, instance
+
+
+def _gen_reject(target, error):
+    """Raise ``error``, which NetworkX raises after filling ``create_using``:
+    an instance passed in would then hold nodes, so leave that to NetworkX."""
+    if target[1] is not None:
+        raise NotImplementedError("NetworkX fills create_using before raising")
+    raise error
+
+
+def _gen_reject_directed(target, message="Directed Graph not supported"):
+    if issubclass(target[0], nx.DiGraph):
+        _gen_reject(target, nx.NetworkXError(message))
+
+
+def _generated(kind, params, target, lists=(), labels=None, cols=None, name=None):
+    """A new graph (or the ``create_using`` instance) holding generator
+    ``kind`` built in Rust."""
+    cls, instance = target
+    G = cls()
+    directed = G.is_directed()
+    built = _CoreGraph.generate_graph(
+        kind,
+        [int(x) for x in params],
+        [list(x) for x in lists],
+        G._node,
+        G._adj,
+        G._pred if directed else None,
+        G.is_multigraph(),
+        labels,
+        cols,
+    )
+    if not built:
+        raise NotImplementedError("rustnx leaves this case to NetworkX")
+    if instance is not None:
+        instance.clear()
+        instance._node.update(G._node)
+        instance._adj.update(G._adj)
+        if directed:
+            instance._pred.update(G._pred)
+        G = instance
+    if name is not None:
+        G.graph["name"] = name
+    return G
+
+
+@functools.cache
+def _gen_source(name):
+    """NetworkX's source of generator ``name``, whitespace-normalised ('' if
+    unavailable). Read from ``orig_func``, so nothing dispatches."""
+    try:
+        func = getattr(nx.utils.backends, "_registered_algorithms", {})[name].orig_func
+        return " ".join(inspect.getsource(func).split())
+    except (AttributeError, KeyError, OSError, TypeError):
+        return ""
+
+
+def empty_graph(n=0, create_using=None, default=nx.Graph):
+    count, labels = _gen_nodes(n)
+    return _generated("empty", [count], _gen_target(create_using, default), labels=labels)
+
+
+def complete_graph(n, create_using=None):
+    count, labels = _gen_nodes(n)
+    return _generated("complete", [count], _gen_target(create_using), labels=labels)
+
+
+def cycle_graph(n, create_using=None):
+    count, labels = _gen_nodes(n)
+    return _generated("cycle", [count], _gen_target(create_using), labels=labels)
+
+
+def path_graph(n, create_using=None):
+    count, labels = _gen_nodes(n)
+    return _generated("path", [count], _gen_target(create_using), labels=labels)
+
+
+def star_graph(n, create_using=None):
+    count, labels = _gen_nodes(n)
+    if labels is None:
+        count += 1  # the hub, then the `n` spokes
+    target = _gen_target(create_using)
+    if "Directed Graph not supported" in _gen_source("star_graph"):
+        # NetworkX 3.4 and 3.5 reject directed stars.
+        _gen_reject_directed(target)
+    return _generated("star", [count], target, labels=labels)
+
+
+def wheel_graph(n, create_using=None):
+    count, labels = _gen_nodes(n)
+    target = _gen_target(create_using)
+    _gen_reject_directed(target)
+    return _generated("wheel", [count], target, labels=labels)
+
+
+def _gen_ladder_target(n, create_using):
+    n = _gen_int(n)
+    if n < 0:
+        raise nx.NetworkXError(f"Negative number of nodes not valid: {2 * n}")
+    target = _gen_target(create_using)
+    _gen_reject_directed(target)
+    return n, target
+
+
+def ladder_graph(n, create_using=None):
+    n, target = _gen_ladder_target(n, create_using)
+    return _generated("ladder", [n], target)
+
+
+def circular_ladder_graph(n, create_using=None):
+    n = _gen_int(n)
+    if n < 2:
+        if "n must be at least 2" in _gen_source("circular_ladder_graph"):
+            raise ValueError("n must be at least 2 for circular_ladder_graph")  # 3.7
+        # Before 3.7, `n` 0 or 1 adds the nodes -1, 0 or 1 as self-loops.
+        raise NotImplementedError("rustnx needs n >= 2 here")
+    n, target = _gen_ladder_target(n, create_using)
+    return _generated("circular_ladder", [n], target)
+
+
+def _gen_two_ints(m, n):
+    """``nodes_or_number([0, 1])`` for two ints."""
+    m, n = _gen_int(m), _gen_int(n)
+    for x in (m, n):
+        if x < 0:
+            raise nx.NetworkXError(f"Negative number of nodes not valid: {x}")
+    return m, n
+
+
+def lollipop_graph(m, n, create_using=None):
+    m, n = _gen_two_ints(m, n)
+    if m < 2:
+        raise nx.NetworkXError("Invalid description: m should indicate at least 2 nodes")
+    target = _gen_target(create_using)
+    _gen_reject_directed(target)
+    return _generated("lollipop", [m, n], target)
+
+
+def barbell_graph(m1, m2, create_using=None):
+    m1, m2 = _gen_int(m1), _gen_int(m2)
+    if m1 < 2:
+        raise nx.NetworkXError("Invalid graph description, m1 should be >=2")
+    if m2 < 0:
+        raise nx.NetworkXError("Invalid graph description, m2 should be >=0")
+    target = _gen_target(create_using)
+    _gen_reject_directed(target)
+    return _generated("barbell", [m1, m2], target)
+
+
+def tadpole_graph(m, n, create_using=None):
+    m, n = _gen_two_ints(m, n)
+    if m < 2:
+        raise nx.NetworkXError("Invalid description: m should indicate at least 2 nodes")
+    target = _gen_target(create_using)
+    _gen_reject_directed(target)
+    return _generated("tadpole", [m, n], target)
+
+
+def full_rary_tree(r, n, create_using=None):
+    # NetworkX 3.4 and 3.5 add `_tree_edges(n, r)`, a breadth-first walk
+    # giving the same edges as 3.6's `((child - 1) // r, child)`.
+    r, n = _gen_int(r), _gen_int(n)
+    if n < 0:
+        raise nx.NetworkXError(f"Negative number of nodes not valid: {n}")
+    return _generated("full_rary", [r, n], _gen_target(create_using))
+
+
+def balanced_tree(r, h, create_using=None):
+    r, h = _gen_int(r), _gen_int(h)
+    if r == 1:
+        n = h + 1
+    elif h + 1 < 0 or (abs(r) > 1 and h > 64):
+        raise NotImplementedError("rustnx needs a small tree here")
+    else:
+        n = (1 - r ** (h + 1)) // (1 - r)
+    return full_rary_tree(r, n, create_using=create_using)
+
+
+def binomial_tree(n, create_using=None):
+    n = _gen_int(n)
+    return _generated("binomial", [n], _gen_target(create_using))
+
+
+def complete_bipartite_graph(n1, n2, create_using=None):
+    n1, n2 = _gen_two_ints(n1, n2)
+    target = _gen_target(create_using)
+    _gen_reject_directed(target)
+    name = f"complete_bipartite_graph({n1}, {n2})"
+    return _generated("bipartite", [n1, n2], target, name=name)
+
+
+def _gen_flag_pair(periodic):
+    if type(periodic) in (bool, int):
+        return bool(periodic), bool(periodic)
+    if type(periodic) in (list, tuple) and len(periodic) == 2:
+        return bool(periodic[0]), bool(periodic[1])
+    raise NotImplementedError("rustnx needs periodic to be a bool or a pair")
+
+
+def grid_2d_graph(m, n, periodic=False, create_using=None):
+    rows, row_labels = _gen_nodes(m)
+    cols, col_labels = _gen_nodes(n)
+    target = _gen_target(create_using)
+    pr, pc = _gen_flag_pair(periodic)
+    return _generated(
+        "grid_2d",
+        [rows, cols, pr, pc],
+        target,
+        labels=list(range(rows)) if row_labels is None else row_labels,
+        cols=list(range(cols)) if col_labels is None else col_labels,
+    )
+
+
+def circulant_graph(n, offsets, create_using=None):
+    n = _gen_int(n)
+    offsets = _gen_ints(offsets)
+    if n < 0:
+        raise nx.NetworkXError(f"Negative number of nodes not valid: {n}")
+    text = _gen_source("circulant_graph")
+    if "G.add_edge(i, (i - j) % n)" in text:
+        two_pass = False  # NetworkX 3.4 and 3.5: both edges per (i, j)
+    elif "G.add_edges_from((i, (i - j) % n) for i in range(n) for j in offsets)" in text:
+        two_pass = True
+    else:
+        raise NotImplementedError("unknown circulant_graph version")
+    return _generated("circulant", [n, two_pass], _gen_target(create_using), lists=[offsets])
+
+
+def caveman_graph(l, k):
+    l, k = _gen_int(l), _gen_int(k)
+    if l < 0 or k < 0:
+        raise NotImplementedError("rustnx needs non-negative sizes here")
+    return _generated("caveman", [l, k], (nx.Graph, None))
+
+
+def connected_caveman_graph(l, k):
+    l, k = _gen_int(l), _gen_int(k)
+    if k < 2:
+        raise nx.NetworkXError(
+            "The size of cliques in a connected caveman graph must be at least 2."
+        )
+    if l < 0:
+        raise NotImplementedError("rustnx needs non-negative sizes here")
+    return _generated("connected_caveman", [l, k], (nx.Graph, None))
+
+
+def ring_of_cliques(num_cliques, clique_size):
+    num_cliques, clique_size = _gen_int(num_cliques), _gen_int(clique_size)
+    if num_cliques < 2:
+        raise nx.NetworkXError("A ring of cliques must have at least two cliques")
+    if clique_size < 2:
+        raise nx.NetworkXError("The cliques must have at least two nodes")
+    return _generated("ring_of_cliques", [num_cliques, clique_size], (nx.Graph, None))
+
+
+def windmill_graph(n, k):
+    n, k = _gen_int(n), _gen_int(k)
+    if n < 2:
+        raise nx.NetworkXError("A windmill graph must have at least two cliques")
+    if k < 2:
+        raise nx.NetworkXError("The cliques must have at least two nodes")
+    return _generated("windmill", [n, k], (nx.Graph, None))
+
+
+def complete_multipartite_graph(subset_sizes=()):
+    # NetworkX's `*subset_sizes`, as the tuple the dispatcher binds.
+    if len(subset_sizes) == 0:
+        return nx.Graph()
+    sizes = _gen_ints(subset_sizes)
+    if any(size < 0 for size in sizes):
+        raise nx.NetworkXError(f"Negative number of nodes not valid: {subset_sizes}")
+    return _generated("multipartite", [], (nx.Graph, None), lists=[sizes])
+
+
+def turan_graph(n, r):
+    n, r = _gen_int(n), _gen_int(r)
+    if not 1 <= r <= n:
+        raise nx.NetworkXError("Must satisfy 1 <= r <= n")
+    partitions = [n // r] * (r - n % r) + [n // r + 1] * (n % r)
+    return _generated("multipartite", [], (nx.Graph, None), lists=[partitions])
+
+
+def sudoku_graph(n=3):
+    n = _gen_int(n)
+    if n < 0:
+        raise nx.NetworkXError("The order must be greater than or equal to zero.")
+    return _generated("sudoku", [n], (nx.Graph, None))
+
+
+def LCF_graph(n, shift_list, repeats, create_using=None):
+    n = _gen_int(n)
+    shifts = _gen_ints(shift_list)
+    repeats = _gen_int(repeats)
+    target = _gen_target(create_using)
+    if n <= 0:
+        return _generated("empty", [0], target)
+    _gen_reject_directed(target)
+    return _generated("lcf", [n, repeats], target, lists=[shifts], name="LCF_graph")
+
+
+def generalized_petersen_graph(n, k, *, create_using=None):
+    n, k = _gen_int(n), _gen_int(k)
+    if n <= 2:
+        raise nx.NetworkXError(f"n >= 3 required. Got n={n!r}")
+    if k < 1 or k > n / 2:
+        raise nx.NetworkXError(f" Got n={n!r} k={k!r}. Need 1 <= k <= n/2")
+    target = _gen_target(create_using)
+    _gen_reject_directed(target, "Directed Graph not supported in create_using")
+    name = f"Generalized Petersen Graph GP({n}, {k})"
+    return _generated("petersen", [n, k], target, name=name)
+
+
+def dorogovtsev_goltsev_mendes_graph(n, create_using=None):
+    n = _gen_int(n)
+    if n < 0:
+        raise nx.NetworkXError("n must be greater than or equal to 0")
+    target = _gen_target(create_using)
+    _gen_reject_directed(target, "directed graph not supported")
+    if issubclass(target[0], nx.MultiGraph):
+        _gen_reject(target, nx.NetworkXError("multigraph not supported"))
+    return _generated("dgm", [n], target)
+
+
+def mycielski_graph(n):
+    n = _gen_int(n)
+    if n < 1:
+        raise nx.NetworkXError("must satisfy n >= 1")
+    return _generated("mycielski", [n], (nx.Graph, None))
+
+
+def paley_graph(p, create_using=None):
+    p = _gen_int(p)
+    target = _gen_target(create_using, nx.DiGraph)
+    if issubclass(target[0], nx.MultiGraph):
+        _gen_reject(target, nx.NetworkXError("`create_using` cannot be a multigraph."))
+    if not _sets_replayable():
+        # The edges follow the iteration order of the set of squares.
+        raise NotImplementedError("this interpreter's sets can't be replayed")
+    return _generated("paley", [p], target, name=f"paley({p})")
+
+
+def kneser_graph(n, k):
+    n, k = _gen_int(n), _gen_int(k)
+    if n <= 0:
+        raise nx.NetworkXError("n should be greater than zero")
+    if k <= 0 or k > n:
+        raise nx.NetworkXError("k should be greater than zero and smaller than n")
+    if not _sets_replayable():
+        # The edges follow the iteration order of `universe - set(s)`.
+        raise NotImplementedError("this interpreter's sets can't be replayed")
+    return _generated("kneser", [n, k], (nx.Graph, None))
+
+
+def _gen_lattice(kind, m, n, periodic, with_positions, create_using):
+    target = _gen_target(create_using)
+    m, n = _gen_int(m), _gen_int(n)
+    if m == 0 or n == 0:
+        return _generated("empty", [0], target)
+    if periodic or m < 0 or n < 0:
+        # Periodic lattices contract nodes with `contracted_nodes`.
+        raise NotImplementedError("rustnx supports non-periodic lattices only")
+    if "if with_positions:" in _gen_source(f"{kind}_lattice_graph"):
+        with_positions = bool(with_positions)
+    else:
+        with_positions = True  # NetworkX 3.4 and 3.5 ignore with_positions
+    return _generated(kind, [m, n, with_positions], target)
+
+
+def hexagonal_lattice_graph(m, n, periodic=False, with_positions=True, create_using=None):
+    return _gen_lattice("hexagonal", m, n, periodic, with_positions, create_using)
+
+
+def triangular_lattice_graph(m, n, periodic=False, with_positions=True, create_using=None):
+    return _gen_lattice("triangular", m, n, periodic, with_positions, create_using)
+
+
+def _gen_grid(dims, periodic):
+    if type(periodic) in (bool, int):
+        cyclic = [bool(periodic)] * len(dims)
+    elif type(periodic) in (list, tuple) and len(periodic) >= len(dims):
+        cyclic = [bool(p) for p in periodic[: len(dims)]]
+    else:
+        raise NotImplementedError("rustnx needs periodic to be a bool or a list")
+    atoms = []
+    for d in dims:
+        if type(d) is int:
+            if d < 0:
+                raise NotImplementedError("NetworkX raises for this dimension")
+            atoms.append(list(range(_gen_int(d))))
+        else:
+            values = _gen_ints(d)
+            if len(set(values)) != len(values):
+                raise NotImplementedError("rustnx needs distinct labels")
+            atoms.append(values)
+    return _generated("grid", cyclic, (nx.Graph, None), lists=atoms)
+
+
+def grid_graph(dim, periodic=False):
+    if type(dim) not in (list, tuple):
+        raise NotImplementedError("rustnx needs dim to be a list")
+    if not dim:
+        return nx.Graph()
+    return _gen_grid(dim, periodic)
+
+
+def hypercube_graph(n):
+    n = _gen_int(n)
+    if n <= 0:
+        return nx.Graph()
+    return _gen_grid([2] * n, False)

@@ -741,6 +741,7 @@ def test_backend_function_list_matches_implementations():
         "connected_dominating_set",
         "densest_subgraph",
         "floyd_warshall_tree",
+        "generalized_petersen_graph",
         "hyper_wiener_index",
         "is_connected_dominating_set",
         "is_cover",
