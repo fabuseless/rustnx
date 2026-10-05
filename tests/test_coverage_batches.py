@@ -5632,9 +5632,10 @@ def test_batch17_backend_priority(monkeypatch):
     real = interface.path_graph
     monkeypatch.setattr(interface, "path_graph", lambda *a, **kw: calls.append(1) or real(*a, **kw))
     with nx.config.backend_priority(generators=["rustnx"]):
-        G = nx.path_graph(5)
+        # Large enough that rustnx takes it (small inputs stay in NetworkX).
+        G = nx.path_graph(500)
         assert calls
-        assert _b17_snapshot(G) == _b17_snapshot(nx.path_graph(5, backend="networkx"))
+        assert _b17_snapshot(G) == _b17_snapshot(nx.path_graph(500, backend="networkx"))
         # An iterator falls back before it is consumed.
         G = nx.path_graph(iter("abc"))
         assert list(G) == ["a", "b", "c"]
@@ -5643,7 +5644,7 @@ def test_batch17_backend_priority(monkeypatch):
             expected = _b17_outcome(lambda: func(args[0], iter(args[1]), *args[2:], backend="networkx"))
             assert _b17_outcome(lambda: func(args[0], iter(args[1]), *args[2:])) == expected
     calls.clear()
-    nx.path_graph(5)
+    nx.path_graph(500)
     assert not calls  # generators need backend_priority.generators
 
 
@@ -7295,8 +7296,8 @@ def test_batch21_runs_in_rust():
 
 
 def test_batch21_dispatch_through_priority(restore_config, monkeypatch):
-    # NetworkX 3.5+ dispatch functions returning graphs by
-    # `backend_priority.generators`; 3.4 by `backend_priority.algos`.
+    # NetworkX dispatches functions returning graphs by
+    # `backend_priority.generators`.
     from rustnx import interface
 
     calls = []
