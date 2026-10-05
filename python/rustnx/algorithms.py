@@ -85,6 +85,7 @@ __all__ = [
     "bidirectional_shortest_path",
     "binomial_tree",
     "bipartite_closeness_centrality",
+    "bipartite_degree_centrality",
     "bipartite_parse_edgelist",
     "bipartite_read_edgelist",
     "boruvka_mst_edges",
@@ -97,6 +98,7 @@ __all__ = [
     "build_flow_dict",
     "build_residual_network",
     "butterflies",
+    "cartesian_product",
     "caveman_graph",
     "center",
     "centroid",
@@ -117,14 +119,18 @@ __all__ = [
     "complete_graph",
     "complete_multipartite_graph",
     "complete_to_chordal_graph",
+    "compose",
+    "compose_all",
     "condensation",
     "conductance",
     "connected_caveman_graph",
     "connected_components",
     "connected_dominating_set",
     "connected_watts_strogatz_graph",
+    "constraint",
     "convert_node_labels_to_integers",
     "core_number",
+    "corona_product",
     "cost_of_flow",
     "could_be_isomorphic",
     "cut_size",
@@ -141,6 +147,7 @@ __all__ = [
     "degree_pearson_correlation_coefficient",
     "dense_gnm_random_graph",
     "densest_subgraph",
+    "density",
     "descendants",
     "descendants_at_distance",
     "dfs_edges",
@@ -156,6 +163,8 @@ __all__ = [
     "dijkstra_path_length",
     "dijkstra_predecessor_and_distance",
     "dinitz",
+    "disjoint_union",
+    "disjoint_union_all",
     "dispersion",
     "dominance_frontiers",
     "dorogovtsev_goltsev_mendes_graph",
@@ -172,7 +181,9 @@ __all__ = [
     "edge_expansion",
     "edge_load_centrality",
     "edmonds_karp",
+    "effective_size",
     "efficiency",
+    "ego_graph",
     "eigenvector_centrality",
     "empty_graph",
     "enumerate_all_cliques",
@@ -201,6 +212,7 @@ __all__ = [
     "from_prufer_sequence",
     "from_scipy_sparse_array",
     "from_sparse6_bytes",
+    "full_join",
     "full_rary_tree",
     "generalized_degree",
     "generalized_petersen_graph",
@@ -248,6 +260,8 @@ __all__ = [
     "incidence_matrix",
     "inter_community_edges",
     "inter_community_non_edges",
+    "intersection",
+    "intersection_all",
     "intersection_array",
     "intra_community_edges",
     "is_aperiodic",
@@ -319,8 +333,11 @@ __all__ = [
     "label_propagation_communities",
     "ladder_graph",
     "laplacian_matrix",
+    "lexicographic_product",
     "lexicographical_topological_sort",
+    "line_graph",
     "local_bridges",
+    "local_constraint",
     "local_edge_connectivity",
     "local_efficiency",
     "local_node_connectivity",
@@ -359,6 +376,7 @@ __all__ = [
     "minimum_st_node_cut",
     "mixing_expansion",
     "modularity",
+    "moral_graph",
     "multi_source_dijkstra",
     "multi_source_dijkstra_path",
     "multi_source_dijkstra_path_length",
@@ -413,6 +431,7 @@ __all__ = [
     "preferential_attachment",
     "preflow_push",
     "prim_mst_edges",
+    "projected_graph",
     "prominent_group",
     "ra_index_soundarajan_hopcroft",
     "radius",
@@ -437,10 +456,12 @@ __all__ = [
     "reciprocity",
     "relabel_nodes",
     "resource_allocation_index",
+    "reverse",
     "rich_club_coefficient",
     "ring_of_cliques",
     "root_to_leaf_paths",
     "root_trees",
+    "rooted_product",
     "rooted_tree_isomorphism",
     "s_metric",
     "schultz_index",
@@ -467,10 +488,12 @@ __all__ = [
     "steiner_tree",
     "stochastic_block_model",
     "stoer_wagner",
+    "strong_product",
     "strongly_connected_components",
     "sudoku_graph",
     "symmetric_difference",
     "tadpole_graph",
+    "tensor_product",
     "threshold_accepting_tsp",
     "to_dict_of_lists",
     "to_nested_tuple",
@@ -486,6 +509,8 @@ __all__ = [
     "transitive_reduction",
     "transitivity",
     "tree_all_pairs_lowest_common_ancestor",
+    "tree_broadcast_center",
+    "tree_broadcast_time",
     "tree_centroid",
     "tree_graph",
     "tree_isomorphism",
@@ -497,6 +522,8 @@ __all__ = [
     "turan_graph",
     "unconstrained_bridge_augmentation",
     "unconstrained_one_edge_augmentation",
+    "union",
+    "union_all",
     "v_structures",
     "vf2pp_is_isomorphic",
     "vf2pp_is_monomorphic",
@@ -507,6 +534,7 @@ __all__ = [
     "watts_strogatz_graph",
     "waxman_graph",
     "weakly_connected_components",
+    "weighted_projected_graph",
     "weisfeiler_lehman_graph_hash",
     "weisfeiler_lehman_subgraph_hashes",
     "wheel_graph",
@@ -11995,3 +12023,517 @@ def parse_gml(lines, label="label", destringizer=None):
 
 def read_gml(path, label="label", destringizer=None):
     return _rw_read(path, "ascii", _rw_gml_args(label, destringizer))
+
+
+# --- Batch 21: operators and structure ---
+
+from itertools import repeat  # noqa: E402
+
+_b21_deepcopy = copy.deepcopy
+
+
+def _b21_view(G):
+    """``(NetworkX graph, OpView)`` for an operator's input: the graph's
+    dicts in the order NetworkX's methods iterate them."""
+    base = _networkx_graph(G)
+    core, nodes = G._core, G._nodes
+    if core.is_native():
+        from .graph import from_networkx
+
+        snapshot = from_networkx(base)
+        core, nodes = snapshot._core, snapshot._nodes
+    return base, core.op_view(list(nodes), base._node, base._adj)
+
+
+def _b21_target(R):
+    """The dicts ``OpView.add_to`` fills: ``_node``, ``_succ``, ``_pred``."""
+    return R._node, R._adj, (R._pred if R.is_directed() else None)
+
+
+def _b21_container(value):
+    """Decline one-shot iterators: if rustnx consumed one and then fell
+    back, NetworkX would get it empty."""
+    if iter(value) is value:
+        raise NotImplementedError("rustnx needs a container, not an iterator")
+    return value
+
+
+def _b21_labels(G, prefix):
+    """``union_all``'s ``f"{prefix}{x}"`` labels (``nx.relabel_nodes``
+    merges nodes whose labels collide; rustnx declines those)."""
+    labels = [f"{prefix}{x}" for x in G._nodes]
+    if len(set(labels)) != len(labels):
+        raise NotImplementedError("relabeling merges nodes")
+    return labels
+
+
+def _b21_union(items, disjoint):
+    """``union_all`` / ``compose_all`` over ``(G, graph dict, OpView)``."""
+    R = None
+    for i, (G, graph, view) in enumerate(items):
+        if i == 0:
+            R = _plain_result_class(G)()
+        elif G.is_directed() != R.is_directed():
+            raise nx.NetworkXError("All graphs must be directed or undirected.")
+        elif disjoint and view.shares_node(R._node):
+            raise nx.NetworkXError(
+                "The node sets of the graphs are not disjoint.\n"
+                "Use `rename` to specify prefixes for the graphs or use\n"
+                "disjoint_union(G1, G2, ..., GN)."
+            )
+        R.graph.update(graph)
+        view.add_to(*_b21_target(R), 1)
+    return R
+
+
+def union_all(graphs, rename=()):
+    _b21_container(rename)
+
+    def items():
+        for G, prefix in zip(graphs, chain(rename, repeat(None))):
+            base, view = _b21_view(G)
+            if prefix is not None:
+                view = view.relabeled(_b21_labels(G, prefix))
+            yield G, base.graph, view
+
+    R = _b21_union(items(), True)
+    if R is None:
+        raise ValueError("cannot apply union_all to an empty list")
+    return R
+
+
+def union(G, H, rename=()):
+    return union_all([G, H], rename)
+
+
+def compose_all(graphs):
+    def items():
+        for G in graphs:
+            base, view = _b21_view(G)
+            yield G, base.graph, view
+
+    R = _b21_union(items(), False)
+    if R is None:
+        raise ValueError("cannot apply compose_all to an empty list")
+    return R
+
+
+def compose(G, H):
+    return compose_all([G, H])
+
+
+def disjoint_union_all(graphs):
+    def items():
+        # `convert_node_labels_to_integers` on each graph, then `union_all`.
+        first = 0
+        for G in graphs:
+            base, view = _b21_view(G)
+            yield G, base.graph, view.relabeled(list(range(first, first + len(G))))
+            first += len(G)
+
+    R = _b21_union(items(), False)
+    if R is None:
+        raise ValueError("cannot apply union_all to an empty list")
+    return R
+
+
+def disjoint_union(G, H):
+    return disjoint_union_all([G, H])
+
+
+def full_join(G, H, rename=(None, None)):
+    R = union(G, H, rename)
+
+    def nodes(graph, prefix):
+        return list(graph._nodes) if prefix is None else _b21_labels(graph, prefix)
+
+    left, right = nodes(G, rename[0]), nodes(H, rename[1])
+    succ, pred = R._adj, (R._pred if R.is_directed() else None)
+    _core._op_join(succ, pred, left, right)
+    if R.is_directed():
+        _core._op_join(succ, pred, right, left)
+    return R
+
+
+def reverse(G, copy=True):
+    if not G.is_directed():
+        raise nx.NetworkXError("Cannot reverse an undirected graph.")
+    if not copy:
+        raise NotImplementedError("NetworkX returns a view of the graph")
+    base, view = _b21_view(G)
+    H = _plain_result_class(G)()
+    H.graph.update(_b21_deepcopy(base.graph))
+    view.add_to(*_b21_target(H), 1, reverse=True, deep=True)
+    return H
+
+
+def moral_graph(G):
+    _directed_only(G)
+    base, view = _b21_view(G)
+    _plain_result_class(G)  # `to_undirected_class()` is nx.Graph
+    H = nx.Graph()
+    H.graph.update(_b21_deepcopy(base.graph))
+    view.add_to(H._node, H._adj, None, 2, deep=True)
+    _core._op_pred_combinations(H._adj, base._pred)
+    return H
+
+
+@functools.cache
+def _b21_tuple_hashes_match():
+    """Whether rustnx's copy of CPython's tuple hash gives this
+    interpreter's ``hash()`` (``line_graph`` iterates a set of tuples)."""
+    samples = [(), (1,), (1, 2), ("a", -1), (-2, 2**61 - 1), ((1, 2), (3, 4)),
+               ((("x", 0), 5), (2**64, -(2**61))), (1.5, None, "b")]
+
+    def ours(t):
+        return _core._tuple_hash([ours(x) if type(x) is tuple else hash(x) for x in t])
+
+    try:
+        return all(ours(t) == hash(t) for t in samples)
+    except Exception:
+        return False
+
+
+def _b21_canonical_view(G):
+    """``_b21_view``, declining graphs whose adjacency keys aren't
+    interchangeable with their nodes (results built from node objects)."""
+    base, view = _b21_view(G)
+    if not view.keys_canonical():
+        raise NotImplementedError("adjacency keys differ from the nodes")
+    return base, view
+
+
+def line_graph(G, create_using=None):
+    if create_using is not None:
+        raise NotImplementedError("rustnx supports create_using=None only")
+    if not G.is_directed() and not (_sets_replayable() and _b21_tuple_hashes_match()):
+        raise NotImplementedError("Python's set order can't be replayed here")
+    _, view = _b21_canonical_view(G)
+    L = _plain_result_class(G)()
+    view.line_graph_into(*_b21_target(L))
+    return L
+
+
+def _b21_product(G, H):
+    """``_init_product_graph`` and both graphs' views."""
+    if G.is_directed() != H.is_directed():
+        raise nx.NetworkXError("G and H must be both directed or both undirected")
+    _, g = _b21_canonical_view(G)
+    _, h = _b21_canonical_view(H)
+    return (nx.DiGraph() if G.is_directed() else nx.Graph()), g, h
+
+
+def _b21_simple_product(kind, G, H):
+    GH, g, h = _b21_product(G, H)
+    _core._op_product(kind, g, h, *_b21_target(GH))
+    return GH
+
+
+def tensor_product(G, H):
+    return _b21_simple_product("tensor", G, H)
+
+
+def cartesian_product(G, H):
+    return _b21_simple_product("cartesian", G, H)
+
+
+def lexicographic_product(G, H):
+    return _b21_simple_product("lexicographic", G, H)
+
+
+def strong_product(G, H):
+    return _b21_simple_product("strong", G, H)
+
+
+def rooted_product(G, H, root):
+    if root not in H:
+        raise nx.NodeNotFound("root must be a vertex in H")
+    r = H._index[root]
+    found = H._nodes[r]
+    if found is not root and not (type(found) is type(root) and type(root) in (int, str)):
+        # NetworkX's edges carry the root as passed.
+        raise NotImplementedError("root differs from H's node object")
+    _, g = _b21_canonical_view(G)
+    _, h = _b21_canonical_view(H)
+    R = nx.Graph()
+    _core._op_rooted_product(g, h, root, r, R._node, R._adj)
+    return R
+
+
+def corona_product(G, H):
+    _undirected_only(G)  # NetworkX checks G only; H's direction fails below
+    GH, g, h = _b21_product(G, H)
+    _core._op_corona_product(g, h, GH._node, GH._adj)
+    return GH
+
+
+@functools.cache
+def _b21_holes_scipy(name):
+    """Whether the installed ``name`` (``constraint``, ``effective_size``)
+    computes every node at once with SciPy sparse arithmetic (3.5+) when
+    ``nodes`` is None, which rustnx can't reproduce bit for bit."""
+    return "adjacency_matrix" in _source_text(_registered(name))
+
+
+@functools.cache
+def _b21_isolated_by_len():
+    """``effective_size`` gives NaN where ``len(G[v]) == 0`` (3.4), or
+    where every neighbor is the node itself (3.5+)."""
+    text = _source_text(_registered("effective_size"))
+    if "all(u == v for u in G[v])" in text:
+        return False
+    if "len(G[v]) == 0" in text:
+        return True
+    return None
+
+
+def _b21_holes(G, kind, targets, others=(), weight=None):
+    if G.is_directed():
+        G._ensure_exact_pred()
+    if G._core.is_native() and weight is None:
+        adj = None
+    else:
+        adj = _networkx_graph(G)._adj
+    by_len = bool(_b21_isolated_by_len())
+    return G._core.structural_holes(
+        kind, _node_list(G), adj, weight, targets, list(others), by_len, _COMPENSATED_SUM
+    )
+
+
+def _b21_hole_nodes(G, nodes, name):
+    """The nodes, their positions up to the first missing one, and that
+    missing node (or None)."""
+    if nodes is None:
+        if _b21_holes_scipy(name):
+            raise NotImplementedError("NetworkX uses SciPy for all nodes")
+        nodes = G._nodes
+    nodes = list(_b21_container(nodes))
+    index = G._index
+    positions = []
+    for v in nodes:
+        try:
+            i = index.get(v)
+        except TypeError:
+            raise NotImplementedError("unhashable node") from None
+        if i is None:
+            return nodes, positions, v
+        positions.append(i)
+    return nodes, positions, None
+
+
+def _b21_hole_dict(nodes, values, missing):
+    """The result dict; NetworkX's ``G[v]`` raises ``KeyError`` at the first
+    missing node, after the nodes before it (whose errors come first)."""
+    if missing is not None:
+        raise KeyError(missing)
+    result = {}
+    for v, x in zip(nodes, values):
+        result[v] = float("nan") if x is None else x
+    return result
+
+
+def constraint(G, nodes=None, weight=None):
+    nodes, positions, missing = _b21_hole_nodes(G, nodes, "constraint")
+    return _b21_hole_dict(nodes, _b21_holes(G, 0, positions, weight=weight), missing)
+
+
+def effective_size(G, nodes=None, weight=None):
+    if _b21_isolated_by_len() is None:
+        raise NotImplementedError("unknown effective_size version")
+    nodes, positions, missing = _b21_hole_nodes(G, nodes, "effective_size")
+    kind = 2 if not G.is_directed() and weight is None else 1
+    return _b21_hole_dict(nodes, _b21_holes(G, kind, positions, weight=weight), missing)
+
+
+def local_constraint(G, u, v, weight=None):
+    pair = _b13_positions(G, u, v)
+    if None in pair:
+        raise NotImplementedError("NetworkX's errors for missing nodes vary")
+    return _b21_holes(G, 3, [pair[0]], [pair[1]], weight=weight)[0]
+
+
+def _b21_same_key(a, b):
+    """Whether ``a`` (a node argument) and the equal node ``b`` are
+    interchangeable in a result (same object, or same types throughout)."""
+    if a is b:
+        return True
+    if type(a) is not type(b):
+        return False
+    if type(a) is tuple:
+        return len(a) == len(b) and all(_b21_same_key(x, y) for x, y in zip(a, b))
+    if type(a) is float:
+        return math.copysign(1.0, a) == math.copysign(1.0, b)
+    return type(a) in (int, str)
+
+
+def ego_graph(G, n, radius=1, center=True, undirected=False, distance=None):
+    if undirected:
+        # BFS on `G.to_undirected()`, whose rows are reordered copies.
+        raise NotImplementedError("rustnx does not support undirected=True")
+    if distance is not None:
+        sp, _ = single_source_dijkstra(G, n, cutoff=radius, weight=distance)
+    else:
+        sp = single_source_shortest_path_length(G, n, cutoff=radius)
+    index = G._index
+    i = index[n]
+    if not _b21_same_key(n, G._nodes[i]):
+        raise NotImplementedError("the node argument differs from G's node")
+    base = _networkx_graph(G)
+    H = _plain_result_class(G)()
+    positions = [index[v] for v in sp]
+    if 2 * len(positions) < len(G):
+        # The subgraph view then iterates `set(sp)` rather than G.
+        if not _sets_replayable():
+            raise NotImplementedError("Python's set order can't be replayed here")
+        _, (order,) = _core._replay_sets(
+            [hash(v) for v in sp], 1, [(0, 0, k) for k in range(len(positions))]
+        )
+        members = [positions[k] for k in order]
+    else:
+        members = sorted(positions)
+    H.graph.update(base.graph)
+    G._core.subgraph_copy_into(_node_list(G), base._node, base._adj, members, *_b21_target(H))
+    if not center:
+        H.remove_node(n)
+    return H
+
+
+@functools.cache
+def _b21_broadcast_checks():
+    """``(center raises NotATree, time checks its node first)``: NetworkX
+    3.4 builds the not-a-tree error without raising it, and finds missing
+    nodes only through ``shortest_path_length``."""
+    center = _source_text(_registered("tree_broadcast_center"))
+    time = _source_text(_registered("tree_broadcast_time"))
+    return "raise nx.NotATree" in center, "raise nx.NodeNotFound(err)" in time
+
+
+def tree_broadcast_center(G):
+    _undirected_only(G)
+    if not is_tree(G):
+        if _b21_broadcast_checks()[0]:
+            raise nx.NotATree("G is not a tree")
+        raise NotImplementedError("NetworkX 3.4 carries on with non-trees")
+    nodes = _node_list(G)
+    if len(nodes) < 3:
+        return len(nodes) - 1, set(nodes)
+    if not _sets_replayable():
+        raise NotImplementedError("Python's set order can't be replayed here")
+    found = G._core.tree_broadcast_center([hash(v) for v in nodes])
+    if found is None:
+        raise NotImplementedError("NetworkX raises here")
+    b_T, centers = found
+    return b_T, set([nodes[i] for i in centers])
+
+
+def tree_broadcast_time(G, node=None):
+    _undirected_only(G)
+    if node is not None and node not in G:
+        if not _b21_broadcast_checks()[1]:
+            raise NotImplementedError("NetworkX 3.4 raises from shortest_path_length")
+        raise nx.NodeNotFound(f"node {node} not in G")
+    b_T, b_C = tree_broadcast_center(G)
+    index = G._index
+    dist = G._core.multi_source_distances([index[v] for v in b_C])
+    if node is None:
+        return b_T + max(dist)
+    return b_T + dist[index[node]]
+
+
+def density(B, nodes):
+    n = len(B)
+    m = B._core.number_of_edges()
+    nb = len(nodes)
+    nt = n - nb
+    if m == 0:
+        d = 0.0
+    elif B.is_directed():
+        d = m / (2 * nb * nt)
+    else:
+        d = m / (nb * nt)
+    return d
+
+
+def bipartite_degree_centrality(G, nodes):
+    top = set(_b21_container(nodes))
+    bottom = set(G._nodes) - top
+    s_top = 1.0 / len(bottom)
+    s_bottom = 1.0 / len(top)
+    index = G._index
+    if type(index) is not dict:
+        index = dict(zip(G._nodes, range(len(G))))
+    if G.is_directed():
+        G._ensure_exact_pred()
+    return G._core.bipartite_degree_centrality(index, top, bottom, s_top, s_bottom)
+
+
+def _b21_projection_nodes(B, nodes):
+    """``nodes`` as a list with their positions. NetworkX iterates
+    ``nodes`` twice, so only containers that iterate the same way twice are
+    taken; a missing node raises ``KeyError`` (``B.nodes[n]``)."""
+    if not isinstance(nodes, (list, tuple, set, frozenset, dict, range)):
+        raise NotImplementedError("rustnx needs nodes in a container")
+    size = len(nodes)
+    nodes = list(nodes)
+    index = B._index
+    positions = []
+    for n in nodes:
+        try:
+            i = index.get(n)
+        except TypeError:
+            raise NotImplementedError("unhashable node") from None
+        if i is None:
+            raise KeyError(n)
+        if not _b21_same_key(n, B._nodes[i]):
+            raise NotImplementedError("a node differs from B's node object")
+        positions.append(i)
+    return size, positions
+
+
+def projected_graph(B, nodes, multigraph=False):
+    if multigraph:
+        raise NotImplementedError("rustnx does not build multigraphs")
+    base, view = _b21_canonical_view(B)
+    _, positions = _b21_projection_nodes(B, nodes)
+    G = nx.DiGraph() if B.is_directed() else nx.Graph()
+    G.graph.update(base.graph)
+    _core._op_projection(view, positions, False, None, *_b21_target(G))
+    return G
+
+
+def weighted_projected_graph(B, nodes, ratio=False):
+    base, view = _b21_canonical_view(B)
+    size, positions = _b21_projection_nodes(B, nodes)
+    G = nx.DiGraph() if B.is_directed() else nx.Graph()
+    G.graph.update(base.graph)
+    n_top = len(B) - size
+    if n_top < 1:
+        raise nx.NetworkXAlgorithmError(
+            f"the size of the nodes to project onto ({size}) is >= the graph size ({len(B)}).\n"
+            "They are either not a valid bipartite partition or contain duplicates"
+        )
+    _core._op_projection(view, positions, True, n_top if ratio else None, *_b21_target(G))
+    return G
+
+
+def intersection_all(graphs):
+    graphs = list(graphs)
+    if not graphs:
+        raise ValueError("cannot apply intersection_all to an empty list")
+    for G in graphs[1:]:
+        if G.is_directed() != graphs[0].is_directed():
+            raise nx.NetworkXError("All graphs must be directed or undirected.")
+    if not (_sets_replayable() and _b21_tuple_hashes_match()):
+        raise NotImplementedError("Python's set order can't be replayed here")
+    views = [_b21_canonical_view(G)[1] for G in graphs]
+    R = _plain_result_class(graphs[0])()
+    first = graphs[0]
+    index = first._index
+    if type(index) is not dict:
+        index = dict(zip(first._nodes, range(len(first))))
+    _core._op_intersection(views, index, *_b21_target(R))
+    return R
+
+
+def intersection(G, H):
+    return intersection_all([G, H])

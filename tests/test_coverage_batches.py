@@ -6858,3 +6858,498 @@ def test_batch20_gml_cases():
     for lines in [["graph [ ]\n"], ["graph [\n", "]\n\n"], ["graph [ ]\r\n"], [b"graph [ ]"],
                   ("graph [ ]",), ["graph [ ", 3, "]"]]:
         _b20_outcome(lambda backend: nx.parse_gml(lines, backend=backend))
+
+
+# --- Batch 21: operators and structure ---
+
+
+def _b21_graph_state(R, *inputs):
+    """Everything about a result graph a caller could see: its class, the
+    graph dict, node and adjacency order (succ and pred), node and edge
+    attribute dicts with the types of keys and values, which edge dicts are
+    shared between directions, and which dicts and values are the inputs'
+    own objects (shared) rather than copies."""
+    if not isinstance(R, nx.Graph):
+        return R
+    known = {}
+    for k, G in enumerate(inputs):
+        if not isinstance(G, nx.Graph):
+            continue
+        known.setdefault(id(G.graph), ("graph", k))
+        for n, d in G.nodes(data=True):
+            known.setdefault(id(d), ("node", k, n))
+            for key, val in d.items():
+                known.setdefault(id(val), ("node value", k, n, key))
+        for u, v, d in G.edges(data=True):
+            known.setdefault(id(d), ("edge", k, u, v))
+            for key, val in d.items():
+                known.setdefault(id(val), ("edge value", k, u, v, key))
+
+    def attrs(d):
+        return (
+            known.get(id(d)),
+            [(type(k).__name__, k, type(v).__name__, v, known.get(id(v))) for k, v in d.items()],
+        )
+
+    def rows(adj):
+        return [
+            (type(u).__name__, u, [(type(v).__name__, v, attrs(d)) for v, d in nbrs.items()])
+            for u, nbrs in adj.items()
+        ]
+
+    state = [type(R).__name__, attrs(R.graph)]
+    state.append([(type(n).__name__, n, attrs(d)) for n, d in R._node.items()])
+    state.append(rows(R._adj))
+    if R.is_directed():
+        state.append(rows(R._pred))
+        state.append([R._succ[u][v] is R._pred[v][u] for u in R for v in R._succ[u]])
+    else:
+        state.append([R._adj[u][v] is R._adj[v][u] for u in R for v in R._adj[u]])
+    return state
+
+
+def _b21_graphs(func):
+    """Compare graph results with `_b21_graph_state` (the graph arguments,
+    also inside a list, are the inputs it checks sharing against)."""
+
+    def run(*args, **kwargs):
+        inputs = []
+        for a in args:
+            inputs.extend(a if isinstance(a, list) else [a])
+        result = func(*args, **kwargs)
+        if isinstance(result, tuple):
+            return tuple(_b21_graph_state(r, *inputs) for r in result)
+        return _b21_graph_state(result, *inputs)
+
+    return run
+
+
+def _b21_decorate(G, seed):
+    """Graph, node and edge attributes of several kinds, some mutable (so
+    copies and deep copies are told apart), on some nodes and edges."""
+    rng = random.Random(seed)
+    G.graph["name"] = f"g{seed}"
+    G.graph["tags"] = [seed]
+    for v in G:
+        r = rng.random()
+        if r < 0.3:
+            G.nodes[v]["color"] = rng.choice(["red", "blue"])
+        elif r < 0.5:
+            G.nodes[v]["data"] = [v]
+            G.nodes[v]["w"] = rng.randint(1, 3)
+    for u, v, d in G.edges(data=True):
+        r = rng.random()
+        if r < 0.3:
+            d["weight"] = rng.choice([1, 2.5])
+        elif r < 0.45:
+            d["path"] = [u, v]
+    return G
+
+
+def _b21_pair(seed, directed, overlap):
+    """Two decorated graphs: disjoint node sets, or (``overlap``) sharing
+    some nodes and edges with different attributes."""
+    G = _b21_decorate(graph_for(seed, directed), seed)
+    H = _b21_decorate(graph_for(seed + 1000, directed), seed + 1)
+    if overlap:
+        nodes = list(G)
+        rng = random.Random(seed)
+        H.add_nodes_from(rng.sample(nodes, len(nodes) // 2), color="green")
+        H.add_edges_from(e for e in G.edges if rng.random() < 0.5)
+        H.add_edge(nodes[0], nodes[-1], weight=7)
+    else:
+        H = nx.relabel_nodes(H, {v: ("h", v) for v in H})
+    return G, H
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch21_unions(seed, directed):
+    G, H = _b21_pair(seed, directed, False)
+    G2, H2 = _b21_pair(seed, directed, True)
+    K = _b21_decorate(graph_for(seed + 7, directed), seed + 7)
+    exact_outcome(_b21_graphs(nx.union), G, H)
+    exact_outcome(_b21_graphs(nx.union), G2, H2)  # not disjoint
+    exact_outcome(_b21_graphs(nx.union), G2, H2, rename=("a", "b"))
+    exact_outcome(_b21_graphs(nx.union), G, H, rename=("a",))
+    exact_outcome(_b21_graphs(nx.union), G, G, rename=("x-", "y-"))
+    exact_outcome(_b21_graphs(nx.union_all), [G, H])
+    exact_outcome(_b21_graphs(nx.union_all), [G, K, H], rename=("p", "q", "r"))
+    exact_outcome(_b21_graphs(nx.union_all), [G])
+    exact_outcome(_b21_graphs(nx.union_all), [])
+    exact_outcome(_b21_graphs(nx.compose), G, H)
+    exact_outcome(_b21_graphs(nx.compose), G2, H2)
+    exact_outcome(_b21_graphs(nx.compose), H2, G2)
+    exact_outcome(_b21_graphs(nx.compose_all), [G2, H2, K])
+    exact_outcome(_b21_graphs(nx.compose_all), [])
+    exact_outcome(_b21_graphs(nx.disjoint_union), G2, H2)
+    exact_outcome(_b21_graphs(nx.disjoint_union_all), [G2, H2, K])
+    exact_outcome(_b21_graphs(nx.disjoint_union_all), [])
+    exact_outcome(_b21_graphs(nx.full_join), G, H)
+    exact_outcome(_b21_graphs(nx.full_join), G2, H2, rename=("a", "b"))
+    exact_outcome(_b21_graphs(nx.full_join), G2, H2)
+    exact_outcome(_b21_graphs(nx.full_join), G, H, rename=("a",))
+    # Mixed directedness.
+    other = H.to_undirected() if directed else H.to_directed()
+    for func in [nx.union, nx.compose, nx.disjoint_union, nx.full_join]:
+        exact_outcome(_b21_graphs(func), G, other)
+    exact_outcome(_b21_graphs(nx.union_all), [G, H2, other])  # not disjoint first
+
+
+@pytest.mark.parametrize("seed", range(30))
+def test_batch21_reverse_and_moral(seed):
+    D = _b21_decorate(graph_for(seed, True), seed)
+    G = _b21_decorate(graph_for(seed, False), seed)
+    exact_outcome(_b21_graphs(nx.reverse), D)
+    exact_outcome(_b21_graphs(nx.reverse), D, copy=True)
+    exact_outcome(_b21_graphs(lambda G, **kw: nx.reverse(G, copy=False, **kw).copy()), D)
+    exact_outcome(_b21_graphs(nx.reverse), G)
+    exact_outcome(_b21_graphs(nx.moral_graph), D)
+    exact_outcome(_b21_graphs(nx.moral_graph), G)
+
+
+def _b21_small(seed, directed, labels="mixed"):
+    """A small decorated graph for the products (whose results are large),
+    with self-loops and reciprocal edges sometimes."""
+    rng = random.Random(seed)
+    n = rng.randint(0, 7)
+    G = nx.gnp_random_graph(n, rng.choice([0.2, 0.5, 0.9]), seed=seed, directed=directed)
+    if labels == "mixed" and rng.random() < 0.5:
+        G = nx.relabel_nodes(G, {v: rng.choice([f"s{v}", (v, "t"), v + 0.5]) for v in G})
+    if n and rng.random() < 0.4:
+        v = rng.choice(list(G))
+        G.add_edge(v, v)
+    return _b21_decorate(G, seed)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch21_products(seed, directed):
+    G = _b21_small(seed, directed)
+    H = _b21_small(seed + 500, directed)
+    for func in [nx.tensor_product, nx.cartesian_product, nx.lexicographic_product,
+                 nx.strong_product, nx.corona_product]:
+        exact_outcome(_b21_graphs(func), G, H)
+        exact_outcome(_b21_graphs(func), H, G)
+        exact_outcome(_b21_graphs(func), G, G)
+        exact_outcome(_b21_graphs(func), G, H.to_undirected() if directed else H.to_directed())
+    for root in list(H)[:2] + ["missing", [1]]:
+        exact_outcome(_b21_graphs(nx.rooted_product), G, H, root)
+    if 0 in H:
+        exact_outcome(_b21_graphs(nx.rooted_product), G, H, 0.0)  # equal, not identical
+    exact_outcome(_b21_graphs(nx.rooted_product), G, H.to_undirected(), next(iter(H), 0))
+
+
+def test_batch21_corona_collisions():
+    # Corona products mix G's nodes and (g, h) tuples, which can collide.
+    G = nx.Graph([(0, (0, "a")), ((0, "a"), 1)])
+    H = nx.Graph([("a", "b")])
+    exact_outcome(_b21_graphs(nx.corona_product), G, H)
+    exact_outcome(_b21_graphs(nx.corona_product), H, G)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch21_line_graph(seed, directed):
+    G = _b21_decorate(graph_for(seed, directed), seed)
+    exact_outcome(_b21_graphs(nx.line_graph), G)
+    exact_outcome(_b21_graphs(nx.line_graph), _b21_small(seed, directed))
+    exact_outcome(_b21_graphs(nx.line_graph), G, create_using=nx.MultiGraph)
+    exact_outcome(_b21_graphs(nx.line_graph), nx.relabel_nodes(G, {v: ("t", v) for v in G}))
+
+
+def test_batch21_mismatched_keys_fall_back():
+    # An edge added with 1.0 where the node is 1: the adjacency row holds the
+    # key 1.0, which NetworkX's results would show.
+    G = nx.Graph()
+    G.add_nodes_from([2, 1])
+    G.add_edge(1.0, 2)
+    H = nx.path_graph(2)
+    exact_outcome(_b21_graphs(nx.line_graph), G)
+    exact_outcome(_b21_graphs(nx.cartesian_product), G, H)
+    exact_outcome(_b21_graphs(nx.union), G, nx.path_graph([5, 6]))
+
+
+def _b21_nan_marked(func):
+    """``func`` with NaN values in its dict result replaced by a marker
+    (two NaN objects never compare equal)."""
+
+    def run(*args, **kwargs):
+        result = func(*args, **kwargs)
+        if isinstance(result, dict):
+            return {k: "nan" if v != v else v for k, v in result.items()}
+        return result
+
+    return run
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float", "missing", "random"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(20))
+def test_batch21_structural_holes(seed, directed, weights):
+    G = graph_for(seed, directed, "float" if weights == "random" else weights)
+    rng = random.Random(seed)
+    if weights == "random":
+        for u, v, d in G.edges(data=True):
+            d["weight"] = rng.random()
+    nodes = list(G)
+    if seed % 4 == 0:
+        G.add_edge("loop", "loop")  # only a self-loop
+        G.add_node("alone")
+        nodes += ["loop", "alone"]
+    picked = rng.sample(nodes, min(8, len(nodes)))
+    for weight in [None, "weight"]:
+        for func in [_b21_nan_marked(nx.constraint), _b21_nan_marked(nx.effective_size)]:
+            exact_outcome(func, G, picked, weight=weight)
+            exact_outcome(func, G, weight=weight)  # 3.5+ use SciPy here: falls back
+            # An iterator with repeats (a fresh one for each backend).
+            exact_outcome(lambda G, **kw: func(G, iter(picked[:3] + picked[:2]), **kw), G,
+                          weight=weight)
+            exact_outcome(func, G, picked[:2] + ["missing"], weight=weight)
+            exact_outcome(func, G, [], weight=weight)
+        for u in picked[:3]:
+            for v in picked[:3] + ["missing"]:
+                exact_outcome(nx.local_constraint, G, u, v, weight=weight)
+
+
+@pytest.mark.parametrize("weights", ["none", "float"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch21_ego_graph(seed, directed, weights):
+    G = _b21_decorate(graph_for(seed, directed, weights), seed)
+    rng = random.Random(seed)
+    if seed % 3 == 0:
+        # Larger graphs, so small ego graphs iterate `set(sp)` (the view's
+        # shortcut when the node set is under half the graph).
+        G.add_edges_from((("x", i), ("x", i + 1)) for i in range(60))
+        G.add_edge(("x", 0), next(iter(G)))
+    for n in rng.sample(list(G), min(4, len(G))) + ["missing"]:
+        for radius in [0, 1, 2, 3, 1.5]:
+            exact_outcome(_b21_graphs(nx.ego_graph), G, n, radius=radius)
+        exact_outcome(_b21_graphs(nx.ego_graph), G, n, center=False)
+        exact_outcome(_b21_graphs(nx.ego_graph), G, n, radius=2, distance="weight")
+        exact_outcome(_b21_graphs(nx.ego_graph), G, n, undirected=True)
+    if 0 in G:
+        exact_outcome(_b21_graphs(nx.ego_graph), G, 0.0)
+
+
+def _b21_tree(seed):
+    rng = random.Random(seed)
+    n = rng.randint(1, 40)
+    T = nx.random_labeled_tree(n, seed=seed) if hasattr(nx, "random_labeled_tree") else nx.random_tree(n, seed=seed)
+    if rng.random() < 0.5:
+        T = nx.relabel_nodes(T, {v: rng.choice([f"t{v}", (v,), v * 1000]) for v in T})
+    H = nx.Graph()
+    nodes = list(T)
+    rng.shuffle(nodes)
+    H.add_nodes_from(nodes)
+    edges = list(T.edges)
+    rng.shuffle(edges)
+    H.add_edges_from(edges)
+    return H
+
+
+@pytest.mark.parametrize("seed", range(80))
+def test_batch21_broadcasting(seed):
+    T = _b21_tree(seed)
+    exact_outcome(with_set_order(nx.tree_broadcast_center), T)
+    exact_outcome(nx.tree_broadcast_time, T)
+    for node in list(T)[:3] + ["missing", [1]]:
+        exact_outcome(nx.tree_broadcast_time, T, node)
+    # Spiders and caterpillars: many ties.
+    S = nx.star_graph(3 + seed % 5)
+    for leaf in range(1, 3 + seed % 3):
+        nx.add_path(S, [leaf] + [100 * leaf + i for i in range(seed % 4)])
+    exact_outcome(with_set_order(nx.tree_broadcast_center), S)
+    exact_outcome(nx.tree_broadcast_time, S)
+    # Not trees.
+    G = graph_for(seed, False)
+    exact_outcome(with_set_order(nx.tree_broadcast_center), G)
+    exact_outcome(nx.tree_broadcast_time, G)
+    exact_outcome(nx.tree_broadcast_time, G, "missing")
+    exact_outcome(with_set_order(nx.tree_broadcast_center), nx.Graph())
+    exact_outcome(with_set_order(nx.tree_broadcast_center), graph_for(seed, True))
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch21_bipartite_measures(seed, directed):
+    G = graph_for(seed, directed)
+    rng = random.Random(seed)
+    nodes = list(G)
+    top = rng.sample(nodes, rng.randint(0, len(nodes)))
+    for side in [top, top + ["missing", 10**6], set(top), nodes, [], top + top[:2]]:
+        exact_outcome(nx.bipartite.density, G, side)
+        exact_outcome(nx.bipartite.degree_centrality, G, side)
+    exact_outcome(lambda G, **kw: nx.bipartite.density(G, iter(top), **kw), G)  # no len()
+    exact_outcome(lambda G, **kw: nx.bipartite.degree_centrality(G, iter(top), **kw), G)
+    exact_outcome(nx.bipartite.density, nx.empty_graph(3), [0])
+    B = nx.complete_bipartite_graph(3, 4)
+    exact_outcome(nx.bipartite.density, B, [0, 1, 2])
+    exact_outcome(nx.bipartite.degree_centrality, B, [0, 1, 2])
+
+
+def _b21_bipartite(seed, directed):
+    rng = random.Random(seed)
+    a, b = rng.randint(1, 15), rng.randint(1, 15)
+    B = nx.bipartite.random_graph(a, b, rng.choice([0.1, 0.3, 0.6]), seed=seed, directed=directed)
+    if rng.random() < 0.5:
+        B = nx.relabel_nodes(B, {v: (f"b{v}" if v % 2 else v) for v in B})
+    H = B.__class__()
+    nodes = list(B)
+    rng.shuffle(nodes)
+    H.add_nodes_from((v, B.nodes[v]) for v in nodes)
+    edges = list(B.edges)
+    rng.shuffle(edges)
+    H.add_edges_from(edges)
+    H.graph["name"] = "B"
+    top = [v for v in nodes if H.nodes[v]["bipartite"] == 0]
+    return _b21_decorate(H, seed), top
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(60))
+def test_batch21_projections(seed, directed):
+    B, top = _b21_bipartite(seed, directed)
+    bottom = [v for v in B if v not in set(top)]
+    rng = random.Random(seed)
+    for side in [top, bottom, set(top), tuple(bottom), top + top[:2], top[:3] + ["missing"]]:
+        exact_outcome(_b21_graphs(nx.bipartite.projected_graph), B, side)
+        exact_outcome(_b21_graphs(nx.bipartite.weighted_projected_graph), B, side)
+        exact_outcome(_b21_graphs(nx.bipartite.weighted_projected_graph), B, side, ratio=True)
+    exact_outcome(_b21_graphs(nx.bipartite.projected_graph), B, top, multigraph=True)
+    exact_outcome(_b21_graphs(nx.bipartite.weighted_projected_graph), B, list(B))
+    # An iterator: NetworkX's second pass over it finds nothing.
+    exact_outcome(_b21_graphs(lambda B, **kw: nx.bipartite.projected_graph(B, iter(top), **kw)), B)
+    # Not bipartite, with self-loops: second neighbours include the node.
+    G = graph_for(seed, directed)
+    nodes = list(G)
+    side = rng.sample(nodes, len(nodes) // 2)
+    exact_outcome(_b21_graphs(nx.bipartite.projected_graph), G, side)
+    exact_outcome(_b21_graphs(nx.bipartite.weighted_projected_graph), G, side)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch21_intersections(seed, directed):
+    G, H = _b21_pair(seed, directed, True)
+    K = graph_for(seed + 3, directed)
+    K.add_edges_from(list(G.edges)[::2])
+    exact_outcome(_b21_graphs(nx.intersection), G, H)
+    exact_outcome(_b21_graphs(nx.intersection), H, G)
+    exact_outcome(_b21_graphs(nx.intersection), G, G)
+    exact_outcome(_b21_graphs(nx.intersection_all), [G, H, K])
+    exact_outcome(_b21_graphs(nx.intersection_all), [K, G])
+    exact_outcome(_b21_graphs(nx.intersection_all), [G])
+    exact_outcome(_b21_graphs(nx.intersection_all), [])
+    other = H.to_undirected() if directed else H.to_directed()
+    exact_outcome(_b21_graphs(nx.intersection), G, other)
+    # Larger graphs: big sets, many collisions and resizes.
+    A = nx.gnm_random_graph(300, 900, seed=seed, directed=directed)
+    B = nx.gnm_random_graph(200, 700, seed=seed + 1, directed=directed)
+    exact_outcome(_b21_graphs(nx.intersection), A, B)
+    exact_outcome(_b21_graphs(nx.intersection), nx.relabel_nodes(A, str), nx.relabel_nodes(B, str))
+
+
+def test_batch21_runs_in_rust():
+    G = _b21_decorate(nx.gnp_random_graph(30, 0.2, seed=1), 1)
+    H = nx.relabel_nodes(G, lambda v: v + 100)
+    D = _b21_decorate(nx.gnp_random_graph(30, 0.2, seed=1, directed=True), 2)
+    S = nx.path_graph(4)
+    T = nx.random_labeled_tree(30, seed=1) if hasattr(nx, "random_labeled_tree") else nx.random_tree(30, seed=1)
+    B, top = _b21_bipartite(3, False)
+    calls = [
+        lambda: nx.union(G, H, backend="rustnx"),
+        lambda: nx.union(G, G, rename=("a", "b"), backend="rustnx"),
+        lambda: nx.union_all([G, H], backend="rustnx"),
+        lambda: nx.compose(G, H, backend="rustnx"),
+        lambda: nx.compose_all([G, G], backend="rustnx"),
+        lambda: nx.disjoint_union(G, H, backend="rustnx"),
+        lambda: nx.disjoint_union_all([G, D.to_undirected()], backend="rustnx"),
+        lambda: nx.full_join(G, H, backend="rustnx"),
+        lambda: nx.intersection(G, H, backend="rustnx"),
+        lambda: nx.intersection_all([G, G], backend="rustnx"),
+        lambda: nx.reverse(D, backend="rustnx"),
+        lambda: nx.moral_graph(D, backend="rustnx"),
+        lambda: nx.line_graph(G, backend="rustnx"),
+        lambda: nx.line_graph(D, backend="rustnx"),
+        lambda: nx.ego_graph(G, 0, radius=2, backend="rustnx"),
+        lambda: nx.cartesian_product(G, S, backend="rustnx"),
+        lambda: nx.tensor_product(G, S, backend="rustnx"),
+        lambda: nx.strong_product(G, S, backend="rustnx"),
+        lambda: nx.lexicographic_product(G, S, backend="rustnx"),
+        lambda: nx.rooted_product(G, S, 0, backend="rustnx"),
+        lambda: nx.corona_product(G, S, backend="rustnx"),
+        lambda: nx.constraint(G, [0, 1, 2], backend="rustnx"),
+        lambda: nx.effective_size(D, [0, 1, 2], backend="rustnx"),
+        lambda: nx.local_constraint(G, 0, 1, backend="rustnx"),
+        lambda: nx.tree_broadcast_center(T, backend="rustnx"),
+        lambda: nx.tree_broadcast_time(T, backend="rustnx"),
+        lambda: nx.bipartite.density(B, top, backend="rustnx"),
+        lambda: nx.bipartite.degree_centrality(B, top, backend="rustnx"),
+        lambda: nx.bipartite.projected_graph(B, top, backend="rustnx"),
+        lambda: nx.bipartite.weighted_projected_graph(B, top, backend="rustnx"),
+    ]
+    for call in calls:
+        call()
+
+
+def test_batch21_dispatch_through_priority(restore_config, monkeypatch):
+    # NetworkX 3.5+ dispatch functions returning graphs by
+    # `backend_priority.generators`; 3.4 by `backend_priority.algos`.
+    from rustnx import interface
+
+    calls = []
+    original = interface.union
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(interface, "union", counting)
+    old_generators = getattr(nx.config.backend_priority, "generators", None)
+    try:
+        nx.config.backend_priority.algos = ["rustnx"]
+        if old_generators is not None:
+            nx.config.backend_priority.generators = ["rustnx"]
+        G = nx.gnm_random_graph(600, 2000, seed=1)
+        H = nx.relabel_nodes(G, lambda v: v + 1000)
+        assert _b21_graph_state(nx.union(G, H)) == _b21_graph_state(nx.union(G, H, backend="networkx"))
+        assert calls, "rustnx was not used"
+    finally:
+        if old_generators is not None:
+            nx.config.backend_priority.generators = old_generators
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(6))
+def test_batch21_fall_backs(seed, directed, restore_config):
+    # Multigraphs, subclasses and graph views run in NetworkX.
+    M = random_multigraph(seed, directed, "int")
+    G = graph_for(seed, directed)
+
+    class MyGraph(G.__class__):
+        pass
+
+    sub = MyGraph(G)
+    view = G.subgraph(list(G)[: len(G) // 2])
+    for A in [M, sub, view]:
+        exact_outcome(_b21_graphs(nx.union), A, nx.relabel_nodes(A, lambda v: ("r", v)))
+        exact_outcome(_b21_graphs(nx.compose), A, A)
+        exact_outcome(_b21_graphs(nx.disjoint_union), A, A)
+        exact_outcome(_b21_graphs(nx.intersection), A, A)
+        exact_outcome(_b21_graphs(nx.line_graph), A)
+        exact_outcome(_b21_graphs(nx.cartesian_product), A, nx.path_graph(2, create_using=A.__class__))
+        exact_outcome(_b21_graphs(nx.ego_graph), A, next(iter(A), 0))
+        exact_outcome(_b21_nan_marked(nx.constraint), A, list(A)[:3])
+        if directed:
+            exact_outcome(_b21_graphs(nx.reverse), A)
+            exact_outcome(_b21_graphs(nx.moral_graph), A)
+    # A graph changed behind NetworkX's back after its conversion was cached.
+    H = _b21_decorate(graph_for(seed, directed), seed)
+    nx.union(H, nx.relabel_nodes(H, lambda v: ("s", v)), backend="rustnx")
+    u = next(iter(H), None)
+    if u is not None:
+        H._node[u]["late"] = 1  # attribute dicts aren't part of the snapshot
+        H._adj[u][("new", u)] = {}  # nor is a row changed directly
+        exact_outcome(_b21_graphs(nx.union), H, nx.path_graph([("p", 0), ("p", 1)]))

@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 487 NetworkX functions. Call them as usual (for
+rustnx implements 515 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -743,6 +743,39 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.readwrite.json_graph.tree_graph` | `data`, `ident`, `children` | no | rustnx | Replays NetworkX's `add_node` / `add_edge` calls on the same objects. Nodes and keys must be `str`, `int`, `float`, `bool`, or tuples of those; plain `dict` and `list` input only; anything else falls back. Trees deeper than 200 levels fall back (NetworkX recurses per level). |
 | `nx.parse_gml` | `lines`, `label`, `destringizer` | no | rustnx | Lines as a list or tuple of `str`, or an iterator (read once; if rustnx declines, NetworkX's code runs on the same lines). A `str` is split at line boundaries as in NetworkX. `destringizer=None` only. Node ids, labels and keys must be ints, floats, strings or `()`; edges must name a node by its id's own type. Named character references other than `&amp;`, `&lt;`, `&gt;` and `&quot;`, and ints beyond 64 bits, fall back. |
 | `nx.read_gml` | `path`, `label`, `destringizer` | no | rustnx | Reads a binary file or path (`.gz` and `.bz2` too) decoded as ASCII; other encodings, text-mode files and anything rustnx declines are read by NetworkX from the same position. `destringizer=None` only. Node ids, labels and keys must be ints, floats, strings or `()`; edges must name a node by its id's own type. Named character references other than `&amp;`, `&lt;`, `&gt;` and `&quot;`, and ints beyond 64 bits, fall back. |
+
+### Operators, products and structure
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.union` | `H`, `rename` | no | NetworkX | Builds the result's dicts in Rust with the exact sequence of NetworkX's `add_nodes_from` / `add_edges_from` calls: same node and adjacency order, attribute dicts copied (or shared) as NetworkX does. Plain `Graph` and `DiGraph` inputs and results; subclasses, graph views and multigraphs fall back. `rename` prefixes that make two nodes' labels collide fall back. |
+| `nx.union_all` | `graphs`, `rename` | no | rustnx | Builds the result's dicts in Rust with the exact sequence of NetworkX's `add_nodes_from` / `add_edges_from` calls: same node and adjacency order, attribute dicts copied (or shared) as NetworkX does. Plain `Graph` and `DiGraph` inputs and results; subclasses, graph views and multigraphs fall back. `rename` prefixes that make two nodes' labels collide fall back. |
+| `nx.compose` | `H` | no | NetworkX | Builds the result's dicts in Rust with the exact sequence of NetworkX's `add_nodes_from` / `add_edges_from` calls: same node and adjacency order, attribute dicts copied (or shared) as NetworkX does. Plain `Graph` and `DiGraph` inputs and results; subclasses, graph views and multigraphs fall back. |
+| `nx.compose_all` | `graphs` | no | rustnx | Builds the result's dicts in Rust with the exact sequence of NetworkX's `add_nodes_from` / `add_edges_from` calls: same node and adjacency order, attribute dicts copied (or shared) as NetworkX does. Plain `Graph` and `DiGraph` inputs and results; subclasses, graph views and multigraphs fall back. |
+| `nx.disjoint_union` | `H` | no | NetworkX | Builds the result's dicts in Rust with the exact sequence of NetworkX's `add_nodes_from` / `add_edges_from` calls: same node and adjacency order, attribute dicts copied (or shared) as NetworkX does. Plain `Graph` and `DiGraph` inputs and results; subclasses, graph views and multigraphs fall back. Replays the reordering of NetworkX's relabelled copies. |
+| `nx.disjoint_union_all` | `graphs` | no | rustnx | Builds the result's dicts in Rust with the exact sequence of NetworkX's `add_nodes_from` / `add_edges_from` calls: same node and adjacency order, attribute dicts copied (or shared) as NetworkX does. Plain `Graph` and `DiGraph` inputs and results; subclasses, graph views and multigraphs fall back. Replays the reordering of NetworkX's relabelled copies. |
+| `nx.full_join` | `H`, `rename` | no | NetworkX | Builds the result's dicts in Rust with the exact sequence of NetworkX's `add_nodes_from` / `add_edges_from` calls: same node and adjacency order, attribute dicts copied (or shared) as NetworkX does. Plain `Graph` and `DiGraph` inputs and results; subclasses, graph views and multigraphs fall back. |
+| `nx.intersection` | `H` | no | NetworkX | Replays NetworkX's node and edge sets (CPython's set table and tuple hash, checked once against the running Python), so nodes and edges come in the same order. Plain `Graph` and `DiGraph` inputs and results; subclasses, graph views and multigraphs fall back. |
+| `nx.intersection_all` | `graphs` | no | rustnx | As `intersection`. Plain `Graph` and `DiGraph` inputs and results; subclasses, graph views and multigraphs fall back. |
+| `nx.reverse` | `copy` | no | NetworkX | Builds the result's dicts in Rust with the exact sequence of NetworkX's `add_nodes_from` / `add_edges_from` calls: same node and adjacency order, attribute dicts copied (or shared) as NetworkX does. Attributes are deep-copied, as in NetworkX. `copy=False` (a view) falls back. |
+| `nx.moral_graph` | none | no | NetworkX | Builds the result's dicts in Rust with the exact sequence of NetworkX's `add_nodes_from` / `add_edges_from` calls: same node and adjacency order, attribute dicts copied (or shared) as NetworkX does. Attributes are deep-copied (`G.to_undirected()`). |
+| `nx.line_graph` | `create_using` | no | NetworkX | Undirected line graphs replay NetworkX's set of node pairs (CPython's set table and tuple hash). `create_using` falls back. |
+| `nx.ego_graph` | `n`, `radius`, `center`, `undirected`, `distance` | no | NetworkX | Replays the subgraph view's node order (`set(sp)` when the subgraph is under half the graph). `undirected=True` falls back. |
+| `nx.cartesian_product` | `H` | no | rustnx | Builds the result's dicts in Rust with the exact sequence of NetworkX's `add_nodes_from` / `add_edges_from` calls: same node and adjacency order, attribute dicts copied (or shared) as NetworkX does. Attribute tuples are built with NetworkX's set order of keys. |
+| `nx.tensor_product` | `H` | no | rustnx | Builds the result's dicts in Rust with the exact sequence of NetworkX's `add_nodes_from` / `add_edges_from` calls: same node and adjacency order, attribute dicts copied (or shared) as NetworkX does. Attribute tuples are built with NetworkX's set order of keys. |
+| `nx.strong_product` | `H` | no | rustnx | Builds the result's dicts in Rust with the exact sequence of NetworkX's `add_nodes_from` / `add_edges_from` calls: same node and adjacency order, attribute dicts copied (or shared) as NetworkX does. Attribute tuples are built with NetworkX's set order of keys. |
+| `nx.lexicographic_product` | `H` | no | rustnx | Builds the result's dicts in Rust with the exact sequence of NetworkX's `add_nodes_from` / `add_edges_from` calls: same node and adjacency order, attribute dicts copied (or shared) as NetworkX does. Attribute tuples are built with NetworkX's set order of keys. |
+| `nx.rooted_product` | `H`, `root` | no | rustnx | Builds the result's dicts in Rust with the exact sequence of NetworkX's `add_nodes_from` / `add_edges_from` calls: same node and adjacency order, attribute dicts copied (or shared) as NetworkX does. A `root` equal to, but not the same object as, H's node falls back. |
+| `nx.corona_product` | `H` | no | rustnx | Builds the result's dicts in Rust with the exact sequence of NetworkX's `add_nodes_from` / `add_edges_from` calls: same node and adjacency order, attribute dicts copied (or shared) as NetworkX does. |
+| `nx.constraint` | `nodes`, `weight` | no | rustnx | Explicit `nodes`; in 3.5+ `nodes=None` uses SciPy and falls back. Sums follow `set(nx.all_neighbors(G, v))` order, which rustnx replays, and Python's `sum()`; weights must be ints or floats. |
+| `nx.effective_size` | `nodes`, `weight` | no | rustnx | Explicit `nodes`; in 3.5+ `nodes=None` uses SciPy and falls back. Sums follow `set(nx.all_neighbors(G, v))` order, which rustnx replays, and Python's `sum()`; weights must be ints or floats. Undirected unweighted graphs count edges of each ego graph, as NetworkX does. |
+| `nx.local_constraint` | `u`, `v`, `weight` | no | rustnx | As `constraint`. Nodes not in the graph fall back. |
+| `nx.tree_broadcast_center` | none | no | rustnx | Replays NetworkX's set of leaves (ties go by set order). Non-trees fall back in 3.4 (it doesn't raise there). |
+| `nx.tree_broadcast_time` | `node` | no | rustnx | Missing nodes fall back in 3.4. |
+| `nx.bipartite.density` | `B`, `nodes` | no | NetworkX | As `nx.bipartite.density`. |
+| `nx.bipartite.degree_centrality` | `nodes` | no | NetworkX | As `nx.bipartite.degree_centrality`; dict order follows NetworkX's sets. |
+| `nx.bipartite.projected_graph` | `B`, `nodes`, `multigraph` | no | rustnx | As `nx.bipartite.projected_graph`; replays the set of second neighbors. `multigraph=True`, and `nodes` that is not a container, fall back. |
+| `nx.bipartite.weighted_projected_graph` | `B`, `nodes`, `ratio` | no | rustnx | As `nx.bipartite.weighted_projected_graph`; replays the set of second neighbors. |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 

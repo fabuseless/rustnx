@@ -51,6 +51,10 @@ impl PySet {
         self.used == 0
     }
 
+    pub fn len(&self) -> usize {
+        self.used
+    }
+
     /// The slot holding `key`, if present.
     fn find(&self, key: u32, hashes: &[i64]) -> Option<usize> {
         let h = hashes[key as usize];
