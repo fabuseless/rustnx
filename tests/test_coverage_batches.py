@@ -5667,3 +5667,383 @@ def test_batch17_runs_in_rust():
         func = _b17_func(name)
         if func is not None:
             func(*args, backend="rustnx")
+
+
+# --- Batch 18: random generators ---------------------------------------------------
+
+
+def _b18_func(name):
+    """The installed NetworkX's dispatchable ``name``; skips if it has none."""
+    registry = nx.utils.backends._registered_algorithms
+    if name not in registry:
+        pytest.skip(f"this NetworkX has no {name}")
+    return registry[name]
+
+
+@pytest.fixture
+def _b18_priority():
+    """Generators dispatch to rustnx (falling back to NetworkX) only when
+    rustnx is listed in ``backend_priority.generators``."""
+    old = list(nx.config.backend_priority.generators)
+    nx.config.backend_priority.generators = ["rustnx"]
+    yield
+    nx.config.backend_priority.generators = old
+
+
+def _b18_same_graph(G, H):
+    """Assert ``G`` and ``H`` are equal in everything NetworkX exposes: class,
+    graph dict (partition sets in iteration order), node order and data
+    (value types too), every adjacency row's order, edge data, multigraph
+    keys, and edge dicts shared between the two rows holding an edge."""
+
+    def graph_dict(X):
+        return [
+            (k, [("set", list(s)) for s in v] if k == "partition" else v)
+            for k, v in X.graph.items()
+        ]
+
+    def typed(value):
+        if isinstance(value, (list, tuple)):
+            return (type(value), [typed(x) for x in value])
+        return (type(value), value)
+
+    assert type(G) is type(H)
+    assert graph_dict(G) == graph_dict(H)
+    assert list(G._node) == list(H._node)
+    for v in G._node:
+        assert [(k, typed(x)) for k, x in G._node[v].items()] == [
+            (k, typed(x)) for k, x in H._node[v].items()
+        ]
+    rows = [(G._adj, H._adj)] + ([(G._pred, H._pred)] if G.is_directed() else [])
+    for A, B in rows:
+        assert list(A) == list(B)
+        for u in A:
+            assert list(A[u].items()) == list(B[u].items()), u
+            if G.is_multigraph():
+                for v in A[u]:
+                    assert list(A[u][v].items()) == list(B[u][v].items())
+    for u, row in G._adj.items():
+        for v, data in row.items():
+            other = G._pred[v][u] if G.is_directed() else G._adj[v][u]
+            assert other is data
+
+
+def _b18_outcome(func, args, kwargs, seed, backend=None):
+    """``func(*args, seed=..., **kwargs)`` with a fresh ``random.Random``:
+    ``("ok", graph, state)`` or the exception's type and message, plus the
+    generator's state afterwards."""
+    rng = random.Random(seed)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            G = func(*args, seed=rng, backend=backend, **kwargs)
+        return ("ok", G, rng.getstate())
+    except NotImplementedError:
+        raise
+    except Exception as exc:
+        return (type(exc), str(exc), rng.getstate())
+
+
+def _b18_check(name, args, kwargs=None, seeds=range(3)):
+    func = _b18_func(name)
+    kwargs = kwargs or {}
+    for seed in seeds:
+        ours = _b18_outcome(func, args, kwargs, seed)
+        ref = _b18_outcome(func, args, kwargs, seed, backend="networkx")
+        if ours[0] == "ok" and ref[0] == "ok":
+            _b18_same_graph(ours[1], ref[1])
+            assert ours[2] == ref[2]
+        else:
+            assert ours == ref
+
+
+_B18_SIZES = [0, 1, 2, 5, 13, 40]
+
+
+@pytest.mark.parametrize("n", _B18_SIZES)
+def test_batch18_gnp_and_gnm(n, _b18_priority):
+    for directed in [False, True]:
+        kw = {"directed": directed}
+        for p in [0, 0.05, 0.3, 0.9, 1, 1e-17, float("nan"), -1]:
+            _b18_check("gnp_random_graph", (n, p), kw)
+            _b18_check("fast_gnp_random_graph", (n, p), kw)
+        for m in [-1, 0, 1, 3, 10, 40, 2000]:
+            _b18_check("gnm_random_graph", (n, m), kw)
+    for m in [-1, 0, 1, 3, 10, 40, 2000]:
+        _b18_check("dense_gnm_random_graph", (n, m))
+
+
+@pytest.mark.parametrize("n", _B18_SIZES)
+def test_batch18_preferential_attachment(n, _b18_priority):
+    for m in [0, 1, 2, 3, 5]:
+        _b18_check("barabasi_albert_graph", (n, m))
+        for p in [0.5, 1, 0, -0.1, 1.5]:
+            _b18_check("powerlaw_cluster_graph", (n, m, p))
+        for p, q in [(0.2, 0.3), (0.5, 0.4), (0.0, 0.0), (0.6, 0.1), (0.6, 0.6)]:
+            _b18_check("extended_barabasi_albert_graph", (n, m, p, q))
+        for m2 in [0, 1, 2, 4]:
+            for p in [0, 0.3, 1, float("nan"), 2]:
+                _b18_check("dual_barabasi_albert_graph", (n, m, m2, p))
+
+
+@pytest.mark.parametrize("n", _B18_SIZES)
+def test_batch18_small_world(n, _b18_priority):
+    for k in [-1, 0, 2, 3, 4, 6, n, n + 1]:
+        for p in [0, 0.2, 0.7, 1]:
+            _b18_check("watts_strogatz_graph", (n, k, p))
+            _b18_check("newman_watts_strogatz_graph", (n, k, p))
+            _b18_check("connected_watts_strogatz_graph", (n, k, p), {"tries": 5})
+    _b18_check("connected_watts_strogatz_graph", (n, 2, 0.5), {"tries": 0})
+    _b18_check("connected_watts_strogatz_graph", (n, 2, 0.9), {"tries": 1})
+
+
+@pytest.mark.parametrize("n", _B18_SIZES)
+def test_batch18_regular_and_growing(n, _b18_priority):
+    for d in [0, 1, 2, 3, 4, 7, -1]:
+        _b18_check("random_regular_graph", (d, n))
+    for cls in [None, nx.MultiDiGraph, nx.Graph]:
+        kw = {"create_using": cls}
+        _b18_check("gn_graph", (n,), kw)
+        _b18_check("gnc_graph", (n,), kw)
+        for p in [0, 0.5, 1]:
+            _b18_check("gnr_graph", (n, p), kw)
+    for k in [-1, 0, 1, 3, 6]:
+        for self_loops in [True, False]:
+            for with_replacement in [True, False]:
+                kw = {"self_loops": self_loops, "with_replacement": with_replacement}
+                _b18_check("random_uniform_k_out_graph", (n, k), kw)
+    _b18_check("random_tournament", (n,))
+    for p1, p2 in [(0.5, 0.5), (0.9, 0.2), (-0.4, 0.0), (1, 0.1), (0.3, -1)]:
+        _b18_check("random_lobster_graph" if hasattr(nx, "random_lobster_graph") else "random_lobster", (n, p1, p2))
+
+
+@pytest.mark.parametrize("version", ["random_lobster", "random_lobster_graph"])
+def test_batch18_lobster_names(version, _b18_priority):
+    _b18_check(version, (20, 0.6, 0.4), seeds=range(5))
+
+
+def test_batch18_block_models(_b18_priority):
+    for sizes in [[], [3], [5, 7], [10, 0, 25, 4], [40, 33]]:
+        for p_in, p_out in [(0.5, 0.1), (1, 0), (0.0, 0.3), (0.9, 1.0), (1.5, 0.1), (0.5, -1)]:
+            for directed in [False, True]:
+                _b18_check("random_partition_graph", (sizes, p_in, p_out), {"directed": directed})
+                P = [[p_in if i == j else p_out for j in range(len(sizes))] for i in range(len(sizes))]
+                for selfloops in [False, True]:
+                    for sparse in [False, True]:
+                        kw = {"directed": directed, "selfloops": selfloops, "sparse": sparse}
+                        _b18_check("stochastic_block_model", (sizes, P), kw)
+    for l, k in [(0, 3), (3, 4), (5, 10), (-1, 3)]:
+        _b18_check("planted_partition_graph", (l, k, 0.5, 0.1))
+        _b18_check("planted_partition_graph", (l, k, 0.5, 0.1), {"directed": True})
+    # NetworkX's checks.
+    _b18_check("stochastic_block_model", ([2, 3], [[0.5, 0.1]]))
+    _b18_check("stochastic_block_model", ([2, 3], [[0.5, 0.1], [0.2]]))
+    _b18_check("stochastic_block_model", ([2, 3], [[0.5, 0.1], [0.2, 0.5]]))
+    _b18_check("stochastic_block_model", ([2, 3], [[0.5, 0.1], [0.2, 0.5]]), {"directed": True})
+    _b18_check("stochastic_block_model", ([2, 3], [[0.5, 0.1], [0.1, 1.5]]))
+    _b18_check("stochastic_block_model", ([2, 3], [[0.5, 0.1], [0.1, 0.5]]), {"nodelist": list("abcde")})
+    # Partition sets of ints wrap around their table, so iterate unsorted.
+    _b18_check("stochastic_block_model", ([28, 10], [[0.3, 0.2], [0.2, 0.6]]))
+
+
+@pytest.mark.parametrize("n", _B18_SIZES)
+def test_batch18_geometric(n, _b18_priority):
+    for radius in [0.1, 0.3, 1.5, 0, -1]:
+        for dim in [1, 2, 3]:
+            for p in [1, 2, 3.5]:
+                _b18_check("random_geometric_graph", (n, radius), {"dim": dim, "p": p})
+    _b18_check("random_geometric_graph", (n, 0.3), {"pos_name": "xy"})
+    for L in [None, 0.5, 3]:
+        _b18_check("waxman_graph", (n,), {"L": L})
+        _b18_check("waxman_graph", (n, 0.9, 0.3), {"L": L, "domain": (-2, 1, 3.5, 7)})
+        _b18_check("waxman_graph", (n,), {"L": L, "pos_name": "xy", "domain": [0, 0, 2, 1]})
+
+
+@pytest.mark.parametrize("n", [0, 1, 2, 5, 13])
+def test_batch18_bipartite(n, _b18_priority):
+    for m in [0, 1, 3, 8]:
+        for directed in [False, True]:
+            kw = {"directed": directed}
+            for p in [0, 0.2, 0.8, 1, float("nan")]:
+                _b18_check("random_graph", (n, m, p), kw)
+            for k in [-1, 0, 3, 10, 24, 500]:
+                _b18_check("gnmk_random_graph", (n, m, k), kw)
+    _b18_check("random_graph", (30, 10, 0.3))
+    # The bottom nodes' set iterates in table order (here not sorted).
+    _b18_check("gnmk_random_graph", (28, 10, 50))
+
+
+def test_batch18_larger_graphs(_b18_priority):
+    seeds = range(2)
+    _b18_check("gnp_random_graph", (300, 0.05), seeds=seeds)
+    _b18_check("fast_gnp_random_graph", (3000, 0.002), {"directed": True}, seeds=seeds)
+    _b18_check("gnm_random_graph", (2000, 6000), seeds=seeds)
+    _b18_check("dense_gnm_random_graph", (300, 4000), seeds=seeds)
+    _b18_check("barabasi_albert_graph", (2000, 3), seeds=seeds)
+    _b18_check("dual_barabasi_albert_graph", (2000, 1, 4, 0.3), seeds=seeds)
+    _b18_check("extended_barabasi_albert_graph", (1000, 3, 0.3, 0.3), seeds=seeds)
+    _b18_check("watts_strogatz_graph", (2000, 6, 0.3), seeds=seeds)
+    _b18_check("newman_watts_strogatz_graph", (2000, 6, 0.3), seeds=seeds)
+    _b18_check("connected_watts_strogatz_graph", (2000, 4, 0.5), seeds=seeds)
+    _b18_check("powerlaw_cluster_graph", (2000, 3, 0.4), seeds=seeds)
+    _b18_check("random_regular_graph", (3, 2000), seeds=seeds)
+    _b18_check("random_regular_graph", (9, 30), seeds=range(10))
+    _b18_check("gn_graph", (1000,), seeds=seeds)
+    _b18_check("gnr_graph", (2000, 0.4), seeds=seeds)
+    _b18_check("gnc_graph", (500,), seeds=seeds)
+    _b18_check("random_uniform_k_out_graph", (300, 3), seeds=seeds)
+    _b18_check("random_uniform_k_out_graph", (2000, 3), {"with_replacement": False}, seeds=seeds)
+    _b18_check("random_tournament", (100,), seeds=seeds)
+    _b18_check("stochastic_block_model", ([300, 200], [[0.05, 0.01], [0.01, 0.08]]), seeds=seeds)
+    _b18_check("random_partition_graph", ([100] * 4, 0.1, 0.01), {"directed": True}, seeds=seeds)
+    _b18_check("random_geometric_graph", (2000, 0.05), seeds=seeds)
+    _b18_check("random_geometric_graph", (1000, 0.15), {"dim": 3, "p": 1}, seeds=seeds)
+    _b18_check("waxman_graph", (200,), seeds=seeds)
+    _b18_check("waxman_graph", (200,), {"L": 2.0}, seeds=seeds)
+    _b18_check("random_graph", (500, 400, 0.01), seeds=seeds)
+    _b18_check("gnmk_random_graph", (500, 400, 3000), {"directed": True}, seeds=seeds)
+
+
+def test_batch18_create_using(_b18_priority):
+    for cls in [nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph]:
+        for directed in [False, True]:
+            kw = {"directed": directed, "create_using": cls}
+            _b18_check("gnp_random_graph", (10, 0.3), kw)
+            _b18_check("gnm_random_graph", (10, 12), kw)
+        _b18_check("barabasi_albert_graph", (10, 2), {"create_using": cls})
+        _b18_check("watts_strogatz_graph", (10, 4, 0.3), {"create_using": cls})
+        _b18_check("gnr_graph", (10, 0.3), {"create_using": cls})
+    # Instances, subclasses and other generators fall back to NetworkX.
+    class Sub(nx.Graph):
+        pass
+
+    _b18_check("gnp_random_graph", (10, 0.3), {"create_using": Sub})
+    for seed in range(3):
+        ours = nx.gnp_random_graph(10, 0.3, seed=seed, create_using=nx.Graph())
+        ref = nx.gnp_random_graph(10, 0.3, seed=seed, create_using=nx.Graph(), backend="networkx")
+        _b18_same_graph(ours, ref)
+
+
+def test_batch18_seeds(_b18_priority):
+    import numpy as np
+
+    # seed=None draws from the global generator, and leaves it where
+    # NetworkX would.
+    results = []
+    for backend in [None, "networkx"]:
+        random.seed(7)
+        G = nx.barabasi_albert_graph(50, 2, backend=backend)
+        results.append((G, random.random()))
+    _b18_same_graph(results[0][0], results[1][0])
+    assert results[0][1] == results[1][1]
+    # Int seeds; NumPy generators and random.Random subclasses fall back.
+    class Sub(random.Random):
+        pass
+
+    for seed in [3, np.random.RandomState(3), np.random.default_rng(3), Sub(3)]:
+        for backend in [None, "networkx"]:
+            s = seed if isinstance(seed, int) else __import__("copy").deepcopy(seed)
+            results.append(nx.gnp_random_graph(30, 0.2, seed=s, backend=backend))
+        _b18_same_graph(results[-2], results[-1])
+    # An explicit backend="rustnx" raises for what rustnx can't replay.
+    with pytest.raises(NotImplementedError):
+        nx.gnp_random_graph(30, 0.2, seed=np.random.RandomState(3), backend="rustnx")
+
+
+def test_batch18_replays_python_random():
+    """``pyrandom.rs`` against ``random.Random`` itself, for many seeds and
+    argument ranges, including ints past 32 bits."""
+    from rustnx._core import CoreGraph
+
+    big = [2**31, 2**32 - 1, 2**32, 2**32 + 1, 2**40 + 7, 2**53, 2**62 + 3, 2**63 - 1]
+    for seed in range(60):
+        rng = random.Random(seed)
+        ops = []
+        for _ in range(300):
+            kind = rng.randrange(9)
+            if kind == 1:
+                ops.append((1, rng.randint(0, 64), 0))
+            elif kind in (2, 5):
+                ops.append((kind, rng.choice([1, 2, 3, 7, 1000, *big, rng.randint(1, 2**63 - 1)]), 0))
+            elif kind in (3, 4):
+                a = rng.randint(-(2**40), 2**40)
+                ops.append((kind, a, a + rng.choice([-1, 0, 1, 2, 17, 2**33, *big[:5]])))
+            elif kind == 6:
+                ops.append((6, rng.randint(-50, 50), rng.randint(-50, 50)))
+            elif kind == 7:
+                pop = rng.choice([0, 1, 5, 6, 20, 21, 22, 85, 86, 400, 5000])
+                ops.append((7, pop, rng.randint(0, pop) if rng.random() < 0.9 else pop + 1))
+            elif kind == 8:
+                ops.append((8, rng.randint(0, 60), 0))
+            else:
+                ops.append((0, 0, 0))
+        mt = random.Random(seed * 7919 + 1)
+        version, internal, gauss = mt.getstate()
+        found, internal = CoreGraph.pyrandom_replay(list(internal), ops)
+        for (op, a, b), got in zip(ops, found):
+            if op == 0:
+                want = mt.random()
+            elif op == 1:
+                want = mt.getrandbits(a)
+            elif op == 2:
+                want = mt._randbelow(a)
+            elif op in (3, 4):
+                try:
+                    want = mt.randrange(a, b) if op == 3 else mt.randint(a, b)
+                except ValueError:
+                    want = None
+            elif op == 5:
+                want = mt.choice(range(a))
+            elif op == 6:
+                want = mt.uniform(a, b)
+            elif op == 7:
+                try:
+                    want = mt.sample(range(a), b)
+                except ValueError:
+                    want = None
+            else:
+                want = list(range(a))
+                mt.shuffle(want)
+            assert type(got) is type(want) and got == want, (seed, op, a, b)
+        assert mt.getstate() == (version, tuple(internal), gauss)
+
+
+def test_batch18_runs_in_rust(monkeypatch):
+    from rustnx import algorithms
+
+    runs = []
+    original = algorithms._rg_run
+    monkeypatch.setattr(algorithms, "_rg_run", lambda seed, run: runs.append(1) or original(seed, run))
+    lobster = "random_lobster_graph" if hasattr(nx, "random_lobster_graph") else "random_lobster"
+    calls = [
+        ("gnp_random_graph", (30, 0.2), {}),
+        ("fast_gnp_random_graph", (30, 0.2), {"directed": True}),
+        ("gnm_random_graph", (30, 50), {}),
+        ("dense_gnm_random_graph", (30, 50), {}),
+        ("barabasi_albert_graph", (30, 2), {}),
+        ("dual_barabasi_albert_graph", (30, 1, 3, 0.5), {}),
+        ("extended_barabasi_albert_graph", (30, 2, 0.2, 0.2), {}),
+        ("watts_strogatz_graph", (30, 4, 0.2), {}),
+        ("newman_watts_strogatz_graph", (30, 4, 0.2), {}),
+        ("connected_watts_strogatz_graph", (30, 4, 0.2), {}),
+        ("powerlaw_cluster_graph", (30, 2, 0.3), {}),
+        ("random_regular_graph", (3, 30), {}),
+        ("gn_graph", (30,), {}),
+        ("gnr_graph", (30, 0.3), {}),
+        ("gnc_graph", (30,), {}),
+        ("random_uniform_k_out_graph", (30, 3), {}),
+        (lobster, (30, 0.5, 0.5), {}),
+        ("random_tournament", (10,), {}),
+        ("stochastic_block_model", ([10, 20], [[0.3, 0.05], [0.05, 0.2]]), {}),
+        ("random_partition_graph", ([10, 20], 0.3, 0.05), {}),
+        ("planted_partition_graph", (3, 10, 0.3, 0.05), {}),
+        ("random_geometric_graph", (30, 0.2), {}),
+        ("waxman_graph", (30,), {}),
+        ("random_graph", (10, 20, 0.2), {}),
+        ("gnmk_random_graph", (10, 20, 30), {}),
+    ]
+    for name, args, kwargs in calls:
+        before = len(runs)
+        G = _b18_func(name)(*args, seed=random.Random(1), backend="rustnx", **kwargs)
+        assert isinstance(G, nx.Graph)
+        assert len(runs) == before + 1, name

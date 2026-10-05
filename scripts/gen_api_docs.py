@@ -222,9 +222,15 @@ SECTIONS = [
         "approximate_diameter", "one_exchange", "randomized_partitioning", "steiner_tree",
         "densest_subgraph",
     ]),
-    ("Graph operations", [
-        "complement", "power", "difference", "symmetric_difference", "is_kl_connected",
-        "kl_connected_subgraph",
+    ("Random graph generators", [
+        "gnp_random_graph", "fast_gnp_random_graph", "gnm_random_graph",
+        "dense_gnm_random_graph", "barabasi_albert_graph", "dual_barabasi_albert_graph",
+        "extended_barabasi_albert_graph", "watts_strogatz_graph", "newman_watts_strogatz_graph",
+        "connected_watts_strogatz_graph", "powerlaw_cluster_graph", "random_regular_graph",
+        "gn_graph", "gnr_graph", "gnc_graph", "random_uniform_k_out_graph",
+        "random_lobster_graph", "random_lobster", "random_tournament", "stochastic_block_model",
+        "random_partition_graph", "planted_partition_graph", "random_geometric_graph",
+        "waxman_graph", "random_graph", "gnmk_random_graph",
     ]),
     ("Matrices and conversion", [
         "to_scipy_sparse_array", "adjacency_matrix", "laplacian_matrix", "incidence_matrix",
@@ -244,6 +250,10 @@ SECTIONS = [
         "connected_caveman_graph", "ring_of_cliques", "windmill_graph", "sudoku_graph",
         "LCF_graph", "generalized_petersen_graph", "dorogovtsev_goltsev_mendes_graph",
         "mycielski_graph", "paley_graph", "kneser_graph",
+    ]),
+    ("Graph operations", [
+        "complement", "power", "difference", "symmetric_difference", "is_kl_connected",
+        "kl_connected_subgraph",
     ]),
 ]
 
@@ -576,6 +586,8 @@ ISOMORPHISM_ONLY = {
     "root_trees": "networkx.algorithms.isomorphism.tree_isomorphism",
     "color": "nx.bipartite",
     "sets": "nx.bipartite",
+    "random_graph": "nx.bipartite",
+    "gnmk_random_graph": "nx.bipartite",
     "is_bipartite_node_set": "nx.bipartite",
     "hopcroft_karp_matching": "nx.bipartite",
     "to_vertex_cover": "nx.bipartite",
@@ -732,6 +744,43 @@ NOTES.update({
     "triangular_lattice_graph": GENERATOR + " Periodic lattices fall back.",
     "paley_graph": GENERATOR + INTS + " The squares are iterated in CPython's set order (replayed in Rust).",
     "kneser_graph": GENERATOR + INTS + " Replays CPython's set difference order; large graphs (over 2**24 nodes) fall back.",
+})
+# Seeded random generators (batch 18): no graph argument, so NetworkX sends
+# them to rustnx only with `backend="rustnx"` or with rustnx listed in
+# `nx.config.backend_priority.generators`.
+RANDOM = (
+    "Replays NetworkX's draws on CPython's `random.Random` (any `seed` NetworkX "
+    "turns into one, including `None`: the global generator, left where NetworkX "
+    "would leave it); NumPy generators fall back. `create_using` takes `None` or a "
+    "NetworkX graph class; instances and subclasses fall back."
+)
+NOTES.update({
+    "gnp_random_graph": RANDOM,
+    "fast_gnp_random_graph": RANDOM,
+    "gnm_random_graph": RANDOM,
+    "dense_gnm_random_graph": RANDOM,
+    "barabasi_albert_graph": RANDOM + " `initial_graph` falls back.",
+    "dual_barabasi_albert_graph": RANDOM + " `initial_graph` falls back.",
+    "extended_barabasi_albert_graph": RANDOM,
+    "watts_strogatz_graph": RANDOM,
+    "newman_watts_strogatz_graph": RANDOM,
+    "connected_watts_strogatz_graph": RANDOM,
+    "powerlaw_cluster_graph": RANDOM + " Replays the order NetworkX pops its target set in.",
+    "random_regular_graph": RANDOM + " Edges in the iteration order of NetworkX's set of pairs.",
+    "gn_graph": RANDOM + " A `kernel` falls back. Follows the installed NetworkX's `cumulative_distribution` (3.6 changed its rounding).",
+    "gnr_graph": RANDOM,
+    "gnc_graph": RANDOM,
+    "random_uniform_k_out_graph": RANDOM,
+    "random_lobster_graph": RANDOM + " NetworkX 3.6+.",
+    "random_lobster": RANDOM + " NetworkX 3.4 and 3.5 (3.6's deprecated alias runs in NetworkX, which calls `random_lobster_graph`).",
+    "random_tournament": RANDOM,
+    "stochastic_block_model": RANDOM + " `nodelist` falls back. Follows the installed NetworkX's loop (3.7 stopped drawing twice for diagonal blocks).",
+    "random_partition_graph": RANDOM,
+    "planted_partition_graph": RANDOM,
+    "random_geometric_graph": RANDOM + " Given `pos` falls back. Pairs whose distance is within 1e-9 (relative) of the radius make the call fall back, since SciPy's KD-tree may round them either way.",
+    "waxman_graph": RANDOM + " A `metric` falls back. Without `L`, a draw within rounding error of its threshold makes the call fall back (`math.dist` and Rust's `hypot` may differ in the last bit).",
+    "random_graph": RANDOM + " As `nx.bipartite.random_graph`. `p >= 1` falls back.",
+    "gnmk_random_graph": RANDOM + " As `nx.bipartite.gnmk_random_graph`. `k >= n * m` falls back.",
 })
 
 
