@@ -222,9 +222,46 @@ SECTIONS = [
         "approximate_diameter", "one_exchange", "randomized_partitioning", "steiner_tree",
         "densest_subgraph",
     ]),
+    ("Random graph generators", [
+        "gnp_random_graph", "fast_gnp_random_graph", "gnm_random_graph",
+        "dense_gnm_random_graph", "barabasi_albert_graph", "dual_barabasi_albert_graph",
+        "extended_barabasi_albert_graph", "watts_strogatz_graph", "newman_watts_strogatz_graph",
+        "connected_watts_strogatz_graph", "powerlaw_cluster_graph", "random_regular_graph",
+        "gn_graph", "gnr_graph", "gnc_graph", "random_uniform_k_out_graph",
+        "random_lobster_graph", "random_lobster", "random_tournament", "stochastic_block_model",
+        "random_partition_graph", "planted_partition_graph", "random_geometric_graph",
+        "waxman_graph", "random_graph", "gnmk_random_graph",
+    ]),
+    ("Matrices and conversion", [
+        "to_scipy_sparse_array", "adjacency_matrix", "laplacian_matrix", "incidence_matrix",
+        "to_numpy_array", "biadjacency_matrix", "to_dict_of_lists", "number_of_selfloops",
+        "is_weighted", "is_negatively_weighted", "get_node_attributes",
+        "get_edge_attributes", "relabel_nodes", "convert_node_labels_to_integers",
+        "from_dict_of_lists", "from_dict_of_dicts", "from_edgelist", "from_numpy_array",
+        "from_scipy_sparse_array", "from_biadjacency_matrix",
+    ]),
+    ("Deterministic generators", [
+        "empty_graph", "complete_graph", "cycle_graph", "path_graph", "star_graph",
+        "wheel_graph", "ladder_graph", "circular_ladder_graph", "lollipop_graph",
+        "barbell_graph", "tadpole_graph", "full_rary_tree", "balanced_tree", "binomial_tree",
+        "complete_bipartite_graph", "complete_multipartite_graph", "turan_graph",
+        "grid_2d_graph", "grid_graph", "hypercube_graph", "hexagonal_lattice_graph",
+        "triangular_lattice_graph", "circulant_graph", "caveman_graph",
+        "connected_caveman_graph", "ring_of_cliques", "windmill_graph", "sudoku_graph",
+        "LCF_graph", "generalized_petersen_graph", "dorogovtsev_goltsev_mendes_graph",
+        "mycielski_graph", "paley_graph", "kneser_graph",
+    ]),
     ("Graph operations", [
         "complement", "power", "difference", "symmetric_difference", "is_kl_connected",
         "kl_connected_subgraph",
+    ]),
+    ("Reading and parsing", [
+        "parse_edgelist", "read_edgelist", "read_weighted_edgelist", "bipartite_parse_edgelist",
+        "bipartite_read_edgelist", "parse_adjlist", "read_adjlist", "parse_multiline_adjlist",
+        "read_multiline_adjlist", "parse_leda", "read_leda", "parse_pajek", "read_pajek",
+        "from_graph6_bytes", "read_graph6", "from_sparse6_bytes", "read_sparse6",
+        "node_link_graph", "adjacency_graph", "cytoscape_graph", "tree_graph", "parse_gml",
+        "read_gml",
     ]),
 ]
 
@@ -557,6 +594,8 @@ ISOMORPHISM_ONLY = {
     "root_trees": "networkx.algorithms.isomorphism.tree_isomorphism",
     "color": "nx.bipartite",
     "sets": "nx.bipartite",
+    "random_graph": "nx.bipartite",
+    "gnmk_random_graph": "nx.bipartite",
     "is_bipartite_node_set": "nx.bipartite",
     "hopcroft_karp_matching": "nx.bipartite",
     "to_vertex_cover": "nx.bipartite",
@@ -657,6 +696,191 @@ SUBMODULE.update({
         "one_edge_augmentation", "unconstrained_one_edge_augmentation", "bridge_augmentation",
         "unconstrained_bridge_augmentation",
     ]
+})
+
+
+# Batch 19: matrices and conversion.
+SPARSE = "Rust builds the COO coordinates in NetworkX's edge order; SciPy assembles the array exactly as for NetworkX (same dtype, format and index arrays)."
+NODELIST = " A `nodelist` that isn't a list, or names missing or repeated nodes, falls back."
+BUILDER = " Runs with `backend=\"rustnx\"` or when rustnx is listed in `nx.config.backend_priority.generators`. `create_using` other than `None`, `nx.Graph` or `nx.DiGraph` falls back."
+NOTES.update({
+    "to_scipy_sparse_array": SPARSE + NODELIST + " Weights other than plain ints and floats, `dtype`s that NumPy would convert differently from a list (narrower ints), and a `nodelist` under half the nodes with a format other than CSR or CSC (NetworkX's subgraph then iterates in set order) fall back.",
+    "adjacency_matrix": "As `to_scipy_sparse_array`.",
+    "laplacian_matrix": "The adjacency matrix as `to_scipy_sparse_array`, then NetworkX's own SciPy arithmetic for the installed version (3.6 changed how the degree matrix is built).",
+    "incidence_matrix": "Builds the CSR arrays of NetworkX's LIL matrix in Rust (zero weights stay unstored). `edgelist`, `dtype` other than float64, and endpoints missing from `nodelist` fall back.",
+    "to_numpy_array": "Entries from Rust, assigned with NumPy as NetworkX does." + NODELIST + " Structured dtypes, `None` weights, and result dtypes other than float64 (or int64 with int weights) fall back.",
+    "biadjacency_matrix": SPARSE + " A `row_order` that isn't a list or tuple falls back.",
+    "to_dict_of_lists": "Neighbor objects come from the graph's own adjacency dicts. A `nodelist` that isn't a list, tuple, set or dict, or names missing nodes, falls back.",
+    "number_of_selfloops": "Dispatchable from NetworkX 3.5 on.",
+    "is_weighted": "Reads the original graph's edge data in Rust. Dispatchable from NetworkX 3.5 on; native graphs fall back.",
+    "is_negatively_weighted": "`None` weights and `weight=None` fall back.",
+    "get_node_attributes": "Reads the original graph's node data in Rust. Dispatchable from NetworkX 3.5 on.",
+    "get_edge_attributes": "Reads the original graph's edge data in Rust (values of any type). Dispatchable from NetworkX 3.5 on; native graphs fall back.",
+    "relabel_nodes": "Fills the new graph's dicts from Rust, row by row in the order NetworkX's `add_edges_from` does. `copy=False` (it changes the input), labels that collide, `None` or unhashable labels, mappings that are neither dicts nor callables, multigraphs and graph subclasses fall back.",
+    "convert_node_labels_to_integers": "Through `relabel_nodes`.",
+    "from_dict_of_lists": "Fills the new graph's dicts from Rust as `add_edges_from` does." + BUILDER,
+    "from_dict_of_dicts": "As `from_dict_of_lists`; `multigraph_input` and non-dict data fall back." + BUILDER,
+    "from_edgelist": "As `from_dict_of_lists`; one-shot iterators and edges other than 2-tuples and 3-tuples with a dict fall back." + BUILDER,
+    "from_numpy_array": "Edge positions and values from NumPy, the graph filled from Rust. Long double, string and structured dtypes fall back." + BUILDER,
+    "from_scipy_sparse_array": "Edges in NetworkX's order for each format; DOK arrays fall back." + BUILDER,
+    "from_biadjacency_matrix": "As `from_scipy_sparse_array`; `row_order` and `column_order` (NetworkX 3.7) fall back." + BUILDER,
+})
+SUBMODULE.update({"biadjacency_matrix": "nx.bipartite", "from_biadjacency_matrix": "nx.bipartite"})
+# Batch 17: deterministic generators.
+GENERATOR = "Generators take no graph: they run in rustnx with `backend=\"rustnx\"` or `nx.config.backend_priority.generators`. Returns a plain NetworkX graph built in Rust, identical to NetworkX's (node and row order, attributes, keys). `create_using` may be a NetworkX graph class or instance (instances that NetworkX would fill and then reject fall back)."
+NODES = " An int, or a list, tuple, range or str of distinct nodes; other iterables fall back."
+INTS = " Int arguments only; others fall back."
+NOTES.update({
+    name: GENERATOR + INTS
+    for name in [
+        "ladder_graph", "lollipop_graph", "barbell_graph", "tadpole_graph", "full_rary_tree",
+        "balanced_tree", "binomial_tree", "complete_bipartite_graph", "complete_multipartite_graph",
+        "turan_graph", "caveman_graph", "connected_caveman_graph", "ring_of_cliques",
+        "windmill_graph", "sudoku_graph", "LCF_graph", "generalized_petersen_graph",
+        "dorogovtsev_goltsev_mendes_graph", "mycielski_graph", "hypercube_graph",
+    ]
+})
+NOTES.update({
+    name: GENERATOR + NODES
+    for name in ["empty_graph", "complete_graph", "cycle_graph", "path_graph", "star_graph", "wheel_graph", "grid_2d_graph"]
+})
+NOTES.update({
+    "circular_ladder_graph": GENERATOR + INTS + " `n` < 2 falls back before NetworkX 3.7 (which raises).",
+    "circulant_graph": GENERATOR + " Int `n` and a list of int offsets; follows the installed NetworkX's edge order (3.6 changed it).",
+    "grid_graph": GENERATOR + " Dimensions are ints or lists of distinct ints; `periodic` is a bool or a list.",
+    "hexagonal_lattice_graph": GENERATOR + " Periodic lattices fall back.",
+    "triangular_lattice_graph": GENERATOR + " Periodic lattices fall back.",
+    "paley_graph": GENERATOR + INTS + " The squares are iterated in CPython's set order (replayed in Rust).",
+    "kneser_graph": GENERATOR + INTS + " Replays CPython's set difference order; large graphs (over 2**24 nodes) fall back.",
+})
+# Seeded random generators (batch 18): no graph argument, so NetworkX sends
+# them to rustnx only with `backend="rustnx"` or with rustnx listed in
+# `nx.config.backend_priority.generators`.
+RANDOM = (
+    "Replays NetworkX's draws on CPython's `random.Random` (any `seed` NetworkX "
+    "turns into one, including `None`: the global generator, left where NetworkX "
+    "would leave it); NumPy generators fall back. `create_using` takes `None` or a "
+    "NetworkX graph class; instances and subclasses fall back."
+)
+NOTES.update({
+    "gnp_random_graph": RANDOM,
+    "fast_gnp_random_graph": RANDOM,
+    "gnm_random_graph": RANDOM,
+    "dense_gnm_random_graph": RANDOM,
+    "barabasi_albert_graph": RANDOM + " `initial_graph` falls back.",
+    "dual_barabasi_albert_graph": RANDOM + " `initial_graph` falls back.",
+    "extended_barabasi_albert_graph": RANDOM,
+    "watts_strogatz_graph": RANDOM,
+    "newman_watts_strogatz_graph": RANDOM,
+    "connected_watts_strogatz_graph": RANDOM,
+    "powerlaw_cluster_graph": RANDOM + " Replays the order NetworkX pops its target set in.",
+    "random_regular_graph": RANDOM + " Edges in the iteration order of NetworkX's set of pairs.",
+    "gn_graph": RANDOM + " A `kernel` falls back. Follows the installed NetworkX's `cumulative_distribution` (3.6 changed its rounding).",
+    "gnr_graph": RANDOM,
+    "gnc_graph": RANDOM,
+    "random_uniform_k_out_graph": RANDOM,
+    "random_lobster_graph": RANDOM + " NetworkX 3.6+.",
+    "random_lobster": RANDOM + " NetworkX 3.4 and 3.5 (3.6's deprecated alias runs in NetworkX, which calls `random_lobster_graph`).",
+    "random_tournament": RANDOM,
+    "stochastic_block_model": RANDOM + " `nodelist` falls back. Follows the installed NetworkX's loop (3.7 stopped drawing twice for diagonal blocks).",
+    "random_partition_graph": RANDOM,
+    "planted_partition_graph": RANDOM,
+    "random_geometric_graph": RANDOM + " Given `pos` falls back. Pairs whose distance is within 1e-9 (relative) of the radius make the call fall back, since SciPy's KD-tree may round them either way.",
+    "waxman_graph": RANDOM + " A `metric` falls back. Without `L`, a draw within rounding error of its threshold makes the call fall back (`math.dist` and Rust's `hypot` may differ in the last bit).",
+    "random_graph": RANDOM + " As `nx.bipartite.random_graph`. `p >= 1` falls back.",
+    "gnmk_random_graph": RANDOM + " As `nx.bipartite.gnmk_random_graph`. `k >= n * m` falls back.",
+})
+# Batch 20: readers and parsers.
+READ = "Reads a binary file or path (`.gz` and `.bz2` too) decoded as UTF-8, ASCII or Latin-1; other encodings, text-mode files and anything rustnx declines are read by NetworkX from the same position."
+PARSE = "Lines as a list or tuple of `str`, or an iterator (read once; if rustnx declines, NetworkX's code runs on the same lines)."
+CREATE = " `create_using`: `None` or a plain NetworkX graph class or instance."
+LITERAL = " `data=True` handles flat dicts of `str`, `int`, `float`, `bool` and `None` values; other edge data falls back."
+NOTES.update({
+    "parse_edgelist": PARSE + CREATE + LITERAL + " `nodetype` and typed `data`: `int`, `float` or `str`.",
+    "read_edgelist": READ + CREATE + LITERAL,
+    "read_weighted_edgelist": READ + CREATE,
+    "bipartite_parse_edgelist": PARSE + CREATE + LITERAL,
+    "bipartite_read_edgelist": READ + CREATE + LITERAL,
+    "parse_adjlist": PARSE + CREATE + " `nodetype`: `int`, `float` or `str`.",
+    "read_adjlist": READ + CREATE,
+    "parse_multiline_adjlist": "Iterators only (NetworkX calls `next(lines)`, so lists fail there); see `parse_edgelist`." + CREATE + LITERAL,
+    "read_multiline_adjlist": READ + CREATE + LITERAL,
+    "parse_leda": PARSE + " A `str` is split at newlines as in NetworkX.",
+    "read_leda": READ,
+    "parse_pajek": PARSE + " A `str` is split at newlines as in NetworkX. Replays `shlex.split` (quotes and escapes); `*matrix` sections fall back.",
+    "read_pajek": READ + " `*matrix` sections fall back.",
+    "from_graph6_bytes": "`bytes` input; follows the installed NetworkX on trailing newlines (ignored from 3.5).",
+    "read_graph6": READ.split(" decoded")[0] + "; one graph or a list, as in NetworkX.",
+    "from_sparse6_bytes": "`bytes` input. Returns a `MultiGraph` when there are parallel edges, as NetworkX does.",
+    "read_sparse6": READ.split(" decoded")[0] + "; one graph or a list, as in NetworkX.",
+})
+JSON = "Replays NetworkX's `add_node` / `add_edge` calls on the same objects. Nodes and keys must be `str`, `int`, `float`, `bool`, or tuples of those; plain `dict` and `list` input only; anything else falls back."
+NOTES.update({
+    "node_link_graph": JSON + " `G.graph` is `data[\"graph\"]` itself, as in NetworkX. In 3.4 and 3.5, leaving out `edges` (which warns there) falls back.",
+    "adjacency_graph": JSON,
+    "cytoscape_graph": JSON,
+    "tree_graph": JSON + " Trees deeper than 200 levels fall back (NetworkX recurses per level).",
+})
+GML = "`destringizer=None` only. Node ids, labels and keys must be ints, floats, strings or `()`; edges must name a node by its id's own type. Named character references other than `&amp;`, `&lt;`, `&gt;` and `&quot;`, and ints beyond 64 bits, fall back."
+NOTES.update({
+    "parse_gml": PARSE + " A `str` is split at line boundaries as in NetworkX. " + GML,
+    "read_gml": READ.replace("decoded as UTF-8, ASCII or Latin-1", "decoded as ASCII") + " " + GML,
+})
+SUBMODULE.update({
+    name: "nx.readwrite.json_graph"
+    for name in ["node_link_graph", "adjacency_graph", "cytoscape_graph", "tree_graph"]
+})
+QUALIFIED.update({
+    "bipartite_parse_edgelist": "nx.bipartite.parse_edgelist",
+    "bipartite_read_edgelist": "nx.bipartite.read_edgelist",
+})
+# Batch 21: operators and structure.
+OPERATOR = "Builds the result's dicts in Rust with the exact sequence of NetworkX's `add_nodes_from` / `add_edges_from` calls: same node and adjacency order, attribute dicts copied (or shared) as NetworkX does."
+PLAIN = " Plain `Graph` and `DiGraph` inputs and results; subclasses, graph views and multigraphs fall back."
+HOLES = "Explicit `nodes`; in 3.5+ `nodes=None` uses SciPy and falls back. Sums follow `set(nx.all_neighbors(G, v))` order, which rustnx replays, and Python's `sum()`; weights must be ints or floats."
+SECTIONS.append(("Operators, products and structure", [
+    "union", "union_all", "compose", "compose_all", "disjoint_union", "disjoint_union_all",
+    "full_join", "intersection", "intersection_all", "reverse", "moral_graph", "line_graph",
+    "ego_graph", "cartesian_product", "tensor_product", "strong_product",
+    "lexicographic_product", "rooted_product", "corona_product", "constraint",
+    "effective_size", "local_constraint", "tree_broadcast_center", "tree_broadcast_time",
+    "density", "bipartite_degree_centrality", "projected_graph", "weighted_projected_graph",
+]))
+NOTES.update({
+    "union": OPERATOR + PLAIN + " `rename` prefixes that make two nodes' labels collide fall back.",
+    "union_all": OPERATOR + PLAIN + " `rename` prefixes that make two nodes' labels collide fall back.",
+    "compose": OPERATOR + PLAIN,
+    "compose_all": OPERATOR + PLAIN,
+    "disjoint_union": OPERATOR + PLAIN + " Replays the reordering of NetworkX's relabelled copies.",
+    "disjoint_union_all": OPERATOR + PLAIN + " Replays the reordering of NetworkX's relabelled copies.",
+    "full_join": OPERATOR + PLAIN,
+    "intersection": "Replays NetworkX's node and edge sets (CPython's set table and tuple hash, checked once against the running Python), so nodes and edges come in the same order." + PLAIN,
+    "intersection_all": "As `intersection`." + PLAIN,
+    "reverse": OPERATOR + " Attributes are deep-copied, as in NetworkX. `copy=False` (a view) falls back.",
+    "moral_graph": OPERATOR + " Attributes are deep-copied (`G.to_undirected()`).",
+    "line_graph": "Undirected line graphs replay NetworkX's set of node pairs (CPython's set table and tuple hash). `create_using` falls back.",
+    "ego_graph": "Replays the subgraph view's node order (`set(sp)` when the subgraph is under half the graph). `undirected=True` falls back.",
+    "cartesian_product": OPERATOR + " Attribute tuples are built with NetworkX's set order of keys.",
+    "tensor_product": OPERATOR + " Attribute tuples are built with NetworkX's set order of keys.",
+    "strong_product": OPERATOR + " Attribute tuples are built with NetworkX's set order of keys.",
+    "lexicographic_product": OPERATOR + " Attribute tuples are built with NetworkX's set order of keys.",
+    "rooted_product": OPERATOR + " A `root` equal to, but not the same object as, H's node falls back.",
+    "corona_product": OPERATOR,
+    "constraint": HOLES,
+    "effective_size": HOLES + " Undirected unweighted graphs count edges of each ego graph, as NetworkX does.",
+    "local_constraint": "As `constraint`. Nodes not in the graph fall back.",
+    "tree_broadcast_center": "Replays NetworkX's set of leaves (ties go by set order). Non-trees fall back in 3.4 (it doesn't raise there).",
+    "tree_broadcast_time": "Missing nodes fall back in 3.4.",
+    "density": "As `nx.bipartite.density`.",
+    "bipartite_degree_centrality": "As `nx.bipartite.degree_centrality`; dict order follows NetworkX's sets.",
+    "projected_graph": "As `nx.bipartite.projected_graph`; replays the set of second neighbors. `multigraph=True`, and `nodes` that is not a container, fall back.",
+    "weighted_projected_graph": "As `nx.bipartite.weighted_projected_graph`; replays the set of second neighbors.",
+})
+QUALIFIED.update({
+    "density": "nx.bipartite.density",
+    "bipartite_degree_centrality": "nx.bipartite.degree_centrality",
+    "projected_graph": "nx.bipartite.projected_graph",
+    "weighted_projected_graph": "nx.bipartite.weighted_projected_graph",
 })
 
 

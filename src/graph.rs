@@ -44,6 +44,10 @@ pub struct Weights {
     /// With `!all_int`, NetworkX's distances are ints or floats depending
     /// on the path.
     pub any_int: bool,
+    /// Every value is an exact Python `int` or `float` (or missing, which
+    /// counts as the int default), so NumPy infers `int64` or `float64` from
+    /// a list of them. Bools and NumPy scalars give other dtypes.
+    pub plain: bool,
 }
 
 /// Predecessor rows in NetworkX's own `G._pred` order, with weights.
@@ -332,6 +336,7 @@ fn read_adj<'py>(
     adj: &Bound<'py, PyAny>,
     attrs: &[Attr<'py>],
     flags: &mut [(bool, bool, bool)],
+    plain: &mut [bool],
     multigraph: bool,
 ) -> PyResult<(Csr, Vec<Vec<f64>>)> {
     let mut offsets = Vec::with_capacity(nodes.len() + 1);
@@ -354,6 +359,7 @@ fn read_adj<'py>(
         };
         for (k, attr) in attrs.iter().enumerate() {
             let (x, kind) = if multigraph {
+                plain[k] = false;
                 // `data` maps edge keys to attribute dicts. NetworkX's
                 // multigraph weight is `min(attr.get(weight, 1) for attr in
                 // data.values())`: the first smallest value, keeping its type.
@@ -379,7 +385,14 @@ fn read_adj<'py>(
                 }
                 best.expect("at least one edge")
             } else {
-                parse_value(&get(data, attr)?)?
+                let value = get(data, attr)?;
+                if !(value.is_none()
+                    || value.is_exact_instance_of::<PyInt>()
+                    || value.is_exact_instance_of::<PyFloat>())
+                {
+                    plain[k] = false;
+                }
+                parse_value(&value)?
             };
             let (all_int, hidden, any_int) = &mut flags[k];
             record(kind, all_int, hidden, any_int);
@@ -463,9 +476,12 @@ pub fn build_graph<'py>(
     let n = nodes.len();
     let attrs = to_attrs(weight_attrs);
     let mut flags = vec![(true, false, false); attrs.len()];
+    let mut plain = vec![true; attrs.len()];
     let index = NodeIndex::new(nodes, index)?;
 
-    let (succ_csr, succ_vals) = read_adj(nodes, &index, succ, &attrs, &mut flags, multigraph)?;
+    let (succ_csr, succ_vals) = read_adj(
+        nodes, &index, succ, &attrs, &mut flags, &mut plain, multigraph,
+    )?;
     let (pred_csr, mut pred_vals) = if directed {
         let (csr, vals) = transpose(&succ_csr, n, &succ_vals);
         (Some(csr), vals.into_iter().map(Some).collect())
@@ -484,6 +500,7 @@ pub fn build_graph<'py>(
                 all_int,
                 has_hidden,
                 any_int,
+                plain: plain[k],
             },
         );
     }
@@ -521,8 +538,11 @@ impl CoreGraph {
         }
         let attrs = to_attrs(weight_attrs);
         let mut flags = vec![(true, false, false); attrs.len()];
+        let mut plain = vec![true; attrs.len()];
         let index = NodeIndex::new(nodes, index)?;
-        let (csr, vals) = read_adj(nodes, &index, pred, &attrs, &mut flags, multigraph)?;
+        let (csr, vals) = read_adj(
+            nodes, &index, pred, &attrs, &mut flags, &mut plain, multigraph,
+        )?;
         if csr.targets.len() != self.succ.targets.len() {
             return Err(PyValueError::new_err(
                 "predecessors do not match this graph",

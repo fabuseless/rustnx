@@ -4987,3 +4987,2369 @@ def test_float_distance_totals_follow_python_sum(seed):
         D[u][v]["weight"] = rng.random()
     exact_outcome(nx.wiener_index, D, weight="weight")
     exact_outcome(nx.closeness_centrality, D, distance="weight")
+
+
+# --- Batch 19: matrices and conversion ---------------------------------------------
+
+from networkx.algorithms import bipartite as _b19_bipartite  # noqa: E402
+
+
+def _b19_value(v):
+    """A scalar with its exact type (floats bit for bit)."""
+    if isinstance(v, float):
+        return (type(v).__name__, v.hex() if v == v else "nan")
+    if isinstance(v, dict):
+        return ("dict", [(_b19_value(k), _b19_value(x)) for k, x in v.items()])
+    if isinstance(v, (list, tuple)):
+        return (type(v).__name__, [_b19_value(x) for x in v])
+    return (type(v).__name__, v)
+
+
+def _b19_graph_state(G):
+    """Everything about a NetworkX graph: class, graph dict, nodes and
+    their data in order, every adjacency row in order (and `_pred`)."""
+    state = [type(G).__name__, _b19_value(G.graph), _b19_value(dict(G._node))]
+    state.append([(_b19_value(u), _b19_value(row)) for u, row in G._adj.items()])
+    if G.is_directed():
+        state.append([(_b19_value(u), _b19_value(row)) for u, row in G._pred.items()])
+    return state
+
+
+def _b19_state(value):
+    """Comparable form of results: graphs, NumPy arrays and SciPy sparse
+    arrays (format, dtypes, index arrays and data bytes exactly)."""
+    import numpy as np
+    import scipy as sp
+
+    if isinstance(value, nx.Graph):
+        return ("graph", _b19_graph_state(value))
+    if isinstance(value, np.ndarray):
+        return ("ndarray", str(value.dtype), value.shape, value.flags.c_contiguous,
+                value.flags.f_contiguous, value.tobytes())
+    if sp.sparse.issparse(value):
+        out = [type(value).__name__, value.format, str(value.dtype), value.shape]
+        fmt = value.format
+        if fmt in ("csr", "csc", "bsr"):
+            out += [str(value.indices.dtype), value.indptr.tolist(), value.indices.tolist(),
+                    value.data.tobytes(), value.has_canonical_format, value.has_sorted_indices]
+        elif fmt == "coo":
+            out += [str(value.row.dtype), value.row.tolist(), value.col.tolist(),
+                    value.data.tobytes()]
+        elif fmt == "lil":
+            out += [value.rows.tolist(), [_b19_value(r) for r in value.data.tolist()]]
+        elif fmt == "dok":
+            out += [[(k, _b19_value(v.item())) for k, v in value.items()]]
+        else:
+            out += [value.toarray().tobytes()]
+        return tuple(out)
+    if isinstance(value, dict):
+        return ("dict", [(_b19_value(k), _b19_state(v)) for k, v in value.items()])
+    if isinstance(value, (list, tuple)):
+        return (type(value).__name__, [_b19_state(v) for v in value])
+    return _b19_value(value)
+
+
+def _b19_exact(func, *args, **kwargs):
+    """``exact_outcome`` for batch 19: results through ``_b19_state``, and a
+    fallback check that also covers functions NetworkX dispatches through
+    ``backend_priority.generators`` (those returning graphs)."""
+
+    def run(backend):
+        try:
+            extra = {} if backend is None else {"backend": backend}
+            return ("ok", _b19_state(func(*args, **extra, **kwargs)))
+        except Exception as exc:
+            return (type(exc), exc.args)
+
+    ours = run("rustnx")
+    if ours[0] is NotImplementedError:
+        prio = nx.config.backend_priority
+        old = prio.algos, prio.generators
+        prio.algos, prio.generators = ["rustnx"], ["rustnx"]
+        try:
+            ours = run(None)
+        finally:
+            prio.algos, prio.generators = old
+    ref = run("networkx")
+    assert ours == ref
+    return ref
+
+
+def _b19_rust(func, *args, **kwargs):
+    """Run with rustnx, which must not hand the call to NetworkX."""
+    return func(*args, backend="rustnx", **kwargs)
+
+
+def _b19_registered(name):
+    return name in nx.utils.backends._registered_algorithms
+
+
+def _b19_graph(seed, directed, weights):
+    G = graph_for(seed, directed, "int" if weights == "negative" else weights)
+    rng = random.Random(seed)
+    if weights == "negative":
+        for u, v, d in G.edges(data=True):
+            if rng.random() < 0.2:
+                d["weight"] = -rng.randint(1, 3)
+    for v in G:
+        if rng.random() < 0.6:
+            G.nodes[v]["color"] = rng.choice(["red", "blue", 3, 2.5])
+    for u, v, d in G.edges(data=True):
+        if rng.random() < 0.6:
+            d["label"] = rng.choice(["x", "y", 1, None])
+    G.graph["name"] = f"g{seed}"
+    return G
+
+
+_B19_WEIGHTS = ["none", "int", "float", "missing", "negative"]
+
+
+@pytest.mark.parametrize("weights", _B19_WEIGHTS)
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch19_sparse_matrices(seed, directed, weights):
+    G = _b19_graph(seed, directed, weights)
+    nodes = list(G)
+    rng = random.Random(seed)
+    shuffled = nodes[:]
+    rng.shuffle(shuffled)
+    subsets = [None, shuffled, shuffled[: len(nodes) // 3], shuffled[: max(1, len(nodes) * 2 // 3)],
+               shuffled[:1], [], nodes[:1] + nodes[:1], nodes[:1] + ["missing"], (nodes[0],)]
+    for nodelist in subsets:
+        for weight in ["weight", None, "missing_attr"]:
+            _b19_exact(_b19_state_of(nx.to_scipy_sparse_array), G, nodelist=nodelist, weight=weight)
+            _b19_exact(_b19_state_of(nx.adjacency_matrix), G, nodelist=nodelist, weight=weight)
+            _b19_exact(_b19_state_of(nx.to_numpy_array), G, nodelist=nodelist, weight=weight)
+            _b19_exact(_b19_state_of(nx.laplacian_matrix), G, nodelist=nodelist, weight=weight)
+            _b19_exact(_b19_state_of(nx.incidence_matrix), G, nodelist=nodelist, weight=weight)
+            _b19_exact(_b19_state_of(nx.incidence_matrix), G, nodelist=nodelist, weight=weight,
+                          oriented=True)
+        for fmt in ["coo", "csc", "lil", "dok", "bsr", "dia", "nope"]:
+            _b19_exact(_b19_state_of(nx.to_scipy_sparse_array), G, nodelist=nodelist, format=fmt)
+    for dtype in [float, int, bool, "float32", "complex128", "int32", "nope"]:
+        _b19_exact(_b19_state_of(nx.to_scipy_sparse_array), G, dtype=dtype)
+        _b19_exact(_b19_state_of(nx.to_numpy_array), G, dtype=dtype)
+        _b19_exact(_b19_state_of(nx.incidence_matrix), G, dtype=dtype)
+    for nonedge in [0, 0.0, -1, float("nan"), float("inf")]:
+        _b19_exact(_b19_state_of(nx.to_numpy_array), G, nonedge=nonedge)
+    _b19_exact(_b19_state_of(nx.to_numpy_array), G, order="F")
+    # Edges with an endpoint missing from nodelist raise in incidence_matrix.
+    _b19_exact(_b19_state_of(nx.incidence_matrix), G, nodelist=nodes[:1] + nodes[:1])
+    _b19_exact(_b19_state_of(nx.incidence_matrix), G, edgelist=list(G.edges)[:3])
+    # The non-integer label kind: weights of type bool and NumPy floats.
+    H = G.copy()
+    for i, (u, v, d) in enumerate(H.edges(data=True)):
+        d["weight"] = True if i % 2 else 2.5
+    _b19_exact(_b19_state_of(nx.to_scipy_sparse_array), H)
+    _b19_exact(_b19_state_of(nx.to_numpy_array), H)
+    for u, v, d in H.edges(data=True):
+        d["weight"] = None
+    H.__networkx_cache__.clear()  # changed by hand
+    _b19_exact(_b19_state_of(nx.to_scipy_sparse_array), H)
+
+
+def _b19_state_of(func):
+    return lambda *a, **kw: _b19_state(func(*a, **kw))
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float", "missing"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch19_biadjacency_matrix(seed, directed, weights):
+    G = _b19_graph(seed, directed, weights)
+    nodes = list(G)
+    rng = random.Random(seed)
+    rows = rng.sample(nodes, max(1, len(nodes) // 2))
+    columns = [v for v in nodes if v not in rows]
+    func = _b19_state_of(_b19_bipartite.biadjacency_matrix)
+    for row_order in [rows, tuple(rows), rows + ["missing"], [], rows + rows[:1], nodes]:
+        exact_outcome(func, G, row_order)
+        exact_outcome(func, G, row_order, columns)
+        exact_outcome(func, G, row_order, columns[::-1], weight=None)
+        exact_outcome(func, G, row_order, format="coo")
+    exact_outcome(func, G, rows, columns + columns[:1])
+    exact_outcome(func, G, rows, dtype=float)
+    exact_outcome(func, G, rows, format="nope")
+    exact_outcome(func, nx.empty_graph(4), [0, 1])
+    B = nx.complete_bipartite_graph(3, 4)
+    exact_outcome(func, B, [0, 1, 2])
+    # Edges, but none from a row node to a column node.
+    exact_outcome(func, nx.Graph([(0, 1), (2, 3)]), [0, 1], [2, 3])
+
+
+@pytest.mark.parametrize("weights", _B19_WEIGHTS)
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch19_queries(seed, directed, weights):
+    G = _b19_graph(seed, directed, weights)
+    nodes = list(G)
+    rng = random.Random(seed)
+    exact_outcome(nx.to_dict_of_lists, G)
+    sample = rng.sample(nodes, max(1, len(nodes) // 2))
+    for nodelist in [sample, set(sample), dict.fromkeys(sample), sample + sample[:1],
+                     sample + ["missing"], []]:
+        exact_outcome(nx.to_dict_of_lists, G, nodelist)
+    exact_outcome(nx.is_negatively_weighted, G)
+    exact_outcome(nx.is_negatively_weighted, G, weight="label")
+    exact_outcome(nx.is_negatively_weighted, G, weight="other")
+    exact_outcome(nx.is_negatively_weighted, G, weight=None)
+    edges = list(G.edges)
+    for edge in edges[:2] + [("missing", nodes[0])]:
+        exact_outcome(nx.is_negatively_weighted, G, edge=edge)
+    exact_outcome(nx.is_negatively_weighted, nx.empty_graph(3))
+    # The names below are dispatchable from NetworkX 3.5 on.
+    if _b19_registered("is_empty"):
+        exact_outcome(nx.number_of_selfloops, G)
+        for weight in ["weight", "label", "other", None]:
+            exact_outcome(nx.is_weighted, G, weight=weight)
+            for edge in edges[:2] + [("missing", nodes[0])]:
+                exact_outcome(nx.is_weighted, G, edge=edge, weight=weight)
+        exact_outcome(nx.is_weighted, nx.empty_graph(3))
+        for name in ["color", "label", "weight", "missing"]:
+            for default in [None, 0, "d"]:
+                exact_outcome(nx.get_node_attributes, G, name, default=default)
+                exact_outcome(nx.get_edge_attributes, G, name, default=default)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch19_relabel(seed, directed):
+    G = _b19_graph(seed, directed, "int")
+    nodes = list(G)
+    rng = random.Random(seed)
+    func = _b19_state_of(nx.relabel_nodes)
+    swap = dict(zip(nodes, rng.sample(nodes, len(nodes))))
+    some = {v: f"r{v}" for v in rng.sample(nodes, len(nodes) // 2)}
+    _b19_exact(func, G, swap)
+    _b19_exact(func, G, some)
+    _b19_exact(func, G, {v: (v, 1) for v in nodes})
+    _b19_exact(func, G, lambda v: str(v) + "!")
+    _b19_exact(func, G, {})
+    _b19_exact(func, G, {"missing": 1})
+    # Collisions merge nodes and edges; None and unhashable labels.
+    _b19_exact(func, G, {nodes[0]: nodes[-1]})
+    _b19_exact(func, G, {nodes[0]: None})
+    _b19_exact(func, G, {nodes[0]: [1]})
+    # In place: rustnx hands these to NetworkX.
+    H = G.copy()
+    K = G.copy()
+    nx.relabel_nodes(H, some, copy=False)
+    nx.relabel_nodes(K, some, copy=False, backend="networkx")
+    assert _b19_graph_state(H) == _b19_graph_state(K)
+    func = _b19_state_of(nx.convert_node_labels_to_integers)
+    for ordering in ["default", "sorted", "increasing degree", "decreasing degree", "nope"]:
+        _b19_exact(func, G, ordering=ordering)
+    _b19_exact(func, G, first_label=5, label_attribute="old")
+    _b19_exact(func, G, first_label=1.5)
+
+
+def test_batch19_relabel_keeps_neighbor_objects():
+    # A neighbor key that is equal to, but not the same object as, the node.
+    for cls in [nx.Graph, nx.DiGraph]:
+        G = cls()
+        G.add_nodes_from([1, 2, 3])
+        G.add_edge(2, 1.0)
+        G.add_edge(3, True, weight=4)
+        _b19_exact(_b19_state_of(nx.relabel_nodes), G, {2: "two"})
+        _b19_exact(nx.to_dict_of_lists, G)
+        _b19_exact(nx.to_dict_of_lists, G, [1.0, 2])
+        if _b19_registered("get_edge_attributes"):
+            _b19_exact(nx.get_edge_attributes, G, "weight")
+
+
+def test_batch19_subclasses_and_multigraphs():
+    class MyGraph(nx.Graph):
+        pass
+
+    G = MyGraph(nx.path_graph(5))
+    _b19_exact(_b19_state_of(nx.relabel_nodes), G, {0: "a"})
+    for directed in [False, True]:
+        M = random_multigraph(3, directed, "int")
+        for func in [nx.to_scipy_sparse_array, nx.to_numpy_array, nx.incidence_matrix,
+                     nx.relabel_nodes]:
+            args = ({list(M)[0]: "x"},) if func is nx.relabel_nodes else ()
+            _b19_exact(_b19_state_of(func), M, *args)
+        _b19_exact(nx.to_dict_of_lists, M)
+
+
+def test_batch19_graph_changes():
+    # A cached conversion must not hide later changes.
+    G = nx.path_graph(6)
+    nx.config.cache_converted_graphs, old = True, nx.config.cache_converted_graphs
+    try:
+        first = _b19_state(nx.to_dict_of_lists(G, backend="rustnx"))
+        G.add_edge(0, 5)
+        assert _b19_state(nx.to_dict_of_lists(G, backend="rustnx")) != first
+        assert _b19_state(nx.to_dict_of_lists(G, backend="rustnx")) == _b19_state(
+            nx.to_dict_of_lists(G, backend="networkx")
+        )
+    finally:
+        nx.config.cache_converted_graphs = old
+
+
+def _b19_builder_inputs(seed):
+    rng = random.Random(seed)
+    G = _b19_graph(seed, seed % 2 == 1, "int")
+    lists = nx.to_dict_of_lists(G, backend="networkx")
+    dicts = nx.to_dict_of_dicts(G)
+    # Extra keys only in neighbor lists, and a repeated edge.
+    if lists:
+        first = next(iter(lists))
+        lists[first] = lists[first] + ["extra", "extra"]
+        dicts[first] = dict(dicts[first], extra={"w": 1})
+    edges = list(G.edges(data=True))
+    rng.shuffle(edges)
+    edges = [e if rng.random() < 0.5 else e[:2] for e in edges]
+    return lists, dicts, edges
+
+
+@pytest.mark.parametrize("seed", range(30))
+def test_batch19_builders(seed):
+    lists, dicts, edges = _b19_builder_inputs(seed)
+    for create_using in [None, nx.Graph, nx.DiGraph, nx.MultiGraph, nx.DiGraph()]:
+        func = _b19_state_of(nx.from_dict_of_lists)
+        _b19_exact(func, lists, create_using=create_using)
+        _b19_exact(_b19_state_of(nx.from_dict_of_dicts), dicts, create_using=create_using)
+        _b19_exact(_b19_state_of(nx.from_dict_of_dicts), dicts, create_using=create_using,
+                   multigraph_input=True)
+        _b19_exact(_b19_state_of(nx.from_edgelist), edges, create_using=create_using)
+    # A fresh iterator for each backend.
+    _b19_exact(lambda **kw: _b19_state(nx.from_edgelist(iter(edges), **kw)))
+    _b19_exact(_b19_state_of(nx.from_edgelist), edges + [(1,)])
+    _b19_exact(_b19_state_of(nx.from_edgelist), edges + [(None, 1)])
+    _b19_exact(_b19_state_of(nx.from_edgelist), edges + [([1], 2)])
+    _b19_exact(_b19_state_of(nx.from_edgelist), [[1, 2], [2, 3]])
+    _b19_exact(_b19_state_of(nx.from_edgelist), 5)
+    _b19_exact(_b19_state_of(nx.from_dict_of_lists), {None: [1]})
+    _b19_exact(_b19_state_of(nx.from_dict_of_lists), {1: [None]})
+
+
+@pytest.mark.parametrize("seed", range(30))
+def test_batch19_array_builders(seed):
+    import numpy as np
+    import scipy as sp
+
+    rng = np.random.default_rng(seed)
+    n = int(rng.integers(0, 12))
+    dense = rng.integers(-2, 4, size=(n, n)) * (rng.random((n, n)) < 0.4)
+    arrays = [dense, dense.astype(float) / 4, dense.astype(bool), dense.astype(np.float32) / 3,
+              dense.astype(np.uint8), dense.astype(complex), dense.astype(np.longdouble),
+              np.where(dense == 1, np.nan, dense / 2)]
+    for A in arrays:
+        for create_using in [None, nx.DiGraph, nx.MultiGraph]:
+            for edge_attr in ["weight", None, False, 0, "w"]:
+                _b19_exact(_b19_state_of(nx.from_numpy_array), A, create_using=create_using,
+                           edge_attr=edge_attr)
+        nodes = [f"v{i}" for i in range(n)]
+        _b19_exact(_b19_state_of(nx.from_numpy_array), A, nodelist=nodes)
+        _b19_exact(_b19_state_of(nx.from_numpy_array), A, nodelist=nodes[:1] * n)
+        _b19_exact(_b19_state_of(nx.from_numpy_array), A, nodelist=nodes[:-1])
+        if "nonedge" in inspect.signature(nx.from_numpy_array).parameters:
+            for nonedge in [1, -2, 0.5, float("nan")]:
+                _b19_exact(_b19_state_of(nx.from_numpy_array), A, nonedge=nonedge)
+        if A.dtype.kind in "fiub" and A.dtype != np.longdouble:
+            S = sp.sparse.csr_array(A)
+            for fmt in ["csr", "csc", "coo", "lil", "dok", "bsr"]:
+                M = S.asformat(fmt)
+                for create_using in [None, nx.DiGraph, nx.MultiGraph]:
+                    _b19_exact(_b19_state_of(nx.from_scipy_sparse_array), M, create_using=create_using)
+                _b19_exact(_b19_state_of(nx.from_scipy_sparse_array), M, edge_attribute=None)
+                _b19_exact(_b19_state_of(nx.from_scipy_sparse_array), M, edge_attribute="w")
+                if n:
+                    R = S[: max(1, n // 2)].asformat(fmt)
+                    _b19_exact(_b19_state_of(_b19_bipartite.from_biadjacency_matrix), R)
+                    _b19_exact(_b19_state_of(_b19_bipartite.from_biadjacency_matrix), R,
+                               create_using=nx.DiGraph, edge_attribute="w")
+                    _b19_exact(_b19_state_of(nx.from_scipy_sparse_array), R)
+        # Explicit zeros stay edges.
+        S = sp.sparse.csr_array((np.zeros(2), np.array([0, 1]), np.array([0, 1, 2])), shape=(2, 2))
+        _b19_exact(_b19_state_of(nx.from_scipy_sparse_array), S)
+    _b19_exact(_b19_state_of(nx.from_numpy_array), np.zeros((2, 3)))
+    _b19_exact(_b19_state_of(nx.from_numpy_array), np.zeros(3))
+    _b19_exact(_b19_state_of(nx.from_numpy_array), np.matrix([[0, 1], [1, 0]]))
+    _b19_exact(_b19_state_of(nx.from_numpy_array), np.array([["a", ""], ["", "b"]]))
+
+
+def test_batch19_builders_dispatch(restore_config):
+    # Functions without a graph argument reach rustnx through
+    # `backend="rustnx"` or `backend_priority.generators`.
+    d = {0: [1, 2], 1: [2]}
+    ref = _b19_state(nx.from_dict_of_lists(d, backend="networkx"))
+    assert _b19_state(nx.from_dict_of_lists(d, backend="rustnx")) == ref
+    old = nx.config.backend_priority.generators
+    nx.config.backend_priority.generators = ["rustnx"]
+    try:
+        assert _b19_state(nx.from_dict_of_lists(d)) == ref
+    finally:
+        nx.config.backend_priority.generators = old
+
+
+def test_batch19_native_graphs():
+    import rustnx
+
+    for cls in [rustnx.Graph, rustnx.DiGraph]:
+        G = cls([("a", "b", 2), ("b", "c", 1.5), ("c", "c", 3)], nodes=["d"])
+        H = G.to_networkx()
+        pairs = [
+            lambda X, b: _b19_state(nx.to_scipy_sparse_array(X, backend=b)),
+            lambda X, b: _b19_state(nx.to_numpy_array(X, backend=b)),
+            lambda X, b: _b19_state(nx.incidence_matrix(X, weight="weight", backend=b)),
+            lambda X, b: _b19_state(nx.to_dict_of_lists(X, backend=b)),
+            lambda X, b: _b19_state(nx.relabel_nodes(X, {"a": 1}, backend=b)),
+            lambda X, b: nx.is_negatively_weighted(X, backend=b),
+        ]
+        for call in pairs:
+            assert call(G, "rustnx") == call(H, "networkx")
+
+
+def test_batch19_runs_in_rust():
+    import numpy as np
+    import scipy as sp
+
+    G = nx.gnp_random_graph(30, 0.2, seed=1)
+    D = nx.gnp_random_graph(30, 0.3, seed=1, directed=True)
+    nx.set_edge_attributes(G, 2, "weight")
+    calls = [
+        lambda: nx.to_scipy_sparse_array(G, backend="rustnx"),
+        lambda: nx.adjacency_matrix(D, backend="rustnx"),
+        lambda: nx.laplacian_matrix(G, backend="rustnx"),
+        lambda: nx.incidence_matrix(D, oriented=True, backend="rustnx"),
+        lambda: nx.to_numpy_array(G, backend="rustnx"),
+        lambda: _b19_bipartite.biadjacency_matrix(G, list(range(10)), backend="rustnx"),
+        lambda: nx.to_dict_of_lists(D, backend="rustnx"),
+        lambda: nx.is_negatively_weighted(G, backend="rustnx"),
+        lambda: nx.relabel_nodes(G, {0: "a"}, backend="rustnx"),
+        lambda: nx.convert_node_labels_to_integers(D, 3, backend="rustnx"),
+        lambda: nx.from_dict_of_lists({0: [1]}, backend="rustnx"),
+        lambda: nx.from_dict_of_dicts({0: {1: {}}}, backend="rustnx"),
+        lambda: nx.from_edgelist([(0, 1)], backend="rustnx"),
+        lambda: nx.from_numpy_array(np.ones((3, 3)), backend="rustnx"),
+        lambda: nx.from_scipy_sparse_array(sp.sparse.csr_array(np.ones((3, 3))), backend="rustnx"),
+        lambda: _b19_bipartite.from_biadjacency_matrix(sp.sparse.csr_array(np.ones((2, 3))),
+                                                       backend="rustnx"),
+    ]
+    if _b19_registered("is_empty"):
+        calls += [
+            lambda: nx.number_of_selfloops(G, backend="rustnx"),
+            lambda: nx.is_weighted(G, backend="rustnx"),
+            lambda: nx.get_node_attributes(G, "x", backend="rustnx"),
+            lambda: nx.get_edge_attributes(G, "weight", backend="rustnx"),
+        ]
+    for call in calls:
+        call()
+
+
+# --- Batch 17: deterministic generators -------------------------------------------
+
+_B17_CLASSES = [None, nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph]
+
+
+def _b17_func(name):
+    return getattr(nx.utils.backends, "_registered_algorithms", {}).get(name)
+
+
+def _b17_snapshot(G):
+    """Everything about a generated graph, with types: class, graph dict,
+    node order and attributes, every row's order and data (keys for
+    multigraphs), and that both rows of an edge share one data dict."""
+    def rows(adj):
+        return [(repr(u), [(repr(v), repr(d)) for v, d in row.items()]) for u, row in adj.items()]
+
+    out = [type(G).__name__, repr(list(G.graph.items()))]
+    out.append([(repr(n), repr(list(d.items()))) for n, d in G._node.items()])
+    out.append(rows(G._adj))
+    if G.is_directed():
+        out.append(rows(G._pred))
+        assert all(G._pred[v][u] is d for u, row in G._succ.items() for v, d in row.items())
+    else:
+        assert all(G._adj[v][u] is d for u, row in G._adj.items() for v, d in row.items())
+    return out
+
+
+def _b17_outcome(call):
+    try:
+        return ("ok", _b17_snapshot(call()))
+    except Exception as exc:
+        return (type(exc), str(exc))
+
+
+def _b17_check(name, *args, **kwargs):
+    """rustnx's result (or, if it hands the call to NetworkX, the result
+    through `backend_priority.generators`) equals NetworkX's in every respect."""
+    func = _b17_func(name)
+    if func is None:
+        return None  # e.g. generalized_petersen_graph before NetworkX 3.6
+    ref = _b17_outcome(lambda: func(*args, backend="networkx", **kwargs))
+    ours = _b17_outcome(lambda: func(*args, backend="rustnx", **kwargs))
+    if ours[0] is NotImplementedError:
+        old = nx.config.backend_priority.generators
+        nx.config.backend_priority.generators = ["rustnx"]
+        try:
+            ours = _b17_outcome(lambda: func(*args, **kwargs))
+        finally:
+            nx.config.backend_priority.generators = old
+    assert ours == ref, (name, args, kwargs)
+    return ref
+
+
+_B17_NODES = [0, 1, 2, 3, 4, 7, -1, [3, "a", (1, 2)], "xyz", range(2, 6), (5,), [1, 1, 2], [[1]]]
+
+
+@pytest.mark.parametrize("create_using", _B17_CLASSES)
+@pytest.mark.parametrize(
+    "name",
+    ["empty_graph", "complete_graph", "cycle_graph", "path_graph", "star_graph", "wheel_graph"],
+)
+def test_batch17_nodes_or_number(name, create_using):
+    for n in _B17_NODES:
+        _b17_check(name, n, create_using=create_using)
+    _b17_check(name, 5, create_using=5)  # not a graph: TypeError
+    _b17_check(name, 2.5)
+    _b17_check(name, True)
+
+
+def test_batch17_empty_graph_default():
+    for default in [nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph, nx.OrderedGraph if hasattr(nx, "OrderedGraph") else nx.Graph]:
+        _b17_check("empty_graph", 3, default=default)
+        _b17_check("empty_graph", 3, nx.Graph, default=default)
+
+
+@pytest.mark.parametrize("create_using", _B17_CLASSES)
+def test_batch17_one_int(create_using):
+    for n in [-2, -1, 0, 1, 2, 3, 5, 8]:
+        for name in ["ladder_graph", "circular_ladder_graph", "binomial_tree", "dorogovtsev_goltsev_mendes_graph"]:
+            _b17_check(name, n, create_using=create_using)
+        _b17_check("paley_graph", 3 * n + 1, create_using=create_using)
+        _b17_check("LCF_graph", 2 * n, [3, -3], 2, create_using=create_using)
+        _b17_check("LCF_graph", 2 * n, [5, -5, 0, 17], n, create_using=create_using)
+        _b17_check("LCF_graph", 2 * n, [], 4, create_using=create_using)
+    _b17_check("LCF_graph", 14, (5, -5), 7, create_using=create_using)
+    _b17_check("binomial_tree", 1.0, create_using=create_using)
+
+
+@pytest.mark.parametrize("create_using", _B17_CLASSES)
+def test_batch17_two_ints(create_using):
+    names = [
+        "lollipop_graph", "barbell_graph", "tadpole_graph", "full_rary_tree", "balanced_tree",
+        "complete_bipartite_graph", "grid_2d_graph", "generalized_petersen_graph",
+    ]
+    for m in [-1, 0, 1, 2, 3, 4, 6]:
+        for n in [-1, 0, 1, 2, 3, 5]:
+            for name in names:
+                _b17_check(name, m, n, create_using=create_using)
+            for periodic in [True, (True, False), [False, True], (1, 0), (True,)]:
+                _b17_check("grid_2d_graph", m, n, periodic=periodic, create_using=create_using)
+            for kind in ["hexagonal", "triangular"]:
+                for with_positions in [True, False]:
+                    _b17_check(f"{kind}_lattice_graph", m, n, with_positions=with_positions, create_using=create_using)
+                _b17_check(f"{kind}_lattice_graph", m, n, periodic=True, create_using=create_using)
+    _b17_check("grid_2d_graph", [5, "a", 1], "xy", create_using=create_using)
+    _b17_check("grid_2d_graph", range(3), [(0, 1), None], periodic=True, create_using=create_using)
+    _b17_check("lollipop_graph", [1, 2, 3], 4, create_using=create_using)
+    _b17_check("tadpole_graph", 4, "ab", create_using=create_using)
+    _b17_check("complete_bipartite_graph", [1, 2], [3], create_using=create_using)
+
+
+@pytest.mark.parametrize("create_using", _B17_CLASSES)
+def test_batch17_circulant(create_using):
+    for n in [-1, 0, 1, 2, 5, 8, 9]:
+        for offsets in [[1], [1, 2], [2, 3, 7], [-1, 0], [], (4, 1), range(1, 3)]:
+            _b17_check("circulant_graph", n, offsets, create_using=create_using)
+    _b17_check("circulant_graph", 6, [1.0], create_using=create_using)
+
+
+def test_batch17_pairs_without_create_using():
+    for m in [-1, 0, 1, 2, 3, 4, 5]:
+        for n in [-1, 0, 1, 2, 3, 4, 5]:
+            for name in [
+                "caveman_graph", "connected_caveman_graph", "ring_of_cliques",
+                "windmill_graph", "turan_graph", "kneser_graph",
+            ]:
+                _b17_check(name, m, n)
+    for n in range(1, 13):
+        for k in range(1, 6):
+            _b17_check("kneser_graph", n, k)
+    for n in [-1, 0, 1, 2, 3, 4, 5]:
+        _b17_check("sudoku_graph", n)
+        _b17_check("mycielski_graph", n)
+        _b17_check("hypercube_graph", n)
+    _b17_check("sudoku_graph")
+    for sizes in [(), (0,), (1, 2), (3, 0, 2), (2, 2, 2, 1), (1, -1), ([1, 2], [3])]:
+        _b17_check("complete_multipartite_graph", *sizes)
+    for p in [5, 13, 17, 97, 101]:
+        for create_using in _B17_CLASSES:
+            _b17_check("paley_graph", p, create_using=create_using)
+
+
+def test_batch17_grid_graph():
+    for dim in [[], [3], [2, 3], [3, 1, 2], [2, 2, 2, 2], [[1, 5, 3], 2], [1], [0, 3], [-1, 2], (2, 4), [range(2, 5), (7, 0)], [[1, 1], 2], [["a", "b"], 2]]:
+        for periodic in [False, True, 1, [True, False, True, False], (False, True, False, True), [True]]:
+            _b17_check("grid_graph", dim, periodic=periodic)
+
+
+def test_batch17_create_using_instances():
+    def make(cls):
+        H = cls(name="old")
+        H.add_edge("x", "y", w=1)
+        H.nodes["x"]["c"] = 2
+        return H
+
+    calls = [
+        ("complete_graph", (5,)), ("path_graph", (4,)), ("star_graph", (3,)), ("wheel_graph", (5,)),
+        ("ladder_graph", (3,)), ("circulant_graph", (7, [1, 2])), ("grid_2d_graph", (3, 4)),
+        ("LCF_graph", (6, [3], 6)), ("LCF_graph", (0, [3], 6)), ("paley_graph", (13,)),
+        ("complete_bipartite_graph", (2, 3)), ("dorogovtsev_goltsev_mendes_graph", (2,)),
+        ("hexagonal_lattice_graph", (2, 3)), ("triangular_lattice_graph", (3, 3)),
+        ("generalized_petersen_graph", (5, 2)), ("empty_graph", ([1, "a"],)),
+    ]
+    for name, args in calls:
+        func = _b17_func(name)
+        if func is None:
+            continue
+        for cls in [nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph]:
+            results = []
+            for backend in ["networkx", "rustnx"]:
+                H = make(cls)
+                try:
+                    try:
+                        R = func(*args, create_using=H, backend=backend)
+                    except NotImplementedError:
+                        # Falls back before touching the instance.
+                        assert _b17_snapshot(H) == _b17_snapshot(make(cls))
+                        with nx.config.backend_priority(generators=["rustnx"]):
+                            R = func(*args, create_using=H)
+                    assert R is H
+                    results.append(("ok", _b17_snapshot(H)))
+                except nx.NetworkXError as exc:
+                    results.append((type(exc), str(exc), _b17_snapshot(H)))
+            assert results[0] == results[1], (name, cls)
+
+
+def test_batch17_backend_priority(monkeypatch):
+    from rustnx import interface
+
+    calls = []
+    real = interface.path_graph
+    monkeypatch.setattr(interface, "path_graph", lambda *a, **kw: calls.append(1) or real(*a, **kw))
+    with nx.config.backend_priority(generators=["rustnx"]):
+        G = nx.path_graph(5)
+        assert calls
+        assert _b17_snapshot(G) == _b17_snapshot(nx.path_graph(5, backend="networkx"))
+        # An iterator falls back before it is consumed.
+        G = nx.path_graph(iter("abc"))
+        assert list(G) == ["a", "b", "c"]
+        for name, args in [("circulant_graph", (6, [1, 2])), ("LCF_graph", (14, [5, -5], 7))]:
+            func = _b17_func(name)
+            expected = _b17_outcome(lambda: func(args[0], iter(args[1]), *args[2:], backend="networkx"))
+            assert _b17_outcome(lambda: func(args[0], iter(args[1]), *args[2:])) == expected
+    calls.clear()
+    nx.path_graph(5)
+    assert not calls  # generators need backend_priority.generators
+
+
+def test_batch17_runs_in_rust():
+    calls = [
+        ("empty_graph", (5,)), ("complete_graph", (5,)), ("cycle_graph", (5,)),
+        ("path_graph", (5,)), ("star_graph", (5,)), ("wheel_graph", (5,)),
+        ("ladder_graph", (5,)), ("circular_ladder_graph", (5,)), ("lollipop_graph", (4, 3)),
+        ("barbell_graph", (4, 3)), ("tadpole_graph", (4, 3)), ("full_rary_tree", (3, 20)),
+        ("balanced_tree", (2, 4)), ("binomial_tree", (4,)), ("complete_bipartite_graph", (3, 4)),
+        ("complete_multipartite_graph", (2, 3, 4)), ("turan_graph", (10, 3)),
+        ("grid_2d_graph", (3, 4)), ("grid_graph", ([2, 3, 4],)), ("hypercube_graph", (4,)),
+        ("hexagonal_lattice_graph", (3, 4)), ("triangular_lattice_graph", (3, 4)),
+        ("circulant_graph", (10, [1, 3])), ("caveman_graph", (3, 4)),
+        ("connected_caveman_graph", (3, 4)), ("ring_of_cliques", (3, 4)),
+        ("windmill_graph", (3, 4)), ("sudoku_graph", (2,)), ("LCF_graph", (14, [5, -5], 7)),
+        ("generalized_petersen_graph", (5, 2)), ("dorogovtsev_goltsev_mendes_graph", (3,)),
+        ("mycielski_graph", (4,)), ("paley_graph", (13,)), ("kneser_graph", (5, 2)),
+    ]
+    for name, args in calls:
+        func = _b17_func(name)
+        if func is not None:
+            func(*args, backend="rustnx")
+
+
+# --- Batch 18: random generators ---------------------------------------------------
+
+
+def _b18_func(name):
+    """The installed NetworkX's dispatchable ``name``; skips if it has none."""
+    registry = nx.utils.backends._registered_algorithms
+    if name not in registry:
+        pytest.skip(f"this NetworkX has no {name}")
+    return registry[name]
+
+
+@pytest.fixture
+def _b18_priority():
+    """Generators dispatch to rustnx (falling back to NetworkX) only when
+    rustnx is listed in ``backend_priority.generators``."""
+    old = list(nx.config.backend_priority.generators)
+    nx.config.backend_priority.generators = ["rustnx"]
+    yield
+    nx.config.backend_priority.generators = old
+
+
+def _b18_same_graph(G, H):
+    """Assert ``G`` and ``H`` are equal in everything NetworkX exposes: class,
+    graph dict (partition sets in iteration order), node order and data
+    (value types too), every adjacency row's order, edge data, multigraph
+    keys, and edge dicts shared between the two rows holding an edge."""
+
+    def graph_dict(X):
+        return [
+            (k, [("set", list(s)) for s in v] if k == "partition" else v)
+            for k, v in X.graph.items()
+        ]
+
+    def typed(value):
+        if isinstance(value, (list, tuple)):
+            return (type(value), [typed(x) for x in value])
+        return (type(value), value)
+
+    assert type(G) is type(H)
+    assert graph_dict(G) == graph_dict(H)
+    assert list(G._node) == list(H._node)
+    for v in G._node:
+        assert [(k, typed(x)) for k, x in G._node[v].items()] == [
+            (k, typed(x)) for k, x in H._node[v].items()
+        ]
+    rows = [(G._adj, H._adj)] + ([(G._pred, H._pred)] if G.is_directed() else [])
+    for A, B in rows:
+        assert list(A) == list(B)
+        for u in A:
+            assert list(A[u].items()) == list(B[u].items()), u
+            if G.is_multigraph():
+                for v in A[u]:
+                    assert list(A[u][v].items()) == list(B[u][v].items())
+    for u, row in G._adj.items():
+        for v, data in row.items():
+            other = G._pred[v][u] if G.is_directed() else G._adj[v][u]
+            assert other is data
+
+
+def _b18_outcome(func, args, kwargs, seed, backend=None):
+    """``func(*args, seed=..., **kwargs)`` with a fresh ``random.Random``:
+    ``("ok", graph, state)`` or the exception's type and message, plus the
+    generator's state afterwards."""
+    rng = random.Random(seed)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            G = func(*args, seed=rng, backend=backend, **kwargs)
+        return ("ok", G, rng.getstate())
+    except NotImplementedError:
+        raise
+    except Exception as exc:
+        return (type(exc), str(exc), rng.getstate())
+
+
+def _b18_check(name, args, kwargs=None, seeds=range(3)):
+    func = _b18_func(name)
+    kwargs = kwargs or {}
+    for seed in seeds:
+        ours = _b18_outcome(func, args, kwargs, seed)
+        ref = _b18_outcome(func, args, kwargs, seed, backend="networkx")
+        if ours[0] == "ok" and ref[0] == "ok":
+            _b18_same_graph(ours[1], ref[1])
+            assert ours[2] == ref[2]
+        else:
+            assert ours == ref
+
+
+_B18_SIZES = [0, 1, 2, 5, 13, 40]
+
+
+@pytest.mark.parametrize("n", _B18_SIZES)
+def test_batch18_gnp_and_gnm(n, _b18_priority):
+    for directed in [False, True]:
+        kw = {"directed": directed}
+        for p in [0, 0.05, 0.3, 0.9, 1, 1e-17, float("nan"), -1]:
+            _b18_check("gnp_random_graph", (n, p), kw)
+            _b18_check("fast_gnp_random_graph", (n, p), kw)
+        for m in [-1, 0, 1, 3, 10, 40, 2000]:
+            _b18_check("gnm_random_graph", (n, m), kw)
+    for m in [-1, 0, 1, 3, 10, 40, 2000]:
+        _b18_check("dense_gnm_random_graph", (n, m))
+
+
+@pytest.mark.parametrize("n", _B18_SIZES)
+def test_batch18_preferential_attachment(n, _b18_priority):
+    for m in [0, 1, 2, 3, 5]:
+        _b18_check("barabasi_albert_graph", (n, m))
+        for p in [0.5, 1, 0, -0.1, 1.5]:
+            _b18_check("powerlaw_cluster_graph", (n, m, p))
+        for p, q in [(0.2, 0.3), (0.5, 0.4), (0.0, 0.0), (0.6, 0.1), (0.6, 0.6)]:
+            _b18_check("extended_barabasi_albert_graph", (n, m, p, q))
+        for m2 in [0, 1, 2, 4]:
+            for p in [0, 0.3, 1, float("nan"), 2]:
+                _b18_check("dual_barabasi_albert_graph", (n, m, m2, p))
+
+
+@pytest.mark.parametrize("n", _B18_SIZES)
+def test_batch18_small_world(n, _b18_priority):
+    for k in [-1, 0, 2, 3, 4, 6, n, n + 1]:
+        for p in [0, 0.2, 0.7, 1]:
+            _b18_check("watts_strogatz_graph", (n, k, p))
+            _b18_check("newman_watts_strogatz_graph", (n, k, p))
+            _b18_check("connected_watts_strogatz_graph", (n, k, p), {"tries": 5})
+    _b18_check("connected_watts_strogatz_graph", (n, 2, 0.5), {"tries": 0})
+    _b18_check("connected_watts_strogatz_graph", (n, 2, 0.9), {"tries": 1})
+
+
+@pytest.mark.parametrize("n", _B18_SIZES)
+def test_batch18_regular_and_growing(n, _b18_priority):
+    for d in [0, 1, 2, 3, 4, 7, -1]:
+        _b18_check("random_regular_graph", (d, n))
+    for cls in [None, nx.MultiDiGraph, nx.Graph]:
+        kw = {"create_using": cls}
+        _b18_check("gn_graph", (n,), kw)
+        _b18_check("gnc_graph", (n,), kw)
+        for p in [0, 0.5, 1]:
+            _b18_check("gnr_graph", (n, p), kw)
+    for k in [-1, 0, 1, 3, 6]:
+        for self_loops in [True, False]:
+            for with_replacement in [True, False]:
+                kw = {"self_loops": self_loops, "with_replacement": with_replacement}
+                _b18_check("random_uniform_k_out_graph", (n, k), kw)
+    _b18_check("random_tournament", (n,))
+    for p1, p2 in [(0.5, 0.5), (0.9, 0.2), (-0.4, 0.0), (1, 0.1), (0.3, -1)]:
+        _b18_check("random_lobster_graph" if hasattr(nx, "random_lobster_graph") else "random_lobster", (n, p1, p2))
+
+
+@pytest.mark.parametrize("version", ["random_lobster", "random_lobster_graph"])
+def test_batch18_lobster_names(version, _b18_priority):
+    _b18_check(version, (20, 0.6, 0.4), seeds=range(5))
+
+
+def test_batch18_block_models(_b18_priority):
+    for sizes in [[], [3], [5, 7], [10, 0, 25, 4], [40, 33]]:
+        for p_in, p_out in [(0.5, 0.1), (1, 0), (0.0, 0.3), (0.9, 1.0), (1.5, 0.1), (0.5, -1)]:
+            for directed in [False, True]:
+                _b18_check("random_partition_graph", (sizes, p_in, p_out), {"directed": directed})
+                P = [[p_in if i == j else p_out for j in range(len(sizes))] for i in range(len(sizes))]
+                for selfloops in [False, True]:
+                    for sparse in [False, True]:
+                        kw = {"directed": directed, "selfloops": selfloops, "sparse": sparse}
+                        _b18_check("stochastic_block_model", (sizes, P), kw)
+    for l, k in [(0, 3), (3, 4), (5, 10), (-1, 3)]:
+        _b18_check("planted_partition_graph", (l, k, 0.5, 0.1))
+        _b18_check("planted_partition_graph", (l, k, 0.5, 0.1), {"directed": True})
+    # NetworkX's checks.
+    _b18_check("stochastic_block_model", ([2, 3], [[0.5, 0.1]]))
+    _b18_check("stochastic_block_model", ([2, 3], [[0.5, 0.1], [0.2]]))
+    _b18_check("stochastic_block_model", ([2, 3], [[0.5, 0.1], [0.2, 0.5]]))
+    _b18_check("stochastic_block_model", ([2, 3], [[0.5, 0.1], [0.2, 0.5]]), {"directed": True})
+    _b18_check("stochastic_block_model", ([2, 3], [[0.5, 0.1], [0.1, 1.5]]))
+    _b18_check("stochastic_block_model", ([2, 3], [[0.5, 0.1], [0.1, 0.5]]), {"nodelist": list("abcde")})
+    # Partition sets of ints wrap around their table, so iterate unsorted.
+    _b18_check("stochastic_block_model", ([28, 10], [[0.3, 0.2], [0.2, 0.6]]))
+
+
+@pytest.mark.parametrize("n", _B18_SIZES)
+def test_batch18_geometric(n, _b18_priority):
+    for radius in [0.1, 0.3, 1.5, 0, -1]:
+        for dim in [1, 2, 3]:
+            for p in [1, 2, 3.5]:
+                _b18_check("random_geometric_graph", (n, radius), {"dim": dim, "p": p})
+    _b18_check("random_geometric_graph", (n, 0.3), {"pos_name": "xy"})
+    for L in [None, 0.5, 3]:
+        _b18_check("waxman_graph", (n,), {"L": L})
+        _b18_check("waxman_graph", (n, 0.9, 0.3), {"L": L, "domain": (-2, 1, 3.5, 7)})
+        _b18_check("waxman_graph", (n,), {"L": L, "pos_name": "xy", "domain": [0, 0, 2, 1]})
+
+
+@pytest.mark.parametrize("n", [0, 1, 2, 5, 13])
+def test_batch18_bipartite(n, _b18_priority):
+    for m in [0, 1, 3, 8]:
+        for directed in [False, True]:
+            kw = {"directed": directed}
+            for p in [0, 0.2, 0.8, 1, float("nan")]:
+                _b18_check("random_graph", (n, m, p), kw)
+            for k in [-1, 0, 3, 10, 24, 500]:
+                _b18_check("gnmk_random_graph", (n, m, k), kw)
+    _b18_check("random_graph", (30, 10, 0.3))
+    # The bottom nodes' set iterates in table order (here not sorted).
+    _b18_check("gnmk_random_graph", (28, 10, 50))
+
+
+def test_batch18_larger_graphs(_b18_priority):
+    seeds = range(2)
+    _b18_check("gnp_random_graph", (300, 0.05), seeds=seeds)
+    _b18_check("fast_gnp_random_graph", (3000, 0.002), {"directed": True}, seeds=seeds)
+    _b18_check("gnm_random_graph", (2000, 6000), seeds=seeds)
+    _b18_check("dense_gnm_random_graph", (300, 4000), seeds=seeds)
+    _b18_check("barabasi_albert_graph", (2000, 3), seeds=seeds)
+    _b18_check("dual_barabasi_albert_graph", (2000, 1, 4, 0.3), seeds=seeds)
+    _b18_check("extended_barabasi_albert_graph", (1000, 3, 0.3, 0.3), seeds=seeds)
+    _b18_check("watts_strogatz_graph", (2000, 6, 0.3), seeds=seeds)
+    _b18_check("newman_watts_strogatz_graph", (2000, 6, 0.3), seeds=seeds)
+    _b18_check("connected_watts_strogatz_graph", (2000, 4, 0.5), seeds=seeds)
+    _b18_check("powerlaw_cluster_graph", (2000, 3, 0.4), seeds=seeds)
+    _b18_check("random_regular_graph", (3, 2000), seeds=seeds)
+    _b18_check("random_regular_graph", (9, 30), seeds=range(10))
+    _b18_check("gn_graph", (1000,), seeds=seeds)
+    _b18_check("gnr_graph", (2000, 0.4), seeds=seeds)
+    _b18_check("gnc_graph", (500,), seeds=seeds)
+    _b18_check("random_uniform_k_out_graph", (300, 3), seeds=seeds)
+    _b18_check("random_uniform_k_out_graph", (2000, 3), {"with_replacement": False}, seeds=seeds)
+    _b18_check("random_tournament", (100,), seeds=seeds)
+    _b18_check("stochastic_block_model", ([300, 200], [[0.05, 0.01], [0.01, 0.08]]), seeds=seeds)
+    _b18_check("random_partition_graph", ([100] * 4, 0.1, 0.01), {"directed": True}, seeds=seeds)
+    _b18_check("random_geometric_graph", (2000, 0.05), seeds=seeds)
+    _b18_check("random_geometric_graph", (1000, 0.15), {"dim": 3, "p": 1}, seeds=seeds)
+    _b18_check("waxman_graph", (200,), seeds=seeds)
+    _b18_check("waxman_graph", (200,), {"L": 2.0}, seeds=seeds)
+    _b18_check("random_graph", (500, 400, 0.01), seeds=seeds)
+    _b18_check("gnmk_random_graph", (500, 400, 3000), {"directed": True}, seeds=seeds)
+
+
+def test_batch18_create_using(_b18_priority):
+    for cls in [nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph]:
+        for directed in [False, True]:
+            kw = {"directed": directed, "create_using": cls}
+            _b18_check("gnp_random_graph", (10, 0.3), kw)
+            _b18_check("gnm_random_graph", (10, 12), kw)
+        _b18_check("barabasi_albert_graph", (10, 2), {"create_using": cls})
+        _b18_check("watts_strogatz_graph", (10, 4, 0.3), {"create_using": cls})
+        _b18_check("gnr_graph", (10, 0.3), {"create_using": cls})
+    # Instances, subclasses and other generators fall back to NetworkX.
+    class Sub(nx.Graph):
+        pass
+
+    _b18_check("gnp_random_graph", (10, 0.3), {"create_using": Sub})
+    for seed in range(3):
+        ours = nx.gnp_random_graph(10, 0.3, seed=seed, create_using=nx.Graph())
+        ref = nx.gnp_random_graph(10, 0.3, seed=seed, create_using=nx.Graph(), backend="networkx")
+        _b18_same_graph(ours, ref)
+
+
+def test_batch18_seeds(_b18_priority):
+    import numpy as np
+
+    # seed=None draws from the global generator, and leaves it where
+    # NetworkX would.
+    results = []
+    for backend in [None, "networkx"]:
+        random.seed(7)
+        G = nx.barabasi_albert_graph(50, 2, backend=backend)
+        results.append((G, random.random()))
+    _b18_same_graph(results[0][0], results[1][0])
+    assert results[0][1] == results[1][1]
+    # Int seeds; NumPy generators and random.Random subclasses fall back.
+    class Sub(random.Random):
+        pass
+
+    for seed in [3, np.random.RandomState(3), np.random.default_rng(3), Sub(3)]:
+        for backend in [None, "networkx"]:
+            s = seed if isinstance(seed, int) else __import__("copy").deepcopy(seed)
+            results.append(nx.gnp_random_graph(30, 0.2, seed=s, backend=backend))
+        _b18_same_graph(results[-2], results[-1])
+    # An explicit backend="rustnx" raises for what rustnx can't replay.
+    with pytest.raises(NotImplementedError):
+        nx.gnp_random_graph(30, 0.2, seed=np.random.RandomState(3), backend="rustnx")
+
+
+def test_batch18_replays_python_random():
+    """``pyrandom.rs`` against ``random.Random`` itself, for many seeds and
+    argument ranges, including ints past 32 bits."""
+    from rustnx._core import CoreGraph
+
+    big = [2**31, 2**32 - 1, 2**32, 2**32 + 1, 2**40 + 7, 2**53, 2**62 + 3, 2**63 - 1]
+    for seed in range(60):
+        rng = random.Random(seed)
+        ops = []
+        for _ in range(300):
+            kind = rng.randrange(9)
+            if kind == 1:
+                ops.append((1, rng.randint(0, 64), 0))
+            elif kind in (2, 5):
+                ops.append((kind, rng.choice([1, 2, 3, 7, 1000, *big, rng.randint(1, 2**63 - 1)]), 0))
+            elif kind in (3, 4):
+                a = rng.randint(-(2**40), 2**40)
+                ops.append((kind, a, a + rng.choice([-1, 0, 1, 2, 17, 2**33, *big[:5]])))
+            elif kind == 6:
+                ops.append((6, rng.randint(-50, 50), rng.randint(-50, 50)))
+            elif kind == 7:
+                pop = rng.choice([0, 1, 5, 6, 20, 21, 22, 85, 86, 400, 5000])
+                ops.append((7, pop, rng.randint(0, pop) if rng.random() < 0.9 else pop + 1))
+            elif kind == 8:
+                ops.append((8, rng.randint(0, 60), 0))
+            else:
+                ops.append((0, 0, 0))
+        mt = random.Random(seed * 7919 + 1)
+        version, internal, gauss = mt.getstate()
+        found, internal = CoreGraph.pyrandom_replay(list(internal), ops)
+        for (op, a, b), got in zip(ops, found):
+            if op == 0:
+                want = mt.random()
+            elif op == 1:
+                want = mt.getrandbits(a)
+            elif op == 2:
+                want = mt._randbelow(a)
+            elif op in (3, 4):
+                try:
+                    want = mt.randrange(a, b) if op == 3 else mt.randint(a, b)
+                except ValueError:
+                    want = None
+            elif op == 5:
+                want = mt.choice(range(a))
+            elif op == 6:
+                want = mt.uniform(a, b)
+            elif op == 7:
+                try:
+                    want = mt.sample(range(a), b)
+                except ValueError:
+                    want = None
+            else:
+                want = list(range(a))
+                mt.shuffle(want)
+            assert type(got) is type(want) and got == want, (seed, op, a, b)
+        assert mt.getstate() == (version, tuple(internal), gauss)
+
+
+def test_batch18_runs_in_rust(monkeypatch):
+    from rustnx import algorithms
+
+    runs = []
+    original = algorithms._rg_run
+    monkeypatch.setattr(algorithms, "_rg_run", lambda seed, run: runs.append(1) or original(seed, run))
+    lobster = "random_lobster_graph" if hasattr(nx, "random_lobster_graph") else "random_lobster"
+    calls = [
+        ("gnp_random_graph", (30, 0.2), {}),
+        ("fast_gnp_random_graph", (30, 0.2), {"directed": True}),
+        ("gnm_random_graph", (30, 50), {}),
+        ("dense_gnm_random_graph", (30, 50), {}),
+        ("barabasi_albert_graph", (30, 2), {}),
+        ("dual_barabasi_albert_graph", (30, 1, 3, 0.5), {}),
+        ("extended_barabasi_albert_graph", (30, 2, 0.2, 0.2), {}),
+        ("watts_strogatz_graph", (30, 4, 0.2), {}),
+        ("newman_watts_strogatz_graph", (30, 4, 0.2), {}),
+        ("connected_watts_strogatz_graph", (30, 4, 0.2), {}),
+        ("powerlaw_cluster_graph", (30, 2, 0.3), {}),
+        ("random_regular_graph", (3, 30), {}),
+        ("gn_graph", (30,), {}),
+        ("gnr_graph", (30, 0.3), {}),
+        ("gnc_graph", (30,), {}),
+        ("random_uniform_k_out_graph", (30, 3), {}),
+        (lobster, (30, 0.5, 0.5), {}),
+        ("random_tournament", (10,), {}),
+        ("stochastic_block_model", ([10, 20], [[0.3, 0.05], [0.05, 0.2]]), {}),
+        ("random_partition_graph", ([10, 20], 0.3, 0.05), {}),
+        ("planted_partition_graph", (3, 10, 0.3, 0.05), {}),
+        ("random_geometric_graph", (30, 0.2), {}),
+        ("waxman_graph", (30,), {}),
+        ("random_graph", (10, 20, 0.2), {}),
+        ("gnmk_random_graph", (10, 20, 30), {}),
+    ]
+    for name, args, kwargs in calls:
+        before = len(runs)
+        G = _b18_func(name)(*args, seed=random.Random(1), backend="rustnx", **kwargs)
+        assert isinstance(G, nx.Graph)
+        assert len(runs) == before + 1, name
+
+
+# --- Batch 20: readers and parsers ----------------------------------------------------
+
+
+import bz2 as _b20_bz2
+import gzip as _b20_gzip
+import io as _b20_io
+import struct as _b20_struct
+
+
+def _b20_value(value):
+    """``value`` with types made explicit and floats compared bit for bit."""
+    if isinstance(value, dict):
+        return ("dict", [(_b20_value(k), _b20_value(v)) for k, v in value.items()])
+    if isinstance(value, (list, tuple)):
+        return (type(value).__name__, [_b20_value(v) for v in value])
+    if type(value) is float:
+        return ("float", _b20_struct.pack("<d", value))
+    return (type(value).__name__, value)
+
+
+def _b20_state(G):
+    """Everything observable about a NetworkX graph: class, graph dict, node
+    order and attributes, every adjacency row in order (with keys), and which
+    rows share each edge's data dict."""
+    if isinstance(G, list):
+        return ("list", [_b20_state(H) for H in G])
+    if not isinstance(G, nx.Graph):
+        return _b20_value(G)
+    multi = G.is_multigraph()
+
+    def row(nbrs):
+        if multi:
+            return [(_b20_value(v), [(_b20_value(k), _b20_value(d)) for k, d in kd.items()])
+                    for v, kd in nbrs.items()]
+        return [(_b20_value(v), _b20_value(d)) for v, d in nbrs.items()]
+
+    state = [type(G), _b20_value(G.graph), [(_b20_value(n), _b20_value(d)) for n, d in G._node.items()]]
+    state.append([(_b20_value(u), row(nbrs)) for u, nbrs in G._adj.items()])
+    assert list(G._adj) == list(G._node)
+    back = G._pred if G.is_directed() else G._adj
+    if G.is_directed():
+        assert G._succ is G._adj and list(G._pred) == list(G._node)
+        state.append([(_b20_value(u), row(nbrs)) for u, nbrs in G._pred.items()])
+    for u, nbrs in G._adj.items():
+        for v, d in nbrs.items():
+            assert back[v][u] is d
+    return state
+
+
+def _b20_outcome(call):
+    """Runs ``call(backend)`` with rustnx and with NetworkX and requires the
+    same graph (or error). If rustnx declines, checks that NetworkX falls
+    back cleanly with rustnx first in ``backend_priority.generators``.
+    Returns whether rustnx ran the call itself."""
+
+    def run(backend):
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                return ("ok", _b20_state(call(backend)))
+        except Exception as exc:
+            return (type(exc), exc.args)
+
+    ours = run("rustnx")
+    ran = ours[0] is not NotImplementedError
+    if not ran:
+        old = nx.config.backend_priority.generators
+        nx.config.backend_priority.generators = ["rustnx"]
+        try:
+            ours = run(None)
+        finally:
+            nx.config.backend_priority.generators = old
+    ref = run("networkx")
+    assert ours == ref
+    return ran
+
+
+def _b20_attr_graph(seed, directed, multigraph=False):
+    """A random graph with str, int, float, bool and None edge attributes."""
+    rng = random.Random(seed)
+    G = graph_for(seed, directed)
+    if multigraph:
+        G = (nx.MultiDiGraph if directed else nx.MultiGraph)(G)
+        for u, v in list(G.edges())[: rng.randint(0, 5)]:
+            G.add_edge(u, v)
+    values = [1, -2, 0, 3.5, -0.25, 1e300, True, False, None, "x", "a b", "q'q", 'd"d']
+    for *_, d in G.edges(data=True):
+        for key in rng.sample(["weight", "color", "w2", "flag"], rng.randint(0, 3)):
+            d[key] = rng.choice(values)
+    return G
+
+
+_B20_TOKENS = [
+    "1", "2", "01", "-1", "+3", "0", "-0", "1.5", "-0.0", "0.0", "1e3", "nan", "inf",
+    "-Infinity", "1_0", "x", "y", "١", "é", "{}", "{'a':", "1}", "{'a': [1]}",
+    "{'key': 1}", "{'w': 2}", "{'w': 2,}", "'s'", "True", "None", "#", "a#b", ",", "\t",
+    "{'w':", "0x1",
+]
+
+
+def _b20_random_lines(seed):
+    rng = random.Random(seed)
+    lines = []
+    for _ in range(rng.randint(0, 25)):
+        tokens = [rng.choice(_B20_TOKENS) for _ in range(rng.randint(0, 5))]
+        sep = rng.choice([" ", " ", "  ", "\t", ","])
+        line = sep.join(tokens)
+        if rng.random() < 0.3:
+            line += rng.choice(["\n", " \n", "\r\n", "  "])
+        lines.append(line)
+    return lines
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch20_edgelists(seed, directed):
+    G = _b20_attr_graph(seed, directed, multigraph=seed % 4 == 3)
+    cls = type(G)
+    rng = random.Random(seed)
+    for data in [True, False]:
+        lines = list(nx.generate_edgelist(G, data=data))
+        if rng.random() < 0.5:
+            lines.insert(rng.randint(0, len(lines)), "# a comment")
+            lines.append("")
+        for create_using in [None, cls]:
+            for nodetype in [None, int, str]:
+                assert _b20_outcome(lambda backend: nx.parse_edgelist(
+                    lines, create_using=create_using, nodetype=nodetype, backend=backend,
+                )) or nodetype is int
+                assert _b20_outcome(lambda backend: nx.bipartite.parse_edgelist(
+                    lines, create_using=create_using, nodetype=nodetype, backend=backend,
+                )) or nodetype is int
+        text = "".join(line + "\n" for line in lines).encode()
+        assert _b20_outcome(lambda backend: nx.read_edgelist(
+            _b20_io.BytesIO(text), create_using=create_using, backend=backend,
+        ))
+        assert _b20_outcome(lambda backend: nx.bipartite.read_edgelist(
+            _b20_io.BytesIO(text), create_using=create_using, backend=backend,
+        ))
+    # Typed data, and the "," delimiter (data joined with "," then).
+    H = nx.Graph()
+    for u, v in G.edges():
+        H.add_edge(u, v, weight=rng.choice([1, 2.5, -3]), color=rng.choice(["r", "g"]))
+    for delimiter in [None, ",", ";", " "]:
+        lines = list(nx.generate_edgelist(H, delimiter=delimiter or " ", data=["weight", "color"]))
+        for data in [(("weight", float), ("color", str)), [("weight", float)], True]:
+            ran = _b20_outcome(lambda backend: nx.parse_edgelist(
+                lines, delimiter=delimiter, data=data, backend=backend,
+            ))
+            assert ran or data is True or len(data) != 2
+        dict_lines = list(nx.generate_edgelist(H, delimiter=delimiter or " "))
+        _b20_outcome(lambda backend: nx.parse_edgelist(dict_lines, delimiter=delimiter, backend=backend))
+        _b20_outcome(lambda backend: nx.bipartite.parse_edgelist(
+            dict_lines, delimiter=delimiter, backend=backend))
+    weighted = "".join(f"{u} {v} {d['weight']}\n" for u, v, d in H.edges(data=True)).encode()
+    for nodetype in [None, str, float]:
+        _b20_outcome(lambda backend: nx.read_weighted_edgelist(
+            _b20_io.BytesIO(weighted), nodetype=nodetype, backend=backend))
+
+
+@pytest.mark.parametrize("seed", range(150))
+def test_batch20_edgelist_tokens(seed):
+    # Odd tokens: numbers Python reads differently, broken dicts, reserved
+    # attribute names, comments mid-token, CR, non-ASCII digits.
+    lines = _b20_random_lines(seed)
+    rng = random.Random(seed)
+    comments = rng.choice(["#", "#", None, "", "a", "//"])
+    delimiter = rng.choice([None, None, ",", "\t", " "])
+    for nodetype in [None, int, float]:
+        for data in [True, False, [("w", int)], (("w", float), ("c", str))]:
+            for func in [nx.parse_edgelist, nx.bipartite.parse_edgelist]:
+                _b20_outcome(lambda backend: func(
+                    lines, comments=comments, delimiter=delimiter, nodetype=nodetype,
+                    data=data, backend=backend,
+                ))
+            # An iterator: rustnx reads it all, then hands NetworkX a copy if needed.
+            _b20_outcome(lambda backend: nx.parse_edgelist(
+                iter(lines), comments=comments, delimiter=delimiter, nodetype=nodetype,
+                data=data, backend=backend,
+            ))
+    text = "\n".join(lines).encode()
+    for nodetype in [None, int]:
+        _b20_outcome(lambda backend: nx.read_edgelist(
+            _b20_io.BytesIO(text), comments=comments, delimiter=delimiter,
+            nodetype=nodetype, backend=backend,
+        ))
+        _b20_outcome(lambda backend: nx.read_weighted_edgelist(
+            _b20_io.BytesIO(text), comments=comments, delimiter=delimiter,
+            nodetype=nodetype, backend=backend,
+        ))
+    for nodetype in [None, int]:
+        _b20_outcome(lambda backend: nx.parse_adjlist(
+            lines, comments=comments or "#", delimiter=delimiter, nodetype=nodetype,
+            backend=backend,
+        ))
+        _b20_outcome(lambda backend: nx.read_adjlist(
+            _b20_io.BytesIO(text), comments=comments or "#", delimiter=delimiter,
+            nodetype=nodetype, backend=backend,
+        ))
+        for edgetype in [None, int, float, str]:
+            _b20_outcome(lambda backend: nx.parse_multiline_adjlist(
+                iter(lines), comments=comments or "#", delimiter=delimiter,
+                nodetype=nodetype, edgetype=edgetype, backend=backend,
+            ))
+            _b20_outcome(lambda backend: nx.read_multiline_adjlist(
+                _b20_io.BytesIO(text), comments=comments or "#", delimiter=delimiter,
+                nodetype=nodetype, edgetype=edgetype, backend=backend,
+            ))
+    for func in [nx.parse_leda, nx.parse_pajek]:
+        _b20_outcome(lambda backend: func(lines, backend=backend))
+        _b20_outcome(lambda backend: func("\n".join(lines), backend=backend))
+
+
+def test_batch20_literal_values():
+    cases = [
+        "{'a': 1, 'b': -2.5, 'c': 'x y', 'd': True, 'e': None, 'f': 1e400}",
+        "{'a': 1, 'a': 2}",  # the last value wins, in the first key's place
+        "{'a': +1, 'b': 00, 'c': .5, 'd': 5., 'e': 1E-3, 'f': -0}",
+        "{ 'a' :1 , }",
+        "{'a': 01}", "{'a': 1_000}", "{'a': 0x1}", "{'a': 1j}", "{'a': 'x' 'y'}",
+        "{'a': \"q\"}", "{'a': b'x'}", "{'a': - 1}", "{'a': {}}", "{1: 2}",
+        "{'self': 1}", "{'u_of_edge': 1}", "{'key': 1}", "[('a', 1)]", "{'a': 'b\\\\c'}",
+        "{'a': 99999999999999999999}", "{'a': 1.5e}",
+    ]
+    for case in cases:
+        for create_using in [None, nx.MultiGraph]:
+            _b20_outcome(lambda backend: nx.parse_edgelist(
+                [f"1 2 {case}"], create_using=create_using, backend=backend))
+            _b20_outcome(lambda backend: nx.bipartite.parse_edgelist(
+                [f"1 2 {case}"], create_using=create_using, backend=backend))
+            _b20_outcome(lambda backend: nx.parse_multiline_adjlist(
+                iter(["1 1", f"2 {case}"]), create_using=create_using, backend=backend))
+
+
+def test_batch20_create_using():
+    lines = ["1 2", "2 3 {'w': 1}", "3 1", "1 2 {'w': 2}"]
+    for create_using in [nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph]:
+        assert _b20_outcome(lambda backend: nx.parse_edgelist(
+            lines, create_using=create_using, backend=backend))
+        assert _b20_outcome(lambda backend: nx.parse_adjlist(
+            lines, create_using=create_using, backend=backend))
+
+        # An instance is cleared (graph attributes too) and filled.
+        def filled(func, backend, create_using=create_using):
+            G = create_using(name="old")
+            G.add_edge("a", "b")
+            H = func(lines, create_using=G, backend=backend)
+            assert H is G
+            return H
+
+        assert _b20_outcome(lambda backend: filled(nx.parse_edgelist, backend))
+        assert _b20_outcome(lambda backend: filled(nx.parse_adjlist, backend))
+
+    class MyGraph(nx.Graph):
+        pass
+
+    frozen = nx.freeze(nx.Graph())
+    for create_using in [MyGraph, MyGraph(), frozen, 3, "x"]:
+        assert not _b20_outcome(lambda backend: nx.parse_edgelist(
+            lines, create_using=create_using, backend=backend))
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch20_adjlists(seed, directed):
+    G = _b20_attr_graph(seed, directed, multigraph=seed % 3 == 2)
+    cls = type(G)
+    lines = list(nx.generate_adjlist(G))
+    text = "".join(line + "\n" for line in lines).encode()
+    for create_using in [None, cls]:
+        assert _b20_outcome(lambda backend: nx.parse_adjlist(
+            lines, create_using=create_using, backend=backend))
+        assert _b20_outcome(lambda backend: nx.read_adjlist(
+            _b20_io.BytesIO(text), create_using=create_using, backend=backend))
+        _b20_outcome(lambda backend: nx.parse_adjlist(
+            lines, create_using=create_using, nodetype=int, backend=backend))
+    # Multiline: dict data (literal_eval) and typed weights.
+    H = nx.DiGraph() if directed else nx.Graph()
+    H.add_nodes_from(G)
+    rng = random.Random(seed)
+    for u, v in G.edges():
+        if rng.random() < 0.5:
+            H.add_edge(u, v, weight=rng.choice([1, 2, 3]))
+        else:
+            H.add_edge(u, v)
+    for graph, edgetypes in [(G, [None]), (H, [None, int, str])]:
+        mlines = list(nx.generate_multiline_adjlist(graph))
+        mtext = "".join(line + "\n" for line in mlines).encode()
+        for edgetype in edgetypes:
+            for create_using in [None, type(graph)]:
+                _b20_outcome(lambda backend: nx.parse_multiline_adjlist(
+                    iter(mlines), create_using=create_using, edgetype=edgetype,
+                    backend=backend))
+                ran = _b20_outcome(lambda backend: nx.read_multiline_adjlist(
+                    _b20_io.BytesIO(mtext), create_using=create_using, edgetype=edgetype,
+                    backend=backend))
+                assert ran or edgetype is not None
+    # A list fails in NetworkX for nodes with neighbors (next(list)); rustnx
+    # leaves lists alone.
+    assert not _b20_outcome(lambda backend: nx.parse_multiline_adjlist(
+        ["a 1", "b"], backend=backend))
+    assert not _b20_outcome(lambda backend: nx.parse_multiline_adjlist(
+        ["a 0", "b 0"], backend=backend))
+
+
+def test_batch20_multiline_adjlist_cases():
+    cases = [
+        ["a 2", "# c", "", "b {'weight': 2}", "c 7"],
+        ["a 2", "b"],  # runs out of neighbors
+        ["a x"], ["a"], ["a 1 2"], ["a -1", "b 0"], ["a 1", "  "], ["a 1", "b junk"],
+        ["a 1", "b {'key': 1}"], ["a 1", "b 5"], ["a 1", "b {'a': 1}{'b': 2}"],
+        ["a 1", "b {'a':", "1}"], ["a 2", "b {'a': 1}", "b {'b': 2}"],
+    ]
+    for lines in cases:
+        for create_using in [None, nx.MultiDiGraph]:
+            _b20_outcome(lambda backend: nx.parse_multiline_adjlist(
+                iter(lines), create_using=create_using, backend=backend))
+            for edgetype in [int, float]:
+                _b20_outcome(lambda backend: nx.parse_multiline_adjlist(
+                    iter(lines), create_using=create_using, edgetype=edgetype,
+                    backend=backend))
+
+
+def test_batch20_files(tmp_path):
+    G = _b20_attr_graph(3, False)
+    text = "".join(line + "\n" for line in nx.generate_edgelist(G)).encode()
+    for suffix, opener in [("", open), (".gz", _b20_gzip.open), (".bz2", _b20_bz2.open)]:
+        path = tmp_path / f"g.edgelist{suffix}"
+        with opener(path, "wb") as f:
+            f.write(text)
+        for p in [path, str(path)]:
+            assert _b20_outcome(lambda backend: nx.read_edgelist(p, backend=backend))
+            assert _b20_outcome(lambda backend: nx.read_weighted_edgelist(
+                p, data=None, backend=backend) if False else nx.read_adjlist(p, backend=backend))
+
+            def from_handle(backend):
+                with opener(path, "rb") as f:
+                    return nx.read_edgelist(f, backend=backend)
+
+            assert _b20_outcome(from_handle)
+    # Text-mode handles fall back; reading resumes where the file was.
+    path = tmp_path / "g.edgelist"
+
+    def text_handle(backend):
+        with open(path, encoding="utf-8") as f:
+            return nx.read_edgelist(f, backend=backend)
+
+    assert not _b20_outcome(text_handle)
+
+    def resumed(backend):
+        f = _b20_io.BytesIO(b"junk line\n1 2\n2 3 {'w': [1]}\n")
+        f.seek(10)
+        return nx.read_edgelist(f, backend=backend), f.tell()
+
+    assert not _b20_outcome(lambda backend: resumed(backend)[0])
+    # Encodings: rustnx decodes UTF-8, ASCII and Latin-1 itself.
+    data = "é ÿ {'c': 'è'}\n".encode
+    for encoding in ["utf-8", "UTF8", "latin-1", "ascii", "utf-16", "utf-8-sig", "nope", 3]:
+        try:
+            raw = data(encoding if encoding in ("utf-8", "latin-1", "utf-16", "utf-8-sig") else "utf-8")
+        except (LookupError, TypeError):
+            raw = b"a b\n"
+        _b20_outcome(lambda backend: nx.read_edgelist(
+            _b20_io.BytesIO(raw), encoding=encoding, backend=backend))
+    # Invalid UTF-8 raises the same error after the fallback.
+    assert not _b20_outcome(lambda backend: nx.read_edgelist(
+        _b20_io.BytesIO(b"1 2\n\xff 3\n"), backend=backend))
+
+
+def test_batch20_fallback_rewinds_files():
+    # rustnx declines this file (a list value), so NetworkX must read it from
+    # where the file was, under backend_priority.
+    raw = b"skip\n1 2 {'w': 1}\n2 3 {'w': [1]}\n"
+    old = nx.config.backend_priority.generators
+    nx.config.backend_priority.generators = ["rustnx"]
+    try:
+        f = _b20_io.BytesIO(raw)
+        f.seek(5)
+        G = nx.read_edgelist(f)
+    finally:
+        nx.config.backend_priority.generators = old
+    f = _b20_io.BytesIO(raw)
+    f.seek(5)
+    assert _b20_state(G) == _b20_state(nx.read_edgelist(f, backend="networkx"))
+
+
+def _b20_leda_text(G, rng):
+    nodes = list(G)
+    index = {v: i + 1 for i, v in enumerate(nodes)}
+    lines = ["#header", "LEDA.GRAPH", "string", "int", "-1" if G.is_directed() else "-2"]
+    lines += ["#nodes", str(len(nodes))]
+    lines += [rng.choice(["|{%s}|", "|{%s}|  ", "%s" if v else "|{%s}|"]) % v for v in nodes]
+    lines += ["#edges", str(G.number_of_edges())]
+    labels = ["", "x", "12", "long_label", "\u00e9t\u00e9"]
+    lines += [f"{index[u]} {index[v]} 0 |{{{rng.choice(labels)}}}|" for u, v in G.edges()]
+    return lines
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch20_leda(seed, directed):
+    rng = random.Random(seed)
+    G = graph_for(seed, directed)
+    G = nx.relabel_nodes(G, {v: f"v{v}" for v in G})
+    if seed % 5 == 0 and len(G):
+        G = nx.relabel_nodes(G, {list(G)[0]: ""})  # no label: the node's number
+    lines = _b20_leda_text(G, rng)
+    text = "\n".join(lines)
+    assert _b20_outcome(lambda backend: nx.parse_leda(text, backend=backend))
+    assert _b20_outcome(lambda backend: nx.parse_leda(lines, backend=backend))
+    assert _b20_outcome(lambda backend: nx.parse_leda(iter(lines), backend=backend))
+    assert _b20_outcome(lambda backend: nx.read_leda(
+        _b20_io.BytesIO(text.encode()), backend=backend))
+    # Damaged files: missing lines, bad numbers, bad node indices.
+    for _ in range(5):
+        broken = list(lines)
+        i = rng.randrange(len(broken))
+        choice = rng.random()
+        if choice < 0.4:
+            del broken[i]
+        elif choice < 0.7:
+            broken[i] = rng.choice(["x", "0 9 0 |{}|", "1 1 0", "99 1 0 |{a}|", "-1", ""])
+        else:
+            broken = broken[:i]
+        _b20_outcome(lambda backend: nx.parse_leda(broken, backend=backend))
+
+
+def test_batch20_pajek_cases():
+    cases = [
+        '*network x\n*vertices 3\n1 "a b" 0.1 0.2 box ic Red\n2 b\n3 c\n*edges\n1 2 2.5\n2 3\n1 2 1 c red\n',
+        "*Network\n*Vertices 2\n1 a\n2 b\n*Arcs\n1 2\n2 1 x\n1 2 1 k v\n",
+        "*vertices 2\n1 a 0.5 junk box\n2 'b c'\n*arcs\n1 2 \"3\"\n",
+        "*vertices 2\n1 a\n2 b\n*edges\n1 3\n3 1 1.5\n  \n1\n",
+        "*vertices 2\n1 a\n2 a\n*edges\n1 2\n",
+        "*vertices 1\n1 a\n*vertices 1\n1 b\n*edges\n1 1\n",
+        "*edges\n1 2\n",  # no *vertices
+        "*edges\n\n",
+        "*vertices 2\n1 a\n2 b\n*matrix\n0 1\n1 0\n",
+        "*vertices 3\n1 a\n2 b\n",  # too few vertex lines
+        "*vertices x\n", "*vertices 2 3\n", "*vertices 1\n1\n",
+        '*vertices 1\n1 "unclosed\n', "*vertices 1\n1 a\\\n", '*vertices 1\n1 "a\\"b" 1 2 s\n',
+        "*vertices 1\n1 a\\ b\n*edges\n1 1 1 key 3\n", "*vertices 1\n1 a\n*edges\n1 1 1 self x\n",
+        "*vertices 1\n1 a 1 2 s id 9 x y\n", "*network  two words  \n",
+        "*vertices 1\n1 a 1_0 2 s\n", "*vertices 1\n1 a inf -nan s\n",
+        "*İ\n", "*networK\n*vertices 1\n1 é\n",
+        "*vertices 2\r\n1 a\r\n2 b\r\n*edges\r\n1 2 3\r\n",
+    ]
+    for text in cases:
+        _b20_outcome(lambda backend: nx.parse_pajek(text, backend=backend))
+        _b20_outcome(lambda backend: nx.parse_pajek(text.split("\n"), backend=backend))
+        _b20_outcome(lambda backend: nx.read_pajek(
+            _b20_io.BytesIO(text.encode()), backend=backend))
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(20))
+def test_batch20_pajek(seed, directed):
+    G = _b20_attr_graph(seed, directed, multigraph=seed % 2 == 1)
+    rng = random.Random(seed)
+    for v, d in G.nodes(data=True):
+        if rng.random() < 0.5:
+            d.update(x=rng.random(), y=rng.choice([1, 2.5]), shape="box")
+    for *_, d in G.edges(data=True):
+        for key in [k for k in d if k != "weight"]:
+            d[key] = str(d[key]).replace('"', "").replace("'", "")
+        if "weight" in d and not isinstance(d["weight"], (int, float)):
+            del d["weight"]
+    text = "\n".join(nx.generate_pajek(G))
+    assert _b20_outcome(lambda backend: nx.parse_pajek(text, backend=backend))
+    assert _b20_outcome(lambda backend: nx.read_pajek(
+        _b20_io.BytesIO(text.encode()), backend=backend))
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_batch20_graph6_sparse6(seed):
+    rng = random.Random(seed)
+    G = nx.convert_node_labels_to_integers(graph_for(seed, False))
+    G.remove_edges_from(nx.selfloop_edges(G))
+    for header in [False, True]:
+        g6 = nx.to_graph6_bytes(G, header=header)
+        for data in [g6, g6.rstrip(b"\n"), g6 + b"\n", g6[:-2], g6[:-1] + b"\x00"]:
+            _b20_outcome(lambda backend: nx.from_graph6_bytes(data, backend=backend))
+        s6 = nx.to_sparse6_bytes(G, header=header)
+        for data in [s6, s6.rstrip(b"\n"), s6[:-2], b">>sparse6<<" + s6[-3:]]:
+            _b20_outcome(lambda backend: nx.from_sparse6_bytes(data, backend=backend))
+    assert _b20_outcome(lambda backend: nx.from_graph6_bytes(
+        nx.to_graph6_bytes(G, header=False).rstrip(b"\n"), backend=backend))
+    assert _b20_outcome(lambda backend: nx.from_sparse6_bytes(
+        nx.to_sparse6_bytes(G, header=False).rstrip(b"\n"), backend=backend))
+    # Parallel edges and self-loops make sparse6 return a MultiGraph.
+    M = nx.MultiGraph(G)
+    for _ in range(rng.randint(0, 4)):
+        if len(G):
+            M.add_edge(rng.choice(list(G)), rng.choice(list(G)))
+    s6 = nx.to_sparse6_bytes(M, header=False).rstrip(b"\n")
+    assert _b20_outcome(lambda backend: nx.from_sparse6_bytes(s6, backend=backend))
+    # Files: one graph per line, blank lines skipped, whitespace stripped.
+    graphs = [nx.convert_node_labels_to_integers(graph_for(seed + k, False)) for k in range(3)]
+    for H in graphs:
+        H.remove_edges_from(nx.selfloop_edges(H))
+    for writer, reader in [(nx.to_graph6_bytes, nx.read_graph6),
+                           (nx.to_sparse6_bytes, nx.read_sparse6)]:
+        chunks = [writer(H, header=rng.random() < 0.5) for H in graphs]
+        for raw in [chunks[0], b"".join(chunks), b"\n \x0b".join(chunks) + b"\n\n", b"", b"\n"]:
+            _b20_outcome(lambda backend: reader(_b20_io.BytesIO(raw), backend=backend))
+
+
+def test_batch20_graph6_errors():
+    for data in [b"", b"\n", b"A", b"A_a", b"@", b"~", b"~?", b"~~", b">>graph6<<", b"A_\n\n",
+                 b"A\x7f", b"B_ ", "A_", bytearray(b"A_")]:
+        _b20_outcome(lambda backend: nx.from_graph6_bytes(data, backend=backend))
+    for data in [b"", b":", b"A", b":A", b":A_", b":~", b":~~", b":@", b":A\x00", b">>sparse6<<",
+                 b":Fa@x^", b":Fa@x^\n", ":A_", bytearray(b":A_")]:
+        _b20_outcome(lambda backend: nx.from_sparse6_bytes(data, backend=backend))
+
+
+import json as _b20_json
+
+_b20_jg = nx.readwrite.json_graph
+
+
+def _b20_json_graph(seed, directed, multigraph):
+    """A random graph with tuple, int, float, bool and str nodes and assorted
+    attribute values (lists and dicts too)."""
+    rng = random.Random(seed)
+    G = _b20_attr_graph(seed, directed, multigraph)
+    labels = [0, 1, 2.5, -0.0, (1, 2), ("a", (3,)), "s", True, 10**20]
+    mapping = {v: rng.choice(labels) if rng.random() < 0.3 else v for v in G}
+    G = nx.relabel_nodes(G, mapping)
+    for v, d in G.nodes(data=True):
+        if rng.random() < 0.4:
+            d["label"] = rng.choice(["x", 1, [1, 2], {"k": 1}, None])
+    if multigraph:
+        for u, v, k, d in list(G.edges(keys=True, data=True))[:3]:
+            G.add_edge(u, v, key=rng.choice(["k", 7, (1, 2)]), **d)
+    G.graph.update(name=f"g{seed}", meta=[1, 2])
+    return G
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch20_json_graphs(seed, directed):
+    G = _b20_json_graph(seed, directed, multigraph=seed % 2 == 1)
+    multi = G.is_multigraph()
+    cases = []
+    for edges in ["links", "edges"]:
+        data = _b20_jg.node_link_data(G, edges=edges)
+        cases.append((_b20_jg.node_link_graph, data, {"edges": edges}))
+    cases.append((_b20_jg.adjacency_graph, _b20_jg.adjacency_data(G), {}))
+    if not any(isinstance(v, bool) or v is None for v in G):
+        cases.append((_b20_jg.cytoscape_graph, _b20_jg.cytoscape_data(G), {}))
+    for func, data, kwargs in cases:
+        # As built, and through JSON (tuples become lists, keys become str).
+        loaded = _b20_json.loads(_b20_json.dumps(data, default=str))
+        for d in [data, loaded]:
+            for flags in [{}, {"directed": not directed, "multigraph": not multi}]:
+                if func is _b20_jg.cytoscape_graph:
+                    if flags:
+                        continue
+                ran = _b20_outcome(lambda backend: func(d, **kwargs, **flags, backend=backend))
+                assert ran or d is loaded
+    # node_link_graph with renamed fields and missing ids (numbered by position).
+    data = _b20_jg.node_link_data(G, source="s", target="t", name="n", key="k", edges="e",
+                                  nodes="v")
+    for d in data["v"][::3]:
+        del d["n"]
+    _b20_outcome(lambda backend: _b20_jg.node_link_graph(
+        data, source="s", target="t", name="n", key="k", edges="e", nodes="v", backend=backend))
+    # tree_graph on a random tree (attributes on some nodes).
+    rng = random.Random(seed)
+    T = nx.bfs_tree(nx.random_labeled_tree(30, seed=seed) if hasattr(nx, "random_labeled_tree")
+                    else nx.balanced_tree(2, 4), 0)
+    for v in T:
+        if rng.random() < 0.5:
+            T.nodes[v]["w"] = rng.choice([1, "x", [2], None])
+    for ident, children in [("id", "children"), ("name", "kids")]:
+        data = _b20_jg.tree_data(T, 0, ident=ident, children=children)
+        assert _b20_outcome(lambda backend: _b20_jg.tree_graph(
+            data, ident=ident, children=children, backend=backend))
+
+
+def test_batch20_graph_dict_identity():
+    data = _b20_jg.node_link_data(nx.path_graph(3, create_using=nx.MultiGraph), edges="edges")
+    G = _b20_jg.node_link_graph(data, edges="edges", backend="rustnx")
+    assert G.graph is data["graph"]
+
+
+def test_batch20_json_edge_cases():
+    nl = _b20_jg.node_link_graph
+    cases = [
+        {"nodes": [{"id": 1}, {"id": 1, "a": 2}, {"id": True, "b": 3}, {"id": 1.0}], "edges": []},
+        {"nodes": [{"id": 0.0}, {"id": -0.0}], "edges": [{"source": -0.0, "target": 0.0},
+                                                       {"source": 1, "target": -0.0}]},
+        {"nodes": [{"id": [1, [2]]}], "edges": [{"source": [1, [2]], "target": 3}]},
+        {"nodes": [{"id": [1, 2]}], "edges": [{"source": [1, 2], "target": [1, 2], "key": 4}]},
+        {"nodes": [{"id": None}], "edges": []},
+        {"nodes": [], "edges": [{"source": None, "target": 1}]},
+        {"nodes": [], "edges": [{"source": 1}]},
+        {"nodes": [{"id": 1, "node_for_adding": 2}], "edges": []},
+        {"nodes": [{"id": 1, "self": 2}], "edges": []},
+        {"nodes": [], "edges": [{"source": 1, "target": 2, "u_of_edge": 3}]},
+        {"nodes": [], "edges": [{"source": 1, "target": 2, "key": None, "w": 1}]},
+        {"nodes": [], "edges": [{"source": 1, "target": 2, "key": [1]}]},
+        {"nodes": [{"id": {1: 2}}], "edges": []},
+        {"nodes": [{"id": 1, 5: "int key"}], "edges": []},
+        {"nodes": ({"id": 1},), "edges": []},
+        {"nodes": [], "edges": [], "graph": [("a", 1)], "multigraph": False, "directed": True},
+        {"nodes": [], "edges": [], "multigraph": "yes"},
+        {"edges": []}, {"nodes": []}, [], None,
+    ]
+    for data in cases:
+        for kwargs in [{"edges": "edges"}, {"edges": "edges", "multigraph": False},
+                       {"edges": "edges", "key": "w"}, {}]:
+            _b20_outcome(lambda backend: nl(data, **kwargs, backend=backend))
+    adj = _b20_jg.adjacency_graph
+    cases = [
+        {"nodes": [{"id": 1, "x": 1}, {"id": 2}], "adjacency": [[{"id": 2, "key": 0, "w": 1}], []]},
+        {"nodes": [{"id": 1}], "adjacency": [[{"id": 2}]]},  # no key in a multigraph
+        {"nodes": [{"id": 1}], "adjacency": [[{"id": 2, "key": None}]]},
+        {"nodes": [{"id": 1}], "adjacency": [[], [{"id": 2}]]},  # more rows than nodes
+        {"nodes": [{"x": 1}], "adjacency": [[]]},
+        {"nodes": [{"id": 1}], "adjacency": [[{"key": 1}]]},
+        {"nodes": [{"id": 1}]},
+        {"nodes": [{"id": 1}], "adjacency": [[{"id": 1, "key": "a", 3: "int key"}]],
+         "graph": {"name": "x"}, "multigraph": False},
+        {"nodes": [], "adjacency": [], "graph": 5},
+    ]
+    for data in cases:
+        for kwargs in [{}, {"multigraph": False}, {"attrs": {"id": "id", "key": "key"}},
+                       {"attrs": {"id": "x", "key": "id"}}, {"attrs": {"key": "key"}}]:
+            _b20_outcome(lambda backend: adj(data, **kwargs, backend=backend))
+
+    class Ambiguous:
+        def __bool__(self):
+            raise ValueError("ambiguous")
+
+    cy = _b20_jg.cytoscape_graph
+    base = {"data": [], "directed": False, "multigraph": False}
+    cases = [
+        {**base, "elements": {"nodes": [{"data": {"value": 1, "name": "a", "id": "1"}}],
+                              "edges": [{"data": {"source": 1, "target": 2, "w": 3}}]}},
+        {**base, "multigraph": True, "elements": {"nodes": [], "edges": [
+            {"data": {"source": 1, "target": 2}}, {"data": {"source": 1, "target": 2, "key": 0}},
+            {"data": {"source": 1, "target": 2, "key": None}}]}},
+        {**base, "elements": {"nodes": [{"data": {"value": 1, "name": Ambiguous()}}], "edges": []}},
+        {**base, "elements": {"nodes": [{"data": {"name": "a"}}], "edges": []}},
+        {**base, "elements": {"nodes": [{"value": 1}], "edges": []}},
+        {**base, "elements": {"nodes": []}},
+        {**base, "data": None, "elements": {"nodes": [], "edges": []}},
+        {**base, "data": {"a": 1}, "directed": True, "elements": {"nodes": [], "edges": [
+            {"data": {"source": (1, 2), "target": 2}}]}},
+    ]
+    for data in cases:
+        for kwargs in [{}, {"name": "id", "ident": "id"}, {"name": "label"}]:
+            _b20_outcome(lambda backend: cy(data, **kwargs, backend=backend))
+    tree = _b20_jg.tree_graph
+    deep = {"id": 0}
+    node = deep
+    for i in range(1, 400):
+        node["children"] = [{"id": i}]
+        node = node["children"][0]
+    cases = [
+        {"id": 1, "children": [{"id": 2, "a": 1}, {"id": 3, "children": [{"id": 2, "b": 2}]}]},
+        {"id": 1, "children": [{"id": 2, "children": []}, {"id": 3, "children": None}]},
+        {"id": 1, "children": ({"id": 2},)},
+        {"id": 1, "children": [{"x": 2}]},
+        {"id": 1, "self": 2},
+        {"id": None},
+        {"id": 1, "children": [{"id": 1}]},
+        {"children": []},
+        deep,
+        [],
+    ]
+    for data in cases:
+        _b20_outcome(lambda backend: tree(data, backend=backend))
+
+
+def _b20_gml_graph(seed, directed, multigraph):
+    rng = random.Random(seed)
+    G = _b20_attr_graph(seed, directed, multigraph)
+    for _, d in G.nodes(data=True):
+        if rng.random() < 0.5:
+            d.update(rng.choice([
+                {"w": 1.5}, {"s": "café \"q\" & <x>"}, {"l": [1, 2.5, "x"]},
+                {"d": {"k": 1, "n": {"m": "x"}}}, {"e": ()}, {"f": []}, {"big": 10**30},
+                {"inf": float("inf"), "ninf": float("-inf")}, {"one": [7]},
+            ]))
+    for *_, d in G.edges(data=True):
+        for k in list(d):
+            if d[k] is None or isinstance(d[k], bool):
+                d[k] = str(d[k])
+    if multigraph:
+        for u, v in list(G.edges())[:3]:
+            G.add_edge(u, v, key=rng.choice(["k", 9, 2.5]))
+    G.graph.update(name=f"g{seed}", tags=["a", "b"])
+    return G
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch20_gml(seed, directed):
+    G = _b20_gml_graph(seed, directed, multigraph=seed % 2 == 1)
+    text = "\n".join(nx.generate_gml(G))
+    for label in ["label", "id", None]:
+        assert _b20_outcome(lambda backend: nx.parse_gml(text, label=label, backend=backend))
+        lines = text.split("\n")
+        assert _b20_outcome(lambda backend: nx.parse_gml(lines, label=label, backend=backend))
+        assert _b20_outcome(lambda backend: nx.parse_gml(
+            iter([line + "\n" for line in lines]), label=label, backend=backend))
+        assert _b20_outcome(lambda backend: nx.read_gml(
+            _b20_io.BytesIO(text.encode()), label=label, backend=backend))
+    # Labels other than "label" (this one is unique: the node's own id).
+    H = nx.relabel_nodes(G, {v: i for i, v in enumerate(G)})
+    for v, d in H.nodes(data=True):
+        d["name"] = f"n{v}"
+    text = "\n".join(nx.generate_gml(H))
+    assert _b20_outcome(lambda backend: nx.parse_gml(text, label="name", backend=backend))
+    _b20_outcome(lambda backend: nx.parse_gml(text, label="missing", backend=backend))
+    _b20_outcome(lambda backend: nx.parse_gml(text, destringizer=nx.readwrite.gml.literal_destringizer,
+                                              backend=backend))
+
+
+_B20_GML_TOKENS = [
+    "graph", "[", "]", "node", "edge", "id", "label", "source", "target", "key", "directed",
+    "multigraph", "1", "0", "-2", "1.5", "+INF", "-INF", "INF", "NAN", "-INFe5", "1e5", "1.",
+    ".5", "5.e3", "1.5x", '"s"', '"()"', '"[]"', '"&#65;&amp;"', '"&nbsp;"', '"&#55296;"',
+    '"&#99999999;"', '"&#x41;"', '"a', 'b"', "# c", " ", "é", "\t", "abc_9",
+    "_networkx_list_start", '"_networkx_list_start"', "+", "99999999999999999999", "self",
+]
+
+
+@pytest.mark.parametrize("seed", range(150))
+def test_batch20_gml_tokens(seed):
+    rng = random.Random(seed)
+    lines = []
+    for _ in range(rng.randint(0, 12)):
+        lines.append(" ".join(rng.choice(_B20_GML_TOKENS) for _ in range(rng.randint(0, 6))))
+    # Mostly well-formed graphs with odd values.
+    body = []
+    n = rng.randint(0, 5)
+    for i in range(n):
+        body.append(f"node [ id {rng.choice([i, i, str(i), f'{i}.0'])} label \"{rng.choice('abcde')}\" "
+                    f"{rng.choice(_B20_GML_TOKENS[3:])} {rng.choice(_B20_GML_TOKENS[12:])} ]")
+    extras = ["", "key 1", "key 1.0", 'key "k"', "w 2"]
+    for _ in range(rng.randint(0, 6)):
+        if n:
+            body.append(f"edge [ source {rng.randrange(n)} target {rng.randrange(n)} "
+                        f"{rng.choice(extras)} ]")
+    header = rng.choice(["", "directed 1", "multigraph 1", "directed 1 multigraph 1", "multigraph 0"])
+    texts = ["\n".join(lines), f"graph [ {header}\n" + "\n".join(body) + "\n]",
+             "graph [\n" + "\n".join(lines) + "\n]"]
+    for text in texts:
+        for label in ["label", "id"]:
+            _b20_outcome(lambda backend: nx.parse_gml(text, label=label, backend=backend))
+            _b20_outcome(lambda backend: nx.parse_gml(text.split("\n"), label=label, backend=backend))
+
+
+def test_batch20_gml_cases():
+    cases = [
+        'graph [ node [ id 1 label "a\n  b" ] ]',  # a string over two lines
+        'graph [ node [ id 1 label "a\n  b\n c" ] ]',
+        'graph [ node [ id 1 label "a\n\n c" ] ]',
+        'graph [ node [ id 1 label "a" x "b\nc" ] ]',
+        'graph [ node [ id 1 label "open\n',
+        "graph [ node [ id abc label def ] edge [ source abc target abc ] ]",
+        "graph [ node [ id 1 ] node [ id 1.0 ] ]",
+        "graph [ node [ id 1 label 2 ] node [ id 2 label 2.0 ] ]",
+        "graph [ node [ id 1 ] edge [ source 1 target 2 ] ]",
+        "graph [ node [ id 1 ] edge [ source 1.0 target 1 ] ]",
+        "graph [ node [ id 1 ] edge [ source 1 target 1 ] edge [ source 1 target 1 ] ]",
+        "graph [ multigraph 1 node [ id 1 ] edge [ source 1 target 1 ] edge [ source 1 target 1 key 0 ] ]",
+        "graph [ multigraph 1 node [ id 1 ] edge [ source 1 target 1 key 1 ] edge [ source 1 target 1 ] edge [ source 1 target 1 ] ]",
+        "graph [ multigraph 1 node [ id 1 ] edge [ source 1 target 1 key NAN ] edge [ source 1 target 1 key NAN ] ]",
+        "graph [ multigraph 1 node [ id 1 ] edge [ source 1 target 1 key [ a 1 ] ] ]",
+        "graph [ node [ id 1 node_for_adding 2 ] ]",
+        "graph [ node [ id 1 ] edge [ source 1 target 1 u_of_edge 2 ] ]",
+        "graph [ node [ id [ a 1 ] ] ]",
+        'graph [ node [ id "()" label "x" ] ]',
+        'graph [ node [ id 1 label "[]" ] ]',
+        "graph [ node [ id 1 x NAN y INF z -INF w +INF ] ]",
+        "graph [ node [ id 1 x -INFe5 ] ]",
+        "graph [ node [ id 1 x 1e5 ] ]",
+        "graph [ node [ id 1 x 99999999999999999999 ] ]",
+        'graph [ node [ id 1 l "_networkx_list_start" l 2 ] node [ id 2 l "_networkx_list_start" ] ]',
+        'graph [ name "&amp;&lt;&gt;&quot;&#65;&#x42;&#99999999;&#; & &x41; &nbsp;" ]',
+        'graph [ name "&#55296;" ]',
+        "graph [ directed 1 directed 0 ]",
+        'graph [ directed "" multigraph 0.0 ]',
+        "graph [ ] graph [ ]",
+        "graph 5", "", "node [ id 1 ]", "graph [ node 5 ]", "graph [ ] ]", "graph [",
+        "graph [ id ] ]", "graph [ x ]",
+        "Creator \"me\"\ngraph [ node [ id 0 ] ]",
+        "graph [ node [ id 0 ] ]",
+        "graph [ node [ id 0 label \"café\" ] ]",
+        "graph [ né 1 ]",
+        "graph [ node [ id 0 ] ]\r\n# trailing\r\n",
+        "graph [ node [ id 0 ] ]\x0bgraph",
+        "graph [ x" + " [ y" * 150 + " ]" * 151,
+    ]
+    for text in cases:
+        for label in ["label", "id", None]:
+            _b20_outcome(lambda backend: nx.parse_gml(text, label=label, backend=backend))
+            _b20_outcome(lambda backend: nx.parse_gml(text.split("\n"), label=label, backend=backend))
+            _b20_outcome(lambda backend: nx.read_gml(
+                _b20_io.BytesIO(text.encode()), label=label, backend=backend))
+    # List items: one trailing newline is dropped; another one inside raises.
+    for lines in [["graph [ ]\n"], ["graph [\n", "]\n\n"], ["graph [ ]\r\n"], [b"graph [ ]"],
+                  ("graph [ ]",), ["graph [ ", 3, "]"]]:
+        _b20_outcome(lambda backend: nx.parse_gml(lines, backend=backend))
+
+
+# --- Batch 21: operators and structure ---
+
+
+def _b21_graph_state(R, *inputs):
+    """Everything about a result graph a caller could see: its class, the
+    graph dict, node and adjacency order (succ and pred), node and edge
+    attribute dicts with the types of keys and values, which edge dicts are
+    shared between directions, and which dicts and values are the inputs'
+    own objects (shared) rather than copies."""
+    if not isinstance(R, nx.Graph):
+        return R
+    known = {}
+    for k, G in enumerate(inputs):
+        if not isinstance(G, nx.Graph):
+            continue
+        known.setdefault(id(G.graph), ("graph", k))
+        for n, d in G.nodes(data=True):
+            known.setdefault(id(d), ("node", k, n))
+            for key, val in d.items():
+                known.setdefault(id(val), ("node value", k, n, key))
+        for u, v, d in G.edges(data=True):
+            known.setdefault(id(d), ("edge", k, u, v))
+            for key, val in d.items():
+                known.setdefault(id(val), ("edge value", k, u, v, key))
+
+    def attrs(d):
+        return (
+            known.get(id(d)),
+            [(type(k).__name__, k, type(v).__name__, v, known.get(id(v))) for k, v in d.items()],
+        )
+
+    def rows(adj):
+        return [
+            (type(u).__name__, u, [(type(v).__name__, v, attrs(d)) for v, d in nbrs.items()])
+            for u, nbrs in adj.items()
+        ]
+
+    state = [type(R).__name__, attrs(R.graph)]
+    state.append([(type(n).__name__, n, attrs(d)) for n, d in R._node.items()])
+    state.append(rows(R._adj))
+    if R.is_directed():
+        state.append(rows(R._pred))
+        state.append([R._succ[u][v] is R._pred[v][u] for u in R for v in R._succ[u]])
+    else:
+        state.append([R._adj[u][v] is R._adj[v][u] for u in R for v in R._adj[u]])
+    return state
+
+
+def _b21_graphs(func):
+    """Compare graph results with `_b21_graph_state` (the graph arguments,
+    also inside a list, are the inputs it checks sharing against)."""
+
+    def run(*args, **kwargs):
+        inputs = []
+        for a in args:
+            inputs.extend(a if isinstance(a, list) else [a])
+        result = func(*args, **kwargs)
+        if isinstance(result, tuple):
+            return tuple(_b21_graph_state(r, *inputs) for r in result)
+        return _b21_graph_state(result, *inputs)
+
+    return run
+
+
+def _b21_decorate(G, seed):
+    """Graph, node and edge attributes of several kinds, some mutable (so
+    copies and deep copies are told apart), on some nodes and edges."""
+    rng = random.Random(seed)
+    G.graph["name"] = f"g{seed}"
+    G.graph["tags"] = [seed]
+    for v in G:
+        r = rng.random()
+        if r < 0.3:
+            G.nodes[v]["color"] = rng.choice(["red", "blue"])
+        elif r < 0.5:
+            G.nodes[v]["data"] = [v]
+            G.nodes[v]["w"] = rng.randint(1, 3)
+    for u, v, d in G.edges(data=True):
+        r = rng.random()
+        if r < 0.3:
+            d["weight"] = rng.choice([1, 2.5])
+        elif r < 0.45:
+            d["path"] = [u, v]
+    return G
+
+
+def _b21_pair(seed, directed, overlap):
+    """Two decorated graphs: disjoint node sets, or (``overlap``) sharing
+    some nodes and edges with different attributes."""
+    G = _b21_decorate(graph_for(seed, directed), seed)
+    H = _b21_decorate(graph_for(seed + 1000, directed), seed + 1)
+    if overlap:
+        nodes = list(G)
+        rng = random.Random(seed)
+        H.add_nodes_from(rng.sample(nodes, len(nodes) // 2), color="green")
+        H.add_edges_from(e for e in G.edges if rng.random() < 0.5)
+        H.add_edge(nodes[0], nodes[-1], weight=7)
+    else:
+        H = nx.relabel_nodes(H, {v: ("h", v) for v in H})
+    return G, H
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch21_unions(seed, directed):
+    G, H = _b21_pair(seed, directed, False)
+    G2, H2 = _b21_pair(seed, directed, True)
+    K = _b21_decorate(graph_for(seed + 7, directed), seed + 7)
+    exact_outcome(_b21_graphs(nx.union), G, H)
+    exact_outcome(_b21_graphs(nx.union), G2, H2)  # not disjoint
+    exact_outcome(_b21_graphs(nx.union), G2, H2, rename=("a", "b"))
+    exact_outcome(_b21_graphs(nx.union), G, H, rename=("a",))
+    exact_outcome(_b21_graphs(nx.union), G, G, rename=("x-", "y-"))
+    exact_outcome(_b21_graphs(nx.union_all), [G, H])
+    exact_outcome(_b21_graphs(nx.union_all), [G, K, H], rename=("p", "q", "r"))
+    exact_outcome(_b21_graphs(nx.union_all), [G])
+    exact_outcome(_b21_graphs(nx.union_all), [])
+    exact_outcome(_b21_graphs(nx.compose), G, H)
+    exact_outcome(_b21_graphs(nx.compose), G2, H2)
+    exact_outcome(_b21_graphs(nx.compose), H2, G2)
+    exact_outcome(_b21_graphs(nx.compose_all), [G2, H2, K])
+    exact_outcome(_b21_graphs(nx.compose_all), [])
+    exact_outcome(_b21_graphs(nx.disjoint_union), G2, H2)
+    exact_outcome(_b21_graphs(nx.disjoint_union_all), [G2, H2, K])
+    exact_outcome(_b21_graphs(nx.disjoint_union_all), [])
+    exact_outcome(_b21_graphs(nx.full_join), G, H)
+    exact_outcome(_b21_graphs(nx.full_join), G2, H2, rename=("a", "b"))
+    exact_outcome(_b21_graphs(nx.full_join), G2, H2)
+    exact_outcome(_b21_graphs(nx.full_join), G, H, rename=("a",))
+    # Mixed directedness.
+    other = H.to_undirected() if directed else H.to_directed()
+    for func in [nx.union, nx.compose, nx.disjoint_union, nx.full_join]:
+        exact_outcome(_b21_graphs(func), G, other)
+    exact_outcome(_b21_graphs(nx.union_all), [G, H2, other])  # not disjoint first
+
+
+@pytest.mark.parametrize("seed", range(30))
+def test_batch21_reverse_and_moral(seed):
+    D = _b21_decorate(graph_for(seed, True), seed)
+    G = _b21_decorate(graph_for(seed, False), seed)
+    exact_outcome(_b21_graphs(nx.reverse), D)
+    exact_outcome(_b21_graphs(nx.reverse), D, copy=True)
+    exact_outcome(_b21_graphs(lambda G, **kw: nx.reverse(G, copy=False, **kw).copy()), D)
+    exact_outcome(_b21_graphs(nx.reverse), G)
+    exact_outcome(_b21_graphs(nx.moral_graph), D)
+    exact_outcome(_b21_graphs(nx.moral_graph), G)
+
+
+def _b21_small(seed, directed, labels="mixed"):
+    """A small decorated graph for the products (whose results are large),
+    with self-loops and reciprocal edges sometimes."""
+    rng = random.Random(seed)
+    n = rng.randint(0, 7)
+    G = nx.gnp_random_graph(n, rng.choice([0.2, 0.5, 0.9]), seed=seed, directed=directed)
+    if labels == "mixed" and rng.random() < 0.5:
+        G = nx.relabel_nodes(G, {v: rng.choice([f"s{v}", (v, "t"), v + 0.5]) for v in G})
+    if n and rng.random() < 0.4:
+        v = rng.choice(list(G))
+        G.add_edge(v, v)
+    return _b21_decorate(G, seed)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch21_products(seed, directed):
+    G = _b21_small(seed, directed)
+    H = _b21_small(seed + 500, directed)
+    for func in [nx.tensor_product, nx.cartesian_product, nx.lexicographic_product,
+                 nx.strong_product, nx.corona_product]:
+        exact_outcome(_b21_graphs(func), G, H)
+        exact_outcome(_b21_graphs(func), H, G)
+        exact_outcome(_b21_graphs(func), G, G)
+        exact_outcome(_b21_graphs(func), G, H.to_undirected() if directed else H.to_directed())
+    for root in list(H)[:2] + ["missing", [1]]:
+        exact_outcome(_b21_graphs(nx.rooted_product), G, H, root)
+    if 0 in H:
+        exact_outcome(_b21_graphs(nx.rooted_product), G, H, 0.0)  # equal, not identical
+    exact_outcome(_b21_graphs(nx.rooted_product), G, H.to_undirected(), next(iter(H), 0))
+
+
+def test_batch21_corona_collisions():
+    # Corona products mix G's nodes and (g, h) tuples, which can collide.
+    G = nx.Graph([(0, (0, "a")), ((0, "a"), 1)])
+    H = nx.Graph([("a", "b")])
+    exact_outcome(_b21_graphs(nx.corona_product), G, H)
+    exact_outcome(_b21_graphs(nx.corona_product), H, G)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch21_line_graph(seed, directed):
+    G = _b21_decorate(graph_for(seed, directed), seed)
+    exact_outcome(_b21_graphs(nx.line_graph), G)
+    exact_outcome(_b21_graphs(nx.line_graph), _b21_small(seed, directed))
+    exact_outcome(_b21_graphs(nx.line_graph), G, create_using=nx.MultiGraph)
+    exact_outcome(_b21_graphs(nx.line_graph), nx.relabel_nodes(G, {v: ("t", v) for v in G}))
+
+
+def test_batch21_mismatched_keys_fall_back():
+    # An edge added with 1.0 where the node is 1: the adjacency row holds the
+    # key 1.0, which NetworkX's results would show.
+    G = nx.Graph()
+    G.add_nodes_from([2, 1])
+    G.add_edge(1.0, 2)
+    H = nx.path_graph(2)
+    exact_outcome(_b21_graphs(nx.line_graph), G)
+    exact_outcome(_b21_graphs(nx.cartesian_product), G, H)
+    exact_outcome(_b21_graphs(nx.union), G, nx.path_graph([5, 6]))
+
+
+def _b21_nan_marked(func):
+    """``func`` with NaN values in its dict result replaced by a marker
+    (two NaN objects never compare equal)."""
+
+    def run(*args, **kwargs):
+        result = func(*args, **kwargs)
+        if isinstance(result, dict):
+            return {k: "nan" if v != v else v for k, v in result.items()}
+        return result
+
+    return run
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float", "missing", "random"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(20))
+def test_batch21_structural_holes(seed, directed, weights):
+    G = graph_for(seed, directed, "float" if weights == "random" else weights)
+    rng = random.Random(seed)
+    if weights == "random":
+        for u, v, d in G.edges(data=True):
+            d["weight"] = rng.random()
+    nodes = list(G)
+    if seed % 4 == 0:
+        G.add_edge("loop", "loop")  # only a self-loop
+        G.add_node("alone")
+        nodes += ["loop", "alone"]
+    picked = rng.sample(nodes, min(8, len(nodes)))
+    for weight in [None, "weight"]:
+        for func in [_b21_nan_marked(nx.constraint), _b21_nan_marked(nx.effective_size)]:
+            exact_outcome(func, G, picked, weight=weight)
+            exact_outcome(func, G, weight=weight)  # 3.5+ use SciPy here: falls back
+            # An iterator with repeats (a fresh one for each backend).
+            exact_outcome(lambda G, **kw: func(G, iter(picked[:3] + picked[:2]), **kw), G,
+                          weight=weight)
+            exact_outcome(func, G, picked[:2] + ["missing"], weight=weight)
+            exact_outcome(func, G, [], weight=weight)
+        for u in picked[:3]:
+            for v in picked[:3] + ["missing"]:
+                exact_outcome(nx.local_constraint, G, u, v, weight=weight)
+
+
+@pytest.mark.parametrize("weights", ["none", "float"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch21_ego_graph(seed, directed, weights):
+    G = _b21_decorate(graph_for(seed, directed, weights), seed)
+    rng = random.Random(seed)
+    if seed % 3 == 0:
+        # Larger graphs, so small ego graphs iterate `set(sp)` (the view's
+        # shortcut when the node set is under half the graph).
+        G.add_edges_from((("x", i), ("x", i + 1)) for i in range(60))
+        G.add_edge(("x", 0), next(iter(G)))
+    for n in rng.sample(list(G), min(4, len(G))) + ["missing"]:
+        for radius in [0, 1, 2, 3, 1.5]:
+            exact_outcome(_b21_graphs(nx.ego_graph), G, n, radius=radius)
+        exact_outcome(_b21_graphs(nx.ego_graph), G, n, center=False)
+        exact_outcome(_b21_graphs(nx.ego_graph), G, n, radius=2, distance="weight")
+        exact_outcome(_b21_graphs(nx.ego_graph), G, n, undirected=True)
+    if 0 in G:
+        exact_outcome(_b21_graphs(nx.ego_graph), G, 0.0)
+
+
+def _b21_tree(seed):
+    rng = random.Random(seed)
+    n = rng.randint(1, 40)
+    T = nx.random_labeled_tree(n, seed=seed) if hasattr(nx, "random_labeled_tree") else nx.random_tree(n, seed=seed)
+    if rng.random() < 0.5:
+        T = nx.relabel_nodes(T, {v: rng.choice([f"t{v}", (v,), v * 1000]) for v in T})
+    H = nx.Graph()
+    nodes = list(T)
+    rng.shuffle(nodes)
+    H.add_nodes_from(nodes)
+    edges = list(T.edges)
+    rng.shuffle(edges)
+    H.add_edges_from(edges)
+    return H
+
+
+@pytest.mark.parametrize("seed", range(80))
+def test_batch21_broadcasting(seed):
+    T = _b21_tree(seed)
+    exact_outcome(with_set_order(nx.tree_broadcast_center), T)
+    exact_outcome(nx.tree_broadcast_time, T)
+    for node in list(T)[:3] + ["missing", [1]]:
+        exact_outcome(nx.tree_broadcast_time, T, node)
+    # Spiders and caterpillars: many ties.
+    S = nx.star_graph(3 + seed % 5)
+    for leaf in range(1, 3 + seed % 3):
+        nx.add_path(S, [leaf] + [100 * leaf + i for i in range(seed % 4)])
+    exact_outcome(with_set_order(nx.tree_broadcast_center), S)
+    exact_outcome(nx.tree_broadcast_time, S)
+    # Not trees.
+    G = graph_for(seed, False)
+    exact_outcome(with_set_order(nx.tree_broadcast_center), G)
+    exact_outcome(nx.tree_broadcast_time, G)
+    exact_outcome(nx.tree_broadcast_time, G, "missing")
+    exact_outcome(with_set_order(nx.tree_broadcast_center), nx.Graph())
+    exact_outcome(with_set_order(nx.tree_broadcast_center), graph_for(seed, True))
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch21_bipartite_measures(seed, directed):
+    G = graph_for(seed, directed)
+    rng = random.Random(seed)
+    nodes = list(G)
+    top = rng.sample(nodes, rng.randint(0, len(nodes)))
+    for side in [top, top + ["missing", 10**6], set(top), nodes, [], top + top[:2]]:
+        exact_outcome(nx.bipartite.density, G, side)
+        exact_outcome(nx.bipartite.degree_centrality, G, side)
+    exact_outcome(lambda G, **kw: nx.bipartite.density(G, iter(top), **kw), G)  # no len()
+    exact_outcome(lambda G, **kw: nx.bipartite.degree_centrality(G, iter(top), **kw), G)
+    exact_outcome(nx.bipartite.density, nx.empty_graph(3), [0])
+    B = nx.complete_bipartite_graph(3, 4)
+    exact_outcome(nx.bipartite.density, B, [0, 1, 2])
+    exact_outcome(nx.bipartite.degree_centrality, B, [0, 1, 2])
+
+
+def _b21_bipartite(seed, directed):
+    rng = random.Random(seed)
+    a, b = rng.randint(1, 15), rng.randint(1, 15)
+    B = nx.bipartite.random_graph(a, b, rng.choice([0.1, 0.3, 0.6]), seed=seed, directed=directed)
+    if rng.random() < 0.5:
+        B = nx.relabel_nodes(B, {v: (f"b{v}" if v % 2 else v) for v in B})
+    H = B.__class__()
+    nodes = list(B)
+    rng.shuffle(nodes)
+    H.add_nodes_from((v, B.nodes[v]) for v in nodes)
+    edges = list(B.edges)
+    rng.shuffle(edges)
+    H.add_edges_from(edges)
+    H.graph["name"] = "B"
+    top = [v for v in nodes if H.nodes[v]["bipartite"] == 0]
+    return _b21_decorate(H, seed), top
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(60))
+def test_batch21_projections(seed, directed):
+    B, top = _b21_bipartite(seed, directed)
+    bottom = [v for v in B if v not in set(top)]
+    rng = random.Random(seed)
+    for side in [top, bottom, set(top), tuple(bottom), top + top[:2], top[:3] + ["missing"]]:
+        exact_outcome(_b21_graphs(nx.bipartite.projected_graph), B, side)
+        exact_outcome(_b21_graphs(nx.bipartite.weighted_projected_graph), B, side)
+        exact_outcome(_b21_graphs(nx.bipartite.weighted_projected_graph), B, side, ratio=True)
+    exact_outcome(_b21_graphs(nx.bipartite.projected_graph), B, top, multigraph=True)
+    exact_outcome(_b21_graphs(nx.bipartite.weighted_projected_graph), B, list(B))
+    # An iterator: NetworkX's second pass over it finds nothing.
+    exact_outcome(_b21_graphs(lambda B, **kw: nx.bipartite.projected_graph(B, iter(top), **kw)), B)
+    # Not bipartite, with self-loops: second neighbours include the node.
+    G = graph_for(seed, directed)
+    nodes = list(G)
+    side = rng.sample(nodes, len(nodes) // 2)
+    exact_outcome(_b21_graphs(nx.bipartite.projected_graph), G, side)
+    exact_outcome(_b21_graphs(nx.bipartite.weighted_projected_graph), G, side)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch21_intersections(seed, directed):
+    G, H = _b21_pair(seed, directed, True)
+    K = graph_for(seed + 3, directed)
+    K.add_edges_from(list(G.edges)[::2])
+    exact_outcome(_b21_graphs(nx.intersection), G, H)
+    exact_outcome(_b21_graphs(nx.intersection), H, G)
+    exact_outcome(_b21_graphs(nx.intersection), G, G)
+    exact_outcome(_b21_graphs(nx.intersection_all), [G, H, K])
+    exact_outcome(_b21_graphs(nx.intersection_all), [K, G])
+    exact_outcome(_b21_graphs(nx.intersection_all), [G])
+    exact_outcome(_b21_graphs(nx.intersection_all), [])
+    other = H.to_undirected() if directed else H.to_directed()
+    exact_outcome(_b21_graphs(nx.intersection), G, other)
+    # Larger graphs: big sets, many collisions and resizes.
+    A = nx.gnm_random_graph(300, 900, seed=seed, directed=directed)
+    B = nx.gnm_random_graph(200, 700, seed=seed + 1, directed=directed)
+    exact_outcome(_b21_graphs(nx.intersection), A, B)
+    exact_outcome(_b21_graphs(nx.intersection), nx.relabel_nodes(A, str), nx.relabel_nodes(B, str))
+
+
+def test_batch21_runs_in_rust():
+    G = _b21_decorate(nx.gnp_random_graph(30, 0.2, seed=1), 1)
+    H = nx.relabel_nodes(G, lambda v: v + 100)
+    D = _b21_decorate(nx.gnp_random_graph(30, 0.2, seed=1, directed=True), 2)
+    S = nx.path_graph(4)
+    T = nx.random_labeled_tree(30, seed=1) if hasattr(nx, "random_labeled_tree") else nx.random_tree(30, seed=1)
+    B, top = _b21_bipartite(3, False)
+    calls = [
+        lambda: nx.union(G, H, backend="rustnx"),
+        lambda: nx.union(G, G, rename=("a", "b"), backend="rustnx"),
+        lambda: nx.union_all([G, H], backend="rustnx"),
+        lambda: nx.compose(G, H, backend="rustnx"),
+        lambda: nx.compose_all([G, G], backend="rustnx"),
+        lambda: nx.disjoint_union(G, H, backend="rustnx"),
+        lambda: nx.disjoint_union_all([G, D.to_undirected()], backend="rustnx"),
+        lambda: nx.full_join(G, H, backend="rustnx"),
+        lambda: nx.intersection(G, H, backend="rustnx"),
+        lambda: nx.intersection_all([G, G], backend="rustnx"),
+        lambda: nx.reverse(D, backend="rustnx"),
+        lambda: nx.moral_graph(D, backend="rustnx"),
+        lambda: nx.line_graph(G, backend="rustnx"),
+        lambda: nx.line_graph(D, backend="rustnx"),
+        lambda: nx.ego_graph(G, 0, radius=2, backend="rustnx"),
+        lambda: nx.cartesian_product(G, S, backend="rustnx"),
+        lambda: nx.tensor_product(G, S, backend="rustnx"),
+        lambda: nx.strong_product(G, S, backend="rustnx"),
+        lambda: nx.lexicographic_product(G, S, backend="rustnx"),
+        lambda: nx.rooted_product(G, S, 0, backend="rustnx"),
+        lambda: nx.corona_product(G, S, backend="rustnx"),
+        lambda: nx.constraint(G, [0, 1, 2], backend="rustnx"),
+        lambda: nx.effective_size(D, [0, 1, 2], backend="rustnx"),
+        lambda: nx.local_constraint(G, 0, 1, backend="rustnx"),
+        lambda: nx.tree_broadcast_center(T, backend="rustnx"),
+        lambda: nx.tree_broadcast_time(T, backend="rustnx"),
+        lambda: nx.bipartite.density(B, top, backend="rustnx"),
+        lambda: nx.bipartite.degree_centrality(B, top, backend="rustnx"),
+        lambda: nx.bipartite.projected_graph(B, top, backend="rustnx"),
+        lambda: nx.bipartite.weighted_projected_graph(B, top, backend="rustnx"),
+    ]
+    for call in calls:
+        call()
+
+
+def test_batch21_dispatch_through_priority(restore_config, monkeypatch):
+    # NetworkX 3.5+ dispatch functions returning graphs by
+    # `backend_priority.generators`; 3.4 by `backend_priority.algos`.
+    from rustnx import interface
+
+    calls = []
+    original = interface.union
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(interface, "union", counting)
+    old_generators = getattr(nx.config.backend_priority, "generators", None)
+    try:
+        nx.config.backend_priority.algos = ["rustnx"]
+        if old_generators is not None:
+            nx.config.backend_priority.generators = ["rustnx"]
+        G = nx.gnm_random_graph(600, 2000, seed=1)
+        H = nx.relabel_nodes(G, lambda v: v + 1000)
+        assert _b21_graph_state(nx.union(G, H)) == _b21_graph_state(nx.union(G, H, backend="networkx"))
+        assert calls, "rustnx was not used"
+    finally:
+        if old_generators is not None:
+            nx.config.backend_priority.generators = old_generators
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(6))
+def test_batch21_fall_backs(seed, directed, restore_config):
+    # Multigraphs, subclasses and graph views run in NetworkX.
+    M = random_multigraph(seed, directed, "int")
+    G = graph_for(seed, directed)
+
+    class MyGraph(G.__class__):
+        pass
+
+    sub = MyGraph(G)
+    view = G.subgraph(list(G)[: len(G) // 2])
+    for A in [M, sub, view]:
+        exact_outcome(_b21_graphs(nx.union), A, nx.relabel_nodes(A, lambda v: ("r", v)))
+        exact_outcome(_b21_graphs(nx.compose), A, A)
+        exact_outcome(_b21_graphs(nx.disjoint_union), A, A)
+        exact_outcome(_b21_graphs(nx.intersection), A, A)
+        exact_outcome(_b21_graphs(nx.line_graph), A)
+        exact_outcome(_b21_graphs(nx.cartesian_product), A, nx.path_graph(2, create_using=A.__class__))
+        exact_outcome(_b21_graphs(nx.ego_graph), A, next(iter(A), 0))
+        exact_outcome(_b21_nan_marked(nx.constraint), A, list(A)[:3])
+        if directed:
+            exact_outcome(_b21_graphs(nx.reverse), A)
+            exact_outcome(_b21_graphs(nx.moral_graph), A)
+    # A graph changed behind NetworkX's back after its conversion was cached.
+    H = _b21_decorate(graph_for(seed, directed), seed)
+    nx.union(H, nx.relabel_nodes(H, lambda v: ("s", v)), backend="rustnx")
+    u = next(iter(H), None)
+    if u is not None:
+        H._node[u]["late"] = 1  # attribute dicts aren't part of the snapshot
+        H._adj[u][("new", u)] = {}  # nor is a row changed directly
+        exact_outcome(_b21_graphs(nx.union), H, nx.path_graph([("p", 0), ("p", 1)]))

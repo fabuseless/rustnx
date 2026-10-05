@@ -26,7 +26,10 @@ from networkx.algorithms import matching as _nx_matching
 from . import _core
 
 __all__ = [
+    "LCF_graph",
     "adamic_adar_index",
+    "adjacency_graph",
+    "adjacency_matrix",
     "all_pairs_all_shortest_paths",
     "all_pairs_bellman_ford_path",
     "all_pairs_bellman_ford_path_length",
@@ -60,6 +63,9 @@ __all__ = [
     "average_neighbor_degree",
     "average_node_connectivity",
     "average_shortest_path_length",
+    "balanced_tree",
+    "barabasi_albert_graph",
+    "barbell_graph",
     "barycenter",
     "bellman_ford_path",
     "bellman_ford_path_length",
@@ -72,11 +78,16 @@ __all__ = [
     "bfs_predecessors",
     "bfs_successors",
     "bfs_tree",
+    "biadjacency_matrix",
     "biconnected_component_edges",
     "biconnected_components",
     "bidirectional_dijkstra",
     "bidirectional_shortest_path",
+    "binomial_tree",
     "bipartite_closeness_centrality",
+    "bipartite_degree_centrality",
+    "bipartite_parse_edgelist",
+    "bipartite_read_edgelist",
     "boruvka_mst_edges",
     "boundary_expansion",
     "boykov_kolmogorov",
@@ -87,12 +98,16 @@ __all__ = [
     "build_flow_dict",
     "build_residual_network",
     "butterflies",
+    "cartesian_product",
+    "caveman_graph",
     "center",
     "centroid",
     "chain_decomposition",
     "check_planarity",
     "check_planarity_recursive",
     "chordal_graph_treewidth",
+    "circulant_graph",
+    "circular_ladder_graph",
     "closeness_centrality",
     "closeness_vitality",
     "clustering",
@@ -100,16 +115,28 @@ __all__ = [
     "color",
     "common_neighbor_centrality",
     "complement",
+    "complete_bipartite_graph",
+    "complete_graph",
+    "complete_multipartite_graph",
     "complete_to_chordal_graph",
+    "compose",
+    "compose_all",
     "condensation",
     "conductance",
+    "connected_caveman_graph",
     "connected_components",
     "connected_dominating_set",
+    "connected_watts_strogatz_graph",
+    "constraint",
+    "convert_node_labels_to_integers",
     "core_number",
+    "corona_product",
     "cost_of_flow",
     "could_be_isomorphic",
     "cut_size",
     "cycle_basis",
+    "cycle_graph",
+    "cytoscape_graph",
     "dag_longest_path",
     "dag_longest_path_length",
     "dag_to_branching",
@@ -118,7 +145,9 @@ __all__ = [
     "degree_mixing_dict",
     "degree_mixing_matrix",
     "degree_pearson_correlation_coefficient",
+    "dense_gnm_random_graph",
     "densest_subgraph",
+    "density",
     "descendants",
     "descendants_at_distance",
     "dfs_edges",
@@ -134,8 +163,12 @@ __all__ = [
     "dijkstra_path_length",
     "dijkstra_predecessor_and_distance",
     "dinitz",
+    "disjoint_union",
+    "disjoint_union_all",
     "dispersion",
     "dominance_frontiers",
+    "dorogovtsev_goltsev_mendes_graph",
+    "dual_barabasi_albert_graph",
     "eccentricity",
     "edge_betweenness_centrality",
     "edge_betweenness_centrality_subset",
@@ -148,12 +181,17 @@ __all__ = [
     "edge_expansion",
     "edge_load_centrality",
     "edmonds_karp",
+    "effective_size",
     "efficiency",
+    "ego_graph",
     "eigenvector_centrality",
+    "empty_graph",
     "enumerate_all_cliques",
     "eulerian_circuit",
     "eulerian_path",
+    "extended_barabasi_albert_graph",
     "fast_could_be_isomorphic",
+    "fast_gnp_random_graph",
     "fast_label_propagation_communities",
     "faster_could_be_isomorphic",
     "find_cycle",
@@ -164,22 +202,43 @@ __all__ = [
     "floyd_warshall_numpy",
     "floyd_warshall_predecessor_and_distance",
     "floyd_warshall_tree",
+    "from_biadjacency_matrix",
+    "from_dict_of_dicts",
+    "from_dict_of_lists",
+    "from_edgelist",
+    "from_graph6_bytes",
     "from_nested_tuple",
+    "from_numpy_array",
     "from_prufer_sequence",
+    "from_scipy_sparse_array",
+    "from_sparse6_bytes",
+    "full_join",
+    "full_rary_tree",
     "generalized_degree",
+    "generalized_petersen_graph",
     "generic_bfs_edges",
     "get_counterexample",
     "get_counterexample_recursive",
+    "get_edge_attributes",
+    "get_node_attributes",
     "girth",
     "girvan_newman",
     "global_efficiency",
     "global_reaching_centrality",
+    "gn_graph",
+    "gnc_graph",
+    "gnm_random_graph",
+    "gnmk_random_graph",
+    "gnp_random_graph",
+    "gnr_graph",
     "goldberg_radzik",
     "gomory_hu_tree",
     "greedy_branching",
     "greedy_color",
     "greedy_modularity_communities",
     "greedy_tsp",
+    "grid_2d_graph",
+    "grid_graph",
     "group_betweenness_centrality",
     "group_closeness_centrality",
     "group_degree_centrality",
@@ -192,12 +251,17 @@ __all__ = [
     "has_cycle",
     "has_eulerian_path",
     "has_path",
+    "hexagonal_lattice_graph",
     "hopcroft_karp_matching",
     "hyper_wiener_index",
+    "hypercube_graph",
     "immediate_dominators",
     "in_degree_centrality",
+    "incidence_matrix",
     "inter_community_edges",
     "inter_community_non_edges",
+    "intersection",
+    "intersection_all",
     "intersection_array",
     "intra_community_edges",
     "is_aperiodic",
@@ -231,6 +295,7 @@ __all__ = [
     "is_maximal_matching",
     "is_minimal_d_separator",
     "is_multigraphical",
+    "is_negatively_weighted",
     "is_partition",
     "is_perfect_graph",
     "is_perfect_matching",
@@ -248,6 +313,7 @@ __all__ = [
     "is_valid_degree_sequence_erdos_gallai",
     "is_valid_degree_sequence_havel_hakimi",
     "is_weakly_connected",
+    "is_weighted",
     "isolates",
     "jaccard_coefficient",
     "johnson",
@@ -261,15 +327,22 @@ __all__ = [
     "k_truss",
     "katz_centrality",
     "kl_connected_subgraph",
+    "kneser_graph",
     "kosaraju_strongly_connected_components",
     "kruskal_mst_edges",
     "label_propagation_communities",
+    "ladder_graph",
+    "laplacian_matrix",
+    "lexicographic_product",
     "lexicographical_topological_sort",
+    "line_graph",
     "local_bridges",
+    "local_constraint",
     "local_edge_connectivity",
     "local_efficiency",
     "local_node_connectivity",
     "local_reaching_centrality",
+    "lollipop_graph",
     "lowest_common_ancestor",
     "max_flow_min_cost",
     "max_weight_clique",
@@ -303,13 +376,16 @@ __all__ = [
     "minimum_st_node_cut",
     "mixing_expansion",
     "modularity",
+    "moral_graph",
     "multi_source_dijkstra",
     "multi_source_dijkstra_path",
     "multi_source_dijkstra_path_length",
+    "mycielski_graph",
     "naive_greedy_modularity_communities",
     "negative_edge_cycle",
     "network_simplex",
     "newman_betweenness_centrality",
+    "newman_watts_strogatz_graph",
     "node_attribute_xy",
     "node_boundary",
     "node_clique_number",
@@ -318,11 +394,13 @@ __all__ = [
     "node_degree_xy",
     "node_disjoint_paths",
     "node_expansion",
+    "node_link_graph",
     "node_redundancy",
     "normalized_cut_size",
     "number_attracting_components",
     "number_connected_components",
     "number_of_isolates",
+    "number_of_selfloops",
     "number_of_walks",
     "number_strongly_connected_components",
     "number_weakly_connected_components",
@@ -334,24 +412,56 @@ __all__ = [
     "overall_reciprocity",
     "overlapping_modularity",
     "pagerank",
+    "paley_graph",
+    "parse_adjlist",
+    "parse_edgelist",
+    "parse_gml",
+    "parse_leda",
+    "parse_multiline_adjlist",
+    "parse_pajek",
     "partition_quality",
     "partition_spanning_tree",
+    "path_graph",
     "percolation_centrality",
     "periphery",
+    "planted_partition_graph",
     "power",
+    "powerlaw_cluster_graph",
     "predecessor",
     "preferential_attachment",
     "preflow_push",
     "prim_mst_edges",
+    "projected_graph",
     "prominent_group",
     "ra_index_soundarajan_hopcroft",
     "radius",
+    "random_geometric_graph",
+    "random_graph",
+    "random_lobster",
+    "random_lobster_graph",
+    "random_partition_graph",
+    "random_regular_graph",
+    "random_tournament",
+    "random_uniform_k_out_graph",
     "randomized_partitioning",
+    "read_adjlist",
+    "read_edgelist",
+    "read_gml",
+    "read_graph6",
+    "read_leda",
+    "read_multiline_adjlist",
+    "read_pajek",
+    "read_sparse6",
+    "read_weighted_edgelist",
     "reciprocity",
+    "relabel_nodes",
     "resource_allocation_index",
+    "reverse",
     "rich_club_coefficient",
+    "ring_of_cliques",
     "root_to_leaf_paths",
     "root_trees",
+    "rooted_product",
     "rooted_tree_isomorphism",
     "s_metric",
     "schultz_index",
@@ -374,13 +484,22 @@ __all__ = [
     "single_target_shortest_path",
     "single_target_shortest_path_length",
     "square_clustering",
+    "star_graph",
     "steiner_tree",
+    "stochastic_block_model",
     "stoer_wagner",
+    "strong_product",
     "strongly_connected_components",
+    "sudoku_graph",
     "symmetric_difference",
+    "tadpole_graph",
+    "tensor_product",
     "threshold_accepting_tsp",
+    "to_dict_of_lists",
     "to_nested_tuple",
+    "to_numpy_array",
     "to_prufer_sequence",
+    "to_scipy_sparse_array",
     "to_vertex_cover",
     "topological_generations",
     "topological_sort",
@@ -390,14 +509,21 @@ __all__ = [
     "transitive_reduction",
     "transitivity",
     "tree_all_pairs_lowest_common_ancestor",
+    "tree_broadcast_center",
+    "tree_broadcast_time",
     "tree_centroid",
+    "tree_graph",
     "tree_isomorphism",
     "treewidth_decomp",
     "treewidth_min_fill_in",
     "triadic_census",
     "triangles",
+    "triangular_lattice_graph",
+    "turan_graph",
     "unconstrained_bridge_augmentation",
     "unconstrained_one_edge_augmentation",
+    "union",
+    "union_all",
     "v_structures",
     "vf2pp_is_isomorphic",
     "vf2pp_is_monomorphic",
@@ -405,10 +531,15 @@ __all__ = [
     "volume",
     "voronoi_cells",
     "voterank",
+    "watts_strogatz_graph",
+    "waxman_graph",
     "weakly_connected_components",
+    "weighted_projected_graph",
     "weisfeiler_lehman_graph_hash",
     "weisfeiler_lehman_subgraph_hashes",
+    "wheel_graph",
     "wiener_index",
+    "windmill_graph",
     "within_inter_cluster",
 ]
 
@@ -9762,3 +9893,2652 @@ def symmetric_difference(G, H):
     us += [back[u] for u in hus]
     vs += [back[v] for v in hvs]
     return _graph_with_plain_edges(cls, G._nodes, us, vs)
+
+
+# --- Batch 19: matrices and conversion ---------------------------------------------
+
+
+def _b19_source(G):
+    """The NetworkX graph G was converted from (its dicts are read directly),
+    or ``None`` for native graphs."""
+    if G._core.is_native():
+        return None
+    if not G._source_unchanged():
+        raise NotImplementedError("the graph changed since it was converted")
+    return G._source
+
+
+def _b19_nodes(G):
+    """``G._nodes`` as a list (native graphs from arrays keep a range)."""
+    nodes = G._nodes
+    return nodes if type(nodes) is list else list(nodes)
+
+
+def _b19_node_map(G, nodelist):
+    """``map[v]``: node ``v``'s position in ``nodelist``, or -1. Missing,
+    unhashable or repeated nodes fall back (NetworkX's checks for them
+    build sets, whose order shows in its messages)."""
+    if type(nodelist) is not list:
+        raise NotImplementedError("rustnx needs nodelist as a list")
+    index = G._index
+    mapping = [-1] * len(G)
+    for i, v in enumerate(nodelist):
+        try:
+            p = index[v]
+        except (KeyError, TypeError):
+            raise NotImplementedError("NetworkX raises for this nodelist") from None
+        if mapping[p] != -1:
+            raise NotImplementedError("NetworkX raises for this nodelist")
+        mapping[p] = i
+    return mapping
+
+
+def _b19_weight_kind(G, weight, plain=True):
+    """Whether an edge attribute's values are all ints (``weight=None``:
+    unit weights, ints). ``plain`` also requires exact Python ints and
+    floats, from which NumPy infers ``int64`` or ``float64``."""
+    if weight is None:
+        return True
+    _, all_int, has_hidden = _check_weight(G, weight)
+    if has_hidden:
+        raise NotImplementedError("rustnx does not support None edge weights here")
+    if plain and not G._core.weight_plain(weight):
+        raise NotImplementedError("rustnx needs plain int or float edge weights here")
+    return all_int
+
+
+def _b19_coo_arrays(coo, all_int):
+    """``(row, col, data)`` NumPy arrays from Rust's COO bytes: the arrays
+    NumPy makes of NetworkX's lists of Python ints and floats."""
+    import numpy as np
+
+    row, col, data = coo
+    data = np.frombuffer(data, dtype=np.float64)
+    return (
+        np.frombuffer(row, dtype=np.int64),
+        np.frombuffer(col, dtype=np.int64),
+        data.astype(np.int64) if all_int else data,
+    )
+
+
+def _b19_check_dtype(dtype, all_int):
+    """SciPy converts NetworkX's list of weights straight to ``dtype``;
+    rustnx converts an int64 or float64 array. The two agree for float and
+    complex targets and for no conversion, not for narrower ints (a list
+    raises on overflow, an array wraps)."""
+    if dtype is None:
+        return
+    import numpy as np
+
+    try:
+        target = np.dtype(dtype)
+    except TypeError:
+        raise NotImplementedError("NetworkX raises for this dtype") from None
+    natural = np.dtype(np.int64 if all_int else np.float64)
+    if target.kind not in "fc" and target != natural:
+        raise NotImplementedError("rustnx does not support this dtype")
+
+
+def _b19_sparse(rows_cols_data, shape, dtype, format, message):
+    import scipy as sp
+
+    data, (row, col) = rows_cols_data
+    A = sp.sparse.coo_array((data, (row, col)), shape=shape, dtype=dtype)
+    try:
+        return A.asformat(format)
+    except ValueError as err:
+        raise nx.NetworkXError(f"{message}: {format}") from err
+
+
+def to_scipy_sparse_array(G, nodelist=None, dtype=None, weight="weight", format="csr"):
+    import scipy  # noqa: F401  (NetworkX imports it first)
+
+    if len(G) == 0:
+        raise nx.NetworkXError("Graph has no nodes or edges")
+    if nodelist is None:
+        nlen = len(G)
+        mapping = None
+    else:
+        if type(nodelist) is list and len(nodelist) == 0:
+            raise nx.NetworkXError("nodelist has no nodes")
+        mapping = _b19_node_map(G, nodelist)
+        nlen = len(nodelist)
+        if 2 * nlen < len(G) and format not in ("csr", "csc"):
+            # NetworkX works on `G.subgraph(nodelist)`, which then iterates
+            # nodes and neighbors in set order; only the CSR and CSC forms
+            # (sorted, duplicates summed) don't show that order.
+            raise NotImplementedError("rustnx can't replay the subgraph's set order")
+    all_int = _b19_weight_kind(G, weight)
+    _b19_check_dtype(dtype, all_int)
+    row, col, data = _b19_coo_arrays(G._core.adjacency_coo(mapping, weight), all_int)
+    if len(row) == 0:
+        # NetworkX's empty lists (NumPy makes float64 arrays of them).
+        row, col, data = [], [], []
+    return _b19_sparse(
+        (data, (row, col)), (nlen, nlen), dtype, format, "Unknown sparse matrix format"
+    )
+
+
+def adjacency_matrix(G, nodelist=None, dtype=None, weight="weight", format="csr"):
+    return to_scipy_sparse_array(G, nodelist=nodelist, dtype=dtype, weight=weight, format=format)
+
+
+@functools.cache
+def _b19_laplacian_dia():
+    """NetworkX 3.6+ builds the degree matrix with ``dia_array``; before,
+    with ``spdiags`` wrapped in ``csr_array``."""
+    text = _source_text(_registered("laplacian_matrix"))
+    if "sp.sparse.dia_array((A.sum(axis=1), 0), shape=(m, n)).tocsr()" in text:
+        return True
+    if "sp.sparse.spdiags(A.sum(axis=1), 0, m, n, format=\"csr\")" in text:
+        return False
+    return None
+
+
+def laplacian_matrix(G, nodelist=None, weight="weight"):
+    import scipy as sp
+
+    dia = _b19_laplacian_dia()
+    if dia is None:
+        raise NotImplementedError("unknown laplacian_matrix version")
+    if nodelist is None:
+        nodelist = list(G)
+    A = to_scipy_sparse_array(G, nodelist=nodelist, weight=weight, format="csr")
+    # NetworkX's own SciPy arithmetic on the same matrix.
+    n, m = A.shape
+    if dia:
+        D = sp.sparse.dia_array((A.sum(axis=1), 0), shape=(m, n)).tocsr()
+    else:
+        D = sp.sparse.csr_array(sp.sparse.spdiags(A.sum(axis=1), 0, m, n, format="csr"))
+    return D - A
+
+
+def incidence_matrix(G, nodelist=None, edgelist=None, oriented=False, weight=None, *, dtype=None):
+    import numpy as np
+    import scipy as sp
+
+    if edgelist is not None:
+        raise NotImplementedError("rustnx does not support edgelist")
+    if dtype is not None:
+        try:
+            # `.char`, not `==`: long double equals float64 where it is 64-bit.
+            plain_float = np.dtype(dtype).char == "d"
+        except TypeError:
+            plain_float = False
+        if not plain_float:
+            raise NotImplementedError("rustnx builds float64 incidence matrices only")
+    if nodelist is None:
+        rows = len(G)
+        mapping = None
+    else:
+        if type(nodelist) not in (list, tuple):
+            raise NotImplementedError("rustnx needs nodelist as a list")
+        node_index = {node: i for i, node in enumerate(nodelist)}
+        rows = len(nodelist)
+        mapping = [node_index.get(v, -1) for v in G._nodes]
+    if weight is not None:
+        _b19_weight_kind(G, weight, plain=False)
+    found, missing = G._core.incidence_csr(rows, mapping, weight, bool(oriented))
+    if missing is not None:
+        # NetworkX names the edge as `G.edges()` gives it, whose second node
+        # can be an object distinct from (but equal to) the node's key.
+        raise NotImplementedError("NetworkX raises for this nodelist")
+    (indptr, indices, data), columns = found
+    data = np.frombuffer(data, dtype=np.float64)
+    # NetworkX fills a LIL matrix and returns it as CSC through CSR; LIL's
+    # `tocsr` picks int32 indices unless the shape or entry count needs more.
+    idx = np.int32 if max(columns, len(data)) <= np.iinfo(np.int32).max else np.int64
+    A = sp.sparse.csr_array(
+        (
+            data,
+            np.frombuffer(indices, dtype=np.int64).astype(idx),
+            np.frombuffer(indptr, dtype=np.int64).astype(idx),
+        ),
+        shape=(rows, columns),
+    )
+    return A.asformat("csc")
+
+
+def to_numpy_array(
+    G,
+    nodelist=None,
+    dtype=None,
+    order=None,
+    multigraph_weight=sum,
+    weight="weight",
+    nonedge=0.0,
+):
+    import numpy as np
+
+    if nodelist is None:
+        mapping = None
+        nlen = len(G)
+    else:
+        mapping = _b19_node_map(G, nodelist)
+        nlen = len(nodelist)
+    A = np.full((nlen, nlen), fill_value=nonedge, dtype=dtype, order=order)
+    if nlen == 0 or G._core.number_of_edges() == 0:
+        return A
+    if A.dtype.names:
+        raise NotImplementedError("rustnx does not support structured dtypes")
+    all_int = _b19_weight_kind(G, weight, plain=False)
+    if A.dtype.char == "d":  # not `==`: long double can equal float64
+        as_int = False
+    elif A.dtype == np.int64 and all_int:
+        as_int = True
+    else:
+        # NumPy converts NetworkX's list of weights to A's dtype, raising
+        # where an array cast would wrap or round differently.
+        raise NotImplementedError("rustnx does not support this dtype")
+    row, col, data = _b19_coo_arrays(G._core.dense_entries(mapping, weight), as_int)
+    A[row, col] = data
+    return A
+
+
+def biadjacency_matrix(G, row_order, column_order=None, dtype=None, weight="weight", format="csr"):
+    import itertools
+
+    import scipy  # noqa: F401
+
+    if type(row_order) not in (list, tuple) or (type(row_order) is tuple and row_order in G):
+        # `G.edges(row_order)` reads a tuple that is a node as that node.
+        raise NotImplementedError("rustnx needs row_order as a list")
+    nlen = len(row_order)
+    if nlen == 0:
+        raise nx.NetworkXError("row_order is empty list")
+    if len(row_order) != len(set(row_order)):
+        msg = "Ambiguous ordering: `row_order` contained duplicates."
+        raise nx.NetworkXError(msg)
+    if column_order is None:
+        # `set(G)`: the same insertions as NetworkX's, so the same order.
+        column_order = list(set(G._nodes) - set(row_order))
+    mlen = len(column_order)
+    if len(column_order) != len(set(column_order)):
+        msg = "Ambiguous ordering: `column_order` contained duplicates."
+        raise nx.NetworkXError(msg)
+    row_index = dict(zip(row_order, itertools.count()))
+    col_index = dict(zip(column_order, itertools.count()))
+    if G._core.number_of_edges() == 0:
+        row, col, data = [], [], []
+    else:
+        all_int = _b19_weight_kind(G, weight)
+        _b19_check_dtype(dtype, all_int)
+        index = G._index
+        rows = [(index[u], row_index[u]) for u in row_order if u in index]
+        col = [col_index.get(v, -1) for v in G._nodes]
+        row, col, data = _b19_coo_arrays(G._core.biadjacency_coo(rows, col, weight), all_int)
+        if len(row) == 0:
+            # NetworkX unpacks `zip(*())`.
+            raise ValueError("not enough values to unpack (expected 3, got 0)")
+    return _b19_sparse(
+        (data, (row, col)), (nlen, mlen), dtype, format, "Unknown sparse array format"
+    )
+
+
+def to_dict_of_lists(G, nodelist=None):
+    source = _b19_source(G)
+    adj = None if source is None else source._adj
+    nodes = _b19_nodes(G)
+    if nodelist is None:
+        return G._core.dict_of_lists(nodes, adj, list(zip(nodes, range(len(nodes)))))
+    if type(nodelist) not in (list, tuple, set, frozenset, dict):
+        raise NotImplementedError("rustnx needs nodelist as a list, set or dict")
+    index = G._index
+    keep = [False] * len(nodes)
+    keys = []
+    for v in nodelist:
+        try:
+            p = index[v]
+        except (KeyError, TypeError):
+            raise NotImplementedError("NetworkX raises for a node not in G") from None
+        keys.append((v, p))
+        keep[p] = True
+    return G._core.dict_of_lists(nodes, adj, keys, keep)
+
+
+def number_of_selfloops(G):
+    return G._core.number_of_selfloops()
+
+
+def is_weighted(G, edge=None, weight="weight"):
+    source = _b19_source(G)
+    if source is None:
+        raise NotImplementedError("native graphs keep no edge data dicts")
+    if edge is not None:
+        data = source.get_edge_data(*edge)
+        if data is None:
+            msg = f"Edge {edge!r} does not exist."
+            raise nx.NetworkXError(msg)
+        return weight in data
+    if G._core.number_of_edges() == 0:
+        return False
+    return _core.CoreGraph.all_edges_have(source._adj, weight)
+
+
+def is_negatively_weighted(G, edge=None, weight="weight"):
+    if edge is not None:
+        source = _b19_source(G)
+        if source is None:
+            raise NotImplementedError("native graphs keep no edge data dicts")
+        data = source.get_edge_data(*edge)
+        if data is None:
+            msg = f"Edge {edge!r} does not exist."
+            raise nx.NetworkXError(msg)
+        return weight in data and data[weight] < 0
+    if weight is None:
+        raise NotImplementedError("rustnx needs a weight attribute here")
+    _b19_weight_kind(G, weight, plain=False)
+    return G._core.has_negative_weight(weight)
+
+
+def get_node_attributes(G, name, default=None):
+    source = _b19_source(G)
+    if source is None:
+        # Native graphs have no node data.
+        return {} if default is None else dict.fromkeys(G._nodes, default)
+    return _core.CoreGraph.node_attributes(source._node, name, default)
+
+
+def get_edge_attributes(G, name, default=None):
+    source = _b19_source(G)
+    if source is None:
+        raise NotImplementedError("native graphs keep no edge data dicts")
+    return G._core.edge_attributes(_b19_nodes(G), source._adj, name, default)
+
+
+def relabel_nodes(G, mapping, copy=True):
+    if not copy:
+        raise NotImplementedError("rustnx does not change its input graph")
+    base = _networkx_graph(G)
+    cls = type(base)
+    if cls not in (nx.Graph, nx.DiGraph):
+        raise NotImplementedError("rustnx relabels plain Graph and DiGraph only")
+    m = {n: mapping(n) for n in G._nodes} if callable(mapping) else mapping
+    if type(m) is not dict:
+        raise NotImplementedError("rustnx needs a dict or callable mapping")
+    labels = []
+    for v in G._nodes:
+        if v in m:
+            new = m[v]
+            try:
+                hash(new)
+            except TypeError:
+                new = None
+            if new is None:
+                # NetworkX raises, or reads an unhashable label as a
+                # `(node, attrdict)` pair.
+                raise NotImplementedError("NetworkX rejects this label")
+            labels.append(new)
+        else:
+            labels.append(None)
+    H = cls()
+    G._core.relabel_copy(
+        _b19_nodes(G), base._node, base._adj, labels, H._node, H._adj,
+        H._pred if cls is nx.DiGraph else None,
+    )
+    H.graph.update(base.graph)
+    return H
+
+
+def convert_node_labels_to_integers(G, first_label=0, ordering="default", label_attribute=None):
+    nodes = G._nodes
+    N = len(nodes) + first_label
+    if ordering == "default":
+        mapping = dict(zip(nodes, range(first_label, N)))
+    elif ordering == "sorted":
+        nlist = sorted(nodes)
+        mapping = dict(zip(nlist, range(first_label, N)))
+    elif ordering == "increasing degree":
+        dv_pairs = [(d, n) for (n, d) in zip(nodes, G._core.degrees())]
+        dv_pairs.sort()  # in-place sort from lowest to highest degree
+        mapping = dict(zip([n for d, n in dv_pairs], range(first_label, N)))
+    elif ordering == "decreasing degree":
+        dv_pairs = [(d, n) for (n, d) in zip(nodes, G._core.degrees())]
+        dv_pairs.sort()  # in-place sort from lowest to highest degree
+        dv_pairs.reverse()
+        mapping = dict(zip([n for d, n in dv_pairs], range(first_label, N)))
+    else:
+        raise nx.NetworkXError(f"Unknown node ordering: {ordering}")
+    H = relabel_nodes(G, mapping)
+    # create node attribute with the old label
+    if label_attribute is not None:
+        set_attrs = getattr(nx.set_node_attributes, "orig_func", nx.set_node_attributes)
+        set_attrs(H, {v: k for k, v in mapping.items()}, label_attribute)
+    return H
+
+
+def _b19_new_graph(create_using):
+    """``nx.empty_graph(0, create_using)`` for the cases rustnx builds."""
+    if create_using is None:
+        return nx.Graph()
+    if create_using is nx.Graph or create_using is nx.DiGraph:
+        return create_using()
+    raise NotImplementedError("rustnx builds new plain Graph and DiGraph results only")
+
+
+def _b19_fill(H, kind, data, attr=None):
+    pred = H._pred if H.is_directed() else None
+    _core.CoreGraph.build_into(H._node, H._adj, pred, kind, data, attr)
+
+
+def _b19_fill_weighted(H, us, vs, labels, attr, values):
+    pred = H._pred if H.is_directed() else None
+    _core.CoreGraph.build_weighted_into(H._node, H._adj, pred, us, vs, labels, attr, values)
+
+
+def from_dict_of_lists(d, create_using=None):
+    G = _b19_new_graph(create_using)
+    if type(d) is not dict:
+        raise NotImplementedError("rustnx needs a dict")
+    _b19_fill(G, "lists", d)
+    return G
+
+
+def from_dict_of_dicts(d, create_using=None, multigraph_input=False):
+    G = _b19_new_graph(create_using)
+    if multigraph_input or type(d) is not dict:
+        raise NotImplementedError("rustnx does not support this input")
+    _b19_fill(G, "dicts", d)
+    return G
+
+
+def from_edgelist(edgelist, create_using=None):
+    G = _b19_new_graph(create_using)
+    if iter(edgelist) is edgelist:
+        # A one-shot iterator: falling back midway would lose edges.
+        raise NotImplementedError("rustnx needs a re-iterable edge list")
+    _b19_fill(G, "edges", edgelist)
+    return G
+
+
+def _b19_sparse_triples(A, offset=0):
+    """NetworkX's ``_generate_weighted_edges(A)`` as three lists, with
+    ``offset`` added to the columns."""
+    import numpy as np
+    import scipy as sp
+
+    if not sp.sparse.issparse(A):
+        raise NotImplementedError("rustnx needs a SciPy sparse array")
+    if A.format == "csr":
+        rows = np.repeat(np.arange(A.shape[0]), np.diff(A.indptr))
+        cols = A.indices
+    elif A.format == "csc":
+        rows = A.indices
+        cols = np.repeat(np.arange(A.shape[1]), np.diff(A.indptr))
+    elif A.format == "dok":
+        raise NotImplementedError("rustnx does not read DOK arrays")
+    else:
+        A = A.tocoo()
+        rows, cols = A.row, A.col
+    if offset:
+        cols = cols + offset
+    return rows.tolist(), cols.tolist(), A.data.tolist()
+
+
+def from_scipy_sparse_array(A, parallel_edges=False, create_using=None, edge_attribute="weight"):
+    G = _b19_new_graph(create_using)
+    n, m = A.shape
+    if n != m:
+        raise nx.NetworkXError(f"Adjacency matrix not square: nx,ny={A.shape}")
+    us, vs, values = _b19_sparse_triples(A)
+    _b19_fill(G, "nodes", range(n))
+    _b19_fill_weighted(G, us, vs, None, edge_attribute, values)
+    return G
+
+
+def from_numpy_array(
+    A,
+    parallel_edges=False,
+    create_using=None,
+    edge_attr="weight",
+    *,
+    nodelist=None,
+    nonedge=0,
+):
+    import numpy as np
+
+    G = _b19_new_graph(create_using)
+    if type(A) is not np.ndarray:
+        raise NotImplementedError("rustnx needs a NumPy array")
+    if A.ndim != 2:
+        raise nx.NetworkXError(f"Input array must be 2D, not {A.ndim}")
+    n, m = A.shape
+    if n != m:
+        raise nx.NetworkXError(f"Adjacency matrix not square: nx,ny={A.shape}")
+    dt = A.dtype
+    # `tolist()` gives what NetworkX's `python_type(A[u, v])` does for these
+    # (not for long doubles, strings or structured types).
+    # Long doubles compare equal to float64 (and complex128) on platforms
+    # where they are 64-bit, but NetworkX keeps them as `np.longdouble`.
+    if dt.char in "gG" or not (
+        dt.kind in "iub" or dt in (np.float16, np.float32, np.float64, np.complex64, np.complex128)
+    ):
+        raise NotImplementedError("rustnx does not support this dtype")
+    if type(nonedge) not in (int, float, bool):
+        raise NotImplementedError("rustnx needs a number as nonedge")
+    if nodelist is None:
+        labels = None
+        nodes = range(n)
+    else:
+        if type(nodelist) not in (list, tuple):
+            raise NotImplementedError("rustnx needs nodelist as a list")
+        if len(nodelist) != n:
+            raise ValueError("nodelist must have the same length as A.shape[0]")
+        labels = nodes = list(nodelist)
+    _b19_fill(G, "nodes", nodes)
+    # NetworkX 3.4 takes `A.nonzero()`, the same entries as `A != 0`.
+    row, col = ((A == A) if nonedge != nonedge else (A != nonedge)).nonzero()
+    values = None if edge_attr in [False, None] else A[row, col].tolist()
+    _b19_fill_weighted(G, row.tolist(), col.tolist(), labels, edge_attr, values)
+    return G
+
+
+def from_biadjacency_matrix(A, create_using=None, edge_attribute="weight", *, row_order=None, column_order=None):
+    if row_order is not None or column_order is not None:
+        raise NotImplementedError("rustnx does not support row_order or column_order")
+    G = _b19_new_graph(create_using)
+    n, m = A.shape
+    us, vs, values = _b19_sparse_triples(A, n)
+    _b19_fill(G, "nodes", range(n), {"bipartite": 0})
+    _b19_fill(G, "nodes", range(n, n + m), {"bipartite": 1})
+    _b19_fill_weighted(G, us, vs, None, edge_attribute, values)
+    return G
+
+
+# --- Batch 17: deterministic generators ----------------------------------------
+
+# Generators take no graph, so NetworkX hands them to rustnx only with
+# `backend="rustnx"` or `nx.config.backend_priority.generators`. Rust replays
+# NetworkX's `add_node` / `add_edge` / `remove_*` calls on a model of the
+# graph's dicts (`src/algorithms/generators.rs`) and writes `G._node`,
+# `G._adj` (and `G._pred`) in one pass, so the result is a plain NetworkX
+# graph equal to NetworkX's in node order, every row's order, attribute
+# dicts and multigraph keys.
+
+_GEN_CLASSES = (nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph)
+_GEN_CONTAINERS = (list, tuple, range, str)
+_GEN_INT_LIMIT = 2**62
+
+
+def _gen_int(x):
+    """``x`` if it is a plain int rustnx can pass to Rust."""
+    if type(x) is not int or not -_GEN_INT_LIMIT < x < _GEN_INT_LIMIT:
+        raise NotImplementedError("rustnx needs int arguments here")
+    return x
+
+
+def _gen_ints(values):
+    if type(values) not in (list, tuple, range):
+        # An iterator would be used up before NetworkX falls back.
+        raise NotImplementedError("rustnx needs a list of ints here")
+    return [_gen_int(x) for x in values]
+
+
+def _gen_nodes(n):
+    """``nodes_or_number``: ``(count, labels)``, with ``labels`` None for an
+    int (the nodes ``range(n)``)."""
+    if type(n) is int:
+        if n < 0:
+            raise nx.NetworkXError(f"Negative number of nodes not valid: {n}")
+        return _gen_int(n), None
+    if type(n) not in _GEN_CONTAINERS:
+        raise NotImplementedError("rustnx needs an int or a list of nodes here")
+    nodes = list(n)
+    try:
+        distinct = len(dict.fromkeys(nodes)) == len(nodes)
+    except TypeError:
+        distinct = False
+    if not distinct:
+        # Repeated nodes give a different edge structure; unhashable ones raise.
+        raise NotImplementedError("rustnx needs distinct, hashable nodes")
+    return len(nodes), nodes
+
+
+def _gen_target(create_using, default=nx.Graph):
+    """``empty_graph``'s ``create_using`` handling: ``(cls, instance)``."""
+    if create_using is None:
+        cls, instance = default, None
+    elif isinstance(create_using, type):
+        cls, instance = create_using, None
+    elif not hasattr(create_using, "adj"):
+        raise TypeError("create_using is not a valid NetworkX graph type or instance")
+    else:
+        cls, instance = type(create_using), create_using
+    if cls not in _GEN_CLASSES:
+        raise NotImplementedError("rustnx builds plain NetworkX graph classes only")
+    return cls, instance
+
+
+def _gen_reject(target, error):
+    """Raise ``error``, which NetworkX raises after filling ``create_using``:
+    an instance passed in would then hold nodes, so leave that to NetworkX."""
+    if target[1] is not None:
+        raise NotImplementedError("NetworkX fills create_using before raising")
+    raise error
+
+
+def _gen_reject_directed(target, message="Directed Graph not supported"):
+    if issubclass(target[0], nx.DiGraph):
+        _gen_reject(target, nx.NetworkXError(message))
+
+
+def _generated(kind, params, target, lists=(), labels=None, cols=None, name=None):
+    """A new graph (or the ``create_using`` instance) holding generator
+    ``kind`` built in Rust."""
+    cls, instance = target
+    G = cls()
+    directed = G.is_directed()
+    built = _CoreGraph.generate_graph(
+        kind,
+        [int(x) for x in params],
+        [list(x) for x in lists],
+        G._node,
+        G._adj,
+        G._pred if directed else None,
+        G.is_multigraph(),
+        labels,
+        cols,
+    )
+    if not built:
+        raise NotImplementedError("rustnx leaves this case to NetworkX")
+    if instance is not None:
+        instance.clear()
+        instance._node.update(G._node)
+        instance._adj.update(G._adj)
+        if directed:
+            instance._pred.update(G._pred)
+        G = instance
+    if name is not None:
+        G.graph["name"] = name
+    return G
+
+
+@functools.cache
+def _gen_source(name):
+    """NetworkX's source of generator ``name``, whitespace-normalised ('' if
+    unavailable). Read from ``orig_func``, so nothing dispatches."""
+    try:
+        func = getattr(nx.utils.backends, "_registered_algorithms", {})[name].orig_func
+        return " ".join(inspect.getsource(func).split())
+    except (AttributeError, KeyError, OSError, TypeError):
+        return ""
+
+
+def empty_graph(n=0, create_using=None, default=nx.Graph):
+    count, labels = _gen_nodes(n)
+    return _generated("empty", [count], _gen_target(create_using, default), labels=labels)
+
+
+def complete_graph(n, create_using=None):
+    count, labels = _gen_nodes(n)
+    return _generated("complete", [count], _gen_target(create_using), labels=labels)
+
+
+def cycle_graph(n, create_using=None):
+    count, labels = _gen_nodes(n)
+    return _generated("cycle", [count], _gen_target(create_using), labels=labels)
+
+
+def path_graph(n, create_using=None):
+    count, labels = _gen_nodes(n)
+    return _generated("path", [count], _gen_target(create_using), labels=labels)
+
+
+def star_graph(n, create_using=None):
+    count, labels = _gen_nodes(n)
+    if labels is None:
+        count += 1  # the hub, then the `n` spokes
+    target = _gen_target(create_using)
+    if "Directed Graph not supported" in _gen_source("star_graph"):
+        # NetworkX 3.4 and 3.5 reject directed stars.
+        _gen_reject_directed(target)
+    return _generated("star", [count], target, labels=labels)
+
+
+def wheel_graph(n, create_using=None):
+    count, labels = _gen_nodes(n)
+    target = _gen_target(create_using)
+    _gen_reject_directed(target)
+    return _generated("wheel", [count], target, labels=labels)
+
+
+def _gen_ladder_target(n, create_using):
+    n = _gen_int(n)
+    if n < 0:
+        raise nx.NetworkXError(f"Negative number of nodes not valid: {2 * n}")
+    target = _gen_target(create_using)
+    _gen_reject_directed(target)
+    return n, target
+
+
+def ladder_graph(n, create_using=None):
+    n, target = _gen_ladder_target(n, create_using)
+    return _generated("ladder", [n], target)
+
+
+def circular_ladder_graph(n, create_using=None):
+    n = _gen_int(n)
+    if n < 2:
+        if "n must be at least 2" in _gen_source("circular_ladder_graph"):
+            raise ValueError("n must be at least 2 for circular_ladder_graph")  # 3.7
+        # Before 3.7, `n` 0 or 1 adds the nodes -1, 0 or 1 as self-loops.
+        raise NotImplementedError("rustnx needs n >= 2 here")
+    n, target = _gen_ladder_target(n, create_using)
+    return _generated("circular_ladder", [n], target)
+
+
+def _gen_two_ints(m, n):
+    """``nodes_or_number([0, 1])`` for two ints."""
+    m, n = _gen_int(m), _gen_int(n)
+    for x in (m, n):
+        if x < 0:
+            raise nx.NetworkXError(f"Negative number of nodes not valid: {x}")
+    return m, n
+
+
+def lollipop_graph(m, n, create_using=None):
+    m, n = _gen_two_ints(m, n)
+    if m < 2:
+        raise nx.NetworkXError("Invalid description: m should indicate at least 2 nodes")
+    target = _gen_target(create_using)
+    _gen_reject_directed(target)
+    return _generated("lollipop", [m, n], target)
+
+
+def barbell_graph(m1, m2, create_using=None):
+    m1, m2 = _gen_int(m1), _gen_int(m2)
+    if m1 < 2:
+        raise nx.NetworkXError("Invalid graph description, m1 should be >=2")
+    if m2 < 0:
+        raise nx.NetworkXError("Invalid graph description, m2 should be >=0")
+    target = _gen_target(create_using)
+    _gen_reject_directed(target)
+    return _generated("barbell", [m1, m2], target)
+
+
+def tadpole_graph(m, n, create_using=None):
+    m, n = _gen_two_ints(m, n)
+    if m < 2:
+        raise nx.NetworkXError("Invalid description: m should indicate at least 2 nodes")
+    target = _gen_target(create_using)
+    _gen_reject_directed(target)
+    return _generated("tadpole", [m, n], target)
+
+
+def full_rary_tree(r, n, create_using=None):
+    # NetworkX 3.4 and 3.5 add `_tree_edges(n, r)`, a breadth-first walk
+    # giving the same edges as 3.6's `((child - 1) // r, child)`.
+    r, n = _gen_int(r), _gen_int(n)
+    if n < 0:
+        raise nx.NetworkXError(f"Negative number of nodes not valid: {n}")
+    return _generated("full_rary", [r, n], _gen_target(create_using))
+
+
+def balanced_tree(r, h, create_using=None):
+    r, h = _gen_int(r), _gen_int(h)
+    if r == 1:
+        n = h + 1
+    elif h + 1 < 0 or (abs(r) > 1 and h > 64):
+        raise NotImplementedError("rustnx needs a small tree here")
+    else:
+        n = (1 - r ** (h + 1)) // (1 - r)
+    return full_rary_tree(r, n, create_using=create_using)
+
+
+def binomial_tree(n, create_using=None):
+    n = _gen_int(n)
+    return _generated("binomial", [n], _gen_target(create_using))
+
+
+def complete_bipartite_graph(n1, n2, create_using=None):
+    n1, n2 = _gen_two_ints(n1, n2)
+    target = _gen_target(create_using)
+    _gen_reject_directed(target)
+    name = f"complete_bipartite_graph({n1}, {n2})"
+    return _generated("bipartite", [n1, n2], target, name=name)
+
+
+def _gen_flag_pair(periodic):
+    if type(periodic) in (bool, int):
+        return bool(periodic), bool(periodic)
+    if type(periodic) in (list, tuple) and len(periodic) == 2:
+        return bool(periodic[0]), bool(periodic[1])
+    raise NotImplementedError("rustnx needs periodic to be a bool or a pair")
+
+
+def grid_2d_graph(m, n, periodic=False, create_using=None):
+    rows, row_labels = _gen_nodes(m)
+    cols, col_labels = _gen_nodes(n)
+    target = _gen_target(create_using)
+    pr, pc = _gen_flag_pair(periodic)
+    return _generated(
+        "grid_2d",
+        [rows, cols, pr, pc],
+        target,
+        labels=list(range(rows)) if row_labels is None else row_labels,
+        cols=list(range(cols)) if col_labels is None else col_labels,
+    )
+
+
+def circulant_graph(n, offsets, create_using=None):
+    n = _gen_int(n)
+    offsets = _gen_ints(offsets)
+    if n < 0:
+        raise nx.NetworkXError(f"Negative number of nodes not valid: {n}")
+    text = _gen_source("circulant_graph")
+    if "G.add_edge(i, (i - j) % n)" in text:
+        two_pass = False  # NetworkX 3.4 and 3.5: both edges per (i, j)
+    elif "G.add_edges_from((i, (i - j) % n) for i in range(n) for j in offsets)" in text:
+        two_pass = True
+    else:
+        raise NotImplementedError("unknown circulant_graph version")
+    return _generated("circulant", [n, two_pass], _gen_target(create_using), lists=[offsets])
+
+
+def caveman_graph(l, k):
+    l, k = _gen_int(l), _gen_int(k)
+    if l < 0 or k < 0:
+        raise NotImplementedError("rustnx needs non-negative sizes here")
+    return _generated("caveman", [l, k], (nx.Graph, None))
+
+
+def connected_caveman_graph(l, k):
+    l, k = _gen_int(l), _gen_int(k)
+    if k < 2:
+        raise nx.NetworkXError(
+            "The size of cliques in a connected caveman graph must be at least 2."
+        )
+    if l < 0:
+        raise NotImplementedError("rustnx needs non-negative sizes here")
+    return _generated("connected_caveman", [l, k], (nx.Graph, None))
+
+
+def ring_of_cliques(num_cliques, clique_size):
+    num_cliques, clique_size = _gen_int(num_cliques), _gen_int(clique_size)
+    if num_cliques < 2:
+        raise nx.NetworkXError("A ring of cliques must have at least two cliques")
+    if clique_size < 2:
+        raise nx.NetworkXError("The cliques must have at least two nodes")
+    return _generated("ring_of_cliques", [num_cliques, clique_size], (nx.Graph, None))
+
+
+def windmill_graph(n, k):
+    n, k = _gen_int(n), _gen_int(k)
+    if n < 2:
+        raise nx.NetworkXError("A windmill graph must have at least two cliques")
+    if k < 2:
+        raise nx.NetworkXError("The cliques must have at least two nodes")
+    return _generated("windmill", [n, k], (nx.Graph, None))
+
+
+def complete_multipartite_graph(subset_sizes=()):
+    # NetworkX's `*subset_sizes`, as the tuple the dispatcher binds.
+    if len(subset_sizes) == 0:
+        return nx.Graph()
+    sizes = _gen_ints(subset_sizes)
+    if any(size < 0 for size in sizes):
+        raise nx.NetworkXError(f"Negative number of nodes not valid: {subset_sizes}")
+    return _generated("multipartite", [], (nx.Graph, None), lists=[sizes])
+
+
+def turan_graph(n, r):
+    n, r = _gen_int(n), _gen_int(r)
+    if not 1 <= r <= n:
+        raise nx.NetworkXError("Must satisfy 1 <= r <= n")
+    partitions = [n // r] * (r - n % r) + [n // r + 1] * (n % r)
+    return _generated("multipartite", [], (nx.Graph, None), lists=[partitions])
+
+
+def sudoku_graph(n=3):
+    n = _gen_int(n)
+    if n < 0:
+        raise nx.NetworkXError("The order must be greater than or equal to zero.")
+    return _generated("sudoku", [n], (nx.Graph, None))
+
+
+def LCF_graph(n, shift_list, repeats, create_using=None):
+    n = _gen_int(n)
+    shifts = _gen_ints(shift_list)
+    repeats = _gen_int(repeats)
+    target = _gen_target(create_using)
+    if n <= 0:
+        return _generated("empty", [0], target)
+    _gen_reject_directed(target)
+    return _generated("lcf", [n, repeats], target, lists=[shifts], name="LCF_graph")
+
+
+def generalized_petersen_graph(n, k, *, create_using=None):
+    n, k = _gen_int(n), _gen_int(k)
+    if n <= 2:
+        raise nx.NetworkXError(f"n >= 3 required. Got n={n!r}")
+    if k < 1 or k > n / 2:
+        raise nx.NetworkXError(f" Got n={n!r} k={k!r}. Need 1 <= k <= n/2")
+    target = _gen_target(create_using)
+    _gen_reject_directed(target, "Directed Graph not supported in create_using")
+    name = f"Generalized Petersen Graph GP({n}, {k})"
+    return _generated("petersen", [n, k], target, name=name)
+
+
+def dorogovtsev_goltsev_mendes_graph(n, create_using=None):
+    n = _gen_int(n)
+    if n < 0:
+        raise nx.NetworkXError("n must be greater than or equal to 0")
+    target = _gen_target(create_using)
+    _gen_reject_directed(target, "directed graph not supported")
+    if issubclass(target[0], nx.MultiGraph):
+        _gen_reject(target, nx.NetworkXError("multigraph not supported"))
+    return _generated("dgm", [n], target)
+
+
+def mycielski_graph(n):
+    n = _gen_int(n)
+    if n < 1:
+        raise nx.NetworkXError("must satisfy n >= 1")
+    return _generated("mycielski", [n], (nx.Graph, None))
+
+
+def paley_graph(p, create_using=None):
+    p = _gen_int(p)
+    target = _gen_target(create_using, nx.DiGraph)
+    if issubclass(target[0], nx.MultiGraph):
+        _gen_reject(target, nx.NetworkXError("`create_using` cannot be a multigraph."))
+    if not _sets_replayable():
+        # The edges follow the iteration order of the set of squares.
+        raise NotImplementedError("this interpreter's sets can't be replayed")
+    return _generated("paley", [p], target, name=f"paley({p})")
+
+
+def kneser_graph(n, k):
+    n, k = _gen_int(n), _gen_int(k)
+    if n <= 0:
+        raise nx.NetworkXError("n should be greater than zero")
+    if k <= 0 or k > n:
+        raise nx.NetworkXError("k should be greater than zero and smaller than n")
+    if not _sets_replayable():
+        # The edges follow the iteration order of `universe - set(s)`.
+        raise NotImplementedError("this interpreter's sets can't be replayed")
+    return _generated("kneser", [n, k], (nx.Graph, None))
+
+
+def _gen_lattice(kind, m, n, periodic, with_positions, create_using):
+    target = _gen_target(create_using)
+    m, n = _gen_int(m), _gen_int(n)
+    if m == 0 or n == 0:
+        return _generated("empty", [0], target)
+    if periodic or m < 0 or n < 0:
+        # Periodic lattices contract nodes with `contracted_nodes`.
+        raise NotImplementedError("rustnx supports non-periodic lattices only")
+    if "if with_positions:" in _gen_source(f"{kind}_lattice_graph"):
+        with_positions = bool(with_positions)
+    else:
+        with_positions = True  # NetworkX 3.4 and 3.5 ignore with_positions
+    return _generated(kind, [m, n, with_positions], target)
+
+
+def hexagonal_lattice_graph(m, n, periodic=False, with_positions=True, create_using=None):
+    return _gen_lattice("hexagonal", m, n, periodic, with_positions, create_using)
+
+
+def triangular_lattice_graph(m, n, periodic=False, with_positions=True, create_using=None):
+    return _gen_lattice("triangular", m, n, periodic, with_positions, create_using)
+
+
+def _gen_grid(dims, periodic):
+    if type(periodic) in (bool, int):
+        cyclic = [bool(periodic)] * len(dims)
+    elif type(periodic) in (list, tuple) and len(periodic) >= len(dims):
+        cyclic = [bool(p) for p in periodic[: len(dims)]]
+    else:
+        raise NotImplementedError("rustnx needs periodic to be a bool or a list")
+    atoms = []
+    for d in dims:
+        if type(d) is int:
+            if d < 0:
+                raise NotImplementedError("NetworkX raises for this dimension")
+            atoms.append(list(range(_gen_int(d))))
+        else:
+            values = _gen_ints(d)
+            if len(set(values)) != len(values):
+                raise NotImplementedError("rustnx needs distinct labels")
+            atoms.append(values)
+    return _generated("grid", cyclic, (nx.Graph, None), lists=atoms)
+
+
+def grid_graph(dim, periodic=False):
+    if type(dim) not in (list, tuple):
+        raise NotImplementedError("rustnx needs dim to be a list")
+    if not dim:
+        return nx.Graph()
+    return _gen_grid(dim, periodic)
+
+
+def hypercube_graph(n):
+    n = _gen_int(n)
+    if n <= 0:
+        return nx.Graph()
+    return _gen_grid([2] * n, False)
+
+
+# --- Batch 18: random generators ---
+#
+# Seeded generators replay NetworkX's draws on CPython's Mersenne Twister in
+# Rust (`pyrandom.rs`). NetworkX's @py_random_state runs before dispatch, so
+# `seed` arrives as a `random.Random` (`random._inst` for `seed=None`); any
+# other generator (NumPy's, or a subclass) falls back. The state is read with
+# `getstate()` and handed back with `setstate()`, so the caller's generator
+# ends where NetworkX's code would leave it. Rust fills the dicts of a fresh
+# NetworkX graph (`fill_generated`), in the order NetworkX's calls leave them.
+
+from networkx.utils.misc import check_create_using as _check_create_using  # noqa: E402
+
+_RG_CLASSES = (nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph)
+_RG_MAX_NODES = 2**31
+
+
+def _rg_seed(seed):
+    if type(seed) is not random.Random:
+        raise NotImplementedError("rustnx replays random.Random generators only")
+
+
+def _rg_ints(*values):
+    """Raise ``NotImplementedError`` unless every value is a plain int in
+    ``0..2**31``."""
+    for value in values:
+        if type(value) is not int or not 0 <= value < _RG_MAX_NODES:
+            raise NotImplementedError("rustnx needs small non-negative int arguments")
+
+
+def _rg_floats(*values):
+    """Raise ``NotImplementedError`` unless every value is a plain int or
+    float (ints exactly representable); returns them as floats."""
+    out = []
+    for value in values:
+        if type(value) is float:
+            out.append(value)
+        elif type(value) is int and -(2**53) <= value <= 2**53:
+            out.append(float(value))
+        else:
+            raise NotImplementedError("rustnx needs int or float arguments")
+    return out
+
+
+def _rg_hashable(key):
+    try:
+        hash(key)
+    except TypeError:
+        # NetworkX raises after drawing; let it.
+        raise NotImplementedError("unhashable attribute name") from None
+
+
+def _rg_class(create_using, **checks):
+    """``check_create_using(create_using, **checks)`` (raising NetworkX's
+    errors), then the class to build: rustnx fills fresh graphs of the
+    four NetworkX classes only, not instances or subclasses."""
+    cls = _check_create_using(create_using, **checks)
+    if cls not in _RG_CLASSES:
+        raise NotImplementedError("rustnx builds plain NetworkX graph classes only")
+    return cls
+
+
+def _rg_digraph_class(create_using):
+    """The class ``empty_graph(1, create_using, default=nx.DiGraph)``
+    builds for ``gn_graph`` and friends, which must be directed."""
+    cls = nx.DiGraph if create_using is None else create_using
+    if cls not in _RG_CLASSES:
+        raise NotImplementedError("rustnx builds plain NetworkX graph classes only")
+    if not cls.is_directed(None):
+        raise nx.NetworkXError("create_using must indicate a Directed Graph")
+    return cls
+
+
+def _rg_run(seed, run):
+    """``run(state)`` on the generator's state list; puts the new state back
+    into ``seed``. ``None`` from Rust means NetworkX's own code must run."""
+    version, internal, gauss = seed.getstate()
+    found = run(list(internal))
+    if found is None:
+        raise NotImplementedError("rustnx can't follow NetworkX's draws here")
+    if isinstance(found, tuple):
+        result, internal = found
+    else:
+        result, internal = None, found
+    seed.setstate((version, tuple(internal), gauss))
+    return result
+
+
+def _rg_complete(cls, n):
+    G = cls()
+    _CoreGraph.rg_complete(n, G)
+    return G
+
+
+def _rg_empty(cls, n):
+    G = cls()
+    _CoreGraph.rg_empty(n, G)
+    return G
+
+
+def gnp_random_graph(n, p, seed=None, directed=False, *, create_using=None):
+    _rg_seed(seed)
+    _rg_ints(n)
+    (p,) = _rg_floats(p)
+    default = nx.DiGraph if directed else nx.Graph
+    cls = _rg_class(create_using, directed=directed, multigraph=False, default=default)
+    if p >= 1:
+        return _rg_complete(cls, n)
+    if p <= 0:
+        return _rg_empty(cls, n)
+    G = cls()
+    _rg_run(seed, lambda state: _CoreGraph.rg_gnp(n, p, False, state, G))
+    return G
+
+
+def fast_gnp_random_graph(n, p, seed=None, directed=False, *, create_using=None):
+    _rg_seed(seed)
+    _rg_ints(n)
+    (p,) = _rg_floats(p)
+    default = nx.DiGraph if directed else nx.Graph
+    cls = _rg_class(create_using, directed=directed, multigraph=False, default=default)
+    # NetworkX hands p <= 0 and p >= 1 to gnp_random_graph, which draws
+    # nothing for them.
+    if p >= 1:
+        return _rg_complete(cls, n)
+    if p <= 0:
+        return _rg_empty(cls, n)
+    G = cls()
+    _rg_run(seed, lambda state: _CoreGraph.rg_gnp(n, p, True, state, G))
+    return G
+
+
+def gnm_random_graph(n, m, seed=None, directed=False, *, create_using=None):
+    _rg_seed(seed)
+    _rg_ints(n)
+    if type(m) is not int or m >= _RG_MAX_NODES:
+        raise NotImplementedError("rustnx needs an int m")
+    default = nx.DiGraph if directed else nx.Graph
+    cls = _rg_class(create_using, directed=directed, multigraph=False, default=default)
+    if n == 1:
+        return _rg_empty(cls, n)
+    # NetworkX's own expression: a float for undirected graphs.
+    max_edges = n * (n - 1) if directed else n * (n - 1) / 2.0
+    if m >= max_edges:
+        return _rg_complete(cls, n)
+    G = cls()
+    _rg_run(seed, lambda state: _CoreGraph.rg_gnm(n, max(m, 0), False, state, G))
+    return G
+
+
+def dense_gnm_random_graph(n, m, seed=None, *, create_using=None):
+    _rg_seed(seed)
+    _rg_ints(n)
+    if type(m) is not int or m >= _RG_MAX_NODES:
+        raise NotImplementedError("rustnx needs an int m")
+    cls = _rg_class(create_using, directed=False, multigraph=False)
+    mmax = n * (n - 1) // 2
+    if m >= mmax:
+        return _rg_complete(cls, n)
+    if n == 1:
+        return _rg_empty(cls, n)
+    if m < 1:
+        # NetworkX's loop runs out of pairs and randrange raises.
+        raise NotImplementedError("NetworkX raises here")
+    G = cls()
+    _rg_run(seed, lambda state: _CoreGraph.rg_gnm(n, m, True, state, G))
+    return G
+
+
+def barabasi_albert_graph(n, m, seed=None, initial_graph=None, *, create_using=None):
+    _rg_seed(seed)
+    _rg_ints(n, m)
+    cls = _rg_class(create_using, directed=False, multigraph=False)
+    if m < 1 or m >= n:
+        raise nx.NetworkXError(
+            f"Barabási–Albert network must have m >= 1 and m < n, m = {m}, n = {n}"
+        )
+    if initial_graph is not None:
+        raise NotImplementedError("rustnx does not support initial_graph")
+    G = cls()
+    _rg_run(seed, lambda state: _CoreGraph.rg_barabasi_albert(n, m, 0, 0.0, state, G))
+    return G
+
+
+def dual_barabasi_albert_graph(
+    n, m1, m2, p, seed=None, initial_graph=None, *, create_using=None
+):
+    _rg_seed(seed)
+    _rg_ints(n, m1, m2)
+    (pf,) = _rg_floats(p)
+    if initial_graph is not None:
+        raise NotImplementedError("rustnx does not support initial_graph")
+    cls = _rg_class(create_using, directed=False, multigraph=False)
+    if m1 < 1 or m1 >= n:
+        raise nx.NetworkXError(
+            f"Dual Barabási–Albert must have m1 >= 1 and m1 < n, m1 = {m1}, n = {n}"
+        )
+    if m2 < 1 or m2 >= n:
+        raise nx.NetworkXError(
+            f"Dual Barabási–Albert must have m2 >= 1 and m2 < n, m2 = {m2}, n = {n}"
+        )
+    if p < 0 or p > 1:
+        raise nx.NetworkXError(
+            f"Dual Barabási–Albert network must have 0 <= p <= 1, p = {p}"
+        )
+    # NetworkX runs barabasi_albert_graph for p == 0 or 1.
+    if p == 1:
+        m1, m2 = m1, 0
+    elif p == 0:
+        m1, m2 = m2, 0
+    G = cls()
+    _rg_run(seed, lambda state: _CoreGraph.rg_barabasi_albert(n, m1, m2, pf, state, G))
+    return G
+
+
+def extended_barabasi_albert_graph(n, m, p, q, seed=None, *, create_using=None):
+    _rg_seed(seed)
+    _rg_ints(n, m)
+    pf, qf = _rg_floats(p, q)
+    cls = _rg_class(create_using, directed=False, multigraph=False)
+    if m < 1 or m >= n:
+        msg = f"Extended Barabasi-Albert network needs m>=1 and m<n, m={m}, n={n}"
+        raise nx.NetworkXError(msg)
+    if p + q >= 1:
+        msg = f"Extended Barabasi-Albert network needs p + q <= 1, p={p}, q={q}"
+        raise nx.NetworkXError(msg)
+    G = cls()
+    _rg_run(seed, lambda state: _CoreGraph.rg_extended_barabasi_albert(n, m, pf, qf, state, G))
+    return G
+
+
+def _rg_watts_strogatz(kind, n, k, p, tries, seed, create_using):
+    _rg_seed(seed)
+    _rg_ints(n)
+    if type(k) is not int or k >= _RG_MAX_NODES:
+        raise NotImplementedError("rustnx needs an int k")
+    (p,) = _rg_floats(p)
+    cls = _rg_class(create_using, directed=False, multigraph=False)
+    if k > n:
+        raise nx.NetworkXError(
+            "k>=n, choose smaller k or larger n" if kind == 1 else "k>n, choose smaller k or larger n"
+        )
+    if k == n:
+        return _rg_complete(cls, n)
+    G = cls()
+    found = _rg_run(
+        seed,
+        lambda state: _CoreGraph.rg_watts_strogatz(kind, n, max(k, 0), p, tries, state, G),
+    )
+    if not found:
+        raise nx.NetworkXError("Maximum number of tries exceeded")
+    return G
+
+
+def watts_strogatz_graph(n, k, p, seed=None, *, create_using=None):
+    return _rg_watts_strogatz(0, n, k, p, 1, seed, create_using)
+
+
+def newman_watts_strogatz_graph(n, k, p, seed=None, *, create_using=None):
+    return _rg_watts_strogatz(1, n, k, p, 1, seed, create_using)
+
+
+def connected_watts_strogatz_graph(n, k, p, tries=100, seed=None, *, create_using=None):
+    if type(tries) is not int:
+        raise NotImplementedError("rustnx needs an int tries")
+    if tries <= 0:
+        raise nx.NetworkXError("Maximum number of tries exceeded")
+    if type(n) is int and n == 0:
+        # NetworkX's is_connected raises for the null graph.
+        raise NotImplementedError("NetworkX raises here")
+    return _rg_watts_strogatz(2, n, k, p, tries, seed, create_using)
+
+
+def powerlaw_cluster_graph(n, m, p, seed=None, *, create_using=None):
+    _rg_seed(seed)
+    _rg_ints(n, m)
+    (pf,) = _rg_floats(p)
+    cls = _rg_class(create_using, directed=False, multigraph=False)
+    if m < 1 or n < m:
+        raise nx.NetworkXError(f"NetworkXError must have m>1 and m<n, m={m},n={n}")
+    if p > 1 or p < 0:
+        raise nx.NetworkXError(f"NetworkXError p must be in [0,1], p={p}")
+    G = cls()
+    _rg_run(seed, lambda state: _CoreGraph.rg_powerlaw_cluster(n, m, pf, state, G))
+    return G
+
+
+def random_regular_graph(d, n, seed=None, *, create_using=None):
+    _rg_seed(seed)
+    _rg_ints(d, n)
+    cls = _rg_class(create_using, directed=False, multigraph=False)
+    if (n * d) % 2 != 0:
+        raise nx.NetworkXError("n * d must be even")
+    if not 0 <= d < n:
+        raise nx.NetworkXError("the 0 <= d < n inequality must be satisfied")
+    if d == 0:
+        return _rg_empty(cls, n)
+    G = cls()
+    _rg_run(seed, lambda state: _CoreGraph.rg_random_regular(d, n, state, G))
+    return G
+
+
+@functools.cache
+def _rg_cumulative_cdf():
+    """Whether ``cumulative_distribution`` divides the running sum by the
+    total (NetworkX 3.6+) rather than summing ``d / total`` (3.4, 3.5).
+    ``None`` if unrecognized."""
+    try:
+        source = inspect.getsource(nx.utils.cumulative_distribution)
+    except (AttributeError, OSError, TypeError):
+        return None
+    if "cumulative += element" in source:
+        return True
+    if "cdf.append(cdf[i] + distribution[i] / psum)" in source:
+        return False
+    return None
+
+
+def _rg_growing(kind, n, p, create_using, seed):
+    _rg_seed(seed)
+    if type(n) is not int or n >= _RG_MAX_NODES:
+        raise NotImplementedError("rustnx needs an int n")
+    cls = _rg_digraph_class(create_using)
+    if n == 1 or (kind and n < 1):
+        return _rg_empty(cls, 1)
+    if n < 1:
+        # gn_graph still adds its first edge.
+        raise NotImplementedError("rustnx needs n >= 1")
+    cumulative = False
+    if kind == 0:
+        cumulative = _rg_cumulative_cdf()
+        if cumulative is None:
+            raise NotImplementedError("unrecognized NetworkX cumulative_distribution")
+    G = cls()
+    _rg_run(seed, lambda state: _CoreGraph.rg_growing_network(kind, n, p, cumulative, state, G))
+    return G
+
+
+def gn_graph(n, kernel=None, create_using=None, seed=None):
+    if kernel is not None:
+        raise NotImplementedError("rustnx does not support a kernel")
+    return _rg_growing(0, n, 0.0, create_using, seed)
+
+
+def gnr_graph(n, p, create_using=None, seed=None):
+    (p,) = _rg_floats(p)
+    return _rg_growing(1, n, p, create_using, seed)
+
+
+def gnc_graph(n, create_using=None, seed=None):
+    return _rg_growing(2, n, 0.0, create_using, seed)
+
+
+def random_uniform_k_out_graph(n, k, self_loops=True, with_replacement=True, seed=None):
+    _rg_seed(seed)
+    _rg_ints(n)
+    if type(k) is not int or k >= _RG_MAX_NODES:
+        raise NotImplementedError("rustnx needs an int k")
+    if with_replacement:
+        cls = nx.MultiDiGraph
+        k = max(k, 0)
+    else:
+        cls = nx.DiGraph
+        if k < 0:
+            raise NotImplementedError("NetworkX raises here")
+    G = cls()
+    _rg_run(
+        seed,
+        lambda state: _CoreGraph.rg_uniform_k_out(
+            n, k, bool(self_loops), bool(with_replacement), state, G
+        ),
+    )
+    return G
+
+
+def random_lobster_graph(n, p1, p2, seed=None, *, create_using=None):
+    _rg_seed(seed)
+    if type(n) is not int or not 0 <= n < 2**52:
+        raise NotImplementedError("rustnx needs a non-negative int n")
+    p1, p2 = _rg_floats(p1, p2)
+    cls = _rg_class(create_using, directed=False, multigraph=False)
+    p1, p2 = abs(p1), abs(p2)
+    if any(p >= 1 for p in [p1, p2]):
+        raise nx.NetworkXError("Probability values for `p1` and `p2` must both be < 1.")
+    G = cls()
+    _rg_run(seed, lambda state: _CoreGraph.rg_lobster(n, p1, p2, state, G))
+    return G
+
+
+@functools.cache
+def _rg_lobster_deprecated():
+    """Whether ``random_lobster`` is NetworkX 3.6's deprecated alias (which
+    warns, then calls ``random_lobster_graph``)."""
+    return "deprecated" in _source_text(getattr(nx, "random_lobster", None))
+
+
+def random_lobster(n, p1, p2, seed=None, *, create_using=None):
+    if _rg_lobster_deprecated():
+        raise NotImplementedError("NetworkX warns, then calls random_lobster_graph")
+    return random_lobster_graph(n, p1, p2, seed, create_using=create_using)
+
+
+def random_tournament(n, seed=None):
+    _rg_seed(seed)
+    _rg_ints(n)
+    G = nx.DiGraph()
+    _rg_run(seed, lambda state: _CoreGraph.rg_tournament(n, state, G))
+    return G
+
+
+@functools.cache
+def _rg_sbm_legacy():
+    """Whether ``stochastic_block_model`` first draws for every pair of a
+    diagonal block, then runs its sparse or dense loop on the spent
+    iterator (NetworkX 3.6 and older). ``None`` if unrecognized."""
+    count = _source_text(nx.stochastic_block_model).count("if seed.random() < p[i][j]:")
+    return {2: True, 1: False}.get(count)
+
+
+def _rg_sbm(sizes, p, nodelist, seed, directed, selfloops, sparse):
+    _rg_seed(seed)
+    if nodelist is not None:
+        raise NotImplementedError("rustnx does not support nodelist")
+    if type(sizes) not in (list, tuple) or type(p) not in (list, tuple):
+        raise NotImplementedError("rustnx needs lists of sizes and probabilities")
+    _rg_ints(*sizes)
+    for row in p:
+        if type(row) not in (list, tuple):
+            raise NotImplementedError("rustnx needs lists of probabilities")
+        _rg_floats(*row)
+    if sum(sizes) >= _RG_MAX_NODES:
+        raise NotImplementedError("too many nodes")
+    legacy = _rg_sbm_legacy()
+    if legacy is None:
+        raise NotImplementedError("unrecognized NetworkX stochastic_block_model")
+    # NetworkX's checks, in its order.
+    if len(sizes) != len(p):
+        raise nx.NetworkXException("'sizes' and 'p' do not match.")
+    for row in p:
+        if len(p) != len(row):
+            raise nx.NetworkXException("'p' must be a square matrix.")
+    if not directed:
+        p_transpose = [list(i) for i in zip(*p)]
+        for i in zip(p, p_transpose):
+            for j in zip(i[0], i[1]):
+                if abs(j[0] - j[1]) > 1e-08:
+                    raise nx.NetworkXException("'p' must be symmetric.")
+    for row in p:
+        for prob in row:
+            if prob < 0 or prob > 1:
+                raise nx.NetworkXException("Entries of 'p' not in [0,1].")
+    nodelist = range(sum(sizes))
+    size_cumsum = [sum(sizes[0:x]) for x in range(len(sizes) + 1)]
+    # The partition sets (and so the node order) as NetworkX builds them.
+    partition = [
+        set(nodelist[size_cumsum[x] : size_cumsum[x + 1]])
+        for x in range(len(size_cumsum) - 1)
+    ]
+    blocks = [0] * len(nodelist)
+    for x in range(len(sizes)):
+        blocks[size_cumsum[x] : size_cumsum[x + 1]] = [x] * sizes[x]
+    g = nx.DiGraph() if directed else nx.Graph()
+    probs = [[float(x) for x in row] for row in p]
+    _rg_run(
+        seed,
+        lambda state: _CoreGraph.rg_stochastic_block_model(
+            [list(s) for s in partition],
+            probs,
+            bool(directed),
+            bool(selfloops),
+            bool(sparse),
+            legacy,
+            state,
+            g,
+            "block",
+            blocks,
+        ),
+    )
+    g.graph["partition"] = partition
+    g.name = "stochastic_block_model"
+    return g
+
+
+def stochastic_block_model(
+    sizes, p, nodelist=None, seed=None, directed=False, selfloops=False, sparse=True
+):
+    return _rg_sbm(sizes, p, nodelist, seed, directed, selfloops, sparse)
+
+
+def random_partition_graph(sizes, p_in, p_out, seed=None, directed=False):
+    _rg_seed(seed)
+    _rg_floats(p_in, p_out)
+    if not 0.0 <= p_in <= 1.0:
+        raise nx.NetworkXError("p_in must be in [0,1]")
+    if not 0.0 <= p_out <= 1.0:
+        raise nx.NetworkXError("p_out must be in [0,1]")
+    if type(sizes) not in (list, tuple):
+        raise NotImplementedError("rustnx needs a list of sizes")
+    num_blocks = len(sizes)
+    p = [[p_out for s in range(num_blocks)] for r in range(num_blocks)]
+    for r in range(num_blocks):
+        p[r][r] = p_in
+    return _rg_sbm(sizes, p, None, seed, directed, False, True)
+
+
+def planted_partition_graph(l, k, p_in, p_out, seed=None, directed=False):
+    if type(l) is not int or type(k) is not int:
+        raise NotImplementedError("rustnx needs int l and k")
+    if l > 0 and k * l >= _RG_MAX_NODES:
+        raise NotImplementedError("too many nodes")
+    return random_partition_graph([k] * l, p_in, p_out, seed=seed, directed=directed)
+
+
+def random_geometric_graph(n, radius, dim=2, pos=None, p=2, seed=None, *, pos_name="pos"):
+    _rg_seed(seed)
+    if pos is not None:
+        raise NotImplementedError("rustnx draws the positions itself")
+    _rg_ints(n, dim)
+    radius, p = _rg_floats(radius, p)
+    if n == 0 or dim == 0 or not (0 <= radius < math.inf) or not (1 <= p < math.inf):
+        raise NotImplementedError("rustnx can't match NetworkX here")
+    _rg_hashable(pos_name)
+    G = nx.Graph()
+    _rg_run(seed, lambda state: _CoreGraph.rg_geometric(n, radius, dim, p, state, G, pos_name))
+    return G
+
+
+def waxman_graph(
+    n,
+    beta=0.4,
+    alpha=0.1,
+    L=None,
+    domain=(0, 0, 1, 1),
+    metric=None,
+    seed=None,
+    *,
+    pos_name="pos",
+):
+    _rg_seed(seed)
+    if metric is not None:
+        raise NotImplementedError("rustnx supports the default metric only")
+    _rg_hashable(pos_name)
+    _rg_ints(n)
+    if type(domain) not in (list, tuple) or len(domain) != 4:
+        raise NotImplementedError("rustnx needs a domain of four numbers")
+    xmin, ymin, xmax, ymax = domain
+    _rg_floats(xmin, ymin, xmax, ymax)
+    beta, alpha = _rg_floats(beta, alpha)
+    # `uniform(a, b)` is `a + (b - a) * random()`, with Python's arithmetic.
+    box = tuple(float(x) for x in (xmin, xmax - xmin, ymin, ymax - ymin))
+    if not all(math.isfinite(x) for x in (*box, beta, alpha)) or not alpha > 0:
+        raise NotImplementedError("rustnx needs finite numbers and alpha > 0")
+    if L is None:
+        if n < 2:
+            raise NotImplementedError("NetworkX raises here")
+    else:
+        # Python's `alpha * L` rounds an int product once, as f64 does.
+        (L,) = _rg_floats(L)
+        if not (0 < L < math.inf):
+            raise NotImplementedError("rustnx needs a positive finite L")
+    G = nx.Graph()
+    _rg_run(
+        seed,
+        lambda state: _CoreGraph.rg_waxman(n, beta, alpha, L, box, state, G, pos_name),
+    )
+    return G
+
+
+def _rg_bipartite_graph(n, m, directed):
+    """The empty graph NetworkX starts from, with the `bipartite` labels."""
+    G = nx.DiGraph() if directed else nx.Graph()
+    return G, [0] * n + [1] * m
+
+
+def random_graph(n, m, p, seed=None, directed=False):
+    _rg_seed(seed)
+    _rg_ints(n, m)
+    if n + m >= _RG_MAX_NODES:
+        raise NotImplementedError("too many nodes")
+    (pf,) = _rg_floats(p)
+    if pf >= 1 or pf != pf:
+        # complete_bipartite_graph, or NetworkX raises.
+        raise NotImplementedError("rustnx leaves this case to NetworkX")
+    G, labels = _rg_bipartite_graph(n, m, directed)
+    if pf <= 0:
+        _CoreGraph.rg_empty(n + m, G)
+        for v, label in zip(G._node.values(), labels):
+            v["bipartite"] = label
+    else:
+        _rg_run(
+            seed,
+            lambda state: _CoreGraph.rg_bipartite(
+                n, m, pf, 0, None, state, G, "bipartite", labels
+            ),
+        )
+    G.name = f"fast_gnp_random_graph({n},{m},{p})"
+    return G
+
+
+def gnmk_random_graph(n, m, k, seed=None, directed=False):
+    _rg_seed(seed)
+    _rg_ints(n, m)
+    if n + m >= _RG_MAX_NODES:
+        raise NotImplementedError("too many nodes")
+    if type(k) is not int or k >= _RG_MAX_NODES:
+        raise NotImplementedError("rustnx needs an int k")
+    G, labels = _rg_bipartite_graph(n, m, directed)
+    if n == 1 or m == 1 or (k <= 0 and k < n * m):
+        _CoreGraph.rg_empty(n + m, G)
+        for v, label in zip(G._node.values(), labels):
+            v["bipartite"] = label
+    elif k >= n * m:
+        raise NotImplementedError("rustnx leaves complete_bipartite_graph to NetworkX")
+    else:
+        # `list(set(G) - set(top))`, in that set's order.
+        bottom = list(set(range(n + m)) - set(range(n)))
+        _rg_run(
+            seed,
+            lambda state: _CoreGraph.rg_bipartite(
+                n, m, 0.0, k, bottom, state, G, "bipartite", labels
+            ),
+        )
+    G.name = f"bipartite_gnm_random_graph({n},{m},{k})"
+    return G
+
+
+# --- Batch 20: readers and parsers ----------------------------------------------------
+#
+# The Rust side parses the text and fills a new NetworkX graph's dicts the way
+# `add_node` / `add_edge` would, or gives up (returning False / None) wherever
+# NetworkX would raise or Python's conversions might do something it doesn't
+# model. Giving up raises NotImplementedError before anything visible has
+# happened: files are rewound to where they were, so NetworkX reads them again.
+
+
+def _rw_new_graph(create_using):
+    """``nx.empty_graph(0, create_using)`` for plain NetworkX graph classes
+    and instances (NetworkX clears an instance and fills it)."""
+    if create_using is None:
+        return nx.Graph()
+    if isinstance(create_using, type) and create_using in _RW_PLAIN_CLASSES:
+        return create_using()
+    if type(create_using) in _RW_PLAIN_CLASSES and not getattr(create_using, "frozen", False):
+        create_using.clear()
+        return create_using
+    raise NotImplementedError("rustnx builds plain NetworkX graphs only")
+
+
+_RW_PLAIN_CLASSES = (nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph)
+
+# Codecs where decoding a whole file equals decoding each b"\n"-terminated
+# line on its own (what NetworkX does while iterating a binary file).
+_RW_LINE_CODECS = {"utf-8", "ascii", "iso8859-1"}
+
+
+def _rw_nodetype(nodetype, allow_none=True):
+    if nodetype is None and allow_none or nodetype is str:
+        return 0
+    if nodetype is int:
+        return 1
+    if nodetype is float:
+        return 2
+    raise NotImplementedError("rustnx converts with int, float or str only")
+
+
+def _rw_text_arg(text):
+    if type(text) is not str or text == "":
+        raise NotImplementedError("rustnx needs a non-empty str here")
+    return text
+
+
+def _rw_lines(lines):
+    """``(items, rerun)`` for the ``lines`` argument of a parser: a list (or
+    tuple) is parsed as it is; an iterator is read into a list, and since
+    NetworkX can't read it again, ``rerun`` is True: if rustnx gives up,
+    NetworkX's own code runs here on an iterator over the same lines. Other
+    iterables fall back untouched."""
+    if type(lines) is list:
+        return lines, False
+    if type(lines) is tuple:
+        return list(lines), False
+    if hasattr(lines, "__next__"):
+        return list(lines), True
+    raise NotImplementedError("rustnx parses lists of lines or iterators")
+
+
+def _rw_networkx(name):
+    return nx.utils.backends._registered_algorithms[name].orig_func
+
+
+_RW_BINARY_FILES = None
+
+
+def _rw_read_bytes(path):
+    """``(data, rewind)``: everything left in the binary file ``path``, and a
+    function putting the file back where it was."""
+    global _RW_BINARY_FILES
+    if _RW_BINARY_FILES is None:
+        import bz2
+        import gzip
+        import io
+
+        _RW_BINARY_FILES = (
+            io.BufferedReader, io.BufferedRandom, io.BytesIO, io.FileIO,
+            gzip.GzipFile, bz2.BZ2File,
+        )
+    if type(path) not in _RW_BINARY_FILES:
+        raise NotImplementedError("rustnx reads paths and binary files only")
+    try:
+        if not path.seekable():
+            raise NotImplementedError("rustnx needs a seekable file")
+        position = path.tell()
+        data = path.read()
+    except (OSError, ValueError):
+        raise NotImplementedError("NetworkX reads this file") from None
+
+    def rewind():
+        path.seek(position)
+
+    if type(data) is not bytes:
+        rewind()
+        raise NotImplementedError("NetworkX reads this file")
+    return data, rewind
+
+
+def _rw_read_text(path, encoding):
+    """``(text, rewind)``: ``_rw_read_bytes`` decoded as NetworkX decodes
+    each line."""
+    import codecs
+
+    try:
+        name = codecs.lookup(encoding).name if type(encoding) is str else None
+    except LookupError:
+        name = None
+    if name not in _RW_LINE_CODECS:
+        raise NotImplementedError("rustnx decodes UTF-8, ASCII and Latin-1 only")
+    data, rewind = _rw_read_bytes(path)
+    try:
+        text = data.decode(encoding)
+    except UnicodeDecodeError:
+        rewind()
+        raise NotImplementedError("NetworkX raises for this file") from None
+    return text, rewind
+
+
+# Names `add_edge(u, v, **data)` binds to a parameter instead of storing.
+_RW_RESERVED_KEYS = {"self", "u_of_edge", "v_of_edge", "u_for_edge", "v_for_edge", "key"}
+
+
+def _rw_edge_data(data):
+    """``(kind, keys, types)`` for ``parse_edgelist``'s ``data``."""
+    if data is True:
+        return 1, [], []
+    if data is False:
+        return 0, [], []
+    if type(data) not in (list, tuple):
+        raise NotImplementedError("rustnx needs data=True, False or (key, type) pairs")
+    keys, types = [], []
+    for item in data:
+        if type(item) not in (list, tuple) or len(item) != 2:
+            raise NotImplementedError("rustnx needs (key, type) pairs")
+        key, kind = item
+        if type(key) is not str or key in _RW_RESERVED_KEYS:
+            raise NotImplementedError("rustnx needs str attribute names")
+        keys.append(key)
+        types.append(_rw_nodetype(kind, allow_none=False))
+    return 2, keys, types
+
+
+def _rw_edgelist_args(comments, delimiter, create_using, nodetype, data, bipartite):
+    """Checks ``parse_edgelist``'s arguments (before any lines are read) and
+    returns ``parse(lines, mode)``: the new graph, or None where NetworkX
+    must run."""
+    # Bipartite parse_edgelist calls line.find(comments) without a None check.
+    if (comments is not None or bipartite) and type(comments) is not str:
+        raise NotImplementedError("rustnx needs a str for comments")
+    if delimiter is not None:
+        _rw_text_arg(delimiter)
+    code = _rw_nodetype(nodetype)
+    kind, keys, types = _rw_edge_data(data)
+    G = _rw_new_graph(create_using)
+    # NetworkX joins the data tokens with "," for delimiter="," (and strips
+    # them); bipartite parse_edgelist always joins with " ".
+    comma = delimiter == "," and not bipartite
+
+    def parse(lines, mode):
+        done = _core.CoreGraph.rw_edgelist(
+            G, lines, mode, comments, delimiter, code, kind, keys, types,
+            comma, not bipartite, bipartite,
+        )
+        return G if done else None
+
+    return parse
+
+
+def _rw_parse(name, lines, parse, **kwargs):
+    """Runs ``parse`` on the lines of a parser's ``lines`` argument (see
+    ``_rw_lines``)."""
+    items, rerun = _rw_lines(lines)
+    G = parse(items, 0)
+    if G is not None:
+        return G
+    if rerun:
+        return _rw_networkx(name)(iter(items), **kwargs)
+    raise NotImplementedError("NetworkX parses these lines")
+
+
+def _rw_read(path, encoding, parse):
+    text, rewind = _rw_read_text(path, encoding)
+    G = parse(text, 1)
+    if G is None:
+        rewind()
+        raise NotImplementedError("NetworkX parses this file")
+    return G
+
+
+def parse_edgelist(lines, comments="#", delimiter=None, create_using=None, nodetype=None,
+                   data=True):
+    parse = _rw_edgelist_args(comments, delimiter, create_using, nodetype, data, False)
+    return _rw_parse(
+        "parse_edgelist", lines, parse, comments=comments, delimiter=delimiter,
+        create_using=create_using, nodetype=nodetype, data=data,
+    )
+
+
+def read_edgelist(path, comments="#", delimiter=None, create_using=None, nodetype=None,
+                  data=True, edgetype=None, encoding="utf-8"):
+    parse = _rw_edgelist_args(comments, delimiter, create_using, nodetype, data, False)
+    return _rw_read(path, encoding, parse)
+
+
+@functools.cache
+def _rw_open_file():
+    """NetworkX's own ``open_file`` decorator (the same in every version),
+    which ``read_weighted_edgelist`` gets through ``read_edgelist``."""
+    return nx.utils.open_file(0, mode="rb")(read_edgelist)
+
+
+def read_weighted_edgelist(path, comments="#", delimiter=None, create_using=None,
+                           nodetype=None, encoding="utf-8"):
+    return _rw_open_file()(
+        path, comments=comments, delimiter=delimiter, create_using=create_using,
+        nodetype=nodetype, data=(("weight", float),), encoding=encoding,
+    )
+
+
+def bipartite_parse_edgelist(lines, comments="#", delimiter=None, create_using=None,
+                             nodetype=None, data=True):
+    parse = _rw_edgelist_args(comments, delimiter, create_using, nodetype, data, True)
+    return _rw_parse(
+        "bipartite_parse_edgelist", lines, parse, comments=comments,
+        delimiter=delimiter, create_using=create_using, nodetype=nodetype, data=data,
+    )
+
+
+def bipartite_read_edgelist(path, comments="#", delimiter=None, create_using=None,
+                            nodetype=None, data=True, edgetype=None, encoding="utf-8"):
+    parse = _rw_edgelist_args(comments, delimiter, create_using, nodetype, data, True)
+    return _rw_read(path, encoding, parse)
+
+
+def _rw_adjlist_args(comments, delimiter, create_using, nodetype, edgetype=False):
+    """Like ``_rw_edgelist_args``, for ``parse_adjlist`` (or, with
+    ``edgetype`` not False, ``parse_multiline_adjlist``)."""
+    if type(comments) is not str:
+        raise NotImplementedError("rustnx needs a str for comments")
+    if delimiter is not None:
+        _rw_text_arg(delimiter)
+    code = _rw_nodetype(nodetype)
+    if edgetype is not False:
+        edge_code = 0 if edgetype is None else _rw_nodetype(edgetype, allow_none=False) + 1
+    G = _rw_new_graph(create_using)
+
+    def parse(lines, mode):
+        if edgetype is False:
+            done = _core.CoreGraph.rw_adjlist(G, lines, mode, comments, delimiter, code)
+        else:
+            done = _core.CoreGraph.rw_multiline_adjlist(
+                G, lines, mode, comments, delimiter, code, edge_code
+            )
+        return G if done else None
+
+    return parse
+
+
+def parse_adjlist(lines, comments="#", delimiter=None, create_using=None, nodetype=None):
+    parse = _rw_adjlist_args(comments, delimiter, create_using, nodetype)
+    return _rw_parse(
+        "parse_adjlist", lines, parse, comments=comments, delimiter=delimiter,
+        create_using=create_using, nodetype=nodetype,
+    )
+
+
+def read_adjlist(path, comments="#", delimiter=None, create_using=None, nodetype=None,
+                 encoding="utf-8"):
+    parse = _rw_adjlist_args(comments, delimiter, create_using, nodetype)
+    return _rw_read(path, encoding, parse)
+
+
+def parse_multiline_adjlist(lines, comments="#", delimiter=None, create_using=None,
+                            nodetype=None, edgetype=None):
+    # NetworkX reads each node's neighbors with next(lines), so a list only
+    # works without neighbors: leave lists to NetworkX.
+    if not hasattr(lines, "__next__"):
+        raise NotImplementedError("NetworkX needs an iterator here")
+    parse = _rw_adjlist_args(comments, delimiter, create_using, nodetype, edgetype)
+    return _rw_parse(
+        "parse_multiline_adjlist", lines, parse, comments=comments, delimiter=delimiter,
+        create_using=create_using, nodetype=nodetype, edgetype=edgetype,
+    )
+
+
+def read_multiline_adjlist(path, comments="#", delimiter=None, create_using=None,
+                           nodetype=None, edgetype=None, encoding="utf-8"):
+    parse = _rw_adjlist_args(comments, delimiter, create_using, nodetype, edgetype)
+    return _rw_read(path, encoding, parse)
+
+
+def _rw_leda_pajek(kind):
+    """``parse(lines, mode)`` for ``parse_leda`` (``kind`` 0) or
+    ``parse_pajek`` (1); mode 2 is a str that NetworkX splits at "\\n"."""
+    return lambda lines, mode: _core.CoreGraph.rw_leda_pajek(lines, mode, kind)
+
+
+def _rw_parse_text(name, lines, kind):
+    if type(lines) is str:
+        G = _rw_leda_pajek(kind)(lines, 2)
+        if G is None:
+            raise NotImplementedError("NetworkX parses this text")
+        return G
+    return _rw_parse(name, lines, _rw_leda_pajek(kind))
+
+
+def parse_leda(lines):
+    return _rw_parse_text("parse_leda", lines, 0)
+
+
+def read_leda(path, encoding="UTF-8"):
+    return _rw_read(path, encoding, _rw_leda_pajek(0))
+
+
+def parse_pajek(lines):
+    return _rw_parse_text("parse_pajek", lines, 1)
+
+
+def read_pajek(path, encoding="UTF-8"):
+    return _rw_read(path, encoding, _rw_leda_pajek(1))
+
+
+@functools.cache
+def _graph6_strips_newline():
+    """NetworkX 3.5+ ignores trailing newlines in ``from_graph6_bytes``."""
+    try:
+        text = inspect.getsource(_rw_networkx("from_graph6_bytes"))
+    except (AttributeError, KeyError, OSError, TypeError):
+        return None
+    return 'bytes_in = bytes_in.rstrip(b"\\n")' in text
+
+
+def from_graph6_bytes(bytes_in):
+    strip = _graph6_strips_newline()
+    if type(bytes_in) is not bytes or strip is None:
+        raise NotImplementedError("rustnx parses bytes only")
+    graphs = _core.CoreGraph.rw_graph6(bytes_in, False, False, strip)
+    if graphs is None:
+        raise NotImplementedError("NetworkX raises for this input")
+    return graphs[0]
+
+
+def from_sparse6_bytes(string):
+    if type(string) is not bytes:
+        raise NotImplementedError("rustnx parses bytes only")
+    graphs = _core.CoreGraph.rw_graph6(string, True, False, False)
+    if graphs is None:
+        raise NotImplementedError("NetworkX raises for this input")
+    return graphs[0]
+
+
+def _rw_read_graph6(path, sparse):
+    strip = _graph6_strips_newline()
+    if strip is None:
+        raise NotImplementedError("unknown graph6 parser")
+    data, rewind = _rw_read_bytes(path)
+    graphs = _core.CoreGraph.rw_graph6(data, sparse, True, strip)
+    if graphs is None:
+        rewind()
+        raise NotImplementedError("NetworkX raises for this file")
+    return graphs[0] if len(graphs) == 1 else graphs
+
+
+def read_graph6(path):
+    return _rw_read_graph6(path, False)
+
+
+def read_sparse6(path):
+    return _rw_read_graph6(path, True)
+
+
+# JSON graphs: the Rust side replays NetworkX's add_node / add_edge calls on
+# the same Python objects (nodes and keys must be str, int, float, bool or
+# tuples of those), into a new graph that is dropped if it gives up.
+
+_RW_UNSET = object()
+_RW_FLAG_TYPES = (bool, int, type(None))
+
+
+def _rw_json_graph(multigraph, directed):
+    if type(multigraph) not in _RW_FLAG_TYPES or type(directed) not in _RW_FLAG_TYPES:
+        raise NotImplementedError("rustnx needs bool flags")
+    if multigraph:
+        return nx.MultiDiGraph() if directed else nx.MultiGraph()
+    return nx.DiGraph() if directed else nx.Graph()
+
+
+@functools.cache
+def _node_link_default_edges():
+    """``"edges"`` from NetworkX 3.6; 3.4 and 3.5 warn and use ``"links"``
+    when ``edges`` isn't given (left to NetworkX, which warns)."""
+    try:
+        param = inspect.signature(_rw_networkx("node_link_graph")).parameters["edges"]
+    except (KeyError, TypeError, ValueError):
+        return None
+    return param.default
+
+
+def node_link_graph(data, directed=False, multigraph=True, *, source="source",
+                    target="target", name="id", key="key", edges=_RW_UNSET, nodes="nodes"):
+    if edges is _RW_UNSET:
+        edges = _node_link_default_edges()
+    if type(data) is not dict or any(
+        type(arg) is not str for arg in (source, target, name, key, edges, nodes)
+    ):
+        raise NotImplementedError("rustnx needs a dict and str names")
+    node_list, edge_list = data.get(nodes), data.get(edges)
+    if type(node_list) is not list or type(edge_list) is not list:
+        raise NotImplementedError("NetworkX raises for this input")
+    graph = _rw_json_graph(data.get("multigraph", multigraph), data.get("directed", directed))
+    if not _core.CoreGraph.rw_node_link(graph, node_list, edge_list, source, target, name, key):
+        raise NotImplementedError("NetworkX builds this graph")
+    graph.graph = data.get("graph", {})
+    return graph
+
+
+def adjacency_graph(data, directed=False, multigraph=True, attrs={"id": "id", "key": "key"}):  # noqa: B006
+    if type(data) is not dict or type(attrs) is not dict:
+        raise NotImplementedError("rustnx needs dicts")
+    graph = _rw_json_graph(data.get("multigraph", multigraph), data.get("directed", directed))
+    multigraph = graph.is_multigraph()
+    id_ = attrs.get("id", _RW_UNSET)
+    key = attrs.get("key", _RW_UNSET) if multigraph else None
+    if type(id_) not in (str, int) or multigraph and type(key) not in (str, int):
+        raise NotImplementedError("rustnx needs str or int attribute names")
+    try:
+        graph.graph = dict(data.get("graph", []))
+    except Exception:
+        raise NotImplementedError("NetworkX raises for this input") from None
+    if not _core.CoreGraph.rw_adjacency(
+        graph, data.get("nodes"), data.get("adjacency"), id_, key
+    ):
+        raise NotImplementedError("NetworkX builds this graph")
+    return graph
+
+
+def cytoscape_graph(data, name="name", ident="id"):
+    if type(data) is not dict or type(name) is not str or type(ident) is not str or name == ident:
+        raise NotImplementedError("rustnx needs a dict and two different str names")
+    elements = data.get("elements")
+    if type(elements) is not dict:
+        raise NotImplementedError("NetworkX raises for this input")
+    graph = _rw_json_graph(data.get("multigraph"), data.get("directed"))
+    try:
+        graph.graph = dict(data.get("data"))
+    except Exception:
+        raise NotImplementedError("NetworkX raises for this input") from None
+    if not _core.CoreGraph.rw_cytoscape(
+        graph, elements.get("nodes"), elements.get("edges"), name, ident
+    ):
+        raise NotImplementedError("NetworkX builds this graph")
+    return graph
+
+
+def tree_graph(data, ident="id", children="children"):
+    if type(ident) is not str or type(children) is not str:
+        raise NotImplementedError("rustnx needs str names")
+    graph = nx.DiGraph()
+    if not _core.CoreGraph.rw_tree(graph, data, ident, children):
+        raise NotImplementedError("NetworkX builds this graph")
+    return graph
+
+
+def _rw_gml_args(label, destringizer):
+    if destringizer is not None:
+        raise NotImplementedError("rustnx parses GML without a destringizer")
+    if label is not None and type(label) is not str:
+        raise NotImplementedError("rustnx needs a str label")
+    return lambda lines, mode: _core.CoreGraph.rw_gml(lines, mode, label)
+
+
+def parse_gml(lines, label="label", destringizer=None):
+    parse = _rw_gml_args(label, destringizer)
+    if type(lines) is str:
+        G = parse(lines, 3)
+        if G is None:
+            raise NotImplementedError("NetworkX parses this text")
+        return G
+    return _rw_parse("parse_gml", lines, parse, label=label, destringizer=destringizer)
+
+
+def read_gml(path, label="label", destringizer=None):
+    return _rw_read(path, "ascii", _rw_gml_args(label, destringizer))
+
+
+# --- Batch 21: operators and structure ---
+
+from itertools import repeat  # noqa: E402
+
+_b21_deepcopy = copy.deepcopy
+
+
+def _b21_view(G):
+    """``(NetworkX graph, OpView)`` for an operator's input: the graph's
+    dicts in the order NetworkX's methods iterate them."""
+    base = _networkx_graph(G)
+    core, nodes = G._core, G._nodes
+    if core.is_native():
+        from .graph import from_networkx
+
+        snapshot = from_networkx(base)
+        core, nodes = snapshot._core, snapshot._nodes
+    return base, core.op_view(list(nodes), base._node, base._adj)
+
+
+def _b21_target(R):
+    """The dicts ``OpView.add_to`` fills: ``_node``, ``_succ``, ``_pred``."""
+    return R._node, R._adj, (R._pred if R.is_directed() else None)
+
+
+def _b21_container(value):
+    """Decline one-shot iterators: if rustnx consumed one and then fell
+    back, NetworkX would get it empty."""
+    if iter(value) is value:
+        raise NotImplementedError("rustnx needs a container, not an iterator")
+    return value
+
+
+def _b21_labels(G, prefix):
+    """``union_all``'s ``f"{prefix}{x}"`` labels (``nx.relabel_nodes``
+    merges nodes whose labels collide; rustnx declines those)."""
+    labels = [f"{prefix}{x}" for x in G._nodes]
+    if len(set(labels)) != len(labels):
+        raise NotImplementedError("relabeling merges nodes")
+    return labels
+
+
+def _b21_union(items, disjoint):
+    """``union_all`` / ``compose_all`` over ``(G, graph dict, OpView)``."""
+    R = None
+    for i, (G, graph, view) in enumerate(items):
+        if i == 0:
+            R = _plain_result_class(G)()
+        elif G.is_directed() != R.is_directed():
+            raise nx.NetworkXError("All graphs must be directed or undirected.")
+        elif disjoint and view.shares_node(R._node):
+            raise nx.NetworkXError(
+                "The node sets of the graphs are not disjoint.\n"
+                "Use `rename` to specify prefixes for the graphs or use\n"
+                "disjoint_union(G1, G2, ..., GN)."
+            )
+        R.graph.update(graph)
+        view.add_to(*_b21_target(R), 1)
+    return R
+
+
+def union_all(graphs, rename=()):
+    _b21_container(rename)
+
+    def items():
+        for G, prefix in zip(graphs, chain(rename, repeat(None))):
+            base, view = _b21_view(G)
+            if prefix is not None:
+                view = view.relabeled(_b21_labels(G, prefix))
+            yield G, base.graph, view
+
+    R = _b21_union(items(), True)
+    if R is None:
+        raise ValueError("cannot apply union_all to an empty list")
+    return R
+
+
+def union(G, H, rename=()):
+    return union_all([G, H], rename)
+
+
+def compose_all(graphs):
+    def items():
+        for G in graphs:
+            base, view = _b21_view(G)
+            yield G, base.graph, view
+
+    R = _b21_union(items(), False)
+    if R is None:
+        raise ValueError("cannot apply compose_all to an empty list")
+    return R
+
+
+def compose(G, H):
+    return compose_all([G, H])
+
+
+def disjoint_union_all(graphs):
+    def items():
+        # `convert_node_labels_to_integers` on each graph, then `union_all`.
+        first = 0
+        for G in graphs:
+            base, view = _b21_view(G)
+            yield G, base.graph, view.relabeled(list(range(first, first + len(G))))
+            first += len(G)
+
+    R = _b21_union(items(), False)
+    if R is None:
+        raise ValueError("cannot apply union_all to an empty list")
+    return R
+
+
+def disjoint_union(G, H):
+    return disjoint_union_all([G, H])
+
+
+def full_join(G, H, rename=(None, None)):
+    R = union(G, H, rename)
+
+    def nodes(graph, prefix):
+        return list(graph._nodes) if prefix is None else _b21_labels(graph, prefix)
+
+    left, right = nodes(G, rename[0]), nodes(H, rename[1])
+    succ, pred = R._adj, (R._pred if R.is_directed() else None)
+    _core._op_join(succ, pred, left, right)
+    if R.is_directed():
+        _core._op_join(succ, pred, right, left)
+    return R
+
+
+def reverse(G, copy=True):
+    if not G.is_directed():
+        raise nx.NetworkXError("Cannot reverse an undirected graph.")
+    if not copy:
+        raise NotImplementedError("NetworkX returns a view of the graph")
+    base, view = _b21_view(G)
+    H = _plain_result_class(G)()
+    H.graph.update(_b21_deepcopy(base.graph))
+    view.add_to(*_b21_target(H), 1, reverse=True, deep=True)
+    return H
+
+
+def moral_graph(G):
+    _directed_only(G)
+    base, view = _b21_view(G)
+    _plain_result_class(G)  # `to_undirected_class()` is nx.Graph
+    H = nx.Graph()
+    H.graph.update(_b21_deepcopy(base.graph))
+    view.add_to(H._node, H._adj, None, 2, deep=True)
+    _core._op_pred_combinations(H._adj, base._pred)
+    return H
+
+
+@functools.cache
+def _b21_tuple_hashes_match():
+    """Whether rustnx's copy of CPython's tuple hash gives this
+    interpreter's ``hash()`` (``line_graph`` iterates a set of tuples)."""
+    samples = [(), (1,), (1, 2), ("a", -1), (-2, 2**61 - 1), ((1, 2), (3, 4)),
+               ((("x", 0), 5), (2**64, -(2**61))), (1.5, None, "b")]
+
+    def ours(t):
+        return _core._tuple_hash([ours(x) if type(x) is tuple else hash(x) for x in t])
+
+    try:
+        return all(ours(t) == hash(t) for t in samples)
+    except Exception:
+        return False
+
+
+def _b21_canonical_view(G):
+    """``_b21_view``, declining graphs whose adjacency keys aren't
+    interchangeable with their nodes (results built from node objects)."""
+    base, view = _b21_view(G)
+    if not view.keys_canonical():
+        raise NotImplementedError("adjacency keys differ from the nodes")
+    return base, view
+
+
+def line_graph(G, create_using=None):
+    if create_using is not None:
+        raise NotImplementedError("rustnx supports create_using=None only")
+    if not G.is_directed() and not (_sets_replayable() and _b21_tuple_hashes_match()):
+        raise NotImplementedError("Python's set order can't be replayed here")
+    _, view = _b21_canonical_view(G)
+    L = _plain_result_class(G)()
+    view.line_graph_into(*_b21_target(L))
+    return L
+
+
+def _b21_product(G, H):
+    """``_init_product_graph`` and both graphs' views."""
+    if G.is_directed() != H.is_directed():
+        raise nx.NetworkXError("G and H must be both directed or both undirected")
+    _, g = _b21_canonical_view(G)
+    _, h = _b21_canonical_view(H)
+    return (nx.DiGraph() if G.is_directed() else nx.Graph()), g, h
+
+
+def _b21_simple_product(kind, G, H):
+    GH, g, h = _b21_product(G, H)
+    _core._op_product(kind, g, h, *_b21_target(GH))
+    return GH
+
+
+def tensor_product(G, H):
+    return _b21_simple_product("tensor", G, H)
+
+
+def cartesian_product(G, H):
+    return _b21_simple_product("cartesian", G, H)
+
+
+def lexicographic_product(G, H):
+    return _b21_simple_product("lexicographic", G, H)
+
+
+def strong_product(G, H):
+    return _b21_simple_product("strong", G, H)
+
+
+def rooted_product(G, H, root):
+    if root not in H:
+        raise nx.NodeNotFound("root must be a vertex in H")
+    r = H._index[root]
+    found = H._nodes[r]
+    if found is not root and not (type(found) is type(root) and type(root) in (int, str)):
+        # NetworkX's edges carry the root as passed.
+        raise NotImplementedError("root differs from H's node object")
+    _, g = _b21_canonical_view(G)
+    _, h = _b21_canonical_view(H)
+    R = nx.Graph()
+    _core._op_rooted_product(g, h, root, r, R._node, R._adj)
+    return R
+
+
+def corona_product(G, H):
+    _undirected_only(G)  # NetworkX checks G only; H's direction fails below
+    GH, g, h = _b21_product(G, H)
+    _core._op_corona_product(g, h, GH._node, GH._adj)
+    return GH
+
+
+@functools.cache
+def _b21_holes_scipy(name):
+    """Whether the installed ``name`` (``constraint``, ``effective_size``)
+    computes every node at once with SciPy sparse arithmetic (3.5+) when
+    ``nodes`` is None, which rustnx can't reproduce bit for bit."""
+    return "adjacency_matrix" in _source_text(_registered(name))
+
+
+@functools.cache
+def _b21_isolated_by_len():
+    """``effective_size`` gives NaN where ``len(G[v]) == 0`` (3.4), or
+    where every neighbor is the node itself (3.5+)."""
+    text = _source_text(_registered("effective_size"))
+    if "all(u == v for u in G[v])" in text:
+        return False
+    if "len(G[v]) == 0" in text:
+        return True
+    return None
+
+
+def _b21_holes(G, kind, targets, others=(), weight=None):
+    if G.is_directed():
+        G._ensure_exact_pred()
+    if G._core.is_native() and weight is None:
+        adj = None
+    else:
+        adj = _networkx_graph(G)._adj
+    by_len = bool(_b21_isolated_by_len())
+    return G._core.structural_holes(
+        kind, _node_list(G), adj, weight, targets, list(others), by_len, _COMPENSATED_SUM
+    )
+
+
+def _b21_hole_nodes(G, nodes, name):
+    """The nodes, their positions up to the first missing one, and that
+    missing node (or None)."""
+    if nodes is None:
+        if _b21_holes_scipy(name):
+            raise NotImplementedError("NetworkX uses SciPy for all nodes")
+        nodes = G._nodes
+    nodes = list(_b21_container(nodes))
+    index = G._index
+    positions = []
+    for v in nodes:
+        try:
+            i = index.get(v)
+        except TypeError:
+            raise NotImplementedError("unhashable node") from None
+        if i is None:
+            return nodes, positions, v
+        positions.append(i)
+    return nodes, positions, None
+
+
+def _b21_hole_dict(nodes, values, missing):
+    """The result dict; NetworkX's ``G[v]`` raises ``KeyError`` at the first
+    missing node, after the nodes before it (whose errors come first)."""
+    if missing is not None:
+        raise KeyError(missing)
+    result = {}
+    for v, x in zip(nodes, values):
+        result[v] = float("nan") if x is None else x
+    return result
+
+
+def constraint(G, nodes=None, weight=None):
+    nodes, positions, missing = _b21_hole_nodes(G, nodes, "constraint")
+    return _b21_hole_dict(nodes, _b21_holes(G, 0, positions, weight=weight), missing)
+
+
+def effective_size(G, nodes=None, weight=None):
+    if _b21_isolated_by_len() is None:
+        raise NotImplementedError("unknown effective_size version")
+    nodes, positions, missing = _b21_hole_nodes(G, nodes, "effective_size")
+    kind = 2 if not G.is_directed() and weight is None else 1
+    return _b21_hole_dict(nodes, _b21_holes(G, kind, positions, weight=weight), missing)
+
+
+def local_constraint(G, u, v, weight=None):
+    pair = _b13_positions(G, u, v)
+    if None in pair:
+        raise NotImplementedError("NetworkX's errors for missing nodes vary")
+    return _b21_holes(G, 3, [pair[0]], [pair[1]], weight=weight)[0]
+
+
+def _b21_same_key(a, b):
+    """Whether ``a`` (a node argument) and the equal node ``b`` are
+    interchangeable in a result (same object, or same types throughout)."""
+    if a is b:
+        return True
+    if type(a) is not type(b):
+        return False
+    if type(a) is tuple:
+        return len(a) == len(b) and all(_b21_same_key(x, y) for x, y in zip(a, b))
+    if type(a) is float:
+        return math.copysign(1.0, a) == math.copysign(1.0, b)
+    return type(a) in (int, str)
+
+
+def ego_graph(G, n, radius=1, center=True, undirected=False, distance=None):
+    if undirected:
+        # BFS on `G.to_undirected()`, whose rows are reordered copies.
+        raise NotImplementedError("rustnx does not support undirected=True")
+    if distance is not None:
+        sp, _ = single_source_dijkstra(G, n, cutoff=radius, weight=distance)
+    else:
+        sp = single_source_shortest_path_length(G, n, cutoff=radius)
+    index = G._index
+    i = index[n]
+    if not _b21_same_key(n, G._nodes[i]):
+        raise NotImplementedError("the node argument differs from G's node")
+    base = _networkx_graph(G)
+    H = _plain_result_class(G)()
+    positions = [index[v] for v in sp]
+    if 2 * len(positions) < len(G):
+        # The subgraph view then iterates `set(sp)` rather than G.
+        if not _sets_replayable():
+            raise NotImplementedError("Python's set order can't be replayed here")
+        _, (order,) = _core._replay_sets(
+            [hash(v) for v in sp], 1, [(0, 0, k) for k in range(len(positions))]
+        )
+        members = [positions[k] for k in order]
+    else:
+        members = sorted(positions)
+    H.graph.update(base.graph)
+    G._core.subgraph_copy_into(_node_list(G), base._node, base._adj, members, *_b21_target(H))
+    if not center:
+        H.remove_node(n)
+    return H
+
+
+@functools.cache
+def _b21_broadcast_checks():
+    """``(center raises NotATree, time checks its node first)``: NetworkX
+    3.4 builds the not-a-tree error without raising it, and finds missing
+    nodes only through ``shortest_path_length``."""
+    center = _source_text(_registered("tree_broadcast_center"))
+    time = _source_text(_registered("tree_broadcast_time"))
+    return "raise nx.NotATree" in center, "raise nx.NodeNotFound(err)" in time
+
+
+def tree_broadcast_center(G):
+    _undirected_only(G)
+    if not is_tree(G):
+        if _b21_broadcast_checks()[0]:
+            raise nx.NotATree("G is not a tree")
+        raise NotImplementedError("NetworkX 3.4 carries on with non-trees")
+    nodes = _node_list(G)
+    if len(nodes) < 3:
+        return len(nodes) - 1, set(nodes)
+    if not _sets_replayable():
+        raise NotImplementedError("Python's set order can't be replayed here")
+    found = G._core.tree_broadcast_center([hash(v) for v in nodes])
+    if found is None:
+        raise NotImplementedError("NetworkX raises here")
+    b_T, centers = found
+    return b_T, set([nodes[i] for i in centers])
+
+
+def tree_broadcast_time(G, node=None):
+    _undirected_only(G)
+    if node is not None and node not in G:
+        if not _b21_broadcast_checks()[1]:
+            raise NotImplementedError("NetworkX 3.4 raises from shortest_path_length")
+        raise nx.NodeNotFound(f"node {node} not in G")
+    b_T, b_C = tree_broadcast_center(G)
+    index = G._index
+    dist = G._core.multi_source_distances([index[v] for v in b_C])
+    if node is None:
+        return b_T + max(dist)
+    return b_T + dist[index[node]]
+
+
+def density(B, nodes):
+    n = len(B)
+    m = B._core.number_of_edges()
+    nb = len(nodes)
+    nt = n - nb
+    if m == 0:
+        d = 0.0
+    elif B.is_directed():
+        d = m / (2 * nb * nt)
+    else:
+        d = m / (nb * nt)
+    return d
+
+
+def bipartite_degree_centrality(G, nodes):
+    top = set(_b21_container(nodes))
+    bottom = set(G._nodes) - top
+    s_top = 1.0 / len(bottom)
+    s_bottom = 1.0 / len(top)
+    index = G._index
+    if type(index) is not dict:
+        index = dict(zip(G._nodes, range(len(G))))
+    if G.is_directed():
+        G._ensure_exact_pred()
+    return G._core.bipartite_degree_centrality(index, top, bottom, s_top, s_bottom)
+
+
+def _b21_projection_nodes(B, nodes):
+    """``nodes`` as a list with their positions. NetworkX iterates
+    ``nodes`` twice, so only containers that iterate the same way twice are
+    taken; a missing node raises ``KeyError`` (``B.nodes[n]``)."""
+    if not isinstance(nodes, (list, tuple, set, frozenset, dict, range)):
+        raise NotImplementedError("rustnx needs nodes in a container")
+    size = len(nodes)
+    nodes = list(nodes)
+    index = B._index
+    positions = []
+    for n in nodes:
+        try:
+            i = index.get(n)
+        except TypeError:
+            raise NotImplementedError("unhashable node") from None
+        if i is None:
+            raise KeyError(n)
+        if not _b21_same_key(n, B._nodes[i]):
+            raise NotImplementedError("a node differs from B's node object")
+        positions.append(i)
+    return size, positions
+
+
+def projected_graph(B, nodes, multigraph=False):
+    if multigraph:
+        raise NotImplementedError("rustnx does not build multigraphs")
+    base, view = _b21_canonical_view(B)
+    _, positions = _b21_projection_nodes(B, nodes)
+    G = nx.DiGraph() if B.is_directed() else nx.Graph()
+    G.graph.update(base.graph)
+    _core._op_projection(view, positions, False, None, *_b21_target(G))
+    return G
+
+
+def weighted_projected_graph(B, nodes, ratio=False):
+    base, view = _b21_canonical_view(B)
+    size, positions = _b21_projection_nodes(B, nodes)
+    G = nx.DiGraph() if B.is_directed() else nx.Graph()
+    G.graph.update(base.graph)
+    n_top = len(B) - size
+    if n_top < 1:
+        raise nx.NetworkXAlgorithmError(
+            f"the size of the nodes to project onto ({size}) is >= the graph size ({len(B)}).\n"
+            "They are either not a valid bipartite partition or contain duplicates"
+        )
+    _core._op_projection(view, positions, True, n_top if ratio else None, *_b21_target(G))
+    return G
+
+
+def intersection_all(graphs):
+    graphs = list(graphs)
+    if not graphs:
+        raise ValueError("cannot apply intersection_all to an empty list")
+    for G in graphs[1:]:
+        if G.is_directed() != graphs[0].is_directed():
+            raise nx.NetworkXError("All graphs must be directed or undirected.")
+    if not (_sets_replayable() and _b21_tuple_hashes_match()):
+        raise NotImplementedError("Python's set order can't be replayed here")
+    views = [_b21_canonical_view(G)[1] for G in graphs]
+    R = _plain_result_class(graphs[0])()
+    first = graphs[0]
+    index = first._index
+    if type(index) is not dict:
+        index = dict(zip(first._nodes, range(len(first))))
+    _core._op_intersection(views, index, *_b21_target(R))
+    return R
+
+
+def intersection(G, H):
+    return intersection_all([G, H])
