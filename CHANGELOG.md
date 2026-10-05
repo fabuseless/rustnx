@@ -143,6 +143,16 @@ versions may change behavior.
   early exit that fills the set in a different order).
 
 ### Changed
+- `rustnx.enable()` also puts rustnx first in
+  `nx.config.backend_priority.generators`, which NetworkX uses for every
+  function that returns a graph (generators, readers, graph builders, and
+  operations such as `union`, `k_core` or `minimum_spanning_tree`). Before,
+  those ran in rustnx only with `backend="rustnx"`. Calls whose input is
+  small (under about 100 nodes, edges or lines) stay in NetworkX, which is
+  faster there; an explicit `backend="rustnx"` always runs rustnx.
+- Internal: the generators, readers, graph builders and operators fill new
+  NetworkX graphs through one shared module (`src/algorithms/nxdicts.rs`)
+  instead of five separate helpers.
 - Internal: one replica of CPython's set table (`src/algorithms/pyset.rs`)
   now serves both the flow algorithms and link prediction, and the
   connectivity functions use the flow module's Edmonds-Karp instead of a

@@ -976,9 +976,10 @@ def test_edge_betweenness_small_graphs():
 
 @pytest.fixture
 def restore_config():
-    old = nx.config.backend_priority.algos, nx.config.fallback_to_nx
+    priority = nx.config.backend_priority
+    old = priority.algos, priority.generators, nx.config.fallback_to_nx
     yield
-    nx.config.backend_priority.algos, nx.config.fallback_to_nx = old
+    priority.algos, priority.generators, nx.config.fallback_to_nx = old
 
 
 @pytest.mark.parametrize("before", [[], ["networkx"], ["rustnx", "networkx"], ["networkx", "rustnx"]])
@@ -996,13 +997,91 @@ def test_enable_runs_rustnx_on_networkx_graphs(restore_config, monkeypatch, befo
 
     monkeypatch.setattr(interface, "pagerank", counting)
     nx.config.backend_priority.algos = before
+    nx.config.backend_priority.generators = before
     rustnx.enable()
     assert nx.config.backend_priority.algos == ["rustnx"]
+    assert nx.config.backend_priority.generators == ["rustnx"]
     G = nx.gnm_random_graph(600, 2000, seed=1)  # above the small-graph cutoff
     assert nx.pagerank(G) == pytest.approx(nx.pagerank(G, backend="networkx"))
     assert calls, "rustnx was not used"
     # Unsupported functions still run in NetworkX.
     assert nx.is_tree(G) is False
+
+
+def test_enable_runs_generators_in_rustnx_above_small_inputs(restore_config, monkeypatch):
+    # Generators, readers and graph builders take no graph: NetworkX picks
+    # their backend from `backend_priority.generators`, which enable() sets.
+    from rustnx import interface
+
+    calls = []
+    for name in ["gnp_random_graph", "path_graph", "balanced_tree", "from_edgelist"]:
+        original = getattr(interface, name)
+
+        def counting(*args, _original=original, _name=name, **kwargs):
+            calls.append(_name)
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(interface, name, counting)
+    rustnx.enable()
+    G = nx.gnp_random_graph(2000, 0.002, seed=3)
+    assert nx.utils.graphs_equal(G, nx.gnp_random_graph(2000, 0.002, seed=3, backend="networkx"))
+    assert list(G) == list(nx.gnp_random_graph(2000, 0.002, seed=3, backend="networkx"))
+    assert calls == ["gnp_random_graph"]
+    # Small inputs stay in NetworkX, which is faster there.
+    nx.path_graph(5)
+    nx.gnp_random_graph(10, 0.3, seed=1)
+    nx.from_edgelist([(1, 2), (2, 3)])
+    assert calls == ["gnp_random_graph"]
+    # Sizes that grow exponentially count as large.
+    nx.balanced_tree(2, 12)
+    nx.from_edgelist([(i, i + 1) for i in range(500)])
+    assert calls == ["gnp_random_graph", "balanced_tree", "from_edgelist"]
+    # backend="rustnx" runs rustnx whatever the size.
+    assert nx.utils.graphs_equal(nx.path_graph(5, backend="rustnx"), nx.path_graph(5, backend="networkx"))
+    assert calls[-1] == "path_graph"
+
+
+@pytest.mark.parametrize(
+    "name, args, kwargs, large",
+    [
+        ("path_graph", (5,), {}, False),
+        ("path_graph", (5000,), {}, True),
+        ("path_graph", (range(50),), {}, False),
+        ("complete_graph", (12,), {}, True),
+        ("balanced_tree", (2, 3), {}, False),
+        ("balanced_tree", (2, 10), {}, True),
+        ("balanced_tree", (3, 10**6), {}, True),
+        ("hypercube_graph", (4,), {}, False),
+        ("hypercube_graph", (8,), {}, True),
+        ("grid_2d_graph", (5, 5), {}, False),
+        ("grid_2d_graph", (20, 20), {}, True),
+        ("grid_graph", ([3, 3, 3],), {}, False),
+        ("grid_graph", ([10, 10, 10],), {}, True),
+        ("gnm_random_graph", (50, 40), {}, False),
+        ("gnm_random_graph", (50, 400), {}, True),
+        ("parse_edgelist", (["1 2"] * 20,), {}, False),
+        ("parse_edgelist", (["1 2"] * 200,), {}, True),
+        ("from_graph6_bytes", (b">>graph6<<A_",), {}, False),
+    ],
+)
+def test_small_input_estimate(name, args, kwargs, large):
+    from rustnx import interface
+
+    size = interface._input_size(name, args, kwargs)
+    assert (size >= interface.SMALL_INPUT) is large
+
+
+def test_small_input_estimate_reads_file_sizes(tmp_path):
+    from rustnx import interface
+
+    path = tmp_path / "g.edgelist"
+    path.write_text("".join(f"{i} {i + 1}\n" for i in range(5)))
+    assert interface._input_size("read_weighted_edgelist", (str(path),), {}) < interface.SMALL_INPUT
+    with open(path, "rb") as f:
+        assert interface._input_size("read_edgelist", (f,), {}) < interface.SMALL_INPUT
+    path.write_text("".join(f"{i} {i + 1}\n" for i in range(100)))
+    with open(path, "rb") as f:
+        assert interface._input_size("read_edgelist", (f,), {}) >= interface.SMALL_INPUT
 
 
 

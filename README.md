@@ -9,8 +9,9 @@ free-threaded 3.14t; prebuilt for Linux, macOS and Windows).
 
 ```python
 import networkx as nx
+import rustnx
 
-nx.config.backend_priority = ["rustnx"]   # or: NETWORKX_BACKEND_PRIORITY=rustnx
+rustnx.enable()                           # or see "Turning it on" below
 
 G = nx.barabasi_albert_graph(4000, 4, seed=1)
 nx.betweenness_centrality(G)              # runs in Rust: 0.4s instead of 41s
@@ -227,9 +228,30 @@ NetworkX, is in [docs/API.md](docs/API.md).
 | Random generators: `gnp_random_graph`, `fast_gnp_random_graph`, `gnm_random_graph`, `dense_gnm_random_graph`, `barabasi_albert_graph`, `dual_barabasi_albert_graph`, `extended_barabasi_albert_graph`, `watts_strogatz_graph`, `newman_watts_strogatz_graph`, `connected_watts_strogatz_graph`, `powerlaw_cluster_graph`, `random_regular_graph`, `gn_graph`, `gnr_graph`, `gnc_graph`, `random_uniform_k_out_graph`, `random_lobster_graph` (`random_lobster` before 3.6), `random_tournament`, `stochastic_block_model`, `random_partition_graph`, `planted_partition_graph`, `random_geometric_graph`, `waxman_graph`, `nx.bipartite.random_graph`, `nx.bipartite.gnmk_random_graph` | The same graph for the same `seed`, and `random.Random` left in the same state, by replaying NetworkX's draws on a copy of CPython's generator. 3x to 350x faster at 100k nodes. NumPy random generators run in NetworkX. |
 | Readers and parsers: `read_edgelist`, `parse_edgelist`, `read_weighted_edgelist`, `read_adjlist`, `parse_adjlist`, `read_multiline_adjlist`, `parse_multiline_adjlist`, `read_leda`, `parse_leda`, `read_pajek`, `parse_pajek`, `read_gml`, `parse_gml`, `read_graph6`, `from_graph6_bytes`, `read_sparse6`, `from_sparse6_bytes`, `node_link_graph`, `adjacency_graph`, `cytoscape_graph`, `tree_graph`, `nx.bipartite.read_edgelist`, `nx.bipartite.parse_edgelist` | Parsed in Rust into the same NetworkX graph (class, node and adjacency order, attribute types, multigraph keys). Files and paths (also `.gz` and `.bz2`) in UTF-8, ASCII or Latin-1; anything else runs in NetworkX. 2x to 15x faster. GraphML and GEXF run in NetworkX. |
 
-Generators, readers and graph builders take no graph, so NetworkX sends them
-to rustnx only with `backend="rustnx"` or when rustnx is listed in
-`nx.config.backend_priority.generators`; `rustnx.enable()` doesn't set that.
+NetworkX picks the backend for functions that return a graph (generators,
+readers, graph builders and graph operations) from
+`nx.config.backend_priority.generators`, and for everything else from
+`nx.config.backend_priority.algos`. `rustnx.enable()` sets both. Small
+inputs (under about 100 nodes, edges or lines) stay in NetworkX, which is
+faster there; NetworkX's own routing still adds a few microseconds to each
+such call.
+
+### Turning it on
+
+```python
+import rustnx
+rustnx.enable()
+```
+
+or, without changing code,
+
+```
+NETWORKX_BACKEND_PRIORITY_ALGOS=rustnx NETWORKX_BACKEND_PRIORITY_GENERATORS=rustnx python my_script.py
+```
+
+`nx.config.backend_priority = ["rustnx"]` and `NETWORKX_BACKEND_PRIORITY=rustnx`
+set only the `algos` list, so generators, readers and graph operations keep
+running in NetworkX.
 
 The rest of NetworkX's functions run in NetworkX. [docs/COVERAGE.md](docs/COVERAGE.md)
 lists every function NetworkX lets a backend implement and which ones rustnx

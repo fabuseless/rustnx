@@ -492,7 +492,7 @@ NOTES = {
     "prim_mst_edges": "Undirected graphs; directed ones fall back. Trees start from the nodes NetworkX pops from `set(G)` (rustnx replays the same set operations). Yields the graph's own edge data dicts.",
     "boruvka_mst_edges": "Rounds run in Rust. Where a component's best edge is tied, rustnx replays NetworkX's set of the component's nodes to scan it in the same order. Yields the graph's own edge data dicts.",
     "partition_spanning_tree": "Kruskal with the partition in Rust. `partition` values must be `EdgePartition` members or `None`.",
-    "from_prufer_sequence": "Takes no graph: runs in rustnx with `backend='rustnx'` or `nx.config.backend_priority.generators`. Sequences of non-ints fall back.",
+    "from_prufer_sequence": "Takes no graph: runs in rustnx with `backend='rustnx'` or `nx.config.backend_priority.generators` (set by `rustnx.enable()`). Sequences of non-ints fall back.",
     "from_nested_tuple": "Takes no graph (see `from_prufer_sequence`). Nesting deeper than 100 levels falls back.",
     "to_nested_tuple": "`canonical_form=True` only (otherwise children follow set order). Trees deeper than 100 levels fall back.",
     "tree_centroid": "NetworkX 3.7+, as `nx.tree.centroid`.",
@@ -702,7 +702,7 @@ SUBMODULE.update({
 # Batch 19: matrices and conversion.
 SPARSE = "Rust builds the COO coordinates in NetworkX's edge order; SciPy assembles the array exactly as for NetworkX (same dtype, format and index arrays)."
 NODELIST = " A `nodelist` that isn't a list, or names missing or repeated nodes, falls back."
-BUILDER = " Runs with `backend=\"rustnx\"` or when rustnx is listed in `nx.config.backend_priority.generators`. `create_using` other than `None`, `nx.Graph` or `nx.DiGraph` falls back."
+BUILDER = " Runs with `backend=\"rustnx\"` or when rustnx is listed in `nx.config.backend_priority.generators` (set by `rustnx.enable()`). `create_using` other than `None`, `nx.Graph` or `nx.DiGraph` falls back."
 NOTES.update({
     "to_scipy_sparse_array": SPARSE + NODELIST + " Weights other than plain ints and floats, `dtype`s that NumPy would convert differently from a list (narrower ints), and a `nodelist` under half the nodes with a format other than CSR or CSC (NetworkX's subgraph then iterates in set order) fall back.",
     "adjacency_matrix": "As `to_scipy_sparse_array`.",
@@ -727,7 +727,7 @@ NOTES.update({
 })
 SUBMODULE.update({"biadjacency_matrix": "nx.bipartite", "from_biadjacency_matrix": "nx.bipartite"})
 # Batch 17: deterministic generators.
-GENERATOR = "Generators take no graph: they run in rustnx with `backend=\"rustnx\"` or `nx.config.backend_priority.generators`. Returns a plain NetworkX graph built in Rust, identical to NetworkX's (node and row order, attributes, keys). `create_using` may be a NetworkX graph class or instance (instances that NetworkX would fill and then reject fall back)."
+GENERATOR = "Generators take no graph: they run in rustnx with `backend=\"rustnx\"` or `nx.config.backend_priority.generators` (set by `rustnx.enable()`). Returns a plain NetworkX graph built in Rust, identical to NetworkX's (node and row order, attributes, keys). `create_using` may be a NetworkX graph class or instance (instances that NetworkX would fill and then reject fall back)."
 NODES = " An int, or a list, tuple, range or str of distinct nodes; other iterables fall back."
 INTS = " Int arguments only; others fall back."
 NOTES.update({
@@ -755,7 +755,7 @@ NOTES.update({
 })
 # Seeded random generators (batch 18): no graph argument, so NetworkX sends
 # them to rustnx only with `backend="rustnx"` or with rustnx listed in
-# `nx.config.backend_priority.generators`.
+# `nx.config.backend_priority.generators` (set by `rustnx.enable()`).
 RANDOM = (
     "Replays NetworkX's draws on CPython's `random.Random` (any `seed` NetworkX "
     "turns into one, including `None`: the global generator, left where NetworkX "
