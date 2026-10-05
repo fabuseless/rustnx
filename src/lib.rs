@@ -17,10 +17,10 @@ use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
-    approximation, bipartite, centrality, centrality_more, cluster, communities, connectivity,
-    conversion, cores_more, dag, directed, distance, flow, generators, graph_classes, isomorphism,
-    leftovers, matching, measures, nxdicts, operators, paths, pyrandom, pyset, random_generators,
-    readwrite, spectral, structure, structure_more, trees_more,
+    approximation, bipartite, centrality, centrality_more, cliques, cluster, communities,
+    connectivity, conversion, cores_more, dag, directed, distance, flow, generators, graph_classes,
+    isomorphism, leftovers, matching, measures, nxdicts, operators, paths, pyrandom, pyset,
+    random_generators, readwrite, spectral, structure, structure_more, trees_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -5844,6 +5844,205 @@ impl CoreGraph {
         operators::bipartite_degree_centrality(self, index, top, bottom, s_top, s_bottom)
     }
 
+    // --- Batch 25: cliques, structure and approximation ---
+
+    /// `find_cliques`' setup for the caller's `nodes` (positions, `None`
+    /// for objects that aren't nodes): 0 they don't form a clique, 1 they
+    /// are the only clique, 2 the search (in the returned iterator).
+    fn clique_search(
+        &self,
+        py: Python<'_>,
+        hashes: Vec<i64>,
+        prefix: Vec<Option<u32>>,
+    ) -> PyResult<(u8, Option<CliqueSearchIter>)> {
+        self.b25_check_hashes(&hashes)?;
+        if prefix.iter().flatten().any(|&v| v as usize >= self.n) {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        let start = py.detach(|| cliques::CliqueSearch::start(&self.succ, self.n, hashes, &prefix));
+        Ok(match start {
+            cliques::CliqueStart::NotAClique => (0, None),
+            cliques::CliqueStart::Only => (1, None),
+            cliques::CliqueStart::Search(s) => (2, Some(CliqueSearchIter(s))),
+        })
+    }
+
+    /// Every maximal clique in `find_cliques`' order (positions).
+    fn maximal_cliques(&self, py: Python<'_>, hashes: Vec<i64>) -> PyResult<Vec<Vec<u32>>> {
+        self.b25_check_hashes(&hashes)?;
+        Ok(py.detach(|| cliques::all_cliques(&self.succ, self.n, hashes)))
+    }
+
+    /// `make_max_clique_graph`'s node count and edges `(us[k], vs[k])`.
+    fn max_clique_graph_edges(
+        &self,
+        py: Python<'_>,
+        hashes: Vec<i64>,
+    ) -> PyResult<(usize, Vec<u32>, Vec<u32>)> {
+        self.b25_check_hashes(&hashes)?;
+        Ok(py.detach(|| {
+            let found = cliques::all_cliques(&self.succ, self.n, hashes);
+            let edges = cliques::clique_overlaps(&found, self.n);
+            (
+                found.len(),
+                edges.iter().map(|e| e.0).collect(),
+                edges.iter().map(|e| e.1).collect(),
+            )
+        }))
+    }
+
+    /// `dominating_set(G, start)`: the nodes in the order they join it.
+    fn dominating_set_order(
+        &self,
+        py: Python<'_>,
+        hashes: Vec<i64>,
+        start: usize,
+    ) -> PyResult<Vec<u32>> {
+        self.b25_check_hashes(&hashes)?;
+        self.check_index(start)?;
+        Ok(py.detach(|| cliques::dominating_set(&self.succ, self.n, &hashes, start as u32)))
+    }
+
+    /// `maximal_independent_set`'s loop from the set `nodes` and the
+    /// generator state `state`: the nodes added and the new state.
+    fn maximal_independent_draws(
+        &self,
+        py: Python<'_>,
+        hashes: Vec<i64>,
+        nodes: Vec<u32>,
+        state: Vec<u32>,
+    ) -> PyResult<Option<(Vec<u32>, Vec<u32>)>> {
+        self.b25_check_hashes(&hashes)?;
+        if nodes.iter().any(|&v| v as usize >= self.n) {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        Ok(py.detach(|| {
+            let mut rng = pyrandom::Mt19937::from_state(&state)?;
+            let added =
+                cliques::maximal_independent_set(&self.succ, self.n, &hashes, &nodes, &mut rng);
+            Some((added, rng.state()))
+        }))
+    }
+
+    /// `approximation.large_clique_size`.
+    fn large_clique_size(&self, py: Python<'_>, hashes: Vec<i64>) -> PyResult<usize> {
+        self.b25_check_hashes(&hashes)?;
+        let degree = self.degrees();
+        Ok(py.detach(|| cliques::large_clique_size(&self.succ, self.n, &hashes, &degree)))
+    }
+
+    /// `approximation.ramsey_R2`: the clique and the independent set, each
+    /// in the order its nodes were added.
+    fn ramsey_r2(&self, py: Python<'_>, hashes: Vec<i64>) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        self.b25_check_hashes(&hashes)?;
+        Ok(py.detach(|| cliques::ramsey_r2(&self.succ, self.n, &hashes)))
+    }
+
+    /// `approximation.clique_removal` on G (or on `nx.complement(G)`, for
+    /// `max_clique`): the index of the largest independent set, the
+    /// independent sets and the cliques, each in add order.
+    #[allow(clippy::type_complexity)]
+    fn clique_removal(
+        &self,
+        py: Python<'_>,
+        hashes: Vec<i64>,
+        complement: bool,
+    ) -> PyResult<(usize, Vec<Vec<u32>>, Vec<Vec<u32>>)> {
+        self.b25_check_hashes(&hashes)?;
+        Ok(py.detach(|| {
+            let g = if complement {
+                cliques::SimGraph::complement(&self.succ, self.n)
+            } else {
+                cliques::SimGraph::of(&self.succ, self.n)
+            };
+            cliques::clique_removal(g, self.n, &hashes)
+        }))
+    }
+
+    /// `tournament.hamiltonian_path` (positions).
+    fn hamiltonian_path(&self, py: Python<'_>, hashes: Vec<i64>) -> PyResult<Vec<u32>> {
+        self.b25_check_hashes(&hashes)?;
+        Ok(py.detach(|| {
+            let rows: Vec<Vec<u32>> = (0..self.n)
+                .map(|v| {
+                    let mut row = self.succ.neighbors(v).to_vec();
+                    row.sort_unstable();
+                    row
+                })
+                .collect();
+            cliques::hamiltonian_path(&rows, &hashes)
+        }))
+    }
+
+    /// `chordal_graph_cliques`: each clique in the order its set was built,
+    /// and how the generator ends (0 normally, 1 "Input graph is not
+    /// chordal.", 2 the self-loop error of `_is_complete_graph`).
+    fn chordal_cliques(&self, py: Python<'_>, hashes: Vec<i64>) -> PyResult<(Vec<Vec<u32>>, u8)> {
+        self.b25_check_hashes(&hashes)?;
+        Ok(py.detach(|| {
+            let (found, error) = cliques::chordal_graph_cliques(&self.succ, self.n, &hashes);
+            let code = match error {
+                None => 0,
+                Some(cliques::ChordalError::NotChordal) => 1,
+                Some(cliques::ChordalError::SelfLoop) => 2,
+            };
+            (found, code)
+        }))
+    }
+
+    /// `treewidth_min_degree`'s elimination order and, per bag added, the
+    /// index of the bag it joins (see `cliques::treewidth_min_degree`).
+    fn min_degree_eliminations(
+        &self,
+        py: Python<'_>,
+        hashes: Vec<i64>,
+    ) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        self.b25_check_hashes(&hashes)?;
+        Ok(py.detach(|| cliques::treewidth_min_degree(&self.succ, self.n, &hashes)))
+    }
+
+    /// `approximation.local_node_connectivity` for each `(us[k], vs[k])`
+    /// (distinct nodes), with `cutoff` (`None`: no cutoff). Directed graphs
+    /// need exact in-edge order.
+    #[pyo3(signature = (us, vs, cutoff=None))]
+    fn approx_local_connectivity(
+        &self,
+        py: Python<'_>,
+        us: Vec<u32>,
+        vs: Vec<u32>,
+        cutoff: Option<usize>,
+    ) -> PyResult<Vec<usize>> {
+        if us.len() != vs.len() || us.iter().chain(&vs).any(|&v| v as usize >= self.n) {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        let back = self.b25_exact_back()?;
+        let pairs: Vec<(u32, u32)> = us.into_iter().zip(vs).collect();
+        let cutoff = cutoff.unwrap_or(usize::MAX);
+        Ok(py.detach(|| cliques::approx_pairs(&self.succ, back, self.n, &pairs, cutoff)))
+    }
+
+    /// `approximation.node_connectivity(G)` for a connected G, from `v`, the
+    /// first node of the smallest degree `min_degree`.
+    fn approx_node_connectivity(
+        &self,
+        py: Python<'_>,
+        v: usize,
+        min_degree: usize,
+    ) -> PyResult<usize> {
+        self.check_index(v)?;
+        let back = self.b25_exact_back()?;
+        Ok(py.detach(|| {
+            cliques::approx_node_connectivity(
+                &self.succ,
+                back,
+                self.n,
+                self.directed,
+                v as u32,
+                min_degree,
+            )
+        }))
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -6430,6 +6629,63 @@ impl CliqueQueue {
             )?)?;
         }
         Ok(out)
+    }
+}
+
+/// `find_cliques`' search after its setup (batch 25).
+#[pyclass(module = "rustnx._core")]
+pub struct CliqueSearchIter(Box<cliques::CliqueSearch>);
+
+#[pymethods]
+impl CliqueSearchIter {
+    /// Up to `limit` more cliques, each `prefix` followed by the objects in
+    /// `nodes` (`find_cliques` yields copies of its list `Q`).
+    fn next_batch<'py>(
+        &mut self,
+        py: Python<'py>,
+        nodes: &Bound<'py, PyList>,
+        prefix: &Bound<'py, PyList>,
+        limit: usize,
+    ) -> PyResult<Bound<'py, PyList>> {
+        let batch = py.detach(|| self.0.next_batch(limit));
+        let objects: Vec<Bound<'py, PyAny>> = nodes.iter().collect();
+        if batch.iter().flatten().any(|&v| v as usize >= objects.len()) {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        let head: Vec<Bound<'py, PyAny>> = prefix.iter().collect();
+        let out = PyList::empty(py);
+        for clique in batch {
+            out.append(PyList::new(
+                py,
+                head.iter()
+                    .chain(clique.iter().map(|&v| &objects[v as usize])),
+            )?)?;
+        }
+        Ok(out)
+    }
+}
+
+impl CoreGraph {
+    fn b25_check_hashes(&self, hashes: &[i64]) -> PyResult<()> {
+        if hashes.len() != self.n {
+            return Err(PyValueError::new_err("one hash per node"));
+        }
+        Ok(())
+    }
+
+    /// In-edges in NetworkX's `G._pred` order (rows of `G._adj` for
+    /// undirected graphs).
+    fn b25_exact_back(&self) -> PyResult<&graph::Csr> {
+        if !self.directed {
+            return Ok(&self.succ);
+        }
+        if self.pred_is_exact {
+            return Ok(self.adj(true));
+        }
+        self.exact_pred
+            .get()
+            .map(|e| &e.csr)
+            .ok_or_else(|| PyNotImplementedError::new_err("exact predecessors not loaded"))
     }
 }
 
@@ -7419,6 +7675,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<TreeLca>()?;
     m.add_class::<Boruvka>()?;
     m.add_class::<CliqueQueue>()?;
+    m.add_class::<CliqueSearchIter>()?;
     m.add_class::<FlowRun>()?;
     m.add_class::<GirvanNewman>()?;
     m.add_class::<TspTour>()?;
