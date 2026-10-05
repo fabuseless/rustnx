@@ -5891,16 +5891,24 @@ impl CoreGraph {
         }))
     }
 
-    /// `dominating_set(G, start)`: the nodes in the order they join it.
+    /// `dominating_set(G, start)` on a non-empty graph (`None`: NetworkX's
+    /// arbitrary start): the nodes in the order they join it.
+    #[pyo3(signature = (hashes, start=None))]
     fn dominating_set_order(
         &self,
         py: Python<'_>,
         hashes: Vec<i64>,
-        start: usize,
+        start: Option<usize>,
     ) -> PyResult<Vec<u32>> {
         self.b25_check_hashes(&hashes)?;
-        self.check_index(start)?;
-        Ok(py.detach(|| cliques::dominating_set(&self.succ, self.n, &hashes, start as u32)))
+        if let Some(s) = start {
+            self.check_index(s)?;
+        }
+        if self.n == 0 {
+            return Err(PyValueError::new_err("the graph is empty"));
+        }
+        let start = start.map(|s| s as u32);
+        Ok(py.detach(|| cliques::dominating_set(&self.succ, self.n, &hashes, start)))
     }
 
     /// `maximal_independent_set`'s loop from the set `nodes` and the

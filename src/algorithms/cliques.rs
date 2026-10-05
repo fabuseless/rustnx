@@ -193,10 +193,12 @@ pub fn clique_overlaps(cliques: &[Vec<u32>], n: usize) -> Vec<(u32, u32)> {
     out
 }
 
-/// `nx.dominating_set(G, start)`: the nodes in the order they join the
-/// set (`{start}`, then one `add` per round).
-pub fn dominating_set(adj: &Csr, n: usize, hashes: &[i64], start: u32) -> Vec<u32> {
+/// `nx.dominating_set(G, start)` (`None`: `arbitrary_element(set(G))`) on
+/// a non-empty graph: the nodes in the order they join the set (`{start}`,
+/// then one `add` per round).
+pub fn dominating_set(adj: &Csr, n: usize, hashes: &[i64], start: Option<u32>) -> Vec<u32> {
     let all_nodes = PySet::from_iter(0..n as u32, hashes);
+    let start = start.unwrap_or_else(|| all_nodes.first().expect("G is not empty"));
     let mut dominating = PySet::from_iter([start], hashes);
     let dominated = PySet::from_iter(adj.neighbors(start as usize).iter().copied(), hashes);
     let mut remaining = all_nodes
@@ -778,8 +780,11 @@ pub fn treewidth_min_degree(adj: &Csr, n: usize, hashes: &[i64]) -> (Vec<u32>, V
     let mut left = n;
     let mut count = 0u64;
     let mut heap: BinaryHeap<Reverse<(usize, u64, u32)>> = BinaryHeap::new();
-    for (v, s) in sets.iter().enumerate() {
-        heap.push(Reverse((s.len(), count, v as u32)));
+    // MinDegreeHeuristic(G) reads `len(G[n])`, which counts a self-loop:
+    // that node's entry is then stale (its set has no loop) until a
+    // neighbor's elimination pushes it again.
+    for v in 0..n {
+        heap.push(Reverse((adj.neighbors(v).len(), count, v as u32)));
         count += 1;
     }
     let mut update: Vec<u32> = Vec::new();
