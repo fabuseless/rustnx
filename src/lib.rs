@@ -19,8 +19,8 @@ use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
     approximation, bipartite, centrality, centrality_more, cluster, communities, connectivity,
     conversion, cores_more, dag, directed, distance, flow, generators, graph_classes, isomorphism,
-    leftovers, matching, measures, operators, paths, pyrandom, pyset, random_generators, readwrite,
-    spectral, structure, structure_more, trees_more,
+    leftovers, matching, measures, nxdicts, operators, paths, pyrandom, pyset, random_generators,
+    readwrite, spectral, structure, structure_more, trees_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -4938,7 +4938,7 @@ impl CoreGraph {
         data: &Bound<'py, PyAny>,
         attr: Option<&Bound<'py, PyDict>>,
     ) -> PyResult<()> {
-        let b = conversion::NxBuilder { node, adj, pred };
+        let b = conversion::NxBuilder(nxdicts::NxDicts::new(node, adj, pred));
         match kind {
             "nodes" => b.add_nodes(data, attr),
             "edges" => b.add_edges(data),
@@ -4978,7 +4978,7 @@ impl CoreGraph {
                 None => Ok(PyInt::new(py, i).into_any()),
             }
         };
-        let b = conversion::NxBuilder { node, adj, pred };
+        let b = conversion::NxBuilder(nxdicts::NxDicts::new(node, adj, pred));
         for (i, (&u, &v)) in us.iter().zip(&vs).enumerate() {
             let (u, v) = (label(u)?, label(v)?);
             b.add_edge(&u, &v, |d| match &values {
@@ -6458,10 +6458,8 @@ fn generated_labels<'py>(
     Ok(out)
 }
 
-/// Writes a generated graph into a new NetworkX graph's dicts, in
-/// NetworkX's order: one `_node` / `_adj` (and `_pred`) entry per node in
-/// node order, rows in insertion order, and one attribute dict per edge
-/// (a key dict per pair for multigraphs) shared by both of its rows.
+/// Writes a generated graph into a new NetworkX graph's dicts (see
+/// `nxdicts::write_sim`), with the node attributes the generator sets.
 fn write_generated<'py>(
     py: Python<'py>,
     built: &generators::Built,
@@ -6470,62 +6468,22 @@ fn write_generated<'py>(
     adj: &Bound<'py, PyDict>,
     pred: Option<&Bound<'py, PyDict>>,
 ) -> PyResult<()> {
-    let g = &built.sim;
-    let label = |v: u32| -> PyResult<&Bound<'py, PyAny>> {
-        labels[v as usize]
-            .as_ref()
-            .ok_or_else(|| PyValueError::new_err("node without a label"))
+    let dicts = nxdicts::NxDicts::new(node.clone(), adj.clone(), pred.cloned());
+    let attr_name = match &built.attr {
+        generators::Attr::Ints(name, _) => Some(pyo3::types::PyString::intern(py, name)),
+        _ => None,
     };
-    let mut slots: Vec<Option<Bound<'py, PyDict>>> = vec![None; g.keys.len()];
-    let mut slot = |s: u32| -> PyResult<Bound<'py, PyDict>> {
-        let entry = &mut slots[s as usize];
-        if let Some(d) = entry.take() {
-            return Ok(d); // the pair's second row: nothing else needs it
+    let pos_name = pyo3::intern!(py, "pos");
+    nxdicts::write_sim(&dicts, &built.sim, labels, |u, data| match &built.attr {
+        generators::Attr::None => Ok(()),
+        generators::Attr::Ints(_, values) => {
+            data.set_item(attr_name.as_ref().unwrap(), values[u as usize])
         }
-        let d = PyDict::new(py);
-        if g.multigraph {
-            for k in 0..g.keys[s as usize] {
-                d.set_item(k, PyDict::new(py))?;
-            }
+        generators::Attr::Pos(values) => {
+            let (x, y) = values[u as usize];
+            data.set_item(pos_name, (x, y))
         }
-        *entry = Some(d.clone());
-        Ok(d)
-    };
-    let (attr_name, pos_name) = (
-        match &built.attr {
-            generators::Attr::Ints(name, _) => Some(pyo3::types::PyString::intern(py, name)),
-            _ => None,
-        },
-        pyo3::intern!(py, "pos"),
-    );
-    for &u in &g.order {
-        let lu = label(u)?;
-        let data = PyDict::new(py);
-        match &built.attr {
-            generators::Attr::None => {}
-            generators::Attr::Ints(_, values) => {
-                data.set_item(attr_name.as_ref().unwrap(), values[u as usize])?
-            }
-            generators::Attr::Pos(values) => {
-                let (x, y) = values[u as usize];
-                data.set_item(pos_name, (x, y))?
-            }
-        }
-        node.set_item(lu, data)?;
-        let row = PyDict::new(py);
-        for &(v, s) in &g.succ[u as usize] {
-            row.set_item(label(v)?, slot(s)?)?;
-        }
-        adj.set_item(lu, row)?;
-        if let Some(pred) = pred {
-            let row = PyDict::new(py);
-            for &(v, s) in &g.pred[u as usize] {
-                row.set_item(label(v)?, slot(s)?)?;
-            }
-            pred.set_item(lu, row)?;
-        }
-    }
-    Ok(())
+    })
 }
 
 // --- Batch 16: approximation algorithms and graph operations ---
@@ -7391,11 +7349,9 @@ fn rg_run<'py>(
 }
 
 /// Fills the empty NetworkX graph `g` (any of the four classes) with the
-/// nodes and adjacency rows of `b`, as NetworkX's `add_node`/`add_edge`
-/// calls leave them: nodes in `b`'s order, each row in insertion order,
-/// one data dict per edge shared by both rows that hold it, and for
-/// multigraphs a key dict per node pair with keys `0, 1, ...`. Node `u`'s
-/// data is `{key: values[u]}` with `node_attr`, else `{}`.
+/// nodes `0..n` and adjacency rows of `b`, as NetworkX's `add_node`/`add_edge`
+/// calls leave them (see `nxdicts::write_sim`). Node `u`'s data is
+/// `{key: values[u]}` with `node_attr`, else `{}`.
 fn fill_generated<'py>(
     py: Python<'py>,
     b: &random_generators::Built,
@@ -7403,33 +7359,21 @@ fn fill_generated<'py>(
     node_attr: Option<(&Bound<'py, PyAny>, &Bound<'py, PyList>)>,
 ) -> PyResult<()> {
     let n = b.n();
-    let nodes: Vec<Bound<'py, PyAny>> = (0..n as u64)
-        .map(|i| PyInt::new(py, i).into_any())
-        .collect();
-    let node_dict = g
-        .getattr(pyo3::intern!(py, "_node"))?
-        .cast_into::<PyDict>()?;
-    let adj = g
-        .getattr(pyo3::intern!(py, "_adj"))?
-        .cast_into::<PyDict>()?;
-    let multi = g
-        .call_method0(pyo3::intern!(py, "is_multigraph"))?
-        .is_truthy()?;
-    let pred = match &b.pred {
-        Some(_) => Some(
-            g.getattr(pyo3::intern!(py, "_pred"))?
-                .cast_into::<PyDict>()?,
-        ),
-        None => None,
-    };
-    if !node_dict.is_empty() || !adj.is_empty() {
+    let dicts = nxdicts::NxDicts::of_graph(g)?;
+    if !dicts.is_empty() {
         return Err(PyValueError::new_err("the graph to fill is not empty"));
+    }
+    if dicts.pred.is_some() != b.pred.is_some() {
+        return Err(PyValueError::new_err("the graph's direction differs"));
     }
     if let Some((_, values)) = node_attr {
         if values.len() != n {
             return Err(PyValueError::new_err("one attribute value per node"));
         }
     }
+    let multi = g
+        .call_method0(pyo3::intern!(py, "is_multigraph"))?
+        .is_truthy()?;
     let all: Vec<u32>;
     let order: &[u32] = match &b.order {
         Some(order) => order,
@@ -7438,73 +7382,14 @@ fn fill_generated<'py>(
             &all
         }
     };
-    let rows: Vec<Bound<'py, PyDict>> = (0..n).map(|_| PyDict::new(py)).collect();
-    let pred_rows: Vec<Bound<'py, PyDict>> = match pred {
-        Some(_) => (0..n).map(|_| PyDict::new(py)).collect(),
-        None => Vec::new(),
-    };
-    for &u in order {
-        let u = u as usize;
-        let data = PyDict::new(py);
-        if let Some((key, values)) = node_attr {
-            data.set_item(key, values.get_item(u)?)?;
-        }
-        node_dict.set_item(&nodes[u], data)?;
-        adj.set_item(&nodes[u], &rows[u])?;
-        if let Some(pred) = &pred {
-            pred.set_item(&nodes[u], &pred_rows[u])?;
-        }
-    }
-    let new_edge = || -> PyResult<Bound<'py, PyAny>> {
-        if multi {
-            let keys = PyDict::new(py);
-            keys.set_item(0, PyDict::new(py))?;
-            Ok(keys.into_any())
-        } else {
-            Ok(PyDict::new(py).into_any())
-        }
-    };
-    for u in 0..n {
-        let row = &rows[u];
-        for &v in &b.succ[u] {
-            let target = &nodes[v as usize];
-            if b.pred.is_none() && (v as usize) < u {
-                // Row `v` is complete: share its dict for this edge.
-                if !multi || !row.contains(target)? {
-                    let data = rows[v as usize]
-                        .get_item(&nodes[u])?
-                        .ok_or_else(|| PyValueError::new_err("asymmetric rows"))?;
-                    row.set_item(target, data)?;
-                }
-                continue;
-            }
-            if multi {
-                if let Some(keys) = row.get_item(target)? {
-                    // A parallel edge: the next key (keys are 0, 1, ...).
-                    let keys = keys.cast_into::<PyDict>()?;
-                    keys.set_item(keys.len(), PyDict::new(py))?;
-                    continue;
-                }
-            }
-            row.set_item(target, new_edge()?)?;
-        }
-    }
-    if let Some(pred) = &b.pred {
-        for (v, sources) in pred.iter().enumerate() {
-            let row = &pred_rows[v];
-            for &u in sources {
-                let source = &nodes[u as usize];
-                if multi && row.contains(source)? {
-                    continue;
-                }
-                let data = rows[u as usize]
-                    .get_item(&nodes[v])?
-                    .ok_or_else(|| PyValueError::new_err("rows disagree"))?;
-                row.set_item(source, data)?;
-            }
-        }
-    }
-    Ok(())
+    let sim = py.detach(|| generators::Sim::from_rows(&b.succ, b.pred.as_deref(), order, multi));
+    let labels: Vec<Option<Bound<'py, PyAny>>> = (0..n as u64)
+        .map(|i| Some(PyInt::new(py, i).into_any()))
+        .collect();
+    nxdicts::write_sim(&dicts, &sim, &labels, |u, data| match node_attr {
+        Some((key, values)) => data.set_item(key, values.get_item(u as usize)?),
+        None => Ok(()),
+    })
 }
 
 #[pymodule(gil_used = false)]

@@ -161,6 +161,66 @@ impl Sim {
         self.order.retain(|&x| x != u);
     }
 
+    /// A graph given as rows of neighbors in insertion order (an edge in
+    /// both rows of an undirected graph, a self-loop once; a parallel edge
+    /// of a multigraph repeats its neighbor) and its node order.
+    pub fn from_rows(
+        succ: &[Vec<u32>],
+        pred: Option<&[Vec<u32>]>,
+        order: &[u32],
+        multigraph: bool,
+    ) -> Self {
+        let n = succ.len();
+        let directed = pred.is_some();
+        let edges = succ.iter().map(Vec::len).sum();
+        let mut g = Sim::new(directed, multigraph, n, edges);
+        for &u in order {
+            g.add_node(u);
+        }
+        // Marks the neighbors already in the row being built (parallel
+        // edges share one entry).
+        let mut seen = vec![u32::MAX; n];
+        for (u, row) in succ.iter().enumerate() {
+            let u = u as u32;
+            for &v in row {
+                let key = g.key(u, v);
+                let first = seen[v as usize] != u;
+                seen[v as usize] = u;
+                if !directed && v < u {
+                    // The other row of an edge from `v`'s row.
+                    if first {
+                        let slot = g.slots[&key];
+                        g.succ[u as usize].push((v, slot));
+                    }
+                    continue;
+                }
+                match g.slots.get(&key) {
+                    Some(&slot) => g.keys[slot as usize] += 1,
+                    None => {
+                        let slot = g.keys.len() as u32;
+                        g.keys.push(1);
+                        g.slots.insert(key, slot);
+                        g.succ[u as usize].push((v, slot));
+                    }
+                }
+            }
+        }
+        if let Some(pred) = pred {
+            seen.fill(u32::MAX);
+            for (v, row) in pred.iter().enumerate() {
+                let v = v as u32;
+                for &u in row {
+                    if seen[u as usize] != v {
+                        seen[u as usize] = v;
+                        let slot = g.slots[&pair(u, v)];
+                        g.pred[v as usize].push((u, slot));
+                    }
+                }
+            }
+        }
+        g
+    }
+
     /// `list(G.edges())`, one pair per parallel edge, in NetworkX's order
     /// (an undirected edge is reported from the endpoint whose row comes
     /// first).

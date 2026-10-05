@@ -9,6 +9,7 @@ use pyo3::exceptions::PyNotImplementedError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
 
+use super::nxdicts::{simple_edge, NodeRows, NxDicts};
 use crate::graph::Csr;
 
 /// Coordinates and values for `scipy.sparse.coo_array`.
@@ -422,11 +423,7 @@ pub fn dict_of_lists<'py>(
 /// A new NetworkX `Graph` or `DiGraph` being filled through its dicts
 /// (`_node`, `_adj`, and `_pred` for directed graphs), exactly as
 /// `add_nodes_from` and `add_edges_from` fill them.
-pub struct NxBuilder<'py> {
-    pub node: Bound<'py, PyDict>,
-    pub adj: Bound<'py, PyDict>,
-    pub pred: Option<Bound<'py, PyDict>>,
-}
+pub struct NxBuilder<'py>(pub NxDicts<'py>);
 
 fn none_node() -> PyErr {
     pyo3::exceptions::PyValueError::new_err("None cannot be a node")
@@ -443,22 +440,13 @@ fn hashable(err: PyErr, py: Python<'_>) -> PyErr {
 }
 
 impl<'py> NxBuilder<'py> {
-    /// Create node `n` if it is new: `_adj[n]`, `_pred[n]` and `_node[n]`
-    /// get empty dicts, in that order. Returns whether it was new.
-    fn ensure(&self, n: &Bound<'py, PyAny>) -> PyResult<bool> {
-        let py = self.node.py();
-        if self.node.contains(n).map_err(|e| hashable(e, py))? {
-            return Ok(false);
-        }
-        if n.is_none() {
+    /// Node `n`'s entries, creating it (empty rows and attributes) if new.
+    fn ensure(&self, n: &Bound<'py, PyAny>) -> PyResult<NodeRows<'py>> {
+        let py = self.0.node.py();
+        if !self.0.node.contains(n).map_err(|e| hashable(e, py))? && n.is_none() {
             return Err(none_node());
         }
-        self.adj.set_item(n, PyDict::new(py))?;
-        if let Some(pred) = &self.pred {
-            pred.set_item(n, PyDict::new(py))?;
-        }
-        self.node.set_item(n, PyDict::new(py))?;
-        Ok(true)
+        Ok(self.0.node(n)?.0)
     }
 
     /// `add_nodes_from(nodes, **attr)` (`attr`: `None` for no attributes).
@@ -468,49 +456,25 @@ impl<'py> NxBuilder<'py> {
         attr: Option<&Bound<'py, PyDict>>,
     ) -> PyResult<()> {
         for n in nodes.try_iter()? {
-            let n = n?;
-            self.ensure(&n)?;
+            let rows = self.ensure(&n?)?;
             if let Some(attr) = attr {
-                let d = self.node.get_item(&n)?.expect("just ensured");
-                d.cast::<PyDict>()?.update(attr.as_mapping())?;
+                rows.attrs.update(attr.as_mapping())?;
             }
         }
         Ok(())
     }
 
     /// One edge of `add_edges_from`: the existing data dict of `(u, v)` or a
-    /// new one, updated by `fill`, then stored in both directions.
+    /// new one, stored in both directions, then updated by `fill`.
     pub fn add_edge(
         &self,
         u: &Bound<'py, PyAny>,
         v: &Bound<'py, PyAny>,
         fill: impl FnOnce(&Bound<'py, PyDict>) -> PyResult<()>,
     ) -> PyResult<()> {
-        let py = self.node.py();
-        self.ensure(u)?;
-        self.ensure(v)?;
-        let row = self.adj.get_item(u)?.expect("just ensured");
-        let row = row.cast::<PyDict>()?;
-        let data = match row.get_item(v)? {
-            Some(d) => d.cast_into::<PyDict>()?,
-            None => PyDict::new(py),
-        };
-        fill(&data)?;
-        row.set_item(v, &data)?;
-        match &self.pred {
-            Some(pred) => pred
-                .get_item(v)?
-                .expect("just ensured")
-                .cast::<PyDict>()?
-                .set_item(u, &data)?,
-            None => self
-                .adj
-                .get_item(v)?
-                .expect("just ensured")
-                .cast::<PyDict>()?
-                .set_item(u, &data)?,
-        }
-        Ok(())
+        let ru = self.ensure(u)?;
+        let rv = self.ensure(v)?;
+        fill(&simple_edge(&ru.succ, rv.back(), u, v)?)
     }
 
     /// `add_edges_from(edges)` for 2-tuples and 3-tuples with a dict; any

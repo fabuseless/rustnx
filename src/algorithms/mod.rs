@@ -18,6 +18,7 @@ pub mod leftovers;
 pub mod link_analysis;
 pub mod matching;
 pub mod measures;
+pub mod nxdicts;
 pub mod operators;
 pub mod paths;
 pub mod pyrandom;

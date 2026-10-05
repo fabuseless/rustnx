@@ -9,6 +9,8 @@
 //! the GIL) builds the result.
 
 use pyo3::prelude::*;
+
+use super::nxdicts::{simple_edge, NodeRows, NxDicts};
 use pyo3::types::{PyBool, PyDict, PyFloat, PyString};
 use std::collections::{HashMap, HashSet};
 
@@ -1722,42 +1724,21 @@ pub fn new_nx_graph(
 
 struct Target<'py> {
     objs: Vec<Bound<'py, PyAny>>,
-    node: Bound<'py, PyDict>,
-    adj: Bound<'py, PyDict>,
-    pred: Option<Bound<'py, PyDict>>,
-    succ_of: Vec<Option<Bound<'py, PyDict>>>,
-    pred_of: Vec<Option<Bound<'py, PyDict>>>,
-    attr_of: Vec<Option<Bound<'py, PyDict>>>,
+    dicts: NxDicts<'py>,
+    rows: Vec<Option<NodeRows<'py>>>,
 }
 
 impl<'py> Target<'py> {
     /// The `if u not in self._node` part of `add_node` / `add_edge`.
-    fn ensure(&mut self, py: Python<'py>, i: usize) -> PyResult<()> {
-        if self.succ_of[i].is_some() {
-            return Ok(());
+    fn ensure(&mut self, i: usize) -> PyResult<&NodeRows<'py>> {
+        if self.rows[i].is_none() {
+            self.rows[i] = Some(self.dicts.create_node(&self.objs[i])?);
         }
-        let key = &self.objs[i];
-        let succ = PyDict::new(py);
-        self.adj.set_item(key, &succ)?;
-        self.succ_of[i] = Some(succ);
-        if let Some(pred) = &self.pred {
-            let p = PyDict::new(py);
-            pred.set_item(key, &p)?;
-            self.pred_of[i] = Some(p);
-        }
-        let attrs = PyDict::new(py);
-        self.node.set_item(key, &attrs)?;
-        self.attr_of[i] = Some(attrs);
-        Ok(())
+        Ok(self.rows[i].as_ref().expect("node added"))
     }
 
-    /// Where `add_edge(u, v)` stores the reverse entry: `_pred[v]` or `_adj[v]`.
-    fn back(&self, v: usize) -> &Bound<'py, PyDict> {
-        match &self.pred {
-            Some(_) => self.pred_of[v].as_ref(),
-            None => self.succ_of[v].as_ref(),
-        }
-        .expect("node added")
+    fn rows(&self, i: usize) -> &NodeRows<'py> {
+        self.rows[i].as_ref().expect("node added")
     }
 }
 
@@ -1765,7 +1746,6 @@ impl<'py> Target<'py> {
 /// Graph, DiGraph, MultiGraph or MultiDiGraph) as `add_node` and
 /// `add_edge` would, filling its dicts directly.
 pub fn apply<'py>(py: Python<'py>, parsed: &Parsed, g: &Bound<'py, PyAny>) -> PyResult<()> {
-    let directed = g.call_method0("is_directed")?.is_truthy()?;
     let multigraph = g.call_method0("is_multigraph")?.is_truthy()?;
     let n = parsed.nodes.len();
     let mut t = Target {
@@ -1774,16 +1754,8 @@ pub fn apply<'py>(py: Python<'py>, parsed: &Parsed, g: &Bound<'py, PyAny>) -> Py
             .iter()
             .map(|v| to_py(py, v))
             .collect::<PyResult<_>>()?,
-        node: g.getattr("_node")?.cast_into::<PyDict>()?,
-        adj: g.getattr("_adj")?.cast_into::<PyDict>()?,
-        pred: if directed {
-            Some(g.getattr("_pred")?.cast_into::<PyDict>()?)
-        } else {
-            None
-        },
-        succ_of: vec![None; n],
-        pred_of: vec![None; n],
-        attr_of: vec![None; n],
+        dicts: NxDicts::of_graph(g)?,
+        rows: (0..n).map(|_| None).collect(),
     };
     let keys: Vec<Bound<'py, PyString>> =
         parsed.keys.iter().map(|k| PyString::new(py, k)).collect();
@@ -1797,8 +1769,7 @@ pub fn apply<'py>(py: Python<'py>, parsed: &Parsed, g: &Bound<'py, PyAny>) -> Py
         match op {
             Op::Node(i, attrs) => {
                 let i = *i as usize;
-                t.ensure(py, i)?;
-                fill(t.attr_of[i].as_ref().expect("node added"), attrs)?;
+                fill(&t.ensure(i)?.attrs, attrs)?;
             }
             Op::Edge(u, v, attrs) | Op::KeyedEdge(u, v, _, attrs) => {
                 let key = match op {
@@ -1806,21 +1777,14 @@ pub fn apply<'py>(py: Python<'py>, parsed: &Parsed, g: &Bound<'py, PyAny>) -> Py
                     _ => None,
                 };
                 let (u, v) = (*u as usize, *v as usize);
-                t.ensure(py, u)?;
-                t.ensure(py, v)?;
-                let succ = t.succ_of[u].as_ref().expect("node added");
-                let existing = succ.get_item(&t.objs[v])?;
+                t.ensure(u)?;
+                t.ensure(v)?;
+                let succ = &t.rows(u).succ;
                 if !multigraph {
-                    match existing {
-                        Some(d) => fill(d.cast::<PyDict>()?, attrs)?,
-                        None => {
-                            let d = PyDict::new(py);
-                            fill(&d, attrs)?;
-                            succ.set_item(&t.objs[v], &d)?;
-                            t.back(v).set_item(&t.objs[u], &d)?;
-                        }
-                    }
+                    let d = simple_edge(succ, t.rows(v).back(), &t.objs[u], &t.objs[v])?;
+                    fill(&d, attrs)?;
                 } else {
+                    let existing = succ.get_item(&t.objs[v])?;
                     let d = PyDict::new(py);
                     fill(&d, attrs)?;
                     match existing {
@@ -1845,7 +1809,7 @@ pub fn apply<'py>(py: Python<'py>, parsed: &Parsed, g: &Bound<'py, PyAny>) -> Py
                                 None => keydict.set_item(0, &d)?,
                             }
                             succ.set_item(&t.objs[v], &keydict)?;
-                            t.back(v).set_item(&t.objs[u], &keydict)?;
+                            t.rows(v).back().set_item(&t.objs[u], &keydict)?;
                         }
                     }
                 }

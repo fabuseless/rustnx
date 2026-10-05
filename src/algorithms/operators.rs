@@ -10,6 +10,7 @@ use pyo3::exceptions::PyNotImplementedError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyFloat, PyList, PyTuple};
 
+use super::nxdicts::{simple_edge, NxDicts};
 use super::pyset::PySet as SetReplica;
 use crate::graph::CoreGraph;
 
@@ -69,7 +70,6 @@ fn row_of<'py>(adj: &Bound<'py, PyDict>, key: &Bound<'py, PyAny>) -> PyResult<Bo
 
 /// `R.add_edges_from` for one edge `(a, b, dd)` whose endpoints are in `R`.
 fn add_edge_rows<'py>(
-    py: Python<'py>,
     row_a: &Bound<'py, PyDict>,
     back_row_b: &Bound<'py, PyDict>,
     akey: &Bound<'py, PyAny>,
@@ -77,15 +77,11 @@ fn add_edge_rows<'py>(
     dd: Option<&Bound<'py, PyAny>>,
     deepcopy: Option<&Bound<'py, PyAny>>,
 ) -> PyResult<()> {
-    let datadict = match row_a.get_item(bkey)? {
-        Some(d) => d.cast_into::<PyDict>()?,
-        None => PyDict::new(py),
-    };
+    let datadict = simple_edge(row_a, back_row_b, akey, bkey)?;
     if let Some(dd) = dd {
         update_from(&datadict, dd, deepcopy)?;
     }
-    row_a.set_item(bkey, &datadict)?;
-    back_row_b.set_item(akey, &datadict)
+    Ok(())
 }
 
 impl OpView {
@@ -169,31 +165,14 @@ impl OpView {
             succ: Vec::with_capacity(n),
             pred: pred.map(|_| Vec::with_capacity(n)),
         };
+        let dicts = NxDicts::new(node.clone(), succ.clone(), pred.cloned());
         for (k, d) in self.nodes.iter().zip(&self.ndata) {
-            let k = k.bind(py);
-            let target = match node.get_item(k)? {
-                Some(existing) => {
-                    rows.succ.push(row_of(succ, k)?);
-                    if let (Some(p), Some(pr)) = (pred, rows.pred.as_mut()) {
-                        pr.push(row_of(p, k)?);
-                    }
-                    existing.cast_into::<PyDict>()?
-                }
-                None => {
-                    let s = PyDict::new(py);
-                    succ.set_item(k, &s)?;
-                    rows.succ.push(s);
-                    if let (Some(p), Some(pr)) = (pred, rows.pred.as_mut()) {
-                        let r = PyDict::new(py);
-                        p.set_item(k, &r)?;
-                        pr.push(r);
-                    }
-                    let nd = PyDict::new(py);
-                    node.set_item(k, &nd)?;
-                    nd
-                }
-            };
-            update_from(&target, d.bind(py), deepcopy)?;
+            let (entry, _) = dicts.node(k.bind(py)).map_err(|_| changed())?;
+            update_from(&entry.attrs, d.bind(py), deepcopy)?;
+            rows.succ.push(entry.succ);
+            if let (Some(pr), Some(p)) = (rows.pred.as_mut(), entry.pred) {
+                pr.push(p);
+            }
         }
         Ok(rows)
     }
@@ -326,7 +305,6 @@ impl OpView {
                 None => &rows.succ[b],
             };
             add_edge_rows(
-                py,
                 &rows.succ[a],
                 back,
                 akey,
@@ -344,7 +322,6 @@ impl OpView {
 #[pyfunction]
 #[pyo3(signature = (succ, pred, left, right))]
 pub fn _op_join<'py>(
-    py: Python<'py>,
     succ: &Bound<'py, PyDict>,
     pred: Option<Bound<'py, PyDict>>,
     left: Vec<Bound<'py, PyAny>>,
@@ -361,7 +338,7 @@ pub fn _op_join<'py>(
         .collect::<PyResult<Vec<_>>>()?;
     for (i, row_i) in left.iter().zip(&lrows) {
         for (j, row_j) in right.iter().zip(&rrows) {
-            add_edge_rows(py, row_i, row_j, i, j, None, None)?;
+            add_edge_rows(row_i, row_j, i, j, None, None)?;
         }
     }
     Ok(())
@@ -371,7 +348,6 @@ pub fn _op_join<'py>(
 /// DiGraph's `_pred`), into the undirected `H` (`moral_graph`).
 #[pyfunction]
 pub fn _op_pred_combinations<'py>(
-    py: Python<'py>,
     adj: &Bound<'py, PyDict>,
     pred: &Bound<'py, PyDict>,
 ) -> PyResult<()> {
@@ -387,7 +363,7 @@ pub fn _op_pred_combinations<'py>(
             .collect::<PyResult<Vec<_>>>()?;
         for i in 0..keys.len() {
             for j in i + 1..keys.len() {
-                add_edge_rows(py, &rows[i], &rows[j], &keys[i], &keys[j], None, None)?;
+                add_edge_rows(&rows[i], &rows[j], &keys[i], &keys[j], None, None)?;
             }
         }
     }
