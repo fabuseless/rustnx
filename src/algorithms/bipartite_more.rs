@@ -724,3 +724,39 @@ pub fn projection_edges(
     }
     Ok(out)
 }
+
+// --- More multigraph degree measures ----------------------------------------------------
+
+/// `(number_of_edges, number_of_selfloops)` of a multigraph, counting
+/// parallel edges.
+pub fn multi_counts(g: &CoreGraph, me: &MultiEdges) -> (u64, u64) {
+    let (mut total, mut loops) = (0u64, 0u64);
+    for u in 0..g.n {
+        for e in g.succ.range(u) {
+            let v = g.succ.targets[e] as usize;
+            let k = me.mult[e] as u64;
+            if v == u {
+                loops += k;
+            }
+            if g.directed || v >= u {
+                total += k;
+            }
+        }
+    }
+    (total, loops)
+}
+
+/// `s_metric`'s `sum(G.degree(u) * G.degree(v) for (u, v) in G.edges())`
+/// on a multigraph: every parallel edge counts.
+pub fn multi_s_metric(g: &CoreGraph, me: &MultiEdges, degree: &[u64]) -> u128 {
+    let mut total = 0u128;
+    for u in 0..g.n {
+        for e in g.succ.range(u) {
+            let v = g.succ.targets[e] as usize;
+            if g.directed || v >= u {
+                total += me.mult[e] as u128 * degree[u] as u128 * degree[v] as u128;
+            }
+        }
+    }
+    total
+}

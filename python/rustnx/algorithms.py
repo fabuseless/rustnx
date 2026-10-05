@@ -4381,6 +4381,11 @@ def number_of_isolates(G):
 def is_regular(G):
     if len(G) == 0:
         raise nx.NetworkXPointlessConcept("Graph has no nodes.")
+    if G._multigraph:
+        deg, ins, outs = _b26_multi_degrees(G)
+        if G.is_directed():
+            return len(set(ins)) == 1 and len(set(outs)) == 1
+        return len(set(deg)) == 1
     return G._core.is_regular()
 
 
@@ -4388,6 +4393,8 @@ def is_k_regular(G, k):
     _undirected_only(G)
     if type(k) not in (int, bool):
         raise NotImplementedError("rustnx needs an integer k")
+    if G._multigraph:
+        return all(d == k for d in _b26_multi_degrees(G)[0])
     return G._core.all_degrees_equal(int(k))
 
 
@@ -4479,7 +4486,7 @@ def chain_decomposition(G, root=None):
 
 
 def is_eulerian(G):
-    plus_in, plus_out, bad = G._core.euler_balance()
+    plus_in, plus_out, bad = _b26_euler_balance(G)
     if G.is_directed():
         return not (plus_in or plus_out or bad) and is_strongly_connected(G)
     return not plus_in and is_connected(G)
@@ -4489,16 +4496,22 @@ def has_eulerian_path(G, source=None):
     if is_eulerian(G):
         return True
     s = None if source is None else _node_arg(G, source)
-    plus_in, plus_out, bad = G._core.euler_balance()
+    plus_in, plus_out, bad = _b26_euler_balance(G)
     if G.is_directed():
         if s is not None:
-            ins, outs = G._core.in_out_degrees()
+            if G._multigraph:
+                _, ins, outs = _b26_multi_degrees(G)
+            else:
+                ins, outs = G._core.in_out_degrees()
             if outs[s] - ins[s] != 1:
                 return False
         if bad:
             return False
         return plus_in <= 1 and plus_out <= 1 and is_weakly_connected(G)
-    if s is not None and G._core.degree_of(s) % 2 != 1:
+    if G._multigraph:
+        if s is not None and _b26_multi_degrees(G)[0][s] % 2 != 1:
+            return False
+    elif s is not None and G._core.degree_of(s) % 2 != 1:
         return False
     return plus_in == 2 and is_connected(G)
 
@@ -8721,6 +8734,8 @@ def rich_club_coefficient(G, normalized=True, Q=100, seed=None):
 
 
 def s_metric(G):
+    if G._multigraph:
+        return float(G._core.b26_multi_s_metric(_b26_multi(G)))
     return float(G._core.s_metric_sum())
 
 
@@ -10221,6 +10236,8 @@ def to_dict_of_lists(G, nodelist=None):
 
 
 def number_of_selfloops(G):
+    if G._multigraph:
+        return G._core.b26_multi_counts(_b26_multi(G))[1]
     return G._core.number_of_selfloops()
 
 
@@ -12471,7 +12488,10 @@ def tree_broadcast_time(G, node=None):
 
 def density(B, nodes):
     n = len(B)
-    m = B._core.number_of_edges()
+    if B._multigraph:
+        m = B._core.b26_multi_counts(_b26_multi(B))[0]
+    else:
+        m = B._core.number_of_edges()
     nb = len(nodes)
     nt = n - nb
     if m == 0:
@@ -12866,3 +12886,22 @@ def maximal_extendability(G):
     if k is None:
         raise nx.NetworkXError("The residual graph of G is not strongly connected")
     return k
+
+
+def _b26_euler_balance(G):
+    """``euler_balance`` (``(+1 in, +1 out, other unbalanced)`` counts, or
+    the number of odd degrees), counting a multigraph's parallel edges."""
+    if not G._multigraph:
+        return G._core.euler_balance()
+    deg, ins, outs = _b26_multi_degrees(G)
+    if not G.is_directed():
+        return sum(d % 2 for d in deg), 0, 0
+    plus_in = plus_out = bad = 0
+    for i, o in zip(ins, outs):
+        if i == o + 1:
+            plus_in += 1
+        elif o == i + 1:
+            plus_out += 1
+        elif i != o:
+            bad += 1
+    return plus_in, plus_out, bad

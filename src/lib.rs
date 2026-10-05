@@ -6086,6 +6086,19 @@ impl CoreGraph {
         Ok(())
     }
 
+    /// Multigraph `(number_of_edges, number_of_selfloops)`.
+    fn b26_multi_counts(&self, me: &bipartite_more::MultiEdges) -> PyResult<(u64, u64)> {
+        self.b26_check_multi(me)?;
+        Ok(bipartite_more::multi_counts(self, me))
+    }
+
+    /// Multigraph `s_metric` total (before `float`).
+    fn b26_multi_s_metric(&self, me: &bipartite_more::MultiEdges) -> PyResult<u128> {
+        self.b26_check_multi(me)?;
+        let (degree, _, _) = bipartite_more::multi_degrees(self, me);
+        Ok(bipartite_more::multi_s_metric(self, me, &degree))
+    }
+
     fn b26_check_multi(&self, me: &bipartite_more::MultiEdges) -> PyResult<()> {
         if me.mult.len() != self.succ.targets.len() {
             return Err(PyValueError::new_err("multigraph data of another graph"));
