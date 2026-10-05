@@ -18,9 +18,9 @@ use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
     approximation, bipartite, centrality, centrality_more, cluster, communities, connectivity,
-    conversion, cores_more, dag, directed, distance, flow, generators, graph_classes, isomorphism,
-    leftovers, matching, measures, nxdicts, operators, paths, pyrandom, pyset, random_generators,
-    readwrite, spectral, structure, structure_more, trees_more,
+    conversion, cores_more, dag, degree_generators, directed, distance, flow, generators,
+    graph_classes, isomorphism, leftovers, matching, measures, nxdicts, operators, paths, pyrandom,
+    pyset, random_generators, readwrite, spectral, structure, structure_more, trees_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -5842,6 +5842,230 @@ impl CoreGraph {
         s_bottom: f64,
     ) -> PyResult<Bound<'py, PyDict>> {
         operators::bipartite_degree_centrality(self, index, top, bottom, s_top, s_bottom)
+    }
+
+    // --- Batch 22: degree-sequence generators ---
+
+    /// `configuration_model` (undirected class) into the empty graph `g`;
+    /// the generator's new state.
+    #[staticmethod]
+    fn dg_configuration(
+        py: Python<'_>,
+        degree: Vec<u32>,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        rg_run(py, &state, g, None, |rng| {
+            Some(degree_generators::configuration_model(&degree, rng))
+        })
+    }
+
+    /// `directed_configuration_model` (any class) into `g`.
+    #[staticmethod]
+    fn dg_directed_configuration(
+        py: Python<'_>,
+        out_degree: Vec<u32>,
+        in_degree: Vec<u32>,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let directed = g.call_method0("is_directed")?.is_truthy()?;
+        rg_run(py, &state, g, None, |rng| {
+            Some(degree_generators::directed_configuration_model(
+                &out_degree,
+                &in_degree,
+                directed,
+                rng,
+            ))
+        })
+    }
+
+    /// Bipartite `configuration_model` into `g`, with node attribute `key`
+    /// set to `labels[v]`.
+    #[staticmethod]
+    fn dg_bipartite_configuration<'py>(
+        py: Python<'py>,
+        aseq: Vec<u32>,
+        bseq: Vec<u32>,
+        state: Vec<u32>,
+        g: &Bound<'py, PyAny>,
+        key: &Bound<'py, PyAny>,
+        labels: &Bound<'py, PyList>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        rg_run(py, &state, g, Some((key, labels)), |rng| {
+            Some(degree_generators::bipartite_configuration_model(
+                &aseq, &bseq, rng,
+            ))
+        })
+    }
+
+    /// `random_clustered_graph` into `g`.
+    #[staticmethod]
+    fn dg_clustered(
+        py: Python<'_>,
+        single: Vec<u32>,
+        triangle: Vec<u32>,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        rg_run(py, &state, g, None, |rng| {
+            Some(degree_generators::random_clustered(&single, &triangle, rng))
+        })
+    }
+
+    /// `expected_degree_graph` into `g` (a `Graph`); `None` where NetworkX
+    /// raises after drawing.
+    #[staticmethod]
+    fn dg_expected_degree(
+        py: Python<'_>,
+        w: Vec<f64>,
+        rho: f64,
+        selfloops: bool,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        if w.iter().any(|x| !x.is_finite() || *x < 0.0) {
+            return Err(PyValueError::new_err(
+                "weights must be finite and non-negative",
+            ));
+        }
+        rg_run(py, &state, g, None, |rng| {
+            degree_generators::expected_degree(&w, rho, selfloops, rng)
+        })
+    }
+
+    /// `havel_hakimi_graph` for a graphical sequence, into `g`.
+    #[staticmethod]
+    fn dg_havel_hakimi(py: Python<'_>, degree: Vec<u32>, g: &Bound<'_, PyAny>) -> PyResult<()> {
+        if degree.iter().any(|&d| d as usize >= degree.len()) {
+            return Err(PyValueError::new_err("degrees must be below the length"));
+        }
+        let b = py.detach(|| degree_generators::havel_hakimi(&degree));
+        fill_generated(py, &b, g, None)
+    }
+
+    /// `directed_havel_hakimi_graph` for non-negative sequences of one
+    /// length with equal sums, into `g`; false for a non-digraphical pair
+    /// (`g` untouched).
+    #[staticmethod]
+    fn dg_directed_havel_hakimi(
+        py: Python<'_>,
+        in_degree: Vec<u32>,
+        out_degree: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<bool> {
+        if in_degree.len() != out_degree.len() {
+            return Err(PyValueError::new_err("sequences of one length"));
+        }
+        let directed = g.call_method0("is_directed")?.is_truthy()?;
+        let found = py
+            .detach(|| degree_generators::directed_havel_hakimi(&in_degree, &out_degree, directed));
+        match found {
+            Ok(b) => fill_generated(py, &b, g, None).map(|_| true),
+            Err(()) => Ok(false),
+        }
+    }
+
+    /// `degree_sequence_tree` for a valid sequence, into `g` (`legacy`:
+    /// NetworkX 3.4 and 3.5, which may remove node 0).
+    #[staticmethod]
+    fn dg_degree_sequence_tree(
+        py: Python<'_>,
+        degree: Vec<i64>,
+        legacy: bool,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let leaves: i128 = degree
+            .iter()
+            .filter(|&&d| d > 1)
+            .map(|&d| d as i128 - 2)
+            .sum();
+        if leaves + degree.len() as i128 + 2 >= 1 << 31 {
+            return Err(PyValueError::new_err("too many nodes"));
+        }
+        let b = py.detach(|| degree_generators::degree_sequence_tree(&degree, legacy));
+        fill_generated(py, &b, g, None)
+    }
+
+    /// The bipartite Havel-Hakimi generators (`kind` 0 `havel_hakimi_graph`,
+    /// 1 `reverse_havel_hakimi_graph`, 2 `alternating_havel_hakimi_graph`)
+    /// into `g`, with node attribute `key` set to `labels[v]`.
+    #[staticmethod]
+    fn dg_bipartite_havel_hakimi<'py>(
+        py: Python<'py>,
+        aseq: Vec<u32>,
+        bseq: Vec<u32>,
+        kind: u8,
+        g: &Bound<'py, PyAny>,
+        key: &Bound<'py, PyAny>,
+        labels: &Bound<'py, PyList>,
+    ) -> PyResult<()> {
+        let b = py.detach(|| degree_generators::bipartite_havel_hakimi(&aseq, &bseq, kind));
+        fill_generated(py, &b, g, Some((key, labels)))
+    }
+
+    /// `random_powerlaw_tree_sequence(n, gamma, tries)` with `alpha = gamma
+    /// - 1`: `(sequence, state)`, the sequence `None` where NetworkX gives
+    /// up after `tries`; `None` where its arithmetic raises.
+    #[staticmethod]
+    #[allow(clippy::type_complexity)]
+    fn dg_powerlaw_tree_sequence(
+        py: Python<'_>,
+        n: usize,
+        alpha: f64,
+        tries: usize,
+        legacy: bool,
+        state: Vec<u32>,
+    ) -> PyResult<Option<(Option<Vec<u64>>, Vec<u32>)>> {
+        let Some(mut rng) = pyrandom::Mt19937::from_state(&state) else {
+            return Ok(None);
+        };
+        let found = py.detach(|| {
+            degree_generators::powerlaw_tree_sequence(n, alpha, tries, legacy, &mut rng)
+        });
+        Ok(found.map(|r| (r.ok(), rng.state())))
+    }
+
+    /// `random_labeled_tree(n)` for `n >= 2` into `g`; with `rooted`, also
+    /// `random_labeled_rooted_tree`'s root. `(root, state)`.
+    #[staticmethod]
+    fn dg_labeled_tree(
+        py: Python<'_>,
+        n: usize,
+        rooted: bool,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<(Option<i64>, Vec<u32>)>> {
+        let Some(mut rng) = pyrandom::Mt19937::from_state(&state) else {
+            return Ok(None);
+        };
+        let (b, root) = py.detach(|| {
+            let b = degree_generators::random_labeled_tree(n, &mut rng);
+            let root = if rooted {
+                rng.randint(0, n as i64 - 1)
+            } else {
+                None
+            };
+            (b, root)
+        });
+        fill_generated(py, &b, g, None)?;
+        Ok(Some((root, rng.state())))
+    }
+
+    /// `random_cograph(n)` into `g`.
+    #[staticmethod]
+    fn dg_cograph(
+        py: Python<'_>,
+        n: u32,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        if n > 26 {
+            return Err(PyValueError::new_err("too many nodes"));
+        }
+        rg_run(py, &state, g, None, |rng| {
+            Some(degree_generators::random_cograph(n, rng))
+        })
     }
 
     /// `greedy_color` (largest_first): processing order and each node's color.

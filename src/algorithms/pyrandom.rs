@@ -142,6 +142,14 @@ impl Mt19937 {
         a + (b - a) * self.random()
     }
 
+    /// `Random.paretovariate(alpha)`: `(1.0 - random()) ** (-1.0 / alpha)`.
+    /// Python raises where `pow` overflows (an infinite result here) and
+    /// for `alpha == 0`; callers check both.
+    pub fn paretovariate(&mut self, alpha: f64) -> f64 {
+        let u = 1.0 - self.random();
+        u.powf(-1.0 / alpha)
+    }
+
     /// `Random.sample(population, k)` for `k <= len(population)`: a pool
     /// for small populations, else rejection against the picks so far.
     pub fn sample<T: Copy>(&mut self, population: &[T], k: usize) -> Vec<T> {
@@ -179,7 +187,8 @@ impl Mt19937 {
 /// Replays `random.Random` calls for the tests: `(op, a, b)` with op 0
 /// `random()`, 1 `getrandbits(a)`, 2 `_randbelow(a)`, 3 `randrange(a, b)`,
 /// 4 `randint(a, b)`, 5 `choice(range(a))`, 6 `uniform(a, b)` (as
-/// floats), 7 `sample(range(a), b)`, 8 `shuffle(list(range(a)))`.
+/// floats), 7 `sample(range(a), b)`, 8 `shuffle(list(range(a)))`, 9
+/// `paretovariate(a / b)` (as floats).
 /// Each op's results come back as floats or ints; `None` for an op whose
 /// arguments the replica doesn't cover.
 pub enum Draw {
@@ -212,6 +221,7 @@ pub fn replay(rng: &mut Mt19937, ops: &[(u8, i64, i64)]) -> Vec<Draw> {
                 rng.shuffle(&mut x);
                 Draw::Ints(x)
             }
+            9 if a != 0 && b != 0 => Draw::Float(rng.paretovariate(a as f64 / b as f64)),
             _ => Draw::Unsupported,
         })
         .collect()
