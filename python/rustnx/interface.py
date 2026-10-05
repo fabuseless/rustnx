@@ -6,6 +6,8 @@ NetworkX looks up algorithms on this module by name, and calls
 
 import functools
 import inspect
+import os
+import sys
 
 import networkx as nx
 
@@ -557,6 +559,14 @@ globals().update({name: _make_entry(name) for name in algorithms.__all__})
 def can_run(name, args, kwargs):
     if name not in _OUR_PARAMS:
         return False
+    if (
+        _takes_no_graph(name)
+        and _input_size(name, args, kwargs) < SMALL_INPUT
+        and not _backend_requested()
+    ):
+        # NetworkX skips `should_run` for calls without graph inputs, so a
+        # small input is declined here; NetworkX then runs its own code.
+        return "input is small; NetworkX is faster"
     try:
         arguments, unsupported = _bind(name, args, kwargs)
     except TypeError:
@@ -589,3 +599,148 @@ def should_run(name, args, kwargs):
     if len(G) < SMALL_GRAPH_NODES:
         return "graph is small; NetworkX is faster"
     return True
+
+
+def _backend_requested():
+    """Whether this call came with ``backend="rustnx"`` rather than through
+    ``nx.config.backend_priority``.
+
+    NetworkX doesn't tell ``can_run`` which, and declining a call the user
+    sent to rustnx explicitly would raise instead of running NetworkX's
+    code, so read the dispatcher's own ``backend`` argument (``__call__`` in
+    NetworkX 3.4, ``_call_if_any_backends_installed`` from 3.5). Anything
+    unexpected counts as requested, so rustnx runs as it would without the
+    check. NetworkX's own test suite with rustnx enabled always runs rustnx.
+    """
+    from networkx.utils.backends import _dispatchable
+
+    if _dispatchable._is_testing:
+        return True
+    frame = sys._getframe(2)
+    for _ in range(6):
+        if frame is None:
+            break
+        if frame.f_code.co_name in ("__call__", "_call_if_any_backends_installed"):
+            local = frame.f_locals
+            if isinstance(local.get("self"), _dispatchable) and "backend" in local:
+                return local["backend"] is not None
+        frame = frame.f_back
+    return True
+
+
+# Generators, readers and graph builders take no graph. Below this input
+# size (nodes, edges, lines or bytes, roughly) NetworkX's own code is faster
+# than rustnx's dispatch overhead (measured: rustnx wins from about 30 to
+# 100 elements up).
+SMALL_INPUT = 100
+
+_LARGE = 1 << 62
+
+
+@functools.cache
+def _takes_no_graph(name):
+    from networkx.utils.backends import _registered_algorithms
+
+    func = _registered_algorithms.get(name)
+    return func is not None and not func.graphs
+
+
+def _power(base, exponent):
+    """``base ** exponent`` for size estimates, without building huge ints."""
+    if type(base) is not int or type(exponent) is not int or exponent < 0:
+        return _LARGE
+    if base <= 1 or exponent <= 1:
+        return abs(base) if exponent == 1 else 1
+    return base**exponent if exponent * base.bit_length() < 62 else _LARGE
+
+
+def _product(*values):
+    out = 1
+    for v in values:
+        out *= _size_of(v)
+        if out >= _LARGE:
+            return _LARGE
+    return out
+
+
+# Generators whose size isn't their largest argument.
+_SIZE_ESTIMATES = {
+    "balanced_tree": lambda a: _power(a.get("r"), a.get("h")),
+    "binomial_tree": lambda a: _power(2, a.get("n")),
+    "hypercube_graph": lambda a: _power(2, a.get("n")),
+    "dorogovtsev_goltsev_mendes_graph": lambda a: _power(3, a.get("n")),
+    "mycielski_graph": lambda a: _power(2, a.get("n")),
+    "sudoku_graph": lambda a: _power(a.get("n", 3), 4),
+    "complete_graph": lambda a: _product(a.get("n"), a.get("n")),
+    "complete_bipartite_graph": lambda a: _product(a.get("n1"), a.get("n2")),
+    "grid_2d_graph": lambda a: _product(a.get("m"), a.get("n")),
+    "hexagonal_lattice_graph": lambda a: _product(a.get("m"), a.get("n")),
+    "triangular_lattice_graph": lambda a: _product(a.get("m"), a.get("n")),
+    "grid_graph": lambda a: _product(*a["dim"]) if isinstance(a.get("dim"), (list, tuple)) else _LARGE,
+    "caveman_graph": lambda a: _product(a.get("l"), a.get("k"), a.get("k")),
+    "connected_caveman_graph": lambda a: _product(a.get("l"), a.get("k"), a.get("k")),
+    "ring_of_cliques": lambda a: _product(a.get("num_cliques"), a.get("clique_size"), a.get("clique_size")),
+    "windmill_graph": lambda a: _product(a.get("n"), a.get("k"), a.get("k")),
+    "kneser_graph": lambda a: _product(a.get("n"), a.get("n"), a.get("k")),
+    "circulant_graph": lambda a: _product(a.get("n"), a.get("offsets")),
+}
+
+
+def _size_of(value):
+    """A rough size for one argument; unknown kinds count as large."""
+    if value is None or type(value) is bool or isinstance(value, type):
+        return 0  # flags, and graph classes (`create_using`, `default`)
+    if isinstance(value, int):
+        return abs(value)
+    if isinstance(value, float):
+        return 0
+    if isinstance(value, (str, bytes, bytearray, list, tuple, dict, set, frozenset, range)):
+        return len(value)
+    nnz = getattr(value, "nnz", None)  # SciPy sparse arrays
+    if isinstance(nnz, int):
+        return nnz
+    size = getattr(value, "size", None)  # NumPy arrays
+    if isinstance(size, int):
+        return size
+    try:  # an open file: its length in bytes
+        return os.fstat(value.fileno()).st_size
+    except (AttributeError, OSError, TypeError, ValueError):
+        return _LARGE
+
+
+@functools.cache
+def _param_names(name):
+    params = _nx_signature(name).parameters.values()
+    if any(p.kind is p.VAR_POSITIONAL for p in params):
+        return None
+    return tuple(p.name for p in params)
+
+
+def _input_size(name, args, kwargs):
+    # Cheaper than binding the signature: this runs on every automatic call.
+    names = _param_names(name)
+    if names is None or len(args) > len(names):
+        return _LARGE  # let rustnx raise the usual error
+    arguments = dict(zip(names, args))
+    arguments.update(kwargs)
+    estimate = _SIZE_ESTIMATES.get(name)
+    if estimate is not None:
+        try:
+            return estimate(arguments)
+        except (TypeError, ValueError, KeyError):
+            return _LARGE
+    size = 0
+    for key, value in arguments.items():
+        if key in ("create_using", "default", "backend", "seed"):
+            continue
+        if isinstance(value, (str, os.PathLike)) and name.startswith("read_"):
+            try:
+                value = os.path.getsize(value)
+            except OSError:
+                return _LARGE  # NetworkX raises the error
+        else:
+            value = _size_of(value)
+        if value >= SMALL_INPUT:
+            return value
+        size = max(size, value)
+    return size
