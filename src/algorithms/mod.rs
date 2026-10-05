@@ -24,6 +24,7 @@ pub mod paths;
 pub mod pyrandom;
 pub mod pyset;
 pub mod random_generators;
+pub mod random_generators_more;
 pub mod readwrite;
 pub mod shortest_paths_more;
 pub mod spectral;
