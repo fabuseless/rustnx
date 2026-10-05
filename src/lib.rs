@@ -19,8 +19,8 @@ use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
     approximation, bipartite, centrality, centrality_more, cluster, communities, connectivity,
     conversion, cores_more, dag, directed, distance, flow, generators, graph_classes, isomorphism,
-    leftovers, matching, measures, paths, pyrandom, pyset, random_generators, spectral, structure,
-    structure_more, trees_more,
+    leftovers, matching, measures, paths, pyrandom, pyset, random_generators, readwrite, spectral,
+    structure, structure_more, trees_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -5443,6 +5443,294 @@ impl CoreGraph {
                 Some(bottom) => Some(random_generators::gnmk(n, bottom, k, directed, rng)),
             },
         )
+    }
+
+    // --- Batch 20: readers and parsers ---
+
+    /// `parse_edgelist` (and bipartite `parse_edgelist`) into the empty
+    /// graph `graph`. `data`: 0 ignores edge data, 1 is `literal_eval`
+    /// (joined with "," if `comma`, then stripped if `strip`), 2 converts
+    /// with `keys` and `types` (nodetype codes). Returns False, leaving
+    /// `graph` untouched, where NetworkX must run instead.
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (graph, lines, mode, comments, delimiter, nodetype, data, keys, types, comma, strip, bipartite))]
+    fn rw_edgelist(
+        py: Python<'_>,
+        graph: &Bound<'_, PyAny>,
+        lines: &Bound<'_, PyAny>,
+        mode: u8,
+        comments: Option<&str>,
+        delimiter: Option<&str>,
+        nodetype: u8,
+        data: u8,
+        keys: Vec<String>,
+        types: Vec<u8>,
+        comma: bool,
+        strip: bool,
+        bipartite: bool,
+    ) -> PyResult<bool> {
+        let (Some(items), Some(nodetype)) = (
+            readwrite::string_items(lines, mode),
+            readwrite::NodeType::from_code(nodetype),
+        ) else {
+            return Ok(false);
+        };
+        let Some(strs) = readwrite::split_lines(&items, mode) else {
+            return Ok(false);
+        };
+        let data = match data {
+            0 => readwrite::EdgeData::Ignore,
+            1 => readwrite::EdgeData::Literal { comma, strip },
+            _ => {
+                let Some(spec) = keys
+                    .into_iter()
+                    .zip(types)
+                    .map(|(k, t)| readwrite::NodeType::from_code(t).map(|t| (k, t)))
+                    .collect::<Option<Vec<_>>>()
+                else {
+                    return Ok(false);
+                };
+                readwrite::EdgeData::Typed(spec)
+            }
+        };
+        let parsed = py
+            .detach(|| readwrite::edgelist(&strs, comments, delimiter, nodetype, &data, bipartite));
+        match parsed {
+            Some(parsed) => readwrite::apply(py, &parsed, graph).map(|_| true),
+            None => Ok(false),
+        }
+    }
+
+    /// `parse_adjlist` into the empty graph `graph` (see `rw_edgelist`).
+    #[staticmethod]
+    fn rw_adjlist(
+        py: Python<'_>,
+        graph: &Bound<'_, PyAny>,
+        lines: &Bound<'_, PyAny>,
+        mode: u8,
+        comments: &str,
+        delimiter: Option<&str>,
+        nodetype: u8,
+    ) -> PyResult<bool> {
+        let (Some(items), Some(nodetype)) = (
+            readwrite::string_items(lines, mode),
+            readwrite::NodeType::from_code(nodetype),
+        ) else {
+            return Ok(false);
+        };
+        let Some(strs) = readwrite::split_lines(&items, mode) else {
+            return Ok(false);
+        };
+        match py.detach(|| readwrite::adjlist(&strs, comments, delimiter, nodetype)) {
+            Some(parsed) => readwrite::apply(py, &parsed, graph).map(|_| true),
+            None => Ok(false),
+        }
+    }
+
+    /// `parse_multiline_adjlist` into the empty graph `graph`; `edgetype` is
+    /// 0 for `literal_eval`, else a nodetype code plus one.
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    fn rw_multiline_adjlist(
+        py: Python<'_>,
+        graph: &Bound<'_, PyAny>,
+        lines: &Bound<'_, PyAny>,
+        mode: u8,
+        comments: &str,
+        delimiter: Option<&str>,
+        nodetype: u8,
+        edgetype: u8,
+    ) -> PyResult<bool> {
+        let edgetype = match edgetype {
+            0 => None,
+            t => match readwrite::NodeType::from_code(t - 1) {
+                Some(t) => Some(t),
+                None => return Ok(false),
+            },
+        };
+        let (Some(items), Some(nodetype)) = (
+            readwrite::string_items(lines, mode),
+            readwrite::NodeType::from_code(nodetype),
+        ) else {
+            return Ok(false);
+        };
+        let Some(strs) = readwrite::split_lines(&items, mode) else {
+            return Ok(false);
+        };
+        let parsed = py.detach(|| {
+            readwrite::multiline_adjlist(&strs, comments, delimiter, nodetype, edgetype)
+        });
+        match parsed {
+            Some(parsed) => readwrite::apply(py, &parsed, graph).map(|_| true),
+            None => Ok(false),
+        }
+    }
+
+    /// `parse_leda` (`kind` 0) or `parse_pajek` (`kind` 1): the new graph, or
+    /// None where NetworkX must run instead.
+    #[staticmethod]
+    fn rw_leda_pajek<'py>(
+        py: Python<'py>,
+        lines: &Bound<'py, PyAny>,
+        mode: u8,
+        kind: u8,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        let Some(items) = readwrite::string_items(lines, mode) else {
+            return Ok(None);
+        };
+        let Some(strs) = readwrite::split_lines(&items, mode) else {
+            return Ok(None);
+        };
+        let parsed = py.detach(|| {
+            if kind == 0 {
+                readwrite::leda(&strs)
+            } else {
+                readwrite::pajek(&strs)
+            }
+        });
+        let Some(parsed) = parsed else {
+            return Ok(None);
+        };
+        let graph = readwrite::new_nx_graph(py, parsed.class.0, parsed.class.1)?;
+        readwrite::apply(py, &parsed, &graph)?;
+        Ok(Some(graph))
+    }
+
+    /// `from_graph6_bytes` (`sparse` false) or `from_sparse6_bytes` for each
+    /// of `chunks`; `file` reads them as `read_graph6` / `read_sparse6` do
+    /// (one per stripped, non-empty line of the one chunk). None if any
+    /// fails, so NetworkX runs instead.
+    #[staticmethod]
+    fn rw_graph6<'py>(
+        py: Python<'py>,
+        data: &Bound<'py, PyBytes>,
+        sparse: bool,
+        file: bool,
+        strip_newline: bool,
+    ) -> PyResult<Option<Vec<Bound<'py, PyAny>>>> {
+        let bytes = data.as_bytes();
+        let chunks: Vec<&[u8]> = if file {
+            bytes
+                .split_inclusive(|&c| c == b'\n')
+                .map(readwrite::py_bytes_strip)
+                .filter(|line| !line.is_empty())
+                .collect()
+        } else {
+            vec![bytes]
+        };
+        let parsed = py.detach(|| {
+            chunks
+                .iter()
+                .map(|c| {
+                    if sparse {
+                        readwrite::sparse6(c)
+                    } else {
+                        readwrite::graph6(c, strip_newline)
+                    }
+                })
+                .collect::<Option<Vec<_>>>()
+        });
+        let Some(parsed) = parsed else {
+            return Ok(None);
+        };
+        let mut graphs = Vec::with_capacity(parsed.len());
+        for p in &parsed {
+            let graph = readwrite::new_nx_graph(py, p.class.0, p.class.1)?;
+            readwrite::apply(py, p, &graph)?;
+            graphs.push(graph);
+        }
+        Ok(Some(graphs))
+    }
+
+    /// `parse_gml` / `read_gml` with `destringizer=None`: the new graph, or
+    /// None where NetworkX must run instead. `mode` as for
+    /// `readwrite::gml_lines` (lists are mode 0, single strings 1 or 3).
+    #[staticmethod]
+    #[pyo3(signature = (lines, mode, label))]
+    fn rw_gml<'py>(
+        py: Python<'py>,
+        lines: &Bound<'py, PyAny>,
+        mode: u8,
+        label: Option<&str>,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        let Some(items) = readwrite::string_items(lines, mode.min(1)) else {
+            return Ok(None);
+        };
+        let Some(strs) = readwrite::gml_lines(&items, mode) else {
+            return Ok(None);
+        };
+        let Some(parsed) = py.detach(|| readwrite::gml(&strs, label)) else {
+            return Ok(None);
+        };
+        let graph = readwrite::new_nx_graph(py, parsed.class.0, parsed.class.1)?;
+        readwrite::apply(py, &parsed, &graph)?;
+        Ok(Some(graph))
+    }
+
+    /// The loops of `node_link_graph` into the new, empty graph `graph`.
+    /// False (leaving `graph` partly built) where NetworkX must run instead.
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    fn rw_node_link<'py>(
+        graph: &Bound<'py, PyAny>,
+        nodes: &Bound<'py, PyAny>,
+        edges: &Bound<'py, PyAny>,
+        source: Bound<'py, PyAny>,
+        target: Bound<'py, PyAny>,
+        name: Bound<'py, PyAny>,
+        key: Bound<'py, PyAny>,
+    ) -> bool {
+        let names = readwrite::NodeLinkNames {
+            source,
+            target,
+            name,
+            key,
+        };
+        readwrite::PyBuilder::new(graph)
+            .and_then(|b| readwrite::node_link(&b, nodes, edges, &names))
+            .is_some()
+    }
+
+    /// The loops of `adjacency_graph` (see `rw_node_link`).
+    #[staticmethod]
+    fn rw_adjacency<'py>(
+        graph: &Bound<'py, PyAny>,
+        nodes: &Bound<'py, PyAny>,
+        adjacency: &Bound<'py, PyAny>,
+        id: &Bound<'py, PyAny>,
+        key: &Bound<'py, PyAny>,
+    ) -> bool {
+        readwrite::PyBuilder::new(graph)
+            .and_then(|b| readwrite::adjacency(&b, nodes, adjacency, id, key))
+            .is_some()
+    }
+
+    /// The loops of `cytoscape_graph` (see `rw_node_link`).
+    #[staticmethod]
+    fn rw_cytoscape<'py>(
+        graph: &Bound<'py, PyAny>,
+        nodes: &Bound<'py, PyAny>,
+        edges: &Bound<'py, PyAny>,
+        name: &Bound<'py, PyAny>,
+        ident: &Bound<'py, PyAny>,
+    ) -> bool {
+        readwrite::PyBuilder::new(graph)
+            .and_then(|b| readwrite::cytoscape(&b, nodes, edges, name, ident))
+            .is_some()
+    }
+
+    /// `tree_graph` into the new, empty DiGraph `graph` (see `rw_node_link`).
+    #[staticmethod]
+    fn rw_tree<'py>(
+        graph: &Bound<'py, PyAny>,
+        data: &Bound<'py, PyAny>,
+        ident: &Bound<'py, PyAny>,
+        children: &Bound<'py, PyAny>,
+    ) -> bool {
+        readwrite::PyBuilder::new(graph)
+            .and_then(|b| readwrite::tree(&b, data, ident, children))
+            .is_some()
     }
 
     /// `greedy_color` (largest_first): processing order and each node's color.

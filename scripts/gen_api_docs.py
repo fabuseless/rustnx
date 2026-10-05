@@ -255,6 +255,14 @@ SECTIONS = [
         "complement", "power", "difference", "symmetric_difference", "is_kl_connected",
         "kl_connected_subgraph",
     ]),
+    ("Reading and parsing", [
+        "parse_edgelist", "read_edgelist", "read_weighted_edgelist", "bipartite_parse_edgelist",
+        "bipartite_read_edgelist", "parse_adjlist", "read_adjlist", "parse_multiline_adjlist",
+        "read_multiline_adjlist", "parse_leda", "read_leda", "parse_pajek", "read_pajek",
+        "from_graph6_bytes", "read_graph6", "from_sparse6_bytes", "read_sparse6",
+        "node_link_graph", "adjacency_graph", "cytoscape_graph", "tree_graph", "parse_gml",
+        "read_gml",
+    ]),
 ]
 
 FLOWNOTE = "Capacities (and the flow values) can be ints or floats, mixed or missing (infinite): every value, its type and the order of every float addition are NetworkX's."
@@ -781,6 +789,50 @@ NOTES.update({
     "waxman_graph": RANDOM + " A `metric` falls back. Without `L`, a draw within rounding error of its threshold makes the call fall back (`math.dist` and Rust's `hypot` may differ in the last bit).",
     "random_graph": RANDOM + " As `nx.bipartite.random_graph`. `p >= 1` falls back.",
     "gnmk_random_graph": RANDOM + " As `nx.bipartite.gnmk_random_graph`. `k >= n * m` falls back.",
+})
+# Batch 20: readers and parsers.
+READ = "Reads a binary file or path (`.gz` and `.bz2` too) decoded as UTF-8, ASCII or Latin-1; other encodings, text-mode files and anything rustnx declines are read by NetworkX from the same position."
+PARSE = "Lines as a list or tuple of `str`, or an iterator (read once; if rustnx declines, NetworkX's code runs on the same lines)."
+CREATE = " `create_using`: `None` or a plain NetworkX graph class or instance."
+LITERAL = " `data=True` handles flat dicts of `str`, `int`, `float`, `bool` and `None` values; other edge data falls back."
+NOTES.update({
+    "parse_edgelist": PARSE + CREATE + LITERAL + " `nodetype` and typed `data`: `int`, `float` or `str`.",
+    "read_edgelist": READ + CREATE + LITERAL,
+    "read_weighted_edgelist": READ + CREATE,
+    "bipartite_parse_edgelist": PARSE + CREATE + LITERAL,
+    "bipartite_read_edgelist": READ + CREATE + LITERAL,
+    "parse_adjlist": PARSE + CREATE + " `nodetype`: `int`, `float` or `str`.",
+    "read_adjlist": READ + CREATE,
+    "parse_multiline_adjlist": "Iterators only (NetworkX calls `next(lines)`, so lists fail there); see `parse_edgelist`." + CREATE + LITERAL,
+    "read_multiline_adjlist": READ + CREATE + LITERAL,
+    "parse_leda": PARSE + " A `str` is split at newlines as in NetworkX.",
+    "read_leda": READ,
+    "parse_pajek": PARSE + " A `str` is split at newlines as in NetworkX. Replays `shlex.split` (quotes and escapes); `*matrix` sections fall back.",
+    "read_pajek": READ + " `*matrix` sections fall back.",
+    "from_graph6_bytes": "`bytes` input; follows the installed NetworkX on trailing newlines (ignored from 3.5).",
+    "read_graph6": READ.split(" decoded")[0] + "; one graph or a list, as in NetworkX.",
+    "from_sparse6_bytes": "`bytes` input. Returns a `MultiGraph` when there are parallel edges, as NetworkX does.",
+    "read_sparse6": READ.split(" decoded")[0] + "; one graph or a list, as in NetworkX.",
+})
+JSON = "Replays NetworkX's `add_node` / `add_edge` calls on the same objects. Nodes and keys must be `str`, `int`, `float`, `bool`, or tuples of those; plain `dict` and `list` input only; anything else falls back."
+NOTES.update({
+    "node_link_graph": JSON + " `G.graph` is `data[\"graph\"]` itself, as in NetworkX. In 3.4 and 3.5, leaving out `edges` (which warns there) falls back.",
+    "adjacency_graph": JSON,
+    "cytoscape_graph": JSON,
+    "tree_graph": JSON + " Trees deeper than 200 levels fall back (NetworkX recurses per level).",
+})
+GML = "`destringizer=None` only. Node ids, labels and keys must be ints, floats, strings or `()`; edges must name a node by its id's own type. Named character references other than `&amp;`, `&lt;`, `&gt;` and `&quot;`, and ints beyond 64 bits, fall back."
+NOTES.update({
+    "parse_gml": PARSE + " A `str` is split at line boundaries as in NetworkX. " + GML,
+    "read_gml": READ.replace("decoded as UTF-8, ASCII or Latin-1", "decoded as ASCII") + " " + GML,
+})
+SUBMODULE.update({
+    name: "nx.readwrite.json_graph"
+    for name in ["node_link_graph", "adjacency_graph", "cytoscape_graph", "tree_graph"]
+})
+QUALIFIED.update({
+    "bipartite_parse_edgelist": "nx.bipartite.parse_edgelist",
+    "bipartite_read_edgelist": "nx.bipartite.read_edgelist",
 })
 
 

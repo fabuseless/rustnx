@@ -28,6 +28,7 @@ from . import _core
 __all__ = [
     "LCF_graph",
     "adamic_adar_index",
+    "adjacency_graph",
     "adjacency_matrix",
     "all_pairs_all_shortest_paths",
     "all_pairs_bellman_ford_path",
@@ -84,6 +85,8 @@ __all__ = [
     "bidirectional_shortest_path",
     "binomial_tree",
     "bipartite_closeness_centrality",
+    "bipartite_parse_edgelist",
+    "bipartite_read_edgelist",
     "boruvka_mst_edges",
     "boundary_expansion",
     "boykov_kolmogorov",
@@ -127,6 +130,7 @@ __all__ = [
     "cut_size",
     "cycle_basis",
     "cycle_graph",
+    "cytoscape_graph",
     "dag_longest_path",
     "dag_longest_path_length",
     "dag_to_branching",
@@ -191,10 +195,12 @@ __all__ = [
     "from_dict_of_dicts",
     "from_dict_of_lists",
     "from_edgelist",
+    "from_graph6_bytes",
     "from_nested_tuple",
     "from_numpy_array",
     "from_prufer_sequence",
     "from_scipy_sparse_array",
+    "from_sparse6_bytes",
     "full_rary_tree",
     "generalized_degree",
     "generalized_petersen_graph",
@@ -370,6 +376,7 @@ __all__ = [
     "node_degree_xy",
     "node_disjoint_paths",
     "node_expansion",
+    "node_link_graph",
     "node_redundancy",
     "normalized_cut_size",
     "number_attracting_components",
@@ -388,6 +395,12 @@ __all__ = [
     "overlapping_modularity",
     "pagerank",
     "paley_graph",
+    "parse_adjlist",
+    "parse_edgelist",
+    "parse_gml",
+    "parse_leda",
+    "parse_multiline_adjlist",
+    "parse_pajek",
     "partition_quality",
     "partition_spanning_tree",
     "path_graph",
@@ -412,6 +425,15 @@ __all__ = [
     "random_tournament",
     "random_uniform_k_out_graph",
     "randomized_partitioning",
+    "read_adjlist",
+    "read_edgelist",
+    "read_gml",
+    "read_graph6",
+    "read_leda",
+    "read_multiline_adjlist",
+    "read_pajek",
+    "read_sparse6",
+    "read_weighted_edgelist",
     "reciprocity",
     "relabel_nodes",
     "resource_allocation_index",
@@ -465,6 +487,7 @@ __all__ = [
     "transitivity",
     "tree_all_pairs_lowest_common_ancestor",
     "tree_centroid",
+    "tree_graph",
     "tree_isomorphism",
     "treewidth_decomp",
     "treewidth_min_fill_in",
@@ -11486,3 +11509,489 @@ def gnmk_random_graph(n, m, k, seed=None, directed=False):
         )
     G.name = f"bipartite_gnm_random_graph({n},{m},{k})"
     return G
+
+
+# --- Batch 20: readers and parsers ----------------------------------------------------
+#
+# The Rust side parses the text and fills a new NetworkX graph's dicts the way
+# `add_node` / `add_edge` would, or gives up (returning False / None) wherever
+# NetworkX would raise or Python's conversions might do something it doesn't
+# model. Giving up raises NotImplementedError before anything visible has
+# happened: files are rewound to where they were, so NetworkX reads them again.
+
+
+def _rw_new_graph(create_using):
+    """``nx.empty_graph(0, create_using)`` for plain NetworkX graph classes
+    and instances (NetworkX clears an instance and fills it)."""
+    if create_using is None:
+        return nx.Graph()
+    if isinstance(create_using, type) and create_using in _RW_PLAIN_CLASSES:
+        return create_using()
+    if type(create_using) in _RW_PLAIN_CLASSES and not getattr(create_using, "frozen", False):
+        create_using.clear()
+        return create_using
+    raise NotImplementedError("rustnx builds plain NetworkX graphs only")
+
+
+_RW_PLAIN_CLASSES = (nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph)
+
+# Codecs where decoding a whole file equals decoding each b"\n"-terminated
+# line on its own (what NetworkX does while iterating a binary file).
+_RW_LINE_CODECS = {"utf-8", "ascii", "iso8859-1"}
+
+
+def _rw_nodetype(nodetype, allow_none=True):
+    if nodetype is None and allow_none or nodetype is str:
+        return 0
+    if nodetype is int:
+        return 1
+    if nodetype is float:
+        return 2
+    raise NotImplementedError("rustnx converts with int, float or str only")
+
+
+def _rw_text_arg(text):
+    if type(text) is not str or text == "":
+        raise NotImplementedError("rustnx needs a non-empty str here")
+    return text
+
+
+def _rw_lines(lines):
+    """``(items, rerun)`` for the ``lines`` argument of a parser: a list (or
+    tuple) is parsed as it is; an iterator is read into a list, and since
+    NetworkX can't read it again, ``rerun`` is True: if rustnx gives up,
+    NetworkX's own code runs here on an iterator over the same lines. Other
+    iterables fall back untouched."""
+    if type(lines) is list:
+        return lines, False
+    if type(lines) is tuple:
+        return list(lines), False
+    if hasattr(lines, "__next__"):
+        return list(lines), True
+    raise NotImplementedError("rustnx parses lists of lines or iterators")
+
+
+def _rw_networkx(name):
+    return nx.utils.backends._registered_algorithms[name].orig_func
+
+
+_RW_BINARY_FILES = None
+
+
+def _rw_read_bytes(path):
+    """``(data, rewind)``: everything left in the binary file ``path``, and a
+    function putting the file back where it was."""
+    global _RW_BINARY_FILES
+    if _RW_BINARY_FILES is None:
+        import bz2
+        import gzip
+        import io
+
+        _RW_BINARY_FILES = (
+            io.BufferedReader, io.BufferedRandom, io.BytesIO, io.FileIO,
+            gzip.GzipFile, bz2.BZ2File,
+        )
+    if type(path) not in _RW_BINARY_FILES:
+        raise NotImplementedError("rustnx reads paths and binary files only")
+    try:
+        if not path.seekable():
+            raise NotImplementedError("rustnx needs a seekable file")
+        position = path.tell()
+        data = path.read()
+    except (OSError, ValueError):
+        raise NotImplementedError("NetworkX reads this file") from None
+
+    def rewind():
+        path.seek(position)
+
+    if type(data) is not bytes:
+        rewind()
+        raise NotImplementedError("NetworkX reads this file")
+    return data, rewind
+
+
+def _rw_read_text(path, encoding):
+    """``(text, rewind)``: ``_rw_read_bytes`` decoded as NetworkX decodes
+    each line."""
+    import codecs
+
+    try:
+        name = codecs.lookup(encoding).name if type(encoding) is str else None
+    except LookupError:
+        name = None
+    if name not in _RW_LINE_CODECS:
+        raise NotImplementedError("rustnx decodes UTF-8, ASCII and Latin-1 only")
+    data, rewind = _rw_read_bytes(path)
+    try:
+        text = data.decode(encoding)
+    except UnicodeDecodeError:
+        rewind()
+        raise NotImplementedError("NetworkX raises for this file") from None
+    return text, rewind
+
+
+# Names `add_edge(u, v, **data)` binds to a parameter instead of storing.
+_RW_RESERVED_KEYS = {"self", "u_of_edge", "v_of_edge", "u_for_edge", "v_for_edge", "key"}
+
+
+def _rw_edge_data(data):
+    """``(kind, keys, types)`` for ``parse_edgelist``'s ``data``."""
+    if data is True:
+        return 1, [], []
+    if data is False:
+        return 0, [], []
+    if type(data) not in (list, tuple):
+        raise NotImplementedError("rustnx needs data=True, False or (key, type) pairs")
+    keys, types = [], []
+    for item in data:
+        if type(item) not in (list, tuple) or len(item) != 2:
+            raise NotImplementedError("rustnx needs (key, type) pairs")
+        key, kind = item
+        if type(key) is not str or key in _RW_RESERVED_KEYS:
+            raise NotImplementedError("rustnx needs str attribute names")
+        keys.append(key)
+        types.append(_rw_nodetype(kind, allow_none=False))
+    return 2, keys, types
+
+
+def _rw_edgelist_args(comments, delimiter, create_using, nodetype, data, bipartite):
+    """Checks ``parse_edgelist``'s arguments (before any lines are read) and
+    returns ``parse(lines, mode)``: the new graph, or None where NetworkX
+    must run."""
+    # Bipartite parse_edgelist calls line.find(comments) without a None check.
+    if (comments is not None or bipartite) and type(comments) is not str:
+        raise NotImplementedError("rustnx needs a str for comments")
+    if delimiter is not None:
+        _rw_text_arg(delimiter)
+    code = _rw_nodetype(nodetype)
+    kind, keys, types = _rw_edge_data(data)
+    G = _rw_new_graph(create_using)
+    # NetworkX joins the data tokens with "," for delimiter="," (and strips
+    # them); bipartite parse_edgelist always joins with " ".
+    comma = delimiter == "," and not bipartite
+
+    def parse(lines, mode):
+        done = _core.CoreGraph.rw_edgelist(
+            G, lines, mode, comments, delimiter, code, kind, keys, types,
+            comma, not bipartite, bipartite,
+        )
+        return G if done else None
+
+    return parse
+
+
+def _rw_parse(name, lines, parse, **kwargs):
+    """Runs ``parse`` on the lines of a parser's ``lines`` argument (see
+    ``_rw_lines``)."""
+    items, rerun = _rw_lines(lines)
+    G = parse(items, 0)
+    if G is not None:
+        return G
+    if rerun:
+        return _rw_networkx(name)(iter(items), **kwargs)
+    raise NotImplementedError("NetworkX parses these lines")
+
+
+def _rw_read(path, encoding, parse):
+    text, rewind = _rw_read_text(path, encoding)
+    G = parse(text, 1)
+    if G is None:
+        rewind()
+        raise NotImplementedError("NetworkX parses this file")
+    return G
+
+
+def parse_edgelist(lines, comments="#", delimiter=None, create_using=None, nodetype=None,
+                   data=True):
+    parse = _rw_edgelist_args(comments, delimiter, create_using, nodetype, data, False)
+    return _rw_parse(
+        "parse_edgelist", lines, parse, comments=comments, delimiter=delimiter,
+        create_using=create_using, nodetype=nodetype, data=data,
+    )
+
+
+def read_edgelist(path, comments="#", delimiter=None, create_using=None, nodetype=None,
+                  data=True, edgetype=None, encoding="utf-8"):
+    parse = _rw_edgelist_args(comments, delimiter, create_using, nodetype, data, False)
+    return _rw_read(path, encoding, parse)
+
+
+@functools.cache
+def _rw_open_file():
+    """NetworkX's own ``open_file`` decorator (the same in every version),
+    which ``read_weighted_edgelist`` gets through ``read_edgelist``."""
+    return nx.utils.open_file(0, mode="rb")(read_edgelist)
+
+
+def read_weighted_edgelist(path, comments="#", delimiter=None, create_using=None,
+                           nodetype=None, encoding="utf-8"):
+    return _rw_open_file()(
+        path, comments=comments, delimiter=delimiter, create_using=create_using,
+        nodetype=nodetype, data=(("weight", float),), encoding=encoding,
+    )
+
+
+def bipartite_parse_edgelist(lines, comments="#", delimiter=None, create_using=None,
+                             nodetype=None, data=True):
+    parse = _rw_edgelist_args(comments, delimiter, create_using, nodetype, data, True)
+    return _rw_parse(
+        "bipartite_parse_edgelist", lines, parse, comments=comments,
+        delimiter=delimiter, create_using=create_using, nodetype=nodetype, data=data,
+    )
+
+
+def bipartite_read_edgelist(path, comments="#", delimiter=None, create_using=None,
+                            nodetype=None, data=True, edgetype=None, encoding="utf-8"):
+    parse = _rw_edgelist_args(comments, delimiter, create_using, nodetype, data, True)
+    return _rw_read(path, encoding, parse)
+
+
+def _rw_adjlist_args(comments, delimiter, create_using, nodetype, edgetype=False):
+    """Like ``_rw_edgelist_args``, for ``parse_adjlist`` (or, with
+    ``edgetype`` not False, ``parse_multiline_adjlist``)."""
+    if type(comments) is not str:
+        raise NotImplementedError("rustnx needs a str for comments")
+    if delimiter is not None:
+        _rw_text_arg(delimiter)
+    code = _rw_nodetype(nodetype)
+    if edgetype is not False:
+        edge_code = 0 if edgetype is None else _rw_nodetype(edgetype, allow_none=False) + 1
+    G = _rw_new_graph(create_using)
+
+    def parse(lines, mode):
+        if edgetype is False:
+            done = _core.CoreGraph.rw_adjlist(G, lines, mode, comments, delimiter, code)
+        else:
+            done = _core.CoreGraph.rw_multiline_adjlist(
+                G, lines, mode, comments, delimiter, code, edge_code
+            )
+        return G if done else None
+
+    return parse
+
+
+def parse_adjlist(lines, comments="#", delimiter=None, create_using=None, nodetype=None):
+    parse = _rw_adjlist_args(comments, delimiter, create_using, nodetype)
+    return _rw_parse(
+        "parse_adjlist", lines, parse, comments=comments, delimiter=delimiter,
+        create_using=create_using, nodetype=nodetype,
+    )
+
+
+def read_adjlist(path, comments="#", delimiter=None, create_using=None, nodetype=None,
+                 encoding="utf-8"):
+    parse = _rw_adjlist_args(comments, delimiter, create_using, nodetype)
+    return _rw_read(path, encoding, parse)
+
+
+def parse_multiline_adjlist(lines, comments="#", delimiter=None, create_using=None,
+                            nodetype=None, edgetype=None):
+    # NetworkX reads each node's neighbors with next(lines), so a list only
+    # works without neighbors: leave lists to NetworkX.
+    if not hasattr(lines, "__next__"):
+        raise NotImplementedError("NetworkX needs an iterator here")
+    parse = _rw_adjlist_args(comments, delimiter, create_using, nodetype, edgetype)
+    return _rw_parse(
+        "parse_multiline_adjlist", lines, parse, comments=comments, delimiter=delimiter,
+        create_using=create_using, nodetype=nodetype, edgetype=edgetype,
+    )
+
+
+def read_multiline_adjlist(path, comments="#", delimiter=None, create_using=None,
+                           nodetype=None, edgetype=None, encoding="utf-8"):
+    parse = _rw_adjlist_args(comments, delimiter, create_using, nodetype, edgetype)
+    return _rw_read(path, encoding, parse)
+
+
+def _rw_leda_pajek(kind):
+    """``parse(lines, mode)`` for ``parse_leda`` (``kind`` 0) or
+    ``parse_pajek`` (1); mode 2 is a str that NetworkX splits at "\\n"."""
+    return lambda lines, mode: _core.CoreGraph.rw_leda_pajek(lines, mode, kind)
+
+
+def _rw_parse_text(name, lines, kind):
+    if type(lines) is str:
+        G = _rw_leda_pajek(kind)(lines, 2)
+        if G is None:
+            raise NotImplementedError("NetworkX parses this text")
+        return G
+    return _rw_parse(name, lines, _rw_leda_pajek(kind))
+
+
+def parse_leda(lines):
+    return _rw_parse_text("parse_leda", lines, 0)
+
+
+def read_leda(path, encoding="UTF-8"):
+    return _rw_read(path, encoding, _rw_leda_pajek(0))
+
+
+def parse_pajek(lines):
+    return _rw_parse_text("parse_pajek", lines, 1)
+
+
+def read_pajek(path, encoding="UTF-8"):
+    return _rw_read(path, encoding, _rw_leda_pajek(1))
+
+
+@functools.cache
+def _graph6_strips_newline():
+    """NetworkX 3.5+ ignores trailing newlines in ``from_graph6_bytes``."""
+    try:
+        text = inspect.getsource(_rw_networkx("from_graph6_bytes"))
+    except (AttributeError, KeyError, OSError, TypeError):
+        return None
+    return 'bytes_in = bytes_in.rstrip(b"\\n")' in text
+
+
+def from_graph6_bytes(bytes_in):
+    strip = _graph6_strips_newline()
+    if type(bytes_in) is not bytes or strip is None:
+        raise NotImplementedError("rustnx parses bytes only")
+    graphs = _core.CoreGraph.rw_graph6(bytes_in, False, False, strip)
+    if graphs is None:
+        raise NotImplementedError("NetworkX raises for this input")
+    return graphs[0]
+
+
+def from_sparse6_bytes(string):
+    if type(string) is not bytes:
+        raise NotImplementedError("rustnx parses bytes only")
+    graphs = _core.CoreGraph.rw_graph6(string, True, False, False)
+    if graphs is None:
+        raise NotImplementedError("NetworkX raises for this input")
+    return graphs[0]
+
+
+def _rw_read_graph6(path, sparse):
+    strip = _graph6_strips_newline()
+    if strip is None:
+        raise NotImplementedError("unknown graph6 parser")
+    data, rewind = _rw_read_bytes(path)
+    graphs = _core.CoreGraph.rw_graph6(data, sparse, True, strip)
+    if graphs is None:
+        rewind()
+        raise NotImplementedError("NetworkX raises for this file")
+    return graphs[0] if len(graphs) == 1 else graphs
+
+
+def read_graph6(path):
+    return _rw_read_graph6(path, False)
+
+
+def read_sparse6(path):
+    return _rw_read_graph6(path, True)
+
+
+# JSON graphs: the Rust side replays NetworkX's add_node / add_edge calls on
+# the same Python objects (nodes and keys must be str, int, float, bool or
+# tuples of those), into a new graph that is dropped if it gives up.
+
+_RW_UNSET = object()
+_RW_FLAG_TYPES = (bool, int, type(None))
+
+
+def _rw_json_graph(multigraph, directed):
+    if type(multigraph) not in _RW_FLAG_TYPES or type(directed) not in _RW_FLAG_TYPES:
+        raise NotImplementedError("rustnx needs bool flags")
+    if multigraph:
+        return nx.MultiDiGraph() if directed else nx.MultiGraph()
+    return nx.DiGraph() if directed else nx.Graph()
+
+
+@functools.cache
+def _node_link_default_edges():
+    """``"edges"`` from NetworkX 3.6; 3.4 and 3.5 warn and use ``"links"``
+    when ``edges`` isn't given (left to NetworkX, which warns)."""
+    try:
+        param = inspect.signature(_rw_networkx("node_link_graph")).parameters["edges"]
+    except (KeyError, TypeError, ValueError):
+        return None
+    return param.default
+
+
+def node_link_graph(data, directed=False, multigraph=True, *, source="source",
+                    target="target", name="id", key="key", edges=_RW_UNSET, nodes="nodes"):
+    if edges is _RW_UNSET:
+        edges = _node_link_default_edges()
+    if type(data) is not dict or any(
+        type(arg) is not str for arg in (source, target, name, key, edges, nodes)
+    ):
+        raise NotImplementedError("rustnx needs a dict and str names")
+    node_list, edge_list = data.get(nodes), data.get(edges)
+    if type(node_list) is not list or type(edge_list) is not list:
+        raise NotImplementedError("NetworkX raises for this input")
+    graph = _rw_json_graph(data.get("multigraph", multigraph), data.get("directed", directed))
+    if not _core.CoreGraph.rw_node_link(graph, node_list, edge_list, source, target, name, key):
+        raise NotImplementedError("NetworkX builds this graph")
+    graph.graph = data.get("graph", {})
+    return graph
+
+
+def adjacency_graph(data, directed=False, multigraph=True, attrs={"id": "id", "key": "key"}):  # noqa: B006
+    if type(data) is not dict or type(attrs) is not dict:
+        raise NotImplementedError("rustnx needs dicts")
+    graph = _rw_json_graph(data.get("multigraph", multigraph), data.get("directed", directed))
+    multigraph = graph.is_multigraph()
+    id_ = attrs.get("id", _RW_UNSET)
+    key = attrs.get("key", _RW_UNSET) if multigraph else None
+    if type(id_) not in (str, int) or multigraph and type(key) not in (str, int):
+        raise NotImplementedError("rustnx needs str or int attribute names")
+    try:
+        graph.graph = dict(data.get("graph", []))
+    except Exception:
+        raise NotImplementedError("NetworkX raises for this input") from None
+    if not _core.CoreGraph.rw_adjacency(
+        graph, data.get("nodes"), data.get("adjacency"), id_, key
+    ):
+        raise NotImplementedError("NetworkX builds this graph")
+    return graph
+
+
+def cytoscape_graph(data, name="name", ident="id"):
+    if type(data) is not dict or type(name) is not str or type(ident) is not str or name == ident:
+        raise NotImplementedError("rustnx needs a dict and two different str names")
+    elements = data.get("elements")
+    if type(elements) is not dict:
+        raise NotImplementedError("NetworkX raises for this input")
+    graph = _rw_json_graph(data.get("multigraph"), data.get("directed"))
+    try:
+        graph.graph = dict(data.get("data"))
+    except Exception:
+        raise NotImplementedError("NetworkX raises for this input") from None
+    if not _core.CoreGraph.rw_cytoscape(
+        graph, elements.get("nodes"), elements.get("edges"), name, ident
+    ):
+        raise NotImplementedError("NetworkX builds this graph")
+    return graph
+
+
+def tree_graph(data, ident="id", children="children"):
+    if type(ident) is not str or type(children) is not str:
+        raise NotImplementedError("rustnx needs str names")
+    graph = nx.DiGraph()
+    if not _core.CoreGraph.rw_tree(graph, data, ident, children):
+        raise NotImplementedError("NetworkX builds this graph")
+    return graph
+
+
+def _rw_gml_args(label, destringizer):
+    if destringizer is not None:
+        raise NotImplementedError("rustnx parses GML without a destringizer")
+    if label is not None and type(label) is not str:
+        raise NotImplementedError("rustnx needs a str label")
+    return lambda lines, mode: _core.CoreGraph.rw_gml(lines, mode, label)
+
+
+def parse_gml(lines, label="label", destringizer=None):
+    parse = _rw_gml_args(label, destringizer)
+    if type(lines) is str:
+        G = parse(lines, 3)
+        if G is None:
+            raise NotImplementedError("NetworkX parses this text")
+        return G
+    return _rw_parse("parse_gml", lines, parse, label=label, destringizer=destringizer)
+
+
+def read_gml(path, label="label", destringizer=None):
+    return _rw_read(path, "ascii", _rw_gml_args(label, destringizer))
