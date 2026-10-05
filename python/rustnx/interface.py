@@ -683,6 +683,10 @@ _SIZE_ESTIMATES = {
     "windmill_graph": lambda a: _product(a.get("n"), a.get("k"), a.get("k")),
     "kneser_graph": lambda a: _product(a.get("n"), a.get("n"), a.get("k")),
     "circulant_graph": lambda a: _product(a.get("n"), a.get("offsets")),
+    "random_cograph": lambda a: _power(2, a.get("n")),
+    # `tries` (default 100) doesn't make the tree larger.
+    "random_powerlaw_tree": lambda a: _size_of(a.get("n")),
+    "random_powerlaw_tree_sequence": lambda a: _size_of(a.get("n")),
 }
 
 
