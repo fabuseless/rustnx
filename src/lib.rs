@@ -5848,24 +5848,18 @@ impl CoreGraph {
 
     /// A multigraph snapshot's per-entry parallel-edge data (see
     /// `bipartite_more::MultiEdges`), read from `adj` (the source graph's
-    /// `G._adj`, rows in `nodes` order) for edge attribute `attr` (missing
-    /// values count as `default`), or counts only when `attr` is `None`.
-    #[pyo3(signature = (nodes, adj, attr=None, default=None))]
+    /// `G._adj`, rows in `nodes` order): counts, and with `weighted` the
+    /// values of edge attribute `attr` (looked up as NetworkX's
+    /// `d.get(attr, 1)` does, so `None` is a key like any other).
     fn b26_multi_edges<'py>(
         &self,
         nodes: &Bound<'py, PyList>,
         adj: &Bound<'py, PyAny>,
-        attr: Option<Bound<'py, PyAny>>,
-        default: Option<Bound<'py, PyAny>>,
+        weighted: bool,
+        attr: Bound<'py, PyAny>,
     ) -> PyResult<bipartite_more::MultiEdges> {
-        let py = nodes.py();
-        let attr = attr.map(|a| {
-            (
-                a,
-                default.unwrap_or_else(|| 1i64.into_pyobject(py).unwrap().into_any()),
-            )
-        });
-        bipartite_more::read_multi(self, nodes, adj, attr)
+        let one = 1i64.into_pyobject(nodes.py())?.into_any();
+        bipartite_more::read_multi(self, nodes, adj, weighted.then_some((attr, one)))
     }
 
     /// Multigraph `(degree, in-degree, out-degree)`, counting parallel edges.
@@ -5980,20 +5974,31 @@ impl CoreGraph {
         py.detach(|| bipartite_more::cycles_and_paths(&self.succ, self.n))
     }
 
-    /// `eppstein_matching` on the digraph of `edges` (positions): the
-    /// matching's items in dict order, or `None` if it would recurse
-    /// deeper than `max_depth`.
-    fn b26_eppstein(
+    /// `eppstein_matching` from its left nodes (positions, in the order
+    /// the set iterates): the matching's items in dict order, or `None` if
+    /// it would recurse deeper than `max_depth`.
+    fn b26_eppstein_from(
         &self,
         py: Python<'_>,
-        edges: Vec<(u32, u32)>,
+        left: Vec<u32>,
         max_depth: usize,
     ) -> PyResult<Option<Vec<(u32, u32)>>> {
-        for &(u, v) in &edges {
-            self.check_index(u as usize)?;
-            self.check_index(v as usize)?;
-        }
-        Ok(py.detach(|| bipartite_more::eppstein(self.n, &edges, max_depth)))
+        let left = self.sources_or_all(Some(left))?;
+        Ok(py.detach(|| {
+            // `G.edges(left)`: undirected graphs skip neighbors already
+            // listed as a start.
+            let mut seen = vec![false; self.n];
+            let mut edges = Vec::new();
+            for &u in &left {
+                for &v in self.succ.neighbors(u as usize) {
+                    if self.directed || !seen[v as usize] {
+                        edges.push((u, v));
+                    }
+                }
+                seen[u as usize] = true;
+            }
+            bipartite_more::eppstein(self.n, &edges, max_depth)
+        }))
     }
 
     /// `maximal_extendability` after its checks: the value, or `None` if
