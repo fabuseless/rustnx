@@ -1,5 +1,6 @@
 pub mod approximation;
 pub mod bipartite;
+pub mod bipartite_more;
 pub mod centrality;
 pub mod centrality_more;
 pub mod cluster;

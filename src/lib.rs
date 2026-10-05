@@ -17,10 +17,10 @@ use algorithms::link_analysis::{self, PagerankInput};
 use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
-    approximation, bipartite, centrality, centrality_more, cluster, communities, connectivity,
-    conversion, cores_more, dag, directed, distance, flow, generators, graph_classes, isomorphism,
-    leftovers, matching, measures, nxdicts, operators, paths, pyrandom, pyset, random_generators,
-    readwrite, spectral, structure, structure_more, trees_more,
+    approximation, bipartite, bipartite_more, centrality, centrality_more, cluster, communities,
+    connectivity, conversion, cores_more, dag, directed, distance, flow, generators, graph_classes,
+    isomorphism, leftovers, matching, measures, nxdicts, operators, paths, pyrandom, pyset,
+    random_generators, readwrite, spectral, structure, structure_more, trees_more,
 };
 use graph::CoreGraph;
 use rayon::prelude::*;
@@ -5844,6 +5844,250 @@ impl CoreGraph {
         operators::bipartite_degree_centrality(self, index, top, bottom, s_top, s_bottom)
     }
 
+    // --- Batch 26: multigraphs and bipartite measures ---
+
+    /// A multigraph snapshot's per-entry parallel-edge data (see
+    /// `bipartite_more::MultiEdges`), read from `adj` (the source graph's
+    /// `G._adj`, rows in `nodes` order) for edge attribute `attr` (missing
+    /// values count as `default`), or counts only when `attr` is `None`.
+    #[pyo3(signature = (nodes, adj, attr=None, default=None))]
+    fn b26_multi_edges<'py>(
+        &self,
+        nodes: &Bound<'py, PyList>,
+        adj: &Bound<'py, PyAny>,
+        attr: Option<Bound<'py, PyAny>>,
+        default: Option<Bound<'py, PyAny>>,
+    ) -> PyResult<bipartite_more::MultiEdges> {
+        let py = nodes.py();
+        let attr = attr.map(|a| {
+            (
+                a,
+                default.unwrap_or_else(|| 1i64.into_pyobject(py).unwrap().into_any()),
+            )
+        });
+        bipartite_more::read_multi(self, nodes, adj, attr)
+    }
+
+    /// Multigraph `(degree, in-degree, out-degree)`, counting parallel edges.
+    fn b26_multi_degrees(
+        &self,
+        me: &bipartite_more::MultiEdges,
+    ) -> PyResult<(Vec<u64>, Vec<u64>, Vec<u64>)> {
+        self.b26_check_multi(me)?;
+        Ok(bipartite_more::multi_degrees(self, me))
+    }
+
+    /// PageRank of a multigraph: NetworkX's sparse matrix adds up parallel
+    /// edges' weights (each edge counts 1 without a weight).
+    #[allow(clippy::too_many_arguments)]
+    fn b26_multi_pagerank(
+        &self,
+        py: Python<'_>,
+        me: &bipartite_more::MultiEdges,
+        alpha: f64,
+        personalization: Option<Vec<f64>>,
+        max_iter: usize,
+        tol: f64,
+        nstart: Option<Vec<f64>>,
+        dangling: Option<Vec<f64>>,
+    ) -> PyResult<Option<Vec<f64>>> {
+        self.b26_check_multi(me)?;
+        for v in [&personalization, &nstart, &dangling].into_iter().flatten() {
+            if v.len() != self.n {
+                return Err(PyValueError::new_err(
+                    "vector length must equal the node count",
+                ));
+            }
+        }
+        let out_w: Vec<f64> = if me.weighted {
+            me.sum.clone()
+        } else {
+            me.mult.iter().map(|&k| k as f64).collect()
+        };
+        let in_w: Vec<f64> = if self.directed {
+            bipartite_more::pred_entries(self)?
+                .into_iter()
+                .map(|e| out_w[e])
+                .collect()
+        } else {
+            out_w.clone()
+        };
+        let input = PagerankInput {
+            n: self.n,
+            out_adj: &self.succ,
+            out_weights: Some(&out_w),
+            in_adj: self.adj(true),
+            in_weights: Some(&in_w),
+            alpha,
+            personalization,
+            nstart,
+            dangling,
+            max_iter,
+            tol,
+            return_previous: false,
+        };
+        Ok(py.detach(|| link_analysis::pagerank(input).ok()))
+    }
+
+    /// Kruskal on an undirected multigraph: `(us, vs, key positions)`.
+    fn b26_multi_kruskal(
+        &self,
+        py: Python<'_>,
+        me: &bipartite_more::MultiEdges,
+        maximum: bool,
+    ) -> PyResult<(Vec<u32>, Vec<u32>, Vec<u32>)> {
+        self.b26_check_multi(me)?;
+        if !me.weighted {
+            return Err(PyValueError::new_err("weights were not read"));
+        }
+        Ok(py.detach(|| bipartite_more::multi_kruskal(self, me, maximum)))
+    }
+
+    /// Prim on an undirected multigraph from `starts`: `(us, vs, key positions)`.
+    fn b26_multi_prim(
+        &self,
+        py: Python<'_>,
+        me: &bipartite_more::MultiEdges,
+        starts: Vec<u32>,
+        minimum: bool,
+    ) -> PyResult<(Vec<u32>, Vec<u32>, Vec<u32>)> {
+        self.b26_check_multi(me)?;
+        if !me.weighted {
+            return Err(PyValueError::new_err("weights were not read"));
+        }
+        let starts = self.sources_or_all(Some(starts))?;
+        Ok(py.detach(|| bipartite_more::multi_prim(self, me, &starts, minimum)))
+    }
+
+    /// Bipartite `latapy_clustering` of `sources` (`mode` 0 dot, 1 min,
+    /// 2 max), given each node's `hash()`.
+    fn b26_latapy(
+        &self,
+        py: Python<'_>,
+        sources: Vec<u32>,
+        mode: u8,
+        hashes: Vec<i64>,
+    ) -> PyResult<Vec<f64>> {
+        let sources = self.sources_or_all(Some(sources))?;
+        if hashes.len() != self.n {
+            return Err(PyValueError::new_err("one hash per node is needed"));
+        }
+        Ok(py.detach(|| bipartite_more::latapy(&self.succ, self.n, &sources, mode, &hashes)))
+    }
+
+    /// `(4 x 4-cycles, 2 x 3-paths)` for `robins_alexander_clustering`.
+    fn b26_cycles_and_paths(&self, py: Python<'_>) -> (u64, u64) {
+        py.detach(|| bipartite_more::cycles_and_paths(&self.succ, self.n))
+    }
+
+    /// `eppstein_matching` on the digraph of `edges` (positions): the
+    /// matching's items in dict order, or `None` if it would recurse
+    /// deeper than `max_depth`.
+    fn b26_eppstein(
+        &self,
+        py: Python<'_>,
+        edges: Vec<(u32, u32)>,
+        max_depth: usize,
+    ) -> PyResult<Option<Vec<(u32, u32)>>> {
+        for &(u, v) in &edges {
+            self.check_index(u as usize)?;
+            self.check_index(v as usize)?;
+        }
+        Ok(py.detach(|| bipartite_more::eppstein(self.n, &edges, max_depth)))
+    }
+
+    /// `maximal_extendability` after its checks: the value, or `None` if
+    /// the residual digraph is not strongly connected. `mate` gives each
+    /// node's partner in the perfect matching.
+    fn b26_extendability(
+        &self,
+        py: Python<'_>,
+        in_u: Vec<bool>,
+        in_v: Vec<bool>,
+        mate: Vec<u32>,
+    ) -> PyResult<Option<i64>> {
+        if in_u.len() != self.n || in_v.len() != self.n || mate.len() != self.n {
+            return Err(PyValueError::new_err("one entry per node is needed"));
+        }
+        if mate.iter().any(|&m| m as usize >= self.n) {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        Ok(py.detach(|| {
+            match bipartite_more::extendability(&self.succ, self.n, &in_u, &in_v, &mate) {
+                bipartite_more::Extendability::NotStronglyConnected => None,
+                bipartite_more::Extendability::Value(k) => Some(k),
+            }
+        }))
+    }
+
+    /// Adds the weighted projection's edges (`kind` 0 Jaccard overlap, 1
+    /// min overlap, 2 collaboration) to the NetworkX graph `target`, whose
+    /// nodes NetworkX's `add_nodes_from` already added. `nodes` are the
+    /// node objects by position.
+    #[allow(clippy::too_many_arguments)]
+    fn b26_projection<'py>(
+        &self,
+        py: Python<'py>,
+        nodes: &Bound<'py, PyList>,
+        members: Vec<u32>,
+        kind: u8,
+        hashes: Vec<i64>,
+        compensated: bool,
+        target: &Bound<'py, PyAny>,
+    ) -> PyResult<()> {
+        let members = self.sources_or_all(Some(members))?;
+        if hashes.len() != self.n || nodes.len() != self.n {
+            return Err(PyValueError::new_err(
+                "one hash and node per node is needed",
+            ));
+        }
+        let kind = match kind {
+            0 => bipartite_more::Projection::Overlap(true),
+            1 => bipartite_more::Projection::Overlap(false),
+            _ => bipartite_more::Projection::Collaboration,
+        };
+        let (pred, _) = self.reverse_exact_order(None)?;
+        let edges = py.detach(|| {
+            bipartite_more::projection_edges(
+                &self.succ,
+                pred,
+                self.n,
+                &members,
+                kind,
+                &hashes,
+                compensated,
+            )
+        })?;
+        let dicts = nxdicts::NxDicts::of_graph(target)?;
+        let weight = pyo3::intern!(py, "weight");
+        let mut rows: Vec<Option<nxdicts::NodeRows<'py>>> = (0..self.n).map(|_| None).collect();
+        for (u, v, w) in edges {
+            for x in [u, v] {
+                if rows[x as usize].is_none() {
+                    rows[x as usize] = Some(dicts.node(&nodes.get_item(x as usize)?)?.0);
+                }
+            }
+            let (ru, rv) = (
+                rows[u as usize].as_ref().unwrap(),
+                rows[v as usize].as_ref().unwrap(),
+            );
+            let (ku, kv) = (nodes.get_item(u as usize)?, nodes.get_item(v as usize)?);
+            let data = nxdicts::simple_edge(&ru.succ, rv.back(), &ku, &kv)?;
+            match w {
+                flow::Val::I(i) => data.set_item(weight, i)?,
+                flow::Val::F(x) => data.set_item(weight, x)?,
+            }
+        }
+        Ok(())
+    }
+
+    fn b26_check_multi(&self, me: &bipartite_more::MultiEdges) -> PyResult<()> {
+        if me.mult.len() != self.succ.targets.len() {
+            return Err(PyValueError::new_err("multigraph data of another graph"));
+        }
+        Ok(())
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -7423,6 +7667,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<GirvanNewman>()?;
     m.add_class::<TspTour>()?;
     m.add_class::<MaxCutState>()?;
+    m.add_class::<bipartite_more::MultiEdges>()?;
     m.add_function(wrap_pyfunction!(graph::build_graph, m)?)?;
     m.add_function(wrap_pyfunction!(serialize::_core_graph_from_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(native::build_native, m)?)?;
