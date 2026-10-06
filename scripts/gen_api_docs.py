@@ -884,6 +884,52 @@ QUALIFIED.update({
 })
 
 
+# Batch 22: degree-sequence and tree generators.
+DEGSEQ = (
+    "Sequences must be lists or tuples of ints; other values fall back. "
+    "`create_using` may be `None` or a NetworkX graph class or instance "
+    "(instances NetworkX would fill and then reject fall back)."
+)
+SECTIONS.append(("Degree-sequence and tree generators", [
+    "configuration_model", "directed_configuration_model", "expected_degree_graph",
+    "havel_hakimi_graph", "directed_havel_hakimi_graph", "degree_sequence_tree",
+    "random_degree_sequence_graph", "random_powerlaw_tree", "random_powerlaw_tree_sequence",
+    "random_labeled_tree", "random_labeled_rooted_tree", "random_labeled_rooted_forest",
+    "random_cograph", "random_clustered_graph", "joint_degree_graph",
+    "is_valid_directed_joint_degree", "bipartite_configuration_model",
+    "bipartite_havel_hakimi_graph", "reverse_havel_hakimi_graph",
+    "alternating_havel_hakimi_graph",
+]))
+NOTES.update({
+    "configuration_model": RANDOM + " " + DEGSEQ,
+    "directed_configuration_model": RANDOM + " " + DEGSEQ,
+    "expected_degree_graph": RANDOM + " Weights must be finite non-negative ints or floats; `1 / sum(w)` is Python's own. A draw NetworkX can't take a log of falls back.",
+    "havel_hakimi_graph": DEGSEQ + " Nodes are numbered among the nonzero degrees, as in NetworkX.",
+    "directed_havel_hakimi_graph": "Sequences as NetworkX's `make_list_of_ints` accepts them (values below 2**31). `create_using` may be `None` or a NetworkX graph class or instance (instances NetworkX would fill and then reject fall back).",
+    "degree_sequence_tree": DEGSEQ + " Follows the installed NetworkX's checks (3.6 changed them and stopped removing node 0).",
+    "random_degree_sequence_graph": RANDOM + " Degrees whose sum or squared maximum reach 2**53 fall back. The degree-weighted draws use a Fenwick tree (exact for int weights), so it is much faster than NetworkX on large sequences.",
+    "random_powerlaw_tree": RANDOM + " Follows the installed NetworkX's tree check (3.6 changed it). An overflowing power draw falls back.",
+    "random_powerlaw_tree_sequence": RANDOM + " Follows the installed NetworkX's tree check (3.6 changed it).",
+    "random_labeled_tree": RANDOM,
+    "random_labeled_rooted_tree": RANDOM,
+    "random_labeled_rooted_forest": RANDOM + " The number of roots is drawn in Python (big ints); the forest replays CPython's set order for `set(range(n)).difference(roots)`.",
+    "random_cograph": RANDOM + " `n` up to 26.",
+    "random_clustered_graph": RANDOM + " Pairs as lists or tuples of ints; an iterator is read once (if rustnx declines, NetworkX's code runs on the same pairs).",
+    "joint_degree_graph": RANDOM + " A dict of dicts of ints; replays the iteration order of NetworkX's sets of unsaturated nodes.",
+    "is_valid_directed_joint_degree": "Int degree lists and a dict of dicts of ints; anything NetworkX raises on falls back.",
+    "bipartite_configuration_model": RANDOM + " As `nx.bipartite.configuration_model`. " + DEGSEQ,
+    "bipartite_havel_hakimi_graph": "As `nx.bipartite.havel_hakimi_graph`. " + DEGSEQ,
+    "reverse_havel_hakimi_graph": "As `nx.bipartite.reverse_havel_hakimi_graph`. " + DEGSEQ,
+    "alternating_havel_hakimi_graph": "As `nx.bipartite.alternating_havel_hakimi_graph`. " + DEGSEQ,
+})
+QUALIFIED.update({
+    "bipartite_configuration_model": "nx.bipartite.configuration_model",
+    "bipartite_havel_hakimi_graph": "nx.bipartite.havel_hakimi_graph",
+    "reverse_havel_hakimi_graph": "nx.bipartite.reverse_havel_hakimi_graph",
+    "alternating_havel_hakimi_graph": "nx.bipartite.alternating_havel_hakimi_graph",
+})
+
+
 def location(name):
     if name in DAG_ONLY:
         return "nx.dag"

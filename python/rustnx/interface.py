@@ -687,7 +687,16 @@ _SIZE_ESTIMATES = {
     # `tries` (default 100) doesn't make the tree larger.
     "random_powerlaw_tree": lambda a: _size_of(a.get("n")),
     "random_powerlaw_tree_sequence": lambda a: _size_of(a.get("n")),
+    "joint_degree_graph": lambda a: _joint_degree_size(a.get("joint_degrees")),
 }
+
+
+def _joint_degree_size(joint_degrees):
+    """Twice the edges of the graph ``joint_degree_graph`` builds."""
+    try:
+        return sum(sum(row.values()) for row in joint_degrees.values())
+    except Exception:
+        return _LARGE
 
 
 def _size_of(value):
