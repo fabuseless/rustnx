@@ -890,7 +890,7 @@ SECTIONS.append(("Bipartite measures", [
     "bipartite_betweenness_centrality", "overlap_weighted_projected_graph",
     "collaboration_weighted_projected_graph", "generic_weighted_projected_graph",
     "bipartite_min_edge_cover", "eppstein_matching", "maximal_extendability",
-    "bipartite_modularity",
+    "bipartite_modularity", "cd_index",
 ]))
 NOTES.update({
     "latapy_clustering": "As `nx.bipartite.latapy_clustering` (also `nx.bipartite.clustering`)." + B26_SETS + " Multigraphs see each neighbor once, as in NetworkX. One-shot iterators of nodes fall back.",
@@ -904,6 +904,7 @@ NOTES.update({
     "eppstein_matching": "As `nx.bipartite.eppstein_matching`, ported with its dict orders. Augmenting paths deep enough to approach Python's recursion limit fall back.",
     "maximal_extendability": "As `nx.bipartite.maximal_extendability`: the fewest node-disjoint paths between the two sides of the residual digraph, as maximum flows computed in parallel in Rust.",
     "bipartite_modularity": "As `nx.bipartite.modularity` (NetworkX 3.7+). Degrees and each community's internal weight in Rust (Python's `sum()` semantics); NetworkX's own expressions over its sets combine them.",
+    "cd_index": "Checks every node's time attribute in Rust; the rest (the node's neighborhood) is NetworkX's own code.",
     "s_metric": "Multigraphs count every parallel edge.",
     "is_semieulerian": "Multigraph degrees count parallel edges.",
 })

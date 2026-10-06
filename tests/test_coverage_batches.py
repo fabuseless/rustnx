@@ -7710,3 +7710,30 @@ def test_batch26_deep_eppstein_falls_back(restore_config):
     G = nx.path_graph(n // 2)
     top = list(range(0, n // 2, 2))
     exact_outcome(nx.bipartite.eppstein_matching, G, top)
+
+
+@pytest.mark.parametrize("seed", range(30))
+def test_batch26_cd_index(seed):
+    import datetime
+
+    G = graph_for(seed, True)
+    rng = random.Random(seed)
+    for v in G:
+        G.nodes[v]["time"] = rng.randint(0, 10)
+        if rng.random() < 0.5:
+            G.nodes[v]["w"] = rng.choice([1, 2, 0.5])
+    for node in list(G)[:4] + ["missing"]:
+        for delta in [0, 3, 100, "x"]:
+            exact_outcome(nx.cd_index, G, node, delta)
+            exact_outcome(nx.cd_index, G, node, delta, weight="w")
+    D = G.copy()
+    start = datetime.datetime(2020, 1, 1)
+    for v in D:
+        D.nodes[v]["when"] = start + datetime.timedelta(days=D.nodes[v]["time"])
+    for node in list(D)[:3]:
+        exact_outcome(nx.cd_index, D, node, datetime.timedelta(days=4), time="when")
+    if len(G) > 1:
+        del G.nodes[list(G)[-1]]["time"]
+        exact_outcome(nx.cd_index, G, list(G)[0], 3)
+    exact_outcome(nx.cd_index, G.to_undirected(), list(G)[0], 3)
+    exact_outcome(nx.cd_index, G, list(G)[0], 3, time=["unhashable"])

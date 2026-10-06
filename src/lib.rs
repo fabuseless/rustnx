@@ -6132,6 +6132,17 @@ impl CoreGraph {
         Ok((objs(deg)?, objs(internal)?))
     }
 
+    /// `all(key in d for d in node.values())` over `G._node` (`cd_index`).
+    #[staticmethod]
+    fn b26_all_nodes_have(node: &Bound<'_, PyAny>, key: &Bound<'_, PyAny>) -> PyResult<bool> {
+        for (_, d) in conversion::plain_dict(node)?.iter() {
+            if !conversion::plain_dict(&d)?.contains(key)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     fn b26_check_multi(&self, me: &bipartite_more::MultiEdges) -> PyResult<()> {
         if me.mult.len() != self.succ.targets.len() {
             return Err(PyValueError::new_err("multigraph data of another graph"));

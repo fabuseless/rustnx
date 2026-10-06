@@ -83,6 +83,7 @@ FUNCTIONS = {
     "butterflies": {},
     "cartesian_product": {},
     "caveman_graph": {},
+    "cd_index": {},
     "center": {},
     "centroid": {},
     "chain_decomposition": {},

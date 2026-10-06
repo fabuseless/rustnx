@@ -104,6 +104,7 @@ __all__ = [
     "butterflies",
     "cartesian_product",
     "caveman_graph",
+    "cd_index",
     "center",
     "centroid",
     "chain_decomposition",
@@ -12931,3 +12932,28 @@ def bipartite_modularity(G, communities, nodes, *, weight="weight", resolution=1
         return L_c / m - resolution * k_c * d_c * norm
 
     return sum(community_contribution(c, L_c) for c, L_c in zip(comms, internal))
+
+
+def cd_index(G, node, time_delta, *, time="time", weight=None):
+    _directed_only(G)
+    G = _networkx_graph(G)
+    # The scan of every node runs in Rust; the rest is NetworkX's own code,
+    # which only looks at `node`'s neighborhood.
+    if not _core.CoreGraph.b26_all_nodes_have(G._node, time):
+        raise nx.NetworkXError("Not all nodes have a 'time' attribute.")
+    try:
+        target_date = G.nodes[node][time] + time_delta
+        pred = {i for i in G.pred[node] if G.nodes[i][time] <= target_date}
+    except:  # noqa: E722  (as NetworkX)
+        raise nx.NetworkXError(
+            "Addition and comparison are not supported between 'time_delta' "
+            "and 'time' types."
+        )
+    b = [-1 if any(j in G[i] for j in G[node]) else 1 for i in pred]
+    n = len(pred.union(*(G.pred[s].keys() - {node} for s in G[node])))
+    if n == 0:
+        raise nx.NetworkXError("The cd index cannot be defined.")
+    if weight is None:
+        return round(sum(bi for bi in b) / n, 2)
+    weights = [G.nodes[i].get(weight, 1) for i in pred]
+    return round(sum(bi / wt for bi, wt in zip(b, weights)) / n, 2)
