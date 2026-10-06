@@ -893,7 +893,7 @@ SECTIONS.append(("Cliques, structure and approximation", [
     "clique_removal", "maximum_independent_set", "max_clique", "treewidth_min_degree",
     "approximate_local_node_connectivity", "approximate_node_connectivity",
     "approximate_all_pairs_node_connectivity", "build_auxiliary_node_connectivity",
-    "build_auxiliary_edge_connectivity",
+    "build_auxiliary_edge_connectivity", "metric_closure",
 ]))
 NOTES.update({
     "find_cliques": "Bron-Kerbosch with NetworkX's pivots in Rust; cliques come in batches once iteration starts, as NetworkX copies the graph then." + SETORDER + " `nodes` other than a list falls back.",
@@ -917,6 +917,7 @@ NOTES.update({
     "approximate_all_pairs_node_connectivity": "Pairs run in parallel. Integer `cutoff` only; `nbunch` with nodes not in G falls back.",
     "build_auxiliary_node_connectivity": "Builds the digraph's dicts in Rust in NetworkX's order.",
     "build_auxiliary_edge_connectivity": "Builds the digraph's dicts in Rust in NetworkX's order.",
+    "metric_closure": "Dijkstra from every node in parallel, and the closure's dicts built in Rust in NetworkX's order (edges follow `set(G)`'s order). Warns as the installed NetworkX does (deprecated in 3.6). " + LENGTHS,
 })
 QUALIFIED.update({
     "approximate_local_node_connectivity": "nx.approximation.local_node_connectivity",
@@ -932,6 +933,7 @@ SUBMODULE.update({
     "maximum_independent_set": "nx.approximation",
     "max_clique": "nx.approximation",
     "treewidth_min_degree": "nx.approximation",
+    "metric_closure": "nx.algorithms.approximation.steinertree",
     "build_auxiliary_node_connectivity": "nx.algorithms.connectivity",
     "build_auxiliary_edge_connectivity": "nx.algorithms.connectivity",
 })

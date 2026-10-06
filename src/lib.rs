@@ -6193,6 +6193,97 @@ impl CoreGraph {
         Ok((found, comps))
     }
 
+    /// The iteration order of `set(G)` (one `add` per node, in order).
+    fn set_iteration_order(&self, hashes: Vec<i64>) -> PyResult<Vec<u32>> {
+        self.b25_check_hashes(&hashes)?;
+        Ok(pyset::PySet::from_iter(0..self.n as u32, &hashes)
+            .iter()
+            .collect())
+    }
+
+    /// `metric_closure` into the empty `nx.Graph` dicts `m_node`, `m_adj`:
+    /// for each node `u` in order, an edge to every node still in `Gnodes`
+    /// (`set(G)`, iterating as `set_order`) with `distance` and `path` from
+    /// Dijkstra. Returns False, filling nothing, when the first node doesn't
+    /// reach every node (NetworkX raises).
+    #[allow(clippy::too_many_arguments)]
+    fn metric_closure_fill<'py>(
+        &self,
+        py: Python<'py>,
+        weight: Option<&str>,
+        all_int: bool,
+        nodes: &Bound<'py, PyList>,
+        set_order: Vec<u32>,
+        m_node: Bound<'py, PyDict>,
+        m_adj: Bound<'py, PyDict>,
+    ) -> PyResult<bool> {
+        if nodes.len() != self.n || set_order.len() != self.n {
+            return Err(PyValueError::new_err("node list does not match this graph"));
+        }
+        if set_order.iter().any(|&v| v as usize >= self.n) {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        let w = self.weight_slice(weight, false)?;
+        let dicts = nxdicts::NxDicts::new(m_node, m_adj, None);
+        let keys: Vec<Bound<'py, PyAny>> = nodes.iter().collect();
+        let distance = pyo3::intern!(py, "distance");
+        let path_key = pyo3::intern!(py, "path");
+        let mut alive = vec![true; self.n];
+        let batch = 64usize;
+        let mut start = 0;
+        while start < self.n {
+            let end = (start + batch).min(self.n);
+            let trees = py.detach(|| {
+                use rayon::prelude::*;
+                (start..end)
+                    .into_par_iter()
+                    .map(|s| paths::dijkstra_tree(&self.succ, self.n, w, s, None, None))
+                    .collect::<Vec<_>>()
+            });
+            for (k, tree) in trees.into_iter().enumerate() {
+                let u = start + k;
+                let tree = tree?;
+                if u == 0 && tree.order.len() != self.n {
+                    return Ok(false);
+                }
+                let mut dist = vec![0.0; self.n];
+                for (&v, &d) in tree.order.iter().zip(&tree.dist) {
+                    dist[v as usize] = d;
+                }
+                alive[u] = false;
+                let mut chain = Vec::new();
+                for &v in &set_order {
+                    let v = v as usize;
+                    if !alive[v] {
+                        continue;
+                    }
+                    // add_edge(u, v): u, then v, join the graph if new
+                    let (row_u, _) = dicts.node(&keys[u])?;
+                    let (row_v, _) = dicts.node(&keys[v])?;
+                    chain.clear();
+                    let mut x = v as u32;
+                    while x as usize != u {
+                        chain.push(x);
+                        x = tree.parent[x as usize];
+                    }
+                    chain.push(u as u32);
+                    let path = PyList::new(py, chain.iter().rev().map(|&x| &keys[x as usize]))?;
+                    let d = PyDict::new(py);
+                    if all_int {
+                        d.set_item(distance, dist[v] as i64)?;
+                    } else {
+                        d.set_item(distance, dist[v])?;
+                    }
+                    d.set_item(path_key, path)?;
+                    row_u.succ.set_item(&keys[v], &d)?;
+                    row_v.succ.set_item(&keys[u], d)?;
+                }
+            }
+            start = end;
+        }
+        Ok(true)
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();

@@ -373,6 +373,7 @@ __all__ = [
     "maximum_spanning_arborescence",
     "maximum_spanning_edges",
     "maximum_spanning_tree",
+    "metric_closure",
     "min_cost_flow",
     "min_cost_flow_cost",
     "min_edge_cover",
@@ -13042,3 +13043,32 @@ def k_clique_communities(G, k, cliques=None):
     return _computed_on_first_next(
         G, compute, lambda H: nx.community.k_clique_communities(H, k, backend="networkx")
     )
+
+
+@functools.cache
+def _b25_metric_closure_deprecated():
+    """Whether the installed ``metric_closure`` warns that it is deprecated
+    (3.6+)."""
+    return "metric_closure is deprecated" in _source_text(_registered("metric_closure"))
+
+
+def metric_closure(G, weight="weight"):
+    _undirected_only(G)
+    weight, all_int, _ = _check_weight(G, weight, distances=True)
+    hashes = _b25_hashes(G)  # (declines before warning, so NetworkX warns once)
+    if _b25_metric_closure_deprecated():
+        warnings.warn(
+            "metric_closure is deprecated and will be removed in NetworkX 3.8.\n"
+            "Use nx.all_pairs_shortest_path_length instead.",
+            category=DeprecationWarning,
+            stacklevel=5,
+        )
+    M = nx.Graph()
+    nodes = _node_list(G)
+    if not nodes:
+        raise StopIteration  # next() on the empty all_pairs_dijkstra
+    # Gnodes = set(G): edges go to the nodes left, in its order
+    order = G._core.set_iteration_order(hashes)
+    if not G._core.metric_closure_fill(weight, all_int, nodes, order, M._node, M._adj):
+        raise nx.NetworkXError("G is not a connected graph. metric_closure is not defined.")
+    return M

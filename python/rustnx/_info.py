@@ -352,6 +352,7 @@ FUNCTIONS = {
     "maximum_spanning_arborescence": {},
     "maximum_spanning_edges": {},
     "maximum_spanning_tree": {},
+    "metric_closure": {},
     "min_cost_flow": {},
     "min_cost_flow_cost": {},
     "min_edge_cover": {},
