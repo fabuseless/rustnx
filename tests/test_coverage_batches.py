@@ -7737,3 +7737,14 @@ def test_batch26_cd_index(seed):
         exact_outcome(nx.cd_index, G, list(G)[0], 3)
     exact_outcome(nx.cd_index, G.to_undirected(), list(G)[0], 3)
     exact_outcome(nx.cd_index, G, list(G)[0], 3, time=["unhashable"])
+
+
+def test_batch26_multigraph_snapshot_pickles():
+    import pickle
+
+    M = _b26_multigraph(2, False, "int")
+    nx.pagerank(M, backend="rustnx")  # caches the snapshot and its parallel-edge data
+    nx.degree_centrality(M, backend="rustnx")
+    M2 = pickle.loads(pickle.dumps(M))
+    _b26_pagerank_close(lambda b: nx.pagerank(M2, backend=b))
+    exact_outcome(nx.degree_centrality, M2)

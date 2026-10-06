@@ -18,6 +18,7 @@ import operator
 import random
 import sys
 import warnings
+import weakref
 
 import networkx as nx
 from networkx.algorithms.centrality import betweenness as _nx_betweenness
@@ -12586,16 +12587,23 @@ def intersection(G, H):
 # --- Batch 26: multigraphs and bipartite measures ---
 
 
+# Multigraph snapshot -> {(weighted, weight): MultiEdges}. Kept beside the
+# snapshot rather than on it, so snapshots still pickle.
+_B26_MULTI = weakref.WeakKeyDictionary()
+
+
 def _b26_multi(G, weight=None, weighted=False):
     """Per-entry parallel-edge data of a multigraph snapshot (see
     ``bipartite_more::MultiEdges``): counts and, with ``weighted``, sums,
     first minima and first maxima of ``d.get(weight, 1)``. The snapshot
     collapses parallel edges, so this is read from the source graph once
-    and kept on G (NetworkX caches G while the graph is unchanged)."""
+    and kept while G lives (NetworkX caches G while the graph is unchanged)."""
     if weighted and weight is not None and not isinstance(weight, str):
         raise NotImplementedError("rustnx only supports string edge attribute names")
     key = (weighted, weight if weighted else None)
-    cache = G.__dict__.setdefault("_b26_multi", {})
+    cache = _B26_MULTI.get(G)
+    if cache is None:
+        cache = _B26_MULTI.setdefault(G, {})
     data = cache.get(key)
     if data is None:
         if not G._source_unchanged():
