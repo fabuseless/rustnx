@@ -7354,3 +7354,432 @@ def test_batch21_fall_backs(seed, directed, restore_config):
         H._node[u]["late"] = 1  # attribute dicts aren't part of the snapshot
         H._adj[u][("new", u)] = {}  # nor is a row changed directly
         exact_outcome(_b21_graphs(nx.union), H, nx.path_graph([("p", 0), ("p", 1)]))
+
+
+# --- Batch 22: degree-sequence generators ---
+
+
+def _b22_func(name):
+    """The installed NetworkX's dispatchable ``name``; skips if it has none."""
+    registry = nx.utils.backends._registered_algorithms
+    if name not in registry:
+        pytest.skip(f"this NetworkX has no {name}")
+    return registry[name]
+
+
+def _b22_same_graph(G, H):
+    """Assert ``G`` and ``H`` are equal in everything NetworkX exposes:
+    class, graph dict (keys, value types, sets in iteration order), node
+    order and data, every adjacency row's order, edge data, multigraph keys,
+    and edge dicts shared by the two rows holding an edge."""
+
+    def typed(value):
+        if isinstance(value, (set, frozenset)):
+            return (type(value), [typed(x) for x in value])
+        if isinstance(value, (list, tuple)):
+            return (type(value), [typed(x) for x in value])
+        if isinstance(value, dict):
+            return (type(value), [(typed(k), typed(v)) for k, v in value.items()])
+        return (type(value), value)
+
+    assert type(G) is type(H)
+    assert typed(G.graph) == typed(H.graph)
+    assert typed(G._node) == typed(H._node)
+    rows = [(G._adj, H._adj)] + ([(G._pred, H._pred)] if G.is_directed() else [])
+    for A, B in rows:
+        assert list(A) == list(B)
+        for u in A:
+            assert typed(A[u]) == typed(B[u]), u
+    for u, row in G._adj.items():
+        for v, data in row.items():
+            other = G._pred[v][u] if G.is_directed() else G._adj[v][u]
+            assert other is data
+
+
+def _b22_outcome(func, args, kwargs, seed, backend):
+    """``func(*args, **kwargs)`` (with ``seed=random.Random(seed)`` unless
+    ``seed`` is None): ``("ok", result, state)`` or the exception's type
+    and message, plus the generator's state afterwards."""
+    rng = None if seed is None else random.Random(seed)
+    extra = {} if rng is None else {"seed": rng}
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            result = func(*args, backend=backend, **extra, **kwargs)
+        out = ("ok", result)
+    except NotImplementedError:
+        raise
+    except Exception as exc:
+        out = (type(exc), str(exc))
+    return out + (None if rng is None else rng.getstate(),)
+
+
+def _b22_check(name, args, kwargs=None, seeds=range(3), fallback=False):
+    """Compare rustnx with NetworkX. Runs with ``backend="rustnx"`` (so a
+    fallback fails the test), or with ``fallback=True`` through
+    ``backend_priority.generators``, where rustnx may decline."""
+    func = _b22_func(name)
+    kwargs = kwargs or {}
+    for seed in seeds:
+        if fallback:
+            with nx.config.backend_priority(generators=["rustnx"]):
+                ours = _b22_outcome(func, args, kwargs, seed, None)
+        else:
+            ours = _b22_outcome(func, args, kwargs, seed, "rustnx")
+        ref = _b22_outcome(func, args, kwargs, seed, "networkx")
+        if ours[0] == "ok" and ref[0] == "ok":
+            if isinstance(ref[1], nx.Graph):
+                _b22_same_graph(ours[1], ref[1])
+            else:
+                assert type(ours[1]) is type(ref[1])
+                assert ours[1] == ref[1]
+                if isinstance(ref[1], list):
+                    assert [type(x) for x in ours[1]] == [type(x) for x in ref[1]]
+            assert ours[2] == ref[2]
+        else:
+            assert ours == ref
+
+
+def _b22_sequences(seed, n):
+    """Degree sequences of random graphs (graphical), plus random lists."""
+    rng = random.Random(seed)
+    G = nx.gnm_random_graph(n, rng.randint(0, 3 * n), seed=seed)
+    graphical = [d for _, d in G.degree()]
+    rough = [rng.randint(0, max(n - 1, 0)) for _ in range(n)]
+    return graphical, rough
+
+
+def _b22_directed_sequences(seed, n):
+    D = nx.gnm_random_graph(n, random.Random(seed).randint(0, 3 * n), seed=seed, directed=True)
+    return [d for _, d in D.in_degree()], [d for _, d in D.out_degree()]
+
+
+_B22_CLASSES = [None, nx.Graph, nx.MultiGraph, nx.DiGraph, nx.MultiDiGraph]
+
+
+@pytest.mark.parametrize("n", [0, 1, 2, 5, 13, 40])
+def test_batch22_configuration_models(n):
+    graphical, rough = _b22_sequences(n, n)
+    for seq in [graphical, rough, rough + [1], [-1, 3] + rough, tuple(graphical)]:
+        for cls in _B22_CLASSES:
+            _b22_check("configuration_model", (seq,), {"create_using": cls})
+    rng = random.Random(n)
+    for _ in range(4):
+        ins = [rng.randint(0, 4) for _ in range(rng.randint(0, n))]
+        outs = [rng.randint(0, 4) for _ in range(rng.randint(0, n))]
+        _b22_check("directed_configuration_model", (ins, outs))
+        gap = sum(ins) - sum(outs)
+        if gap > 0:
+            outs.append(gap)
+        else:
+            ins.append(-gap)
+        for cls in _B22_CLASSES:
+            _b22_check("directed_configuration_model", (ins, outs), {"create_using": cls})
+        # Trailing zeros: nodes past len(out) that no edge reaches.
+        _b22_check("directed_configuration_model", (ins + [0, 0], outs))
+        _b22_check("directed_configuration_model", ([], [0, 0]))
+        _b22_check("directed_configuration_model", ([0, 0], []))
+        pairs = [(rng.randint(-1, 3), rng.randint(0, 3)) for _ in range(n)]
+        for cls in [None, nx.Graph, nx.DiGraph]:
+            _b22_check("random_clustered_graph", (pairs,), {"create_using": cls})
+        if n:
+            single = sum(max(a, 0) for a, _ in pairs)
+            tri = sum(b for _, b in pairs)
+            pairs[0] = (pairs[0][0] + single % 2, pairs[0][1] + (-tri) % 3)
+        for cls in [None, nx.Graph, nx.MultiGraph]:
+            _b22_check("random_clustered_graph", (pairs,), {"create_using": cls})
+            _b22_check("random_clustered_graph", ([list(p) for p in pairs],), {"create_using": cls})
+
+
+@pytest.mark.parametrize("n", [0, 1, 2, 5, 13, 40])
+def test_batch22_bipartite_models(n):
+    rng = random.Random(n)
+    names = [
+        "bipartite_havel_hakimi_graph",
+        "reverse_havel_hakimi_graph",
+        "alternating_havel_hakimi_graph",
+    ]
+    for _ in range(6):
+        a = [rng.randint(0, 5) for _ in range(rng.randint(0, n))]
+        b = [rng.randint(0, 5) for _ in range(rng.randint(0, n))]
+        for cls in [None, nx.Graph]:
+            _b22_check("bipartite_configuration_model", (a, b), {"create_using": cls})
+            for name in names:
+                _b22_check(name, (a, b), {"create_using": cls}, seeds=[None])
+        gap = sum(a) - sum(b)
+        if gap > 0:
+            b.append(gap)
+        else:
+            a.append(-gap)
+        for cls in [None, nx.Graph, nx.MultiGraph, nx.DiGraph]:
+            _b22_check("bipartite_configuration_model", (a, b), {"create_using": cls})
+            for name in names:
+                _b22_check(name, (a, b), {"create_using": cls}, seeds=[None])
+        # Degrees above the other side's size, and zeros on both sides.
+        for name in names:
+            _b22_check(name, ([0, 7, 1], [2, 0, 3, 3]), seeds=[None])
+            _b22_check(name, ([0, 0], [0]), seeds=[None])
+
+
+@pytest.mark.parametrize("n", [0, 1, 2, 5, 13, 40])
+def test_batch22_havel_hakimi(n):
+    graphical, rough = _b22_sequences(n, n)
+    for seq in [graphical, rough, [0] * n + graphical, graphical[::-1]]:
+        for cls in _B22_CLASSES:
+            _b22_check("havel_hakimi_graph", (seq,), {"create_using": cls}, seeds=[None])
+    for seed in range(4):
+        ins, outs = _b22_directed_sequences(seed + 10 * n, n)
+        for args in [
+            (ins, outs),
+            (ins[::-1], outs),
+            (ins + [0], outs),
+            (ins, outs + [0, 0]),
+            ([2.0 * d for d in ins], outs),
+            (ins, [-1] + outs[1:]),
+            ([n] + ins[1:], outs),
+        ]:
+            for cls in [None, nx.MultiDiGraph, nx.Graph]:
+                _b22_check("directed_havel_hakimi_graph", args, {"create_using": cls}, seeds=[None])
+
+
+@pytest.mark.parametrize("n", [0, 1, 2, 5, 13, 60])
+def test_batch22_expected_degree(n):
+    rng = random.Random(n)
+    for w in [
+        [rng.random() * 4 for _ in range(n)],
+        [rng.randint(0, 6) for _ in range(n)],
+        [rng.choice([0, 1, 2.5, 7]) for _ in range(n)],
+        [0] * n,
+        [10**6] * n,
+    ]:
+        for selfloops in [True, False]:
+            _b22_check("expected_degree_graph", (w,), {"selfloops": selfloops})
+    # Probabilities so small that `1 - p == 1`: NetworkX divides by log(1).
+    _b22_check("expected_degree_graph", ([1e-300] * n,), fallback=True)
+
+
+@pytest.mark.parametrize("n", [0, 1, 2, 3, 5, 13, 40])
+def test_batch22_trees(n):
+    rng = random.Random(n)
+    for _ in range(5):
+        seq = [d for _, d in nx.random_labeled_tree(n, seed=rng.randint(0, 99), backend="networkx").degree()] if n else []
+        for s in [seq, [rng.randint(0, 4) for _ in range(n)], [0], [2, 0], [1, 1, 0, 0, 2], [3, -1, 1, 1, 1]]:
+            for cls in [None, nx.Graph, nx.MultiGraph, nx.DiGraph]:
+                _b22_check("degree_sequence_tree", (s,), {"create_using": cls}, seeds=[None])
+    for gamma in [3, 2, 2.5, 1.5, 0.5, -1, 1]:
+        for tries in [100, 3, 0, -2]:
+            kw = {"gamma": gamma, "tries": tries}
+            fallback = n == 0 or gamma == 1
+            _b22_check("random_powerlaw_tree_sequence", (n,), kw, seeds=range(4), fallback=fallback)
+            _b22_check("random_powerlaw_tree", (n,), kw, seeds=range(4), fallback=fallback)
+    for cls in [nx.Graph, nx.MultiGraph, nx.DiGraph]:
+        _b22_check("random_powerlaw_tree", (n,), {"create_using": cls, "tries": 1000}, fallback=n == 0)
+    _b22_check("random_labeled_tree", (n,), seeds=range(4))
+    _b22_check("random_labeled_rooted_tree", (n,), seeds=range(4))
+    _b22_check("random_labeled_rooted_forest", (n,), seeds=range(8))
+
+
+def test_batch22_larger_trees():
+    _b22_check("random_labeled_rooted_forest", (1000,), seeds=range(3))
+    _b22_check("random_labeled_tree", (3000,), seeds=range(2))
+    _b22_check("random_powerlaw_tree", (500,), {"tries": 10000}, seeds=range(3))
+
+
+@pytest.mark.parametrize("n", [-1, 0, 1, 2, 5, 8])
+def test_batch22_cograph(n):
+    _b22_check("random_cograph", (n,), seeds=range(6))
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_batch22_random_degree_sequence_graph(seed):
+    rng = random.Random(seed)
+    graphs = [
+        nx.gnm_random_graph(rng.randint(1, 60), rng.randint(0, 200), seed=seed),
+        nx.barabasi_albert_graph(80, 3, seed=seed),
+        nx.star_graph(10),
+        nx.complete_graph(6),
+    ]
+    for G in graphs:
+        seq = [d for _, d in G.degree()]
+        for tries in [10, 1, 0]:
+            _b22_check("random_degree_sequence_graph", (seq,), {"tries": tries}, seeds=range(2))
+    for seq in [[], [0, 0], [3, 3, 3, 1], [1, 1], [2, 2, 2], [5, 1, 1]]:
+        _b22_check("random_degree_sequence_graph", (seq,), seeds=range(3))
+
+
+def _b22_joint_degrees(G):
+    jd = {}
+    for u, v in G.edges():
+        du, dv = G.degree(u), G.degree(v)
+        jd.setdefault(du, {}).setdefault(dv, 0)
+        jd.setdefault(dv, {}).setdefault(du, 0)
+        jd[du][dv] += 1
+        jd[dv][du] += 1
+    return jd
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_batch22_joint_degree(seed):
+    rng = random.Random(seed)
+    for G in [
+        nx.gnm_random_graph(rng.randint(2, 60), rng.randint(1, 200), seed=seed),
+        nx.barabasi_albert_graph(100, 2, seed=seed),
+        nx.complete_graph(5),
+    ]:
+        jd = _b22_joint_degrees(G)
+        _b22_check("joint_degree_graph", (jd,))
+        # Unrealizable: one more edge between two classes.
+        k = next(iter(jd))
+        bad = {a: dict(row) for a, row in jd.items()}
+        bad[k][k] = bad[k].get(k, 0) + 2
+        _b22_check("joint_degree_graph", (bad,))
+    _b22_check("joint_degree_graph", ({1: {1: 2}},))
+    _b22_check("joint_degree_graph", ({},))
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_batch22_is_valid_directed_joint_degree(seed):
+    rng = random.Random(seed)
+    D = nx.gnm_random_graph(rng.randint(1, 60), rng.randint(0, 200), seed=seed, directed=True)
+    ins = [d for _, d in D.in_degree()]
+    outs = [d for _, d in D.out_degree()]
+    nkk = {}
+    for u, v in D.edges():
+        row = nkk.setdefault(D.out_degree(u), {})
+        row[D.in_degree(v)] = row.get(D.in_degree(v), 0) + 1
+    plus = {k: {l: c + 1 for l, c in row.items()} for k, row in nkk.items()}
+    for args in [
+        (ins, outs, nkk),
+        (ins, outs[:-1], nkk),
+        (ins[::-1], outs, nkk),
+        (ins, outs, plus),
+        (ins, outs, {**nkk, 0: {1: 1}}),
+        (ins, outs, {**nkk, 99: {1: 1}}),
+        (ins, outs, {}),
+    ]:
+        _b22_check("is_valid_directed_joint_degree", args, seeds=[None], fallback=True)
+    _b22_check("is_valid_directed_joint_degree", (ins, outs, nkk), seeds=[None])
+    _b22_check("is_valid_directed_joint_degree", (ins, outs, plus), seeds=[None])
+
+
+def test_batch22_fall_backs():
+    class Sub(nx.Graph):
+        pass
+
+    seq = [3, 2, 2, 1, 1, 1, 0, 2]
+    # Instances, subclasses, iterators and floats fall back or run as NetworkX.
+    for cls in [Sub, nx.Graph(), nx.MultiGraph([(5, 6)]), nx.DiGraph()]:
+        _b22_check("configuration_model", (seq,), {"create_using": cls}, fallback=True)
+        _b22_check("havel_hakimi_graph", (seq,), {"create_using": cls}, seeds=[None], fallback=True)
+        _b22_check("degree_sequence_tree", ([2, 1, 1],), {"create_using": cls}, seeds=[None], fallback=True)
+        _b22_check("bipartite_havel_hakimi_graph", ([2, 1], [1, 1, 1]), {"create_using": cls}, seeds=[None], fallback=True)
+        _b22_check("random_clustered_graph", ([(1, 0), (1, 0)],), {"create_using": cls}, fallback=True)
+    for args in [([2.0, 1, 1],), (iter([2, 1, 1]),), ([True, 1],)]:
+        _b22_check("degree_sequence_tree", args, seeds=[None], fallback=True)
+        _b22_check("havel_hakimi_graph", args, seeds=[None], fallback=True)
+    _b22_check("expected_degree_graph", ([1, float("inf")],), fallback=True)
+    _b22_check("expected_degree_graph", ([1, -1, 2],), fallback=True)
+    _b22_check("random_labeled_tree", (2.0,), fallback=True)
+    _b22_check("joint_degree_graph", ({1.0: {1.0: 2}},), fallback=True)
+    # An iterator of pairs: read once, then NetworkX's code if rustnx declines.
+    for pairs in [[(1, 0), (1, 0)], [(1, 0), (1.0, 0)], [(1, 0), (0, 0)]]:
+        for seed in range(3):
+            ours = nx.random_clustered_graph(iter(pairs), seed=random.Random(seed), backend="rustnx") if all(type(x) is int for p in pairs for x in p) else None
+            ref = nx.random_clustered_graph(iter(pairs), seed=random.Random(seed), backend="networkx")
+            if ours is not None:
+                _b22_same_graph(ours, ref)
+            with nx.config.backend_priority(generators=["rustnx"]):
+                try:
+                    got = nx.random_clustered_graph(iter(pairs), seed=random.Random(seed))
+                except nx.NetworkXError:
+                    got = None
+            if got is not None:
+                _b22_same_graph(got, ref)
+    # Other generators fall back.
+    import numpy as np
+
+    with pytest.raises(NotImplementedError):
+        nx.configuration_model(seq, seed=np.random.RandomState(3), backend="rustnx")
+    with nx.config.backend_priority(generators=["rustnx"]):
+        G = nx.configuration_model(seq * 20, seed=np.random.RandomState(3))
+    _b22_same_graph(G, nx.configuration_model(seq * 20, seed=np.random.RandomState(3), backend="networkx"))
+
+
+def test_batch22_instances():
+    # A create_using instance is cleared and filled, as in NetworkX.
+    for name, args, seeded in [
+        ("configuration_model", ([2, 2, 1, 1],), True),
+        ("havel_hakimi_graph", ([2, 2, 1, 1],), False),
+        ("degree_sequence_tree", ([2, 2, 1, 1],), False),
+        ("bipartite_configuration_model", ([2, 1], [1, 1, 1]), True),
+        ("alternating_havel_hakimi_graph", ([2, 1], [1, 1, 1]), False),
+    ]:
+        func = _b22_func(name)
+        results = []
+        for backend in ["rustnx", "networkx"]:
+            G = nx.MultiGraph([(7, 8)], name="old")
+            extra = {"seed": random.Random(1)} if seeded else {}
+            R = func(*args, create_using=G, backend=backend, **extra)
+            assert R is G
+            results.append(R)
+        _b22_same_graph(*results)
+
+
+def test_batch22_seed_none():
+    # seed=None draws from the global generator and leaves it where NetworkX would.
+    results = []
+    for backend in ["rustnx", "networkx"]:
+        random.seed(11)
+        G = nx.configuration_model([3, 3, 2, 2, 1, 1], backend=backend)
+        results.append((G, random.random()))
+    _b22_same_graph(results[0][0], results[1][0])
+    assert results[0][1] == results[1][1]
+
+
+def test_batch22_replays_paretovariate():
+    """``pyrandom.rs``'s ``paretovariate`` against ``random.Random`` itself."""
+    from rustnx._core import CoreGraph
+
+    for seed in range(40):
+        rng = random.Random(seed)
+        ops = [(9, rng.choice([1, 2, 3, 5, 200, -3, -1]), rng.choice([1, 2, 4, 1000])) for _ in range(300)]
+        ops += [(7, rng.choice([5, 21, 22, 100, 5000]), 2) for _ in range(50)]
+        mt = random.Random(seed + 1000)
+        version, internal, gauss = mt.getstate()
+        found, internal = CoreGraph.pyrandom_replay(list(internal), ops)
+        for (op, a, b), got in zip(ops, found):
+            if op == 9:
+                try:
+                    want = mt.paretovariate(a / b)
+                except OverflowError:
+                    want = float("inf")
+            else:
+                want = mt.sample(range(a), b)
+            assert type(got) is type(want) and got == want, (seed, op, a, b)
+        assert mt.getstate() == (version, tuple(internal), gauss)
+
+
+def test_batch22_dispatch(monkeypatch):
+    from rustnx import algorithms
+
+    runs = []
+    original = algorithms._rg_run
+    monkeypatch.setattr(algorithms, "_rg_run", lambda seed, run: runs.append(1) or original(seed, run))
+    seq = [2] * 200
+    with nx.config.backend_priority(generators=["rustnx"]):
+        G = nx.configuration_model(seq, seed=1)
+        assert runs
+        _b22_same_graph(G, nx.configuration_model(seq, seed=1, backend="networkx"))
+        # Small inputs stay in NetworkX.
+        runs.clear()
+        nx.configuration_model([2, 2, 2], seed=1)
+        nx.random_powerlaw_tree(10, seed=1, tries=1000)
+        nx.random_cograph(5, seed=1)
+        nx.joint_degree_graph({1: {1: 2}}, seed=1)
+        assert not runs
+        # Sizes that grow faster than the arguments.
+        nx.random_cograph(8, seed=1)
+        nx.random_powerlaw_tree(150, seed=1, tries=10000)
+        jd = _b22_joint_degrees(nx.barabasi_albert_graph(100, 2, seed=1))
+        nx.joint_degree_graph(jd, seed=1)
+        assert len(runs) == 3
