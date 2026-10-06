@@ -5931,6 +5931,28 @@ impl CoreGraph {
         transforms::inverse_line_edges(&cells_of)
     }
 
+    /// `quotient_graph`'s default data for the blocks `block` (each node's
+    /// block index): edges inside each block, the joined block pairs and
+    /// their weight sums. `None` unless the weights are ints (or missing).
+    #[allow(clippy::type_complexity)]
+    fn b24_quotient(
+        &self,
+        py: Python<'_>,
+        block: Vec<u32>,
+        nblocks: usize,
+        weight: Option<&str>,
+    ) -> PyResult<Option<(Vec<i64>, Vec<(u32, u32)>, Vec<i64>)>> {
+        if block.len() != self.n || block.iter().any(|&b| b as usize >= nblocks) {
+            return Err(PyValueError::new_err("one block per node"));
+        }
+        let (all_int, hidden) = self.weights_info(weight);
+        if !all_int || hidden {
+            return Ok(None);
+        }
+        let w = self.weight_slice(weight, false)?;
+        Ok(py.detach(|| transforms::quotient(self, &block, nblocks, w)))
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();

@@ -1007,3 +1007,49 @@ pub fn _b24_modular_product<'py>(
     }
     Ok(())
 }
+
+// --- quotient_graph -----------------------------------------------------------------
+
+/// What `quotient_graph`'s default node and edge data need, for blocks
+/// given as each node's block index: the edges inside each block
+/// (`S.number_of_edges()`), and the block pairs its default edge relation
+/// joins (`combinations` order, or `permutations` order when directed: an
+/// arc from the first block to the second) with the summed weights of the
+/// edges between them in either direction. `weights` are exact ints (unit
+/// weights if `None`); `None` if a sum leaves `i64`.
+pub fn quotient(
+    g: &crate::graph::CoreGraph,
+    block: &[u32],
+    nblocks: usize,
+    weights: Option<&[f64]>,
+) -> Option<(Vec<i64>, Vec<(u32, u32)>, Vec<i64>)> {
+    let mut inside = vec![0i64; nblocks];
+    let mut joined: HashSet<(u32, u32)> = HashSet::new();
+    let mut sums: HashMap<(u32, u32), i64> = HashMap::new();
+    for u in 0..g.n {
+        let bu = block[u];
+        for e in g.succ.range(u) {
+            let v = g.succ.targets[e] as usize;
+            let bv = block[v];
+            if !g.directed && v < u {
+                continue; // the edge's other entry
+            }
+            if bu == bv {
+                inside[bu as usize] += 1;
+                continue;
+            }
+            let w = weights.map_or(1, |w| w[e] as i64);
+            let pair = (bu.min(bv), bu.max(bv));
+            let s = sums.entry(pair).or_insert(0);
+            *s = s.checked_add(w)?;
+            joined.insert(if g.directed { (bu, bv) } else { pair });
+        }
+    }
+    let mut pairs: Vec<(u32, u32)> = joined.into_iter().collect();
+    pairs.sort_unstable();
+    let totals = pairs
+        .iter()
+        .map(|&(b, c)| sums[&(b.min(c), b.max(c))])
+        .collect();
+    Some((inside, pairs, totals))
+}

@@ -324,6 +324,7 @@ __all__ = [
     "isolates",
     "jaccard_coefficient",
     "johnson",
+    "join_trees",
     "k_core",
     "k_corona",
     "k_crust",
@@ -447,6 +448,7 @@ __all__ = [
     "prim_mst_edges",
     "projected_graph",
     "prominent_group",
+    "quotient_graph",
     "ra_index_soundarajan_hopcroft",
     "radius",
     "random_geometric_graph",
@@ -12562,6 +12564,8 @@ def intersection(G, H):
 
 # --- Batch 24: generators and transforms ---
 
+from itertools import accumulate  # noqa: E402
+
 # The generators build on batch 17's `_generated` (Rust replays NetworkX's
 # `add_node` / `add_edge` calls) or add edge lists computed in Rust with
 # `_graph_with_plain_edges`. The transformations copy attribute dicts the
@@ -12920,3 +12924,125 @@ def inverse_line_graph(G):
             H_nodes.append((nodes[u],))
     us, vs = _CoreGraph.b24_inverse_line_edges(cells_of)
     return _graph_with_plain_edges(nx.Graph, H_nodes, us, vs)
+
+
+def _b24_join_view(tree):
+    """An ``OpView`` of the NetworkX graph ``tree`` (``join_trees`` takes
+    NetworkX graphs as they are)."""
+    from .graph import from_networkx
+
+    if type(tree) not in (nx.Graph, nx.DiGraph):
+        raise NotImplementedError("rustnx joins plain Graph and DiGraph trees only")
+    snapshot = from_networkx(tree)
+    return snapshot._core.op_view(list(snapshot._nodes), tree._node, tree._adj)
+
+
+def join_trees(rooted_trees, *, label_attribute=None, first_label=0):
+    if type(rooted_trees) not in (list, tuple):
+        # An iterator would be used up before NetworkX falls back.
+        raise NotImplementedError("rustnx needs the trees in a list or tuple")
+    if type(first_label) is not int:
+        raise NotImplementedError("rustnx needs an int first_label")
+    if not rooted_trees:
+        R = nx.Graph()
+        R.add_node(0)
+        return R
+    trees, roots = zip(*rooted_trees)
+    R = type(trees[0])()
+    lengths = (len(tree) for tree in trees[:-1])
+    first_labels = list(accumulate(lengths, initial=first_label + 1))
+    new_roots = []
+    for tree, root, first_node in zip(trees, roots, first_labels):
+        new_roots.append(first_node + list(tree.nodes()).index(root))
+    if type(R) not in (nx.Graph, nx.DiGraph):
+        raise NotImplementedError("rustnx joins plain Graph and DiGraph trees only")
+    views = [_b24_join_view(tree) for tree in trees]
+    if any(tree.is_directed() != R.is_directed() for tree in trees):
+        raise NotImplementedError("NetworkX mixes directed and undirected trees")
+    # Each tree goes through `convert_node_labels_to_integers` (a copy whose
+    # undirected rows follow its edge order), then `R.update(tree)`, which
+    # adds its nodes and edges with copies of their dicts.
+    for tree, view, start in zip(trees, views, first_labels):
+        labels = list(range(start, start + len(tree)))
+        view.relabeled(labels).add_to(*_b21_target(R), 1)
+        if label_attribute is not None:
+            node = R._node
+            for new, old in zip(labels, tree._node):
+                node[new][label_attribute] = old
+        R.graph.update(tree.graph)
+    R.add_node(first_label)
+    R.add_edges_from((first_label, root) for root in new_roots)
+    return R
+
+
+def _b24_index(G):
+    index = G._index
+    if type(index) is not dict:
+        index = dict(zip(G._nodes, range(len(G))))
+    return index
+
+
+def quotient_graph(
+    G,
+    partition,
+    edge_relation=None,
+    node_data=None,
+    edge_data=None,
+    weight="weight",
+    relabel=False,
+    create_using=None,
+):
+    if callable(partition) or edge_relation is not None or edge_data is not None:
+        # Python callables per pair of blocks: nothing to speed up.
+        raise NotImplementedError("rustnx supports the default relations only")
+    if create_using is not None:
+        raise NotImplementedError("rustnx supports create_using=None only")
+    if isinstance(partition, dict):
+        partition = list(partition.values())
+    if type(partition) not in (list, tuple) or any(
+        type(b) not in (list, tuple, set, frozenset) for b in partition
+    ):
+        raise NotImplementedError("rustnx needs the blocks as containers in a list")
+    if not isinstance(weight, str):
+        raise NotImplementedError("rustnx needs a string weight attribute")
+    base = _networkx_graph(G)
+    cls = _plain_result_class(G)
+    partition_nodes = set().union(*partition)
+    if len(partition_nodes) != len(G):
+        raise NotImplementedError("NetworkX works on a subgraph view here")
+    if not nx.community.is_partition.orig_func(base, partition):
+        raise nx.NetworkXException("each node must be in exactly one part of `partition`")
+    blocks = [frozenset(b) for b in partition]
+    if not all(blocks):
+        raise NotImplementedError("empty blocks merge in NetworkX")
+    index = _b24_index(G)
+    block_of = [0] * len(G)
+    for i, b in enumerate(blocks):
+        for v in b:
+            block_of[index[v]] = i
+    core = _weight_core(G, weight, 1)
+    found = core.b24_quotient(block_of, len(blocks), weight)
+    if found is None:
+        # Float weights: NetworkX sums them in set order.
+        raise NotImplementedError("rustnx sums int weights only")
+    inside, pairs, totals = found
+    H = cls()
+    directed = H.is_directed()
+    for i, b in enumerate(blocks):
+        if node_data is None:
+            n, m = len(b), inside[i]
+            if m == 0 or n <= 1:
+                density = 0
+            else:
+                density = m / (n * (n - 1))
+                if not directed:
+                    density *= 2
+            data = {"graph": base.subgraph(b), "nnodes": n, "nedges": m, "density": density}
+        else:
+            data = node_data(b)
+        H.add_nodes_from([(b, data)])
+    H.add_edges_from((blocks[i], blocks[j], {"weight": w}) for (i, j), w in zip(pairs, totals))
+    if relabel:
+        labels = {b: i for i, b in enumerate(blocks)}
+        H = nx.relabel_nodes.orig_func(H, labels)
+    return H

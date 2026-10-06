@@ -693,7 +693,19 @@ _SIZE_ESTIMATES = {
     "circulant_graph": lambda a: _product(a.get("n"), a.get("offsets")),
     "margulis_gabber_galil_graph": lambda a: _product(a.get("n"), a.get("n")),
     "nonisomorphic_trees": lambda a: _power(3, a.get("order")),
+    "number_of_nonisomorphic_trees": lambda a: _tree_count_size(a.get("order")),
+    "join_trees": lambda a: sum(len(pair[0]) for pair in a["rooted_trees"])
+    if isinstance(a.get("rooted_trees"), (list, tuple))
+    else _LARGE,
 }
+
+
+def _tree_count_size(order):
+    """NetworkX 3.4 counts the trees by enumerating them (exponential work);
+    later versions use a formula as fast as rustnx's."""
+    if "sum(1 for" in algorithms._gen_source("number_of_nonisomorphic_trees"):
+        return _power(3, order)
+    return _size_of(order)
 
 
 def _size_of(value):

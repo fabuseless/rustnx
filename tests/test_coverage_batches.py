@@ -7747,3 +7747,97 @@ def test_batch24_inverse_line_graph_edge_cases():
               nx.petersen_graph(), nx.Graph([(0, 1), (1, 2), (2, 0), (0, 3)]),
               nx.DiGraph([(0, 1)]), nx.MultiGraph([(0, 1)])]:
         exact_outcome(_b21_graphs(nx.inverse_line_graph), G)
+
+
+def _b24_tree(seed, directed=False):
+    rng = random.Random(seed)
+    n = rng.randint(1, 15)
+    T = nx.Graph()
+    T.add_node(0)
+    for v in range(1, n):
+        T.add_edge(v, rng.randrange(v))
+    if rng.random() < 0.5:
+        T = nx.relabel_nodes(T, {v: f"t{seed}-{v}" for v in T})
+    if directed:
+        T = nx.bfs_tree(T, next(iter(T)))
+    H = T.__class__()
+    nodes = list(T)
+    rng.shuffle(nodes)
+    H.add_nodes_from(nodes)
+    edges = list(T.edges())
+    rng.shuffle(edges)
+    H.add_edges_from(edges)
+    return _b21_decorate(H, seed)
+
+
+@pytest.mark.parametrize("seed", range(30))
+def test_batch24_join_trees(seed):
+    rng = random.Random(seed)
+    directed = seed % 3 == 0
+    trees = [_b24_tree(seed * 10 + i, directed) for i in range(rng.randint(1, 4))]
+    pairs = [(T, rng.choice(list(T))) for T in trees]
+    for kw in [{}, {"label_attribute": "old"}, {"first_label": 5}, {"label_attribute": "color", "first_label": -3}]:
+        exact_outcome(_b21_graphs(nx.join_trees), pairs, **kw)
+        exact_outcome(_b21_graphs(nx.join_trees), tuple(pairs), **kw)
+    runs_in_rustnx(nx.join_trees, pairs)
+    exact_outcome(_b21_graphs(nx.join_trees), [])
+    exact_outcome(_b21_graphs(nx.join_trees), [], first_label=4)
+    exact_outcome(_b21_graphs(nx.join_trees), pairs + [(trees[0], "missing")])
+    exact_outcome(_b21_graphs(nx.join_trees), pairs, first_label=1.5)
+    mixed = [(_b24_tree(seed, not directed), 0)] + pairs
+    exact_outcome(_b21_graphs(nx.join_trees), mixed)
+
+
+def _b24_quotient_state(H):
+    """`_b21_graph_state`, with the default "graph" node attribute (a fresh
+    subgraph view) replaced by its nodes and edges."""
+    if not isinstance(H, nx.Graph):
+        return H
+    H = H.copy()
+    for v, d in H.nodes(data=True):
+        if isinstance(d.get("graph"), nx.Graph):
+            S = d["graph"]
+            d["graph"] = (type(S).__name__, list(S.nodes), list(S.edges))
+    return _b21_graph_state(H)
+
+
+def _b24_partition(G, seed):
+    rng = random.Random(seed)
+    nodes = list(G)
+    rng.shuffle(nodes)
+    blocks, i = [], 0
+    while i < len(nodes):
+        k = rng.randint(1, 4)
+        block = nodes[i : i + k]
+        blocks.append(rng.choice([list, tuple, set, frozenset])(block))
+        i += k
+    return blocks
+
+
+@pytest.mark.parametrize("seed", range(40))
+@pytest.mark.parametrize("directed", [False, True])
+def test_batch24_quotient_graph(seed, directed):
+    G = _b21_decorate(graph_for(seed, directed, "int" if seed % 2 else "none"), seed)
+    for _, _, d in G.edges(data=True):
+        if isinstance(d.get("weight"), float):
+            d["weight"] = int(d["weight"] * 2)  # float sums fall back
+    part = _b24_partition(G, seed)
+    q = lambda *a, **kw: _b24_quotient_state(nx.quotient_graph(*a, **kw))
+    exact_outcome(q, G, part)
+    exact_outcome(q, G, part, relabel=True)
+    exact_outcome(q, G, {i: b for i, b in enumerate(part)})
+    exact_outcome(q, G, part, weight="w")
+    exact_outcome(q, G, part, node_data=lambda b: {"size": len(b)})
+    runs_in_rustnx(nx.quotient_graph, G, part)
+    # Cases rustnx leaves to NetworkX, or NetworkX's errors.
+    exact_outcome(q, G, part[:-1])
+    exact_outcome(q, G, part + [[]])
+    exact_outcome(q, G, part + [part[0]])
+    exact_outcome(q, G, lambda u, v: str(u)[-1] == str(v)[-1])
+    exact_outcome(q, G, part, edge_relation=lambda b, c: True)
+    exact_outcome(q, G, part, create_using=nx.MultiGraph)
+    if G.number_of_edges():
+        H = G.copy()
+        u, v = next(iter(H.edges()))
+        H[u][v]["weight"] = 0.5
+        exact_outcome(q, H, part)
