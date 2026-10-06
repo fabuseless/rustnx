@@ -3,6 +3,7 @@ pub mod bipartite;
 pub mod bipartite_more;
 pub mod centrality;
 pub mod centrality_more;
+pub mod cliques;
 pub mod cluster;
 pub mod communities;
 pub mod connectivity;

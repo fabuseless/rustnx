@@ -8236,3 +8236,345 @@ def test_batch24_quotient_graph(seed, directed):
         u, v = next(iter(H.edges()))
         H[u][v]["weight"] = 0.5
         exact_outcome(q, H, part)
+
+
+# --- Batch 25: cliques, structure and approximation ---
+
+from itertools import combinations  # noqa: E402
+
+from networkx.algorithms import approximation as _b25_approx  # noqa: E402
+from networkx.algorithms import connectivity as _b25_conn  # noqa: E402
+from networkx.algorithms.approximation.steinertree import metric_closure as _b25_metric_closure  # noqa: E402
+
+
+def _b25_simple(G):
+    """G without self-loops (the approximation functions' usual input)."""
+    H = G.copy()
+    H.remove_edges_from(list(nx.selfloop_edges(H)))
+    return H
+
+
+def _b25_chordal(G):
+    """A chordal supergraph of G: its min-fill-in triangulation."""
+    C = _b25_simple(G)
+    for bag in _b25_approx.treewidth_min_fill_in(C, backend="networkx")[1]:
+        C.add_edges_from(combinations(bag, 2))
+    return C
+
+
+def _b25_decomposition(func):
+    """``treewidth_*`` results with the bags' iteration order and edges."""
+
+    def run(*args, **kwargs):
+        width, T = func(*args, **kwargs)
+        return width, [list(b) for b in T], [(list(u), list(v)) for u, v in T.edges()]
+
+    return run
+
+
+def test_b25_set_algebra_probe():
+    from rustnx import algorithms
+
+    assert algorithms._b25_set_algebra_replayable()
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch25_cliques(seed, directed):
+    G = graph_for(seed, directed)
+    exact_outcome(listed(nx.find_cliques), G)
+    exact_outcome(listed(nx.find_cliques_recursive), G)
+    nodes = list(G)
+    if nodes:
+        v = nodes[seed % len(nodes)]
+        nbrs = [w for w in G[v] if w != v]
+        for prefix in ([v], [v] + nbrs[:1], [v] + nbrs[:2], [v, v], [v, "missing"], [[1], v]):
+            exact_outcome(listed(nx.find_cliques), G, prefix)
+            exact_outcome(listed(nx.find_cliques_recursive), G, prefix)
+        exact_outcome(listed(nx.find_cliques), G, (v,))  # a tuple falls back
+    exact_outcome(_b21_graphs(nx.make_max_clique_graph), G)
+    exact_outcome(_b21_graphs(nx.make_max_clique_graph), G, create_using=nx.DiGraph)
+    exact_outcome(_b21_graphs(nx.make_clique_bipartite), G)
+    exact_outcome(_b21_graphs(nx.make_clique_bipartite), G, create_using=nx.MultiGraph)
+    for k in (1, 2, 3, 4):
+        exact_outcome(listed(nx.community.k_clique_communities), G, k)
+    exact_outcome(listed(nx.community.k_clique_communities), G, 3, cliques=list(nx.find_cliques(_b25_simple(G).to_undirected())))
+
+
+def test_batch25_clique_edge_cases():
+    for G in [nx.Graph(), nx.empty_graph(3), nx.complete_graph(5), nx.path_graph(4)]:
+        exact_outcome(listed(nx.find_cliques), G)
+        exact_outcome(listed(nx.find_cliques_recursive), G)
+        exact_outcome(listed(nx.find_cliques), G, [0])
+        exact_outcome(listed(nx.find_cliques_recursive), G, [0, 1])
+        exact_outcome(_b21_graphs(nx.make_max_clique_graph), G)
+        exact_outcome(_b21_graphs(nx.make_clique_bipartite), G)
+    # Clique nodes named like make_clique_bipartite's clique labels.
+    G = nx.relabel_nodes(nx.path_graph(5), lambda v: -v)
+    exact_outcome(_b21_graphs(nx.make_clique_bipartite), G)
+    # The caller's node objects start each clique (1.0 is G's node 1).
+    exact_outcome(listed(nx.find_cliques), nx.complete_graph(4), [1.0])
+    exact_outcome(listed(nx.find_cliques_recursive), nx.complete_graph(4), [1.0, 2])
+    B = nx.DiGraph([(9, 9)])
+    exact_outcome(_b21_graphs(lambda G, **kw: nx.make_max_clique_graph(G, create_using=B, **kw)), nx.path_graph(3))
+
+
+def test_batch25_find_cliques_laziness():
+    # find_cliques reads G at the first next(); later changes don't matter.
+    results = []
+    for ours in [True, False]:
+        G = nx.gnp_random_graph(30, 0.3, seed=3)
+        gen = nx.find_cliques(_b13_converted(G, "find_cliques") if ours else G)
+        G.add_edge(0, 1)
+        G.add_edge(2, 3)
+        first = next(gen)
+        G.add_edge(4, 5)
+        results.append([first] + list(gen))
+    assert results[0] == results[1]
+    # find_cliques_recursive copies G at the call.
+    results = []
+    for ours in [True, False]:
+        G = nx.gnp_random_graph(30, 0.3, seed=4)
+        gen = nx.find_cliques_recursive(_b13_converted(G, "find_cliques_recursive") if ours else G)
+        G.add_edge(0, 1)
+        results.append(list(gen))
+    assert results[0] == results[1]
+    # Large outputs come in batches as iteration goes on.
+    G = nx.gnm_random_graph(3000, 9000, seed=5)
+    assert list(islice(nx.find_cliques(G, backend="rustnx"), 5)) == list(
+        islice(nx.find_cliques(G, backend="networkx"), 5)
+    )
+    exact_outcome(listed(nx.find_cliques), G)
+    exact_outcome(listed(nx.community.k_clique_communities), G, 3)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch25_dominating_and_independent_sets(seed, directed):
+    G = graph_for(seed, directed)
+    exact_outcome(with_set_order(nx.dominating_set), G)
+    nodes = list(G)
+    for start in nodes[-1:] + ["missing", [1]]:
+        exact_outcome(with_set_order(nx.dominating_set), G, start)
+    for s in range(3):
+        exact_outcome(with_set_order(nx.maximal_independent_set), G, seed=s)
+        exact_outcome(with_set_order(lambda G, **kw: nx.maximal_independent_set(G, seed=random.Random(s), **kw)), G)
+        exact_outcome(with_set_order(nx.maximal_independent_set), G, nodes[:1], seed=s)
+        exact_outcome(with_set_order(nx.maximal_independent_set), G, nodes[:3], seed=s)
+        exact_outcome(with_set_order(nx.maximal_independent_set), G, ["missing"], seed=s)
+
+
+def test_batch25_independent_set_state():
+    # The generator ends where NetworkX's draws leave it.
+    G = nx.gnm_random_graph(200, 500, seed=1)
+    states = []
+    for backend in ["rustnx", "networkx"]:
+        rng = random.Random(42)
+        result = nx.maximal_independent_set(G, seed=rng, backend=backend)
+        states.append((list(result), rng.random()))
+    assert states[0] == states[1]
+    exact_outcome(with_set_order(nx.dominating_set), nx.Graph())
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float", "missing"])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch25_kernighan_lin(seed, weights):
+    G = graph_for(seed, False, weights)
+    nodes = list(G)
+    kl = nx.community.kernighan_lin_bisection
+    for s in range(3):
+        exact_outcome(with_set_order(kl), G, seed=s)
+        exact_outcome(with_set_order(kl), G, seed=s, max_iter=1)
+        exact_outcome(with_set_order(kl), G, weight=None, seed=s)
+    halves = [nodes[::2], nodes[1::2]]
+    for partition in [tuple(set(h) for h in halves), halves, [halves[0], halves[0]], (nodes, [])]:
+        exact_outcome(with_set_order(kl), G, partition, seed=1)
+    exact_outcome(with_set_order(lambda G, **kw: kl(G, iter(halves), seed=1, **kw)), G)
+    exact_outcome(with_set_order(kl), G, seed=1, max_iter=0)
+    exact_outcome(with_set_order(kl), G, seed=1, max_iter=-2)
+    if weights == "int" and nodes:
+        H = G.copy()
+        u, v = next(iter(H.edges()), (nodes[0], nodes[0]))
+        H.add_edge(u, v, weight=None)  # hidden in 3.6+, an error before
+        exact_outcome(with_set_order(kl), H, seed=1)
+
+
+def test_batch25_kernighan_lin_state():
+    # The caller's generator ends where NetworkX leaves it.
+    G = nx.gnm_random_graph(300, 900, seed=3)
+    states = []
+    for backend in ["rustnx", "networkx"]:
+        rng = random.Random(7)
+        parts = nx.community.kernighan_lin_bisection(G, seed=rng, backend=backend)
+        states.append(([list(p) for p in parts], rng.random()))
+    assert states[0] == states[1]
+    for G in [nx.Graph(), nx.empty_graph(1), nx.MultiGraph([(0, 1), (0, 1)]), nx.DiGraph([(0, 1)])]:
+        exact_outcome(with_set_order(nx.community.kernighan_lin_bisection), G, seed=1)
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_batch25_approximation(seed):
+    G = graph_for(seed, False)
+    H = _b25_simple(G)
+    exact_outcome(_b25_approx.large_clique_size, G)
+    for A in [G, H]:
+        exact_outcome(with_set_order(_b25_approx.ramsey_R2), A)
+        exact_outcome(with_set_order(_b25_approx.clique_removal), A)
+        exact_outcome(with_set_order(_b25_approx.maximum_independent_set), A)
+        exact_outcome(with_set_order(_b25_approx.max_clique), A)
+        exact_outcome(_b25_decomposition(_b25_approx.treewidth_min_degree), A)
+    # The shared decomposition replay (treewidth_min_fill_in uses it too).
+    exact_outcome(_b25_decomposition(_b25_approx.treewidth_min_fill_in), G)
+    exact_outcome(_b25_approx.large_clique_size, graph_for(seed, True))
+    exact_outcome(_b25_approx.ramsey_R2, graph_for(seed, True))
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch25_approximate_connectivity(seed, directed):
+    G = graph_for(seed, directed)
+    nodes = list(G)
+    exact_outcome(_b25_approx.node_connectivity, G)
+    exact_outcome(_b25_approx.node_connectivity, _b25_simple(nx.k_core(_b25_simple(G).to_undirected(), 2)))
+    exact_outcome(_b25_approx.all_pairs_node_connectivity, G)
+    exact_outcome(_b25_approx.all_pairs_node_connectivity, G, nbunch=nodes[:6])
+    exact_outcome(_b25_approx.all_pairs_node_connectivity, G, nbunch=nodes[:4], cutoff=1)
+    exact_outcome(_b25_approx.all_pairs_node_connectivity, G, nbunch=nodes[:2] + ["missing"])
+    if len(nodes) >= 2:
+        s, t = nodes[0], nodes[-1]
+        for cutoff in [None, 0, 1, 2, True, 1.5, -1]:
+            exact_outcome(_b25_approx.local_node_connectivity, G, s, t, cutoff=cutoff)
+            exact_outcome(_b25_approx.local_node_connectivity, G, t, s, cutoff=cutoff)
+        exact_outcome(_b25_approx.local_node_connectivity, G, s, s)
+        exact_outcome(_b25_approx.local_node_connectivity, G, s, "missing")
+        exact_outcome(_b25_approx.node_connectivity, G, s, t)
+        exact_outcome(_b25_approx.node_connectivity, G, s, "missing")
+        exact_outcome(_b25_approx.node_connectivity, G, s)
+    exact_outcome(_b25_approx.node_connectivity, nx.DiGraph() if directed else nx.Graph())
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_batch25_structure(seed):
+    G = graph_for(seed, False)
+    D = graph_for(seed, True)
+    rng = random.Random(seed)
+    T = nx.tournament.random_tournament(rng.randint(0, 40), seed=seed)
+    exact_outcome(nx.tournament.hamiltonian_path, T)
+    exact_outcome(nx.tournament.hamiltonian_path, D)
+    exact_outcome(nx.tournament.hamiltonian_path, G)
+    for A in [G, _b25_simple(G), _b25_chordal(G), D]:
+        exact_outcome(listed(nx.chordal_graph_cliques), A)
+    H = _b25_simple(G)
+    exact_outcome(nx.find_asteroidal_triple, H)
+    exact_outcome(nx.find_asteroidal_triple, nx.gnp_random_graph(rng.randint(5, 25), 0.4, seed=seed))
+    exact_outcome(nx.find_asteroidal_triple, nx.random_labeled_tree(rng.randint(5, 25), seed=seed)
+                  if hasattr(nx, "random_labeled_tree") else nx.path_graph(9))
+    exact_outcome(nx.find_asteroidal_triple, D)
+
+
+def test_batch25_structure_edge_cases():
+    for T in [nx.DiGraph(), nx.DiGraph([(0, 1)]), nx.tournament.random_tournament(1)]:
+        exact_outcome(nx.tournament.hamiltonian_path, T)
+    loop = nx.Graph([(0, 1), (1, 2), (2, 0), (2, 2)])
+    for A in [loop, nx.Graph([(5, 5)]), nx.cycle_graph(5), nx.Graph()]:
+        exact_outcome(listed(nx.chordal_graph_cliques), A)
+    # chordal_graph_cliques reads G at the first next().
+    results = []
+    for ours in [True, False]:
+        G = nx.path_graph(6)
+        gen = nx.chordal_graph_cliques(_b13_converted(G, "chordal_graph_cliques") if ours else G)
+        G.add_edge(0, 2)
+        results.append([sorted(c) for c in gen])
+    assert results[0] == results[1]
+    exact_outcome(nx.find_asteroidal_triple, nx.cycle_graph(6))
+    exact_outcome(nx.find_asteroidal_triple, nx.cycle_graph(5))
+    # Subgraphs of views filter the underlying graph: these fall back.
+    T = nx.tournament.random_tournament(30, seed=1)
+    exact_outcome(nx.tournament.hamiltonian_path, T.subgraph(list(T)[:20]))
+    G = nx.gnp_random_graph(30, 0.3, seed=2)
+    V = G.subgraph(list(G)[:20])
+    for func in [_b25_approx.ramsey_R2, _b25_approx.maximum_independent_set, _b25_approx.max_clique]:
+        exact_outcome(with_set_order(func), V)
+    exact_outcome(listed(nx.chordal_graph_cliques), _b25_chordal(G).subgraph(list(G)[:20]))
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch25_auxiliary_graphs(seed, directed):
+    G = graph_for(seed, directed)
+    M = random_multigraph(seed, directed, "int")
+    for A in [G, M]:
+        exact_outcome(_b21_graphs(_b25_conn.build_auxiliary_edge_connectivity), A)
+        exact_outcome(_b21_graphs(_b25_conn.build_auxiliary_node_connectivity), A)
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float"])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch25_metric_closure(seed, weights):
+    G = graph_for(seed, False, weights)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        exact_outcome(_b21_graphs(_b25_metric_closure), G)
+        if len(G):
+            C = G.subgraph(max(nx.connected_components(G), key=len)).copy()
+            exact_outcome(_b21_graphs(_b25_metric_closure), C)
+            exact_outcome(_b21_graphs(_b25_metric_closure), C, weight=None)
+            exact_outcome(_b21_graphs(_b25_metric_closure), C, weight=lambda u, v, d: 2)
+        exact_outcome(_b21_graphs(_b25_metric_closure), graph_for(seed, True))
+
+
+def test_batch25_metric_closure_warns_like_networkx():
+    G = nx.path_graph(4)
+    caught = []
+    for backend in ["rustnx", "networkx"]:
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            _b25_metric_closure(G, backend=backend)
+        caught.append([(x.category, str(x.message)) for x in w])
+    assert caught[0] == caught[1]
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(10))
+def test_batch25_multigraphs(seed, directed, restore_config):
+    M = random_multigraph(seed, directed, "int")
+    exact_outcome(listed(nx.find_cliques), M)
+    exact_outcome(listed(nx.find_cliques_recursive), M)
+    exact_outcome(with_set_order(nx.dominating_set), M)
+    # These fall back (or raise as NetworkX does).
+    exact_outcome(_b21_graphs(nx.make_max_clique_graph), M)
+    exact_outcome(_b25_approx.large_clique_size, M)
+    exact_outcome(with_set_order(_b25_approx.max_clique), M)
+    exact_outcome(_b25_approx.node_connectivity, M)
+    exact_outcome(listed(nx.chordal_graph_cliques), M)
+    exact_outcome(nx.tournament.hamiltonian_path, M)
+
+
+def test_batch25_dispatch_through_priority(restore_config, monkeypatch):
+    from rustnx import interface
+
+    calls = []
+    for name in ["find_cliques", "dominating_set", "build_auxiliary_node_connectivity"]:
+        original = getattr(interface, name)
+
+        def counting(*args, _original=original, **kwargs):
+            calls.append(1)
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(interface, name, counting)
+    old_generators = getattr(nx.config.backend_priority, "generators", None)
+    try:
+        nx.config.backend_priority.algos = ["rustnx"]
+        if old_generators is not None:
+            nx.config.backend_priority.generators = ["rustnx"]
+        G = nx.gnm_random_graph(800, 2400, seed=2)
+        assert list(nx.find_cliques(G)) == list(nx.find_cliques(G, backend="networkx"))
+        assert list(nx.dominating_set(G)) == list(nx.dominating_set(G, backend="networkx"))
+        H = _b25_conn.build_auxiliary_node_connectivity(G)
+        assert _b21_graph_state(H) == _b21_graph_state(
+            _b25_conn.build_auxiliary_node_connectivity(G, backend="networkx")
+        )
+        assert len(calls) == 3, "rustnx was not used"
+    finally:
+        if old_generators is not None:
+            nx.config.backend_priority.generators = old_generators

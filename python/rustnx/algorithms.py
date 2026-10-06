@@ -49,7 +49,10 @@ __all__ = [
     "ancestors",
     "antichain_width",
     "antichains",
+    "approximate_all_pairs_node_connectivity",
     "approximate_diameter",
+    "approximate_local_node_connectivity",
+    "approximate_node_connectivity",
     "articulation_points",
     "astar_path",
     "astar_path_length",
@@ -100,6 +103,8 @@ __all__ = [
     "bridge_augmentation",
     "bridge_components",
     "bridges",
+    "build_auxiliary_edge_connectivity",
+    "build_auxiliary_node_connectivity",
     "build_flow_dict",
     "build_residual_network",
     "butterflies",
@@ -112,9 +117,11 @@ __all__ = [
     "check_planarity",
     "check_planarity_recursive",
     "chordal_cycle_graph",
+    "chordal_graph_cliques",
     "chordal_graph_treewidth",
     "circulant_graph",
     "circular_ladder_graph",
+    "clique_removal",
     "closeness_centrality",
     "closeness_vitality",
     "clustering",
@@ -177,6 +184,7 @@ __all__ = [
     "disjoint_union_all",
     "dispersion",
     "dominance_frontiers",
+    "dominating_set",
     "dorogovtsev_goltsev_mendes_graph",
     "dual_barabasi_albert_graph",
     "eccentricity",
@@ -205,6 +213,9 @@ __all__ = [
     "fast_gnp_random_graph",
     "fast_label_propagation_communities",
     "faster_could_be_isomorphic",
+    "find_asteroidal_triple",
+    "find_cliques",
+    "find_cliques_recursive",
     "find_cycle",
     "find_minimal_d_separator",
     "find_negative_cycle",
@@ -257,6 +268,7 @@ __all__ = [
     "group_in_degree_centrality",
     "group_out_degree_centrality",
     "gutman_index",
+    "hamiltonian_path",
     "harmonic_centrality",
     "harmonic_diameter",
     "has_bridges",
@@ -334,6 +346,7 @@ __all__ = [
     "jaccard_coefficient",
     "johnson",
     "join_trees",
+    "k_clique_communities",
     "k_core",
     "k_corona",
     "k_crust",
@@ -343,6 +356,7 @@ __all__ = [
     "k_shell",
     "k_truss",
     "katz_centrality",
+    "kernighan_lin_bisection",
     "kl_connected_subgraph",
     "kneser_graph",
     "kosaraju_strongly_connected_components",
@@ -350,6 +364,7 @@ __all__ = [
     "label_propagation_communities",
     "ladder_graph",
     "laplacian_matrix",
+    "large_clique_size",
     "latapy_clustering",
     "lexicographic_product",
     "lexicographical_topological_sort",
@@ -362,18 +377,24 @@ __all__ = [
     "local_reaching_centrality",
     "lollipop_graph",
     "lowest_common_ancestor",
+    "make_clique_bipartite",
+    "make_max_clique_graph",
     "margulis_gabber_galil_graph",
+    "max_clique",
     "max_flow_min_cost",
     "max_weight_clique",
     "max_weight_matching",
     "maximal_extendability",
+    "maximal_independent_set",
     "maximal_matching",
     "maximum_branching",
     "maximum_flow",
     "maximum_flow_value",
+    "maximum_independent_set",
     "maximum_spanning_arborescence",
     "maximum_spanning_edges",
     "maximum_spanning_tree",
+    "metric_closure",
     "min_cost_flow",
     "min_cost_flow_cost",
     "min_edge_cover",
@@ -463,6 +484,7 @@ __all__ = [
     "quotient_graph",
     "ra_index_soundarajan_hopcroft",
     "radius",
+    "ramsey_R2",
     "random_geometric_graph",
     "random_graph",
     "random_lobster",
@@ -545,6 +567,7 @@ __all__ = [
     "tree_graph",
     "tree_isomorphism",
     "treewidth_decomp",
+    "treewidth_min_degree",
     "treewidth_min_fill_in",
     "triadic_census",
     "triangles",
@@ -9598,12 +9621,13 @@ def threshold_accepting_tsp(
     return [cycle[k] for k in tour.best()]
 
 
-def _treewidth_decomposition(G, order):
+def _treewidth_decomposition(G, order, parents=None):
     """``treewidth_decomp``'s result for the elimination ``order`` (node
     positions). The bags are frozensets copied from sets whose iteration
     order depends on their history, so this replays NetworkX's set
     operations exactly; the heuristic, NetworkX's expensive part, ran in
-    Rust."""
+    Rust. ``parents`` (batch 25): for each bag added, the index of the bag
+    it joins, found in Rust (else found here, as NetworkX does)."""
     nodes = G._nodes
     if G._core.is_native():
         core = G._core
@@ -9615,9 +9639,14 @@ def _treewidth_decomposition(G, order):
     for i in order:
         elim_node = nodes[i]
         nbrs = graph_dict[elim_node]
-        for u, v in permutations(nbrs, 2):
-            if v not in graph_dict[u]:
-                graph_dict[u].add(v)
+        # NetworkX adds each `v` of `permutations(nbrs, 2)` missing from
+        # `graph_dict[u]`, u by u: the same adds as updating with the other
+        # neighbors in order (adding a member does nothing).
+        pool = list(nbrs)
+        for k, u in enumerate(pool):
+            neighbors = graph_dict[u]
+            neighbors.update(pool[:k])
+            neighbors.update(pool[k + 1 :])
         node_stack.append((elim_node, nbrs))
         for u in graph_dict[elim_node]:
             graph_dict[u].remove(elim_node)
@@ -9627,17 +9656,22 @@ def _treewidth_decomposition(G, order):
     first_bag = frozenset(graph_dict.keys())
     decomp.add_node(first_bag)
     treewidth = len(first_bag) - 1
+    bags = [first_bag]
     while node_stack:
         curr_node, nbrs = node_stack.pop()
         old_bag = None
-        for bag in decomp.nodes:
-            if nbrs <= bag:
-                old_bag = bag
-                break
+        if parents is not None:
+            old_bag = bags[parents[len(bags) - 1]]
+        else:
+            for bag in decomp.nodes:
+                if nbrs <= bag:
+                    old_bag = bag
+                    break
         if old_bag is None:
             old_bag = first_bag
         nbrs.add(curr_node)
         new_bag = frozenset(nbrs)
+        bags.append(new_bag)
         treewidth = max(treewidth, len(new_bag) - 1)
         decomp.add_edge(old_bag, new_bag)
     return treewidth, decomp
@@ -13469,3 +13503,599 @@ def quotient_graph(
         labels = {b: i for i, b in enumerate(blocks)}
         H = nx.relabel_nodes.orig_func(H, labels)
     return H
+
+
+# --- Batch 25: cliques, structure and approximation ---
+#
+# Most of these iterate Python sets (`find_cliques`' pivots, `pop()` picks,
+# subgraph views that iterate their node set). Rust replays NetworkX's set
+# operations on `pyset.rs`, given each node's `hash()`; `_b25_hashes` first
+# checks that the replica agrees with this interpreter. Result sets built
+# by adds alone are rebuilt in Python in the same add order.
+
+
+@functools.cache
+def _b25_set_algebra_replayable():
+    """Whether ``pyset.rs``'s set algebra (``pop``, ``&``, ``-``, ``|``,
+    ``copy``, ``-=``, ``&=``) gives this interpreter's iteration order, on
+    random operations (``_sets_replayable`` checks the basic ones)."""
+    if not _sets_replayable():
+        return False
+    rng = random.Random(20261005)
+    keys = list(range(40)) + [-1, -2, 2**61 - 1, 2**61, -(2**61), 2**64 + 7]
+    keys += [1000 + 64 * i for i in range(50)] + [f"k{i}" for i in range(30)]
+    keys += [(i, "t") for i in range(15)]
+    position = {k: i for i, k in enumerate(keys)}
+    nsets = 4
+    sets = [set() for _ in range(nsets)]
+    ops, firsts = [], []
+    for _ in range(3000):
+        s, r, k = rng.randrange(nsets), rng.random(), rng.randrange(nsets)
+        if r < 0.45:
+            op, k = 0, rng.randrange(len(keys))
+            sets[s].add(keys[k])
+        elif r < 0.65:
+            op, k = 1, rng.randrange(len(keys))
+            sets[s].discard(keys[k])
+        elif r < 0.67:
+            op, k = 2, 0
+            sets[s].clear()
+        elif r < 0.70:
+            op = 3
+            sets[s].update(sets[k])
+        elif r < 0.80:
+            ops.append((4, s, 0))
+            firsts.append(position[sets[s].pop()] if sets[s] else -1)
+            continue
+        elif r < 0.84:
+            op = 5
+            sets[s] = sets[s] & sets[k]
+        elif r < 0.88:
+            op = 6
+            sets[s] = sets[s] - sets[k]
+        elif r < 0.90:
+            op = 7
+            sets[s] = sets[s].copy()
+        elif r < 0.94:
+            op = 8
+            sets[s] -= sets[k]
+        elif r < 0.97:
+            op = 9
+            sets[s] &= sets[k]
+        else:
+            op = 10
+            sets[s] = sets[s] | sets[k]
+        ops.append((op, s, k))
+        first = next(iter(sets[s]), None)
+        firsts.append(-1 if first is None else position[first])
+    try:
+        got_firsts, got_sets = _core._replay_sets([hash(k) for k in keys], nsets, ops)
+    except Exception:
+        return False
+    return got_firsts == firsts and got_sets == [[position[k] for k in s] for s in sets]
+
+
+def _b25_hashes(G):
+    """Each node's ``hash()``, for the set replays (declines if this
+    interpreter's sets can't be replayed)."""
+    if not _b25_set_algebra_replayable():
+        raise NotImplementedError("this interpreter's sets can't be replayed")
+    return [hash(v) for v in G._nodes]
+
+
+def _b25_lazy(G, compute, fallback):
+    """A generator that runs ``compute()`` when iteration starts (NetworkX's
+    ``fallback(H)`` if G changed before that), then stops loudly if G
+    changes while NetworkX would still be reading it."""
+    guard = _MutationGuard(G)
+
+    def generate():
+        try:
+            if guard.changed():
+                yield from fallback(guard.graph)
+                return
+            for item in compute():
+                if guard.changed():
+                    raise RuntimeError("Graph changed during iteration")
+                yield item
+        finally:
+            guard.release()
+
+    return generate()
+
+
+def _b25_not_a_view(G):
+    """Decline graph views: NetworkX's subgraphs of a view filter the
+    underlying graph (so their node order depends on its size), which the
+    replays here don't model."""
+    if not G._core.is_native() and getattr(G._source, "_graph", None) is not None:
+        raise NotImplementedError("rustnx doesn't replay subgraphs of graph views")
+
+
+def _b25_index(G, node):
+    """The position of ``node`` in G, or ``None`` (``node in G`` is False
+    for unhashable objects too)."""
+    try:
+        return G._index.get(node)
+    except TypeError:
+        return None
+
+
+@functools.cache
+def _b25_recursive_cliques_reject_directed():
+    """Whether the installed ``find_cliques_recursive`` refuses directed
+    graphs (3.6+); before, it ran on the successors."""
+    return 'not_implemented_for("directed")' in _source_text(_registered("find_cliques_recursive"))
+
+
+def _b25_clique_nodes(nodes):
+    if nodes is not None and type(nodes) is not list:
+        # NetworkX copies `nodes[:]` and appends to it.
+        raise NotImplementedError("rustnx supports nodes given as a list")
+
+
+def _b25_clique_start(G, hashes, Q, nodes):
+    """``find_cliques``' setup for ``Q = nodes[:]``: the search, or None
+    when ``Q`` is the only clique. Raises what NetworkX's loop over ``Q``
+    raises first (``node not in cand`` is a TypeError for unhashable
+    objects)."""
+    prefix, error = [], None
+    for v in Q:
+        try:
+            i = G._index.get(v)
+        except TypeError as err:
+            error = err
+            break
+        prefix.append(i)
+        if i is None:
+            break
+    code, search = G._core.clique_search(hashes, prefix)
+    if code == 0:
+        raise ValueError(f"The given `nodes` {nodes} do not form a clique")
+    if error is not None:
+        raise error
+    return search
+
+
+def _b25_clique_batches(G, search, prefix):
+    nodes = _node_list(G)
+    while True:
+        batch = search.next_batch(nodes, prefix, _CLIQUE_BATCH)
+        yield from batch
+        if len(batch) < _CLIQUE_BATCH:
+            return
+
+
+def find_cliques(G, nodes=None):
+    _undirected_only(G)
+    _b25_clique_nodes(nodes)
+    hashes = _b25_hashes(G)
+
+    def compute():
+        if len(G) == 0:
+            return
+        Q = nodes[:] if nodes is not None else []
+        search = _b25_clique_start(G, hashes, Q, nodes)
+        if search is None:
+            yield Q[:]
+            return
+        yield from _b25_clique_batches(G, search, Q)
+
+    return _computed_on_first_next(
+        G, compute, lambda H: nx.find_cliques(H, nodes, backend="networkx")
+    )
+
+
+def find_cliques_recursive(G, nodes=None):
+    if G.is_directed() and _b25_recursive_cliques_reject_directed():
+        _undirected_only(G)
+    _b25_clique_nodes(nodes)
+    hashes = _b25_hashes(G)
+    if len(G) == 0:
+        return iter([])
+    Q = nodes[:] if nodes is not None else []
+    search = _b25_clique_start(G, hashes, Q, nodes)
+    if search is None:
+        return iter([Q])
+    return _b25_clique_batches(G, search, Q)
+
+
+def make_max_clique_graph(G, create_using=None):
+    if create_using is None:
+        B = _plain_result_class(G)()
+    else:
+        B = nx.empty_graph(0, create_using)
+    _undirected_only(G)  # find_cliques raises
+    count, us, vs = G._core.max_clique_graph_edges(_b25_hashes(G))
+    B.add_nodes_from(range(count))
+    B.add_edges_from(zip(us, vs))
+    return B
+
+
+def make_clique_bipartite(G, fpos=None, create_using=None, name=None):
+    hashes = _b25_hashes(G) if not G.is_directed() else None
+    B = nx.empty_graph(0, create_using)
+    B.clear()
+    nodes = _node_list(G)
+    if type(B) is nx.Graph and hashes is not None:
+        G._core.clique_bipartite_fill(hashes, nodes, B._node, B._adj)
+        return B
+    B.add_nodes_from(nodes, bipartite=1)
+    _undirected_only(G)  # find_cliques raises on its first step
+    for i, cl in enumerate(G._core.maximal_cliques(hashes)):
+        name = -i - 1
+        B.add_node(name, bipartite=0)
+        B.add_edges_from((nodes[v], name) for v in cl)
+    return B
+
+
+def dominating_set(G, start_with=None):
+    hashes = _b25_hashes(G)
+    nodes = _node_list(G)
+    if start_with is None:
+        if not nodes:
+            raise StopIteration  # arbitrary_element(set())
+        order = G._core.dominating_set_order(hashes)
+        first = nodes[order[0]]
+    else:
+        start = _b25_index(G, start_with)
+        if start is None:
+            raise nx.NetworkXError(f"node {start_with} is not in G")
+        order = G._core.dominating_set_order(hashes, start)
+        first = start_with
+    return set([first] + [nodes[i] for i in order[1:]])
+
+
+@functools.cache
+def _b25_mis_returns_set():
+    """Whether the installed ``maximal_independent_set`` returns a set
+    (3.7+) rather than a list."""
+    return "indep_nodes = set(nodes)" in _source_text(_registered("maximal_independent_set"))
+
+
+def maximal_independent_set(G, nodes=None, seed=None):
+    _undirected_only(G)
+    _rg_seed(seed)
+    hashes = _b25_hashes(G)
+    index = G._index
+    if not nodes:
+        nodes = {seed.choice(_node_list(G))}
+    else:
+        nodes = set(nodes)
+    if not nodes.issubset(index):
+        raise nx.NetworkXUnfeasible(f"{nodes} is not a subset of the nodes of G")
+    positions = [index[v] for v in nodes]
+    taken = set(positions)
+    core = G._core
+    if any(w in taken for v in positions for w in core.neighbors(v)):
+        raise nx.NetworkXUnfeasible(f"{nodes} is not an independent set of G")
+    added = _rg_run(seed, lambda state: core.maximal_independent_draws(hashes, positions, state))
+    graph_nodes = G._nodes
+    if _b25_mis_returns_set():
+        indep_nodes = set(nodes)
+        indep_nodes.update([graph_nodes[i] for i in added])
+    else:
+        indep_nodes = list(nodes)
+        indep_nodes.extend(graph_nodes[i] for i in added)
+    return indep_nodes
+
+
+def large_clique_size(G):
+    _undirected_only(G)
+    return G._core.large_clique_size(_b25_hashes(G))
+
+
+def _b25_set(G, order):
+    nodes = G._nodes
+    return set([nodes[i] for i in order])
+
+
+def ramsey_R2(G):
+    _undirected_only(G)
+    _b25_not_a_view(G)
+    clique, iset = G._core.ramsey_r2(_b25_hashes(G))
+    return _b25_set(G, clique), _b25_set(G, iset)
+
+
+def _b25_clique_removal(G, complement):
+    best, isets, cliques = G._core.clique_removal(_b25_hashes(G), complement)
+    return _b25_set(G, isets[best]), [_b25_set(G, c) for c in cliques]
+
+
+def clique_removal(G):
+    _undirected_only(G)
+    _b25_not_a_view(G)
+    return _b25_clique_removal(G, False)
+
+
+def maximum_independent_set(G):
+    _undirected_only(G)
+    _b25_not_a_view(G)
+    return _b25_clique_removal(G, False)[0]
+
+
+def max_clique(G):
+    _undirected_only(G)
+    _b25_not_a_view(G)
+    return _b25_clique_removal(G, True)[0]
+
+
+def hamiltonian_path(G):
+    _directed_only(G)
+    _b25_not_a_view(G)
+    nodes = G._nodes
+    return [nodes[i] for i in G._core.hamiltonian_path(_b25_hashes(G))]
+
+
+def chordal_graph_cliques(G):
+    _b25_not_a_view(G)
+    hashes = None if G.is_directed() else _b25_hashes(G)
+
+    def compute():
+        if hashes is None:
+            raise nx.NetworkXNotImplemented("not implemented for directed type")
+        found, code = G._core.chordal_cliques(hashes)
+        nodes = G._nodes
+        for c in found:
+            yield frozenset(set([nodes[i] for i in c]))
+        if code == 1:
+            raise nx.NetworkXError("Input graph is not chordal.")
+        if code == 2:
+            raise nx.NetworkXError("Self loop found in _is_complete_graph()")
+
+    return _b25_lazy(G, compute, lambda H: nx.chordal_graph_cliques(H, backend="networkx"))
+
+
+def treewidth_min_degree(G):
+    _undirected_only(G)
+    order, parents = G._core.min_degree_eliminations(_b25_hashes(G))
+    return _treewidth_decomposition(G, order, parents)
+
+
+def _b25_cutoff(cutoff):
+    if cutoff is None:
+        return None
+    if type(cutoff) not in (int, bool):
+        raise NotImplementedError("rustnx supports int cutoffs only")
+    return max(int(cutoff), 0)
+
+
+def _b25_exact_pred(G):
+    if G.is_directed():
+        G._ensure_exact_pred()
+
+
+def approximate_local_node_connectivity(G, source, target, cutoff=None):
+    if target == source:
+        raise nx.NetworkXError("source and target have to be different nodes.")
+    s, t = _b25_index(G, source), _b25_index(G, target)
+    if s is None or t is None:
+        raise NotImplementedError("NetworkX fails on missing nodes here")
+    cutoff = _b25_cutoff(cutoff)
+    _b25_exact_pred(G)
+    return G._core.approx_local_connectivity([s], [t], cutoff)[0]
+
+
+def approximate_node_connectivity(G, s=None, t=None):
+    if (s is not None and t is None) or (s is None and t is not None):
+        raise nx.NetworkXError("Both source and target must be specified.")
+    if s is not None and t is not None:
+        if _b25_index(G, s) is None:
+            raise nx.NetworkXError(f"node {s} not in graph")
+        if _b25_index(G, t) is None:
+            raise nx.NetworkXError(f"node {t} not in graph")
+        return approximate_local_node_connectivity(G, s, t)
+    connected = is_weakly_connected(G) if G.is_directed() else is_connected(G)
+    if not connected:
+        return 0
+    degrees = G._core.degrees()
+    minimum_degree = min(degrees)
+    _b25_exact_pred(G)
+    return G._core.approx_node_connectivity(degrees.index(minimum_degree), minimum_degree)
+
+
+def approximate_all_pairs_node_connectivity(G, nbunch=None, cutoff=None):
+    if nbunch is None:
+        nbunch = _node_list(G)
+    else:
+        nbunch = set(nbunch)
+    positions = [_b25_index(G, v) for v in nbunch]
+    if None in positions:
+        raise NotImplementedError("NetworkX fails on missing nodes here")
+    cutoff = _b25_cutoff(cutoff)
+    directed = G.is_directed()
+    iter_func = itertools.permutations if directed else itertools.combinations
+    pairs = list(iter_func(range(len(positions)), 2))
+    _b25_exact_pred(G)
+    values = G._core.approx_local_connectivity(
+        [positions[a] for a, _ in pairs], [positions[b] for _, b in pairs], cutoff
+    )
+    keys = list(nbunch)
+    all_pairs = {n: {} for n in keys}
+    for (a, b), k in zip(pairs, values):
+        u, v = keys[a], keys[b]
+        all_pairs[u][v] = k
+        if not directed:
+            all_pairs[v][u] = k
+    return all_pairs
+
+
+def build_auxiliary_edge_connectivity(G):
+    H = nx.DiGraph()
+    G._core.auxiliary_fill(_node_list(G), H._node, H._succ, H._pred, False)
+    return H
+
+
+def build_auxiliary_node_connectivity(G):
+    nodes = _node_list(G)
+    H = nx.DiGraph()
+    G._core.auxiliary_fill(nodes, H._node, H._succ, H._pred, True)
+    H.graph["mapping"] = {node: i for i, node in enumerate(nodes)}
+    return H
+
+
+@functools.cache
+def _b25_asteroidal_tuple_set():
+    """Whether the installed ``find_asteroidal_triple`` iterates a set of
+    the complement's edges (3.4) rather than ``nx.non_edges``."""
+    return "E_complement" in _source_text(_registered("find_asteroidal_triple"))
+
+
+def find_asteroidal_triple(G):
+    _undirected_only(G)
+    if len(G) < 6:
+        return None
+    tuple_set = _b25_asteroidal_tuple_set()
+    if tuple_set and not _b21_tuple_hashes_match():
+        raise NotImplementedError("this interpreter's tuple hashes can't be replayed")
+    found = G._core.asteroidal_triple(_b25_hashes(G), tuple_set)
+    if found is None:
+        return None
+    nodes = G._nodes
+    return [nodes[i] for i in found]
+
+
+def _b25_frozenset_hashes(G):
+    nodes = G._nodes
+
+    def clique_hashes(cliques):
+        return [hash(frozenset([nodes[i] for i in c])) for c in cliques]
+
+    return clique_hashes
+
+
+def k_clique_communities(G, k, cliques=None):
+    if cliques is not None:
+        raise NotImplementedError("rustnx finds the cliques itself")
+    if type(k) is not int:
+        raise NotImplementedError("rustnx supports int k only")
+    hashes = None if G.is_directed() else _b25_hashes(G)
+
+    def compute():
+        if k < 2:
+            raise nx.NetworkXError(f"k={k}, k must be greater than 1.")
+        if hashes is None:
+            raise nx.NetworkXNotImplemented("not implemented for directed type")
+        found, communities = G._core.k_clique_communities(hashes, k, _b25_frozenset_hashes(G))
+        nodes = G._nodes
+        frozen = [frozenset([nodes[i] for i in c]) for c in found]
+        for community in communities:
+            yield frozenset.union(*[frozen[i] for i in community])
+
+    return _computed_on_first_next(
+        G, compute, lambda H: nx.community.k_clique_communities(H, k, backend="networkx")
+    )
+
+
+@functools.cache
+def _b25_metric_closure_deprecated():
+    """Whether the installed ``metric_closure`` warns that it is deprecated
+    (3.6+)."""
+    return "metric_closure is deprecated" in _source_text(_registered("metric_closure"))
+
+
+def metric_closure(G, weight="weight"):
+    _undirected_only(G)
+    weight, all_int, _ = _check_weight(G, weight, distances=True)
+    hashes = _b25_hashes(G)  # (declines before warning, so NetworkX warns once)
+    if _b25_metric_closure_deprecated():
+        warnings.warn(
+            "metric_closure is deprecated and will be removed in NetworkX 3.8.\n"
+            "Use nx.all_pairs_shortest_path_length instead.",
+            category=DeprecationWarning,
+            stacklevel=5,
+        )
+    M = nx.Graph()
+    nodes = _node_list(G)
+    if not nodes:
+        raise StopIteration  # next() on the empty all_pairs_dijkstra
+    # Gnodes = set(G): edges go to the nodes left, in its order
+    order = G._core.set_iteration_order(hashes)
+    if not G._core.metric_closure_fill(weight, all_int, nodes, order, M._node, M._adj):
+        raise nx.NetworkXError("G is not a connected graph. metric_closure is not defined.")
+    return M
+
+
+@functools.cache
+def _b25_kl_shuffles_first():
+    """Whether the installed ``kernighan_lin_bisection`` is 3.4's and 3.5's:
+    it always shuffles the nodes first and keeps sides in a list; 3.6+
+    shuffles only without ``partition`` and skips edges weighted ``None``."""
+    return "side = [0] * n" in _source_text(_registered("kernighan_lin_bisection"))
+
+
+_B25_CONTAINERS = (set, frozenset, list, tuple)
+
+
+def kernighan_lin_bisection(G, partition=None, max_iter=10, weight="weight", seed=None):
+    _undirected_only(G)
+    if type(max_iter) is not int:
+        raise NotImplementedError("rustnx supports int max_iter only")
+    old = _b25_kl_shuffles_first()
+    if callable(weight):
+        raise NotImplementedError("rustnx does not support callable weights")
+    if weight is not None:
+        _check_weight(G, weight, distances=True)
+    if not G._core.kl_supported(weight, not old):
+        raise NotImplementedError("rustnx can't follow these weights")
+    if partition is not None and not (
+        type(partition) in (list, tuple)
+        and len(partition) == 2
+        and all(type(c) in _B25_CONTAINERS for c in partition)
+    ):
+        # NetworkX may consume it (after shuffling, in 3.4 and 3.5).
+        raise NotImplementedError("rustnx needs partition as two containers")
+    index = G._index
+    nodes = list(_node_list(G))
+    n = len(nodes)
+    if old:
+        labels = nodes
+        seed.shuffle(labels)
+        if partition is None:
+            in_a = [False] * (n // 2) + [True] * ((n + 1) // 2)
+        else:
+            A, B = partition
+            if not _b25_is_partition(G, [A, B]):
+                raise nx.NetworkXError("partition invalid")
+            position = {v: i for i, v in enumerate(labels)}
+            in_a = [False] * n
+            for a in A:
+                in_a[position[a]] = True
+        order = [index[v] for v in labels]
+    else:
+        if partition is None:
+            seed.shuffle(nodes)
+            mid = len(nodes) // 2
+            A = nodes[:mid]
+        else:
+            A, B = partition
+            if not _b25_is_partition(G, [A, B]):
+                raise nx.NetworkXError("partition invalid")
+        members = set(A) if type(A) is list and partition is None else A
+        in_a = [node in members for node in nodes]
+        labels = nodes
+        order = list(range(n))
+    side = [False] * n
+    positions = [index[v] for v in labels]
+    for p, s in zip(positions, in_a):
+        side[p] = s
+    final = G._core.kernighan_lin(weight, not old, order, side, max(max_iter, 0), _COMPENSATED_SUM)
+    if final is None:
+        min([])  # NetworkX's min(costs) of an empty sweep raises this ValueError
+    part1 = {v for v, p in zip(labels, positions) if not final[p]}
+    part2 = {v for v, p in zip(labels, positions) if final[p]}
+    return part1, part2
+
+
+def _b25_is_partition(G, communities):
+    """NetworkX's ``is_partition`` (its 3.4 to 3.7 code agrees)."""
+    index = G._index
+
+    def inside(n):
+        try:
+            return n in index
+        except TypeError:
+            return False
+
+    nodes = {n for c in communities for n in c if inside(n)}
+    return len(G) == len(nodes) == sum(len(c) for c in communities)

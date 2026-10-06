@@ -497,6 +497,24 @@ def algorithm_calls(H, directed):
     calls["quotient_graph"] = lambda G, b: [
         (sorted(map(str, n)), sorted(d)) for n, d in nx.quotient_graph(G, blocks, backend=b).nodes(data=True)
     ]
+    # Batch 25: cliques, structure and approximation.
+    calls["dominating_set"] = lambda G, b: list(nx.dominating_set(G, backend=b)) if nodes else None
+    calls["auxiliary_node"] = lambda G, b: state(
+        nx.algorithms.connectivity.build_auxiliary_node_connectivity(G, backend=b)
+    )
+    calls["approx_node_connectivity"] = lambda G, b: nx.approximation.node_connectivity(G, backend=b)
+    if directed:
+        calls["hamiltonian_path"] = lambda G, b: nx.tournament.hamiltonian_path(G, backend=b)
+    else:
+        calls["find_cliques"] = lambda G, b: list(nx.find_cliques(G, backend=b))
+        calls["k_clique_communities"] = lambda G, b: [
+            list(c) for c in nx.community.k_clique_communities(G, 3, backend=b)
+        ]
+        calls["max_clique"] = lambda G, b: list(nx.approximation.max_clique(G, backend=b))
+        calls["treewidth_min_degree"] = lambda G, b: (lambda w, T: (w, [list(x) for x in T]))(
+            *nx.approximation.treewidth_min_degree(G, backend=b)
+        )
+        calls["chordal_graph_cliques"] = lambda G, b: [list(c) for c in nx.chordal_graph_cliques(G, backend=b)]
     return calls
 
 
