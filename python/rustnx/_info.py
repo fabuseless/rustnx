@@ -68,6 +68,7 @@ FUNCTIONS = {
     "bipartite_closeness_centrality": {},
     "bipartite_degree_centrality": {},
     "bipartite_min_edge_cover": {},
+    "bipartite_modularity": {},
     "bipartite_parse_edgelist": {},
     "bipartite_read_edgelist": {},
     "boruvka_mst_edges": {},

@@ -6099,6 +6099,38 @@ impl CoreGraph {
         Ok(bipartite_more::multi_s_metric(self, me, &degree))
     }
 
+    /// `bipartite_modularity`'s pieces: each node's weighted degree, and
+    /// each community's internal weight (communities as positions in set
+    /// order). `rows` as for `cut_size_value`.
+    #[pyo3(signature = (communities, compensated, weight=None, rows=None))]
+    #[allow(clippy::type_complexity)]
+    fn b26_modularity_parts<'py>(
+        &self,
+        py: Python<'py>,
+        communities: Vec<Vec<u32>>,
+        compensated: bool,
+        weight: Option<&str>,
+        rows: Option<&Bound<'py, PyList>>,
+    ) -> PyResult<(Vec<Bound<'py, PyAny>>, Vec<Bound<'py, PyAny>>)> {
+        for c in &communities {
+            self.membership(c)?;
+        }
+        let w = self.cut_weights(weight, rows)?;
+        let n = self.n;
+        let (deg, internal) = py
+            .detach(|| -> flow::Res<_> {
+                Ok((
+                    bipartite_more::weighted_degrees(&self.succ, n, &w, compensated)?,
+                    bipartite_more::internal_weights(&self.succ, n, &w, &communities, compensated)?,
+                ))
+            })
+            .map_err(fail_err)?;
+        let objs = |v: Vec<flow::Val>| -> PyResult<Vec<Bound<'py, PyAny>>> {
+            v.into_iter().map(|x| val_obj(py, x)).collect()
+        };
+        Ok((objs(deg)?, objs(internal)?))
+    }
+
     fn b26_check_multi(&self, me: &bipartite_more::MultiEdges) -> PyResult<()> {
         if me.mult.len() != self.succ.targets.len() {
             return Err(PyValueError::new_err("multigraph data of another graph"));

@@ -89,6 +89,7 @@ __all__ = [
     "bipartite_closeness_centrality",
     "bipartite_degree_centrality",
     "bipartite_min_edge_cover",
+    "bipartite_modularity",
     "bipartite_parse_edgelist",
     "bipartite_read_edgelist",
     "boruvka_mst_edges",
@@ -12905,3 +12906,35 @@ def _b26_euler_balance(G):
         elif i != o:
             bad += 1
     return plus_in, plus_out, bad
+
+
+def bipartite_modularity(G, communities, nodes, *, weight="weight", resolution=1):
+    # NetworkX 3.7+.
+    _undirected_only(G)
+    if not isinstance(communities, list):
+        communities = list(_b21_container(communities))
+    if not is_partition(G, communities):
+        from networkx.algorithms.community.quality import NotAPartition
+
+        raise NotAPartition(_networkx_graph(G), communities)
+    weight, rows = _cut_weight(G, weight)
+    comms = [set(c) for c in communities]
+    index = G._index
+    orders = [[index[v] for v in comm] for comm in comms]
+    # Degrees and each community's internal weight in Rust; the sums over
+    # sets below are NetworkX's own expressions.
+    degrees, internal = G._core.b26_modularity_parts(orders, _COMPENSATED_SUM, weight, rows)
+    degree = dict(zip(G._nodes, degrees))
+    red = set(nodes)
+    blue = set(G._nodes) - red
+    m = sum(degree[v] for v in red)
+    if m == 0:
+        return 0.0
+    norm = 1 / m**2
+
+    def community_contribution(comm, L_c):
+        k_c = sum(degree[u] for u in comm & red)
+        d_c = sum(degree[u] for u in comm & blue)
+        return L_c / m - resolution * k_c * d_c * norm
+
+    return sum(community_contribution(c, L_c) for c, L_c in zip(comms, internal))

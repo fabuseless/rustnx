@@ -760,3 +760,62 @@ pub fn multi_s_metric(g: &CoreGraph, me: &MultiEdges, degree: &[u64]) -> u128 {
     }
     total
 }
+
+// --- Bipartite modularity ---------------------------------------------------------------
+
+/// `dict(G.degree(weight=weight))`'s values of an undirected graph, in
+/// node order: Python's `sum()` of a row, plus a self-loop's weight again.
+pub fn weighted_degrees(
+    adj: &Csr,
+    n: usize,
+    w: &super::flow::Weights,
+    compensated: bool,
+) -> super::flow::Res<Vec<super::flow::Val>> {
+    use super::flow::{py_sum, Val, Weights};
+    let mut out = Vec::with_capacity(n);
+    for u in 0..n {
+        let range = adj.range(u);
+        let self_loop = range.clone().find(|&e| adj.targets[e] as usize == u);
+        let mut d = match w {
+            Weights::Unit => Val::I(range.len() as i64),
+            _ => py_sum(range.map(|e| w.at(e)), compensated)?,
+        };
+        if let Some(e) = self_loop {
+            d = d.add(w.at(e))?;
+        }
+        out.push(d);
+    }
+    Ok(out)
+}
+
+/// For each community (node positions in its set's iteration order),
+/// `sum(wt for _, v, wt in G.edges(comm, data=weight, default=1) if v in
+/// comm)` of an undirected graph.
+pub fn internal_weights(
+    adj: &Csr,
+    n: usize,
+    w: &super::flow::Weights,
+    communities: &[Vec<u32>],
+    compensated: bool,
+) -> super::flow::Res<Vec<super::flow::Val>> {
+    let mut member = vec![usize::MAX; n];
+    let mut seen = vec![usize::MAX; n];
+    let mut out = Vec::with_capacity(communities.len());
+    for (c, comm) in communities.iter().enumerate() {
+        for &u in comm {
+            member[u as usize] = c;
+        }
+        let mut terms = Vec::new();
+        for &u in comm {
+            for e in adj.range(u as usize) {
+                let v = adj.targets[e] as usize;
+                if seen[v] != c && member[v] == c {
+                    terms.push(w.at(e));
+                }
+            }
+            seen[u as usize] = c;
+        }
+        out.push(super::flow::py_sum(terms, compensated)?);
+    }
+    Ok(out)
+}
