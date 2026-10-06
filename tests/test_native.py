@@ -468,6 +468,21 @@ def algorithm_calls(H, directed):
         calls["moral_graph"] = lambda G, b: state(nx.moral_graph(G, backend=b))
     calls["projected_graph"] = lambda G, b: state(nx.bipartite.projected_graph(G, nodes[::2], backend=b))
     calls["bipartite_density"] = lambda G, b: nx.bipartite.density(G, nodes[::2], backend=b)
+    # Batch 26: bipartite measures (most graphs here aren't bipartite: the
+    # errors must match too).
+    calls["latapy_clustering"] = lambda G, b: list(nx.bipartite.latapy_clustering(G, backend=b).items())
+    calls["robins_alexander"] = lambda G, b: nx.bipartite.robins_alexander_clustering(G, backend=b)
+    calls["bipartite_betweenness"] = lambda G, b: list(
+        nx.bipartite.betweenness_centrality(G, nodes[::2], backend=b).items()
+    )
+    calls["overlap_projection"] = lambda G, b: state(
+        nx.bipartite.overlap_weighted_projected_graph(G, nodes[::2], backend=b)
+    )
+    calls["collaboration_projection"] = lambda G, b: state(
+        nx.bipartite.collaboration_weighted_projected_graph(G, nodes[::2], backend=b)
+    )
+    if not directed:
+        calls["bipartite_min_edge_cover"] = lambda G, b: list(nx.bipartite.min_edge_cover(G, backend=b))
     return calls
 
 

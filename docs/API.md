@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 515 NetworkX functions. Call them as usual (for
+rustnx implements 526 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -62,16 +62,16 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 
 | Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
 |---|---|---|---|---|
-| `nx.degree_centrality` | none | no | NetworkX |  |
-| `nx.in_degree_centrality` | none | no | NetworkX |  |
-| `nx.out_degree_centrality` | none | no | NetworkX |  |
+| `nx.degree_centrality` | none | yes | NetworkX |  |
+| `nx.in_degree_centrality` | none | yes | NetworkX |  |
+| `nx.out_degree_centrality` | none | yes | NetworkX |  |
 | `nx.betweenness_centrality` | `k`, `normalized`, `weight`, `endpoints`, `seed` | yes | rustnx | Parallel. Matches NetworkX to about 1e-15 (sums in a different order). `k` picks the same nodes as NetworkX for a given `seed`. `None` weights fall back. |
 | `nx.edge_betweenness_centrality` | `k`, `normalized`, `weight`, `seed` | no | rustnx | Parallel. Matches NetworkX to about 1e-15. `None` weights fall back. |
 | `nx.closeness_centrality` | `u`, `distance`, `wf_improved` | yes | rustnx | Bit-for-bit identical. |
 | `nx.harmonic_centrality` | `nbunch`, `distance`, `sources` | yes | rustnx | Bit-for-bit identical. A small `nbunch` with many `sources` falls back. |
 | `nx.eigenvector_centrality` | `max_iter`, `tol`, `nstart`, `weight` | no | rustnx | Bit-for-bit identical. `nstart` must give a value for every node. |
 | `nx.katz_centrality` | `alpha`, `beta`, `max_iter`, `tol`, `nstart`, `normalized`, `weight` | no | rustnx | Bit-for-bit identical. `nstart` and a per-node `beta` fall back. |
-| `nx.pagerank` | `alpha`, `personalization`, `max_iter`, `tol`, `nstart`, `weight`, `dangling` | no | rustnx | Parallel on large graphs. Matches NetworkX to about 1e-16 (NetworkX computes it with SciPy sparse arithmetic). `None` weights fall back. |
+| `nx.pagerank` | `alpha`, `personalization`, `max_iter`, `tol`, `nstart`, `weight`, `dangling` | yes | rustnx | Parallel on large graphs. Matches NetworkX to about 1e-16 (NetworkX computes it with SciPy sparse arithmetic). `None` weights fall back. Multigraphs add up parallel edges' weights, as NetworkX's sparse matrix does. |
 
 ### Centrality: subsets, groups and more
 
@@ -84,9 +84,9 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.percolation_centrality` | `attribute`, `states`, `weight` | no | rustnx | Parallel. Bit-for-bit identical. Non-numeric states, 2-node graphs and states that would divide by zero fall back. |
 | `nx.group_betweenness_centrality` | `C`, `normalized`, `weight`, `endpoints` | no | rustnx | Bit-for-bit identical, following the installed NetworkX's algorithm (3.7 changed it). Cases where NetworkX raises `KeyError` (directed graphs before 3.7) fall back, as does the null graph. |
 | `nx.group_closeness_centrality` | `S`, `weight` | no | NetworkX | Negative weights fall back. |
-| `nx.group_degree_centrality` | `S` | no | NetworkX | Missing nodes and one-shot iterators fall back. |
-| `nx.group_in_degree_centrality` | `S` | no | NetworkX | Missing nodes and one-shot iterators fall back. |
-| `nx.group_out_degree_centrality` | `S` | no | NetworkX | Missing nodes and one-shot iterators fall back. |
+| `nx.group_degree_centrality` | `S` | yes | NetworkX | Missing nodes and one-shot iterators fall back. |
+| `nx.group_in_degree_centrality` | `S` | yes | NetworkX | Missing nodes and one-shot iterators fall back. |
+| `nx.group_out_degree_centrality` | `S` | yes | NetworkX | Missing nodes and one-shot iterators fall back. |
 | `nx.prominent_group` | `k`, `weight`, `C`, `endpoints`, `normalized`, `greedy` | no | rustnx | Bit-for-bit identical search. `C`, `k` outside 0 to n, non-int/str node labels, and cases where NetworkX raises fall back. Needs pandas installed, like NetworkX. |
 | `nx.local_reaching_centrality` | `v`, `paths`, `weight`, `normalized` | no | NetworkX | `paths` falls back. Weighted: all edges need an int or float weight (not mixed, not zero), else it falls back. |
 | `nx.global_reaching_centrality` | `weight`, `normalized` | no | rustnx | Weighted: as `local_reaching_centrality`. Gives the installed NetworkX's warnings (3.4). |
@@ -294,11 +294,11 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 
 | Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
 |---|---|---|---|---|
-| `nx.minimum_spanning_edges` | `algorithm`, `weight`, `keys`, `data`, `ignore_nan` | no | NetworkX | Kruskal; Prim and Borůvka fall back. Yields the graph's own edge data dicts. |
-| `nx.maximum_spanning_edges` | `algorithm`, `weight`, `keys`, `data`, `ignore_nan` | no | NetworkX | Kruskal; Prim and Borůvka fall back. Yields the graph's own edge data dicts. |
-| `nx.minimum_spanning_tree` | `weight`, `algorithm`, `ignore_nan` | no | NetworkX | Kruskal; Prim and Borůvka fall back. |
-| `nx.maximum_spanning_tree` | `weight`, `algorithm`, `ignore_nan` | no | NetworkX | Kruskal; Prim and Borůvka fall back. |
-| `nx.tree.mst.kruskal_mst_edges` | `minimum`, `weight`, `keys`, `data`, `ignore_nan`, `partition` | no | NetworkX | `partition` falls back. Yields the graph's own edge data dicts. |
+| `nx.minimum_spanning_edges` | `algorithm`, `weight`, `keys`, `data`, `ignore_nan` | yes | NetworkX | Kruskal; Prim and Borůvka fall back. Yields the graph's own edge data dicts. Multigraphs: each node pair's first lightest (heaviest for maximum trees) parallel edge, with its key, as NetworkX's stable sort picks it. |
+| `nx.maximum_spanning_edges` | `algorithm`, `weight`, `keys`, `data`, `ignore_nan` | yes | NetworkX | Kruskal; Prim and Borůvka fall back. Yields the graph's own edge data dicts. Multigraphs: each node pair's first lightest (heaviest for maximum trees) parallel edge, with its key, as NetworkX's stable sort picks it. |
+| `nx.minimum_spanning_tree` | `weight`, `algorithm`, `ignore_nan` | yes | NetworkX | Kruskal; Prim and Borůvka fall back. Multigraphs: each node pair's first lightest (heaviest for maximum trees) parallel edge, with its key, as NetworkX's stable sort picks it. |
+| `nx.maximum_spanning_tree` | `weight`, `algorithm`, `ignore_nan` | yes | NetworkX | Kruskal; Prim and Borůvka fall back. Multigraphs: each node pair's first lightest (heaviest for maximum trees) parallel edge, with its key, as NetworkX's stable sort picks it. |
+| `nx.tree.mst.kruskal_mst_edges` | `minimum`, `weight`, `keys`, `data`, `ignore_nan`, `partition` | yes | NetworkX | `partition` falls back. Yields the graph's own edge data dicts. Multigraphs: each node pair's first lightest (heaviest for maximum trees) parallel edge, with its key, as NetworkX's stable sort picks it. Directed multigraphs fall back. |
 
 ### Structural tests
 
@@ -321,8 +321,8 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
 |---|---|---|---|---|
 | `nx.is_eulerian` | none | no | NetworkX |  |
-| `nx.has_eulerian_path` | `source` | no | NetworkX | A `source` not in the graph falls back. |
-| `nx.is_semieulerian` | none | no | NetworkX |  |
+| `nx.has_eulerian_path` | `source` | yes | NetworkX | A `source` not in the graph falls back. Multigraph degrees count parallel edges. |
+| `nx.is_semieulerian` | none | yes | NetworkX | Multigraph degrees count parallel edges. |
 | `nx.eulerian_circuit` | `source`, `keys` | no | NetworkX | Computed when iteration starts, as NetworkX does. A `source` not in the graph falls back. |
 | `nx.eulerian_path` | `source`, `keys` | no | NetworkX | Computed when iteration starts, as NetworkX does. A `source` not in the graph falls back. |
 | `nx.cycle_basis` | `root` | no | NetworkX | A `root` not in the graph falls back. |
@@ -341,7 +341,7 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.minimum_spanning_arborescence` | `attr`, `default`, `preserve_attrs`, `partition` | no | rustnx | Edmonds' algorithm as NetworkX runs it, in Rust; the result's edges come in NetworkX's (set iteration) order. Weights must be Python ints or floats, and `partition` values `EdgePartition` members or `None`. Changes G's weights exactly as NetworkX does (edges without `attr` gain it). |
 | `nx.tree.greedy_branching` | `attr`, `default`, `kind`, `seed` | no | rustnx | Only int or str node labels (NetworkX sorts edges by weight, then nodes); others fall back. `attr=None` uses the random state as NetworkX does. |
 | `nx.tree.branching_weight` | `attr`, `default` | no | NetworkX | Weights mixing ints and floats fall back. |
-| `nx.tree.mst.prim_mst_edges` | `minimum`, `weight`, `keys`, `data`, `ignore_nan` | no | rustnx | Undirected graphs; directed ones fall back. Trees start from the nodes NetworkX pops from `set(G)` (rustnx replays the same set operations). Yields the graph's own edge data dicts. |
+| `nx.tree.mst.prim_mst_edges` | `minimum`, `weight`, `keys`, `data`, `ignore_nan` | yes | rustnx | Undirected graphs; directed ones fall back. Trees start from the nodes NetworkX pops from `set(G)` (rustnx replays the same set operations). Yields the graph's own edge data dicts. Multigraphs: the first lightest (heaviest) parallel edge, as NetworkX's heap order picks it. |
 | `nx.tree.mst.boruvka_mst_edges` | `minimum`, `weight`, `keys`, `data`, `ignore_nan` | no | rustnx | Rounds run in Rust. Where a component's best edge is tied, rustnx replays NetworkX's set of the component's nodes to scan it in the same order. Yields the graph's own edge data dicts. |
 | `nx.partition_spanning_tree` | `minimum`, `weight`, `partition`, `ignore_nan` | no | rustnx | Kruskal with the partition in Rust. `partition` values must be `EdgePartition` members or `None`. |
 | `nx.from_prufer_sequence` | `sequence` | no | rustnx | Takes no graph: runs in rustnx with `backend='rustnx'` or `nx.config.backend_priority.generators` (set by `rustnx.enable()`). Sequences of non-ints fall back. |
@@ -554,7 +554,7 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.reciprocity` | `nodes` | no | NetworkX | Undirected graphs with `nodes` fall back (NetworkX raises `AttributeError`). |
 | `nx.overall_reciprocity` | none | no | NetworkX |  |
 | `nx.rich_club_coefficient` | `normalized`, `Q`, `seed` | no | NetworkX | `normalized=False` only: normalizing uses random edge swaps, so the default falls back. |
-| `nx.s_metric` | none | no | NetworkX |  |
+| `nx.s_metric` | none | yes | NetworkX | Multigraphs count every parallel edge. |
 | `nx.number_of_walks` | `walk_length` | no | rustnx | Exact int64 arithmetic (wrapping on overflow as NumPy and SciPy do). Graphs without edges (NetworkX returns floats) and walks longer than 100 fall back. |
 
 ### Communities
@@ -652,7 +652,7 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.to_numpy_array` | `nodelist`, `dtype`, `order`, `multigraph_weight`, `weight`, `nonedge` | no | NetworkX | Entries from Rust, assigned with NumPy as NetworkX does. A `nodelist` that isn't a list, or names missing or repeated nodes, falls back. Structured dtypes, `None` weights, and result dtypes other than float64 (or int64 with int weights) fall back. |
 | `nx.bipartite.biadjacency_matrix` | `row_order`, `column_order`, `dtype`, `weight`, `format` | no | NetworkX | Rust builds the COO coordinates in NetworkX's edge order; SciPy assembles the array exactly as for NetworkX (same dtype, format and index arrays). A `row_order` that isn't a list or tuple falls back. |
 | `nx.to_dict_of_lists` | `nodelist` | no | NetworkX | Neighbor objects come from the graph's own adjacency dicts. A `nodelist` that isn't a list, tuple, set or dict, or names missing nodes, falls back. |
-| `nx.number_of_selfloops` | none | no | NetworkX | Dispatchable from NetworkX 3.5 on. |
+| `nx.number_of_selfloops` | none | yes | NetworkX | Dispatchable from NetworkX 3.5 on. Multigraphs count every parallel self-loop. |
 | `nx.is_weighted` | `edge`, `weight` | no | NetworkX | Reads the original graph's edge data in Rust. Dispatchable from NetworkX 3.5 on; native graphs fall back. |
 | `nx.is_negatively_weighted` | `edge`, `weight` | no | NetworkX | `None` weights and `weight=None` fall back. |
 | `nx.get_node_attributes` | `name`, `default` | no | NetworkX | Reads the original graph's node data in Rust. Dispatchable from NetworkX 3.5 on. |
@@ -772,10 +772,26 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.local_constraint` | `u`, `v`, `weight` | no | rustnx | As `constraint`. Nodes not in the graph fall back. |
 | `nx.tree_broadcast_center` | none | no | rustnx | Replays NetworkX's set of leaves (ties go by set order). Non-trees fall back in 3.4 (it doesn't raise there). |
 | `nx.tree_broadcast_time` | `node` | no | rustnx | Missing nodes fall back in 3.4. |
-| `nx.bipartite.density` | `B`, `nodes` | no | NetworkX | As `nx.bipartite.density`. |
+| `nx.bipartite.density` | `B`, `nodes` | yes | NetworkX | As `nx.bipartite.density`. |
 | `nx.bipartite.degree_centrality` | `nodes` | no | NetworkX | As `nx.bipartite.degree_centrality`; dict order follows NetworkX's sets. |
 | `nx.bipartite.projected_graph` | `B`, `nodes`, `multigraph` | no | rustnx | As `nx.bipartite.projected_graph`; replays the set of second neighbors. `multigraph=True`, and `nodes` that is not a container, fall back. |
 | `nx.bipartite.weighted_projected_graph` | `B`, `nodes`, `ratio` | no | rustnx | As `nx.bipartite.weighted_projected_graph`; replays the set of second neighbors. |
+
+### Bipartite measures
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.bipartite.latapy_clustering` | `nodes`, `mode` | yes | rustnx | As `nx.bipartite.latapy_clustering` (also `nx.bipartite.clustering`). Replays NetworkX's sets of second neighbors (CPython's set table, checked once against the running Python). Multigraphs see each neighbor once, as in NetworkX. One-shot iterators of nodes fall back. |
+| `nx.bipartite.average_clustering` | `nodes`, `mode` | yes | rustnx | As `nx.bipartite.average_clustering`; the average is Python's own `sum()` of the clustering values. One-shot iterators fall back. |
+| `nx.bipartite.robins_alexander_clustering` | none | no | rustnx | As `nx.bipartite.robins_alexander_clustering`: counts 4-cycles and 3-paths in Rust (every version gives the same value). Directed graphs and graphs with self-loops fall back (NetworkX versions treat them differently). |
+| `nx.bipartite.betweenness_centrality` | `nodes` | yes | rustnx | As `nx.bipartite.betweenness_centrality`: rustnx's unnormalized betweenness, rescaled with NetworkX's own expressions. Multigraphs are supported. |
+| `nx.bipartite.overlap_weighted_projected_graph` | `B`, `nodes`, `jaccard` | no | rustnx | As `nx.bipartite.overlap_weighted_projected_graph`. Replays NetworkX's sets of second neighbors (CPython's set table, checked once against the running Python). Edges are added in NetworkX's order. |
+| `nx.bipartite.collaboration_weighted_projected_graph` | `B`, `nodes` | no | rustnx | As `nx.bipartite.collaboration_weighted_projected_graph`. Replays NetworkX's sets of second neighbors (CPython's set table, checked once against the running Python). Each weight is Python's `sum()` over the set intersection, in its replayed order. |
+| `nx.bipartite.generic_weighted_projected_graph` | `B`, `nodes`, `weight_function` | no | rustnx | As `nx.bipartite.generic_weighted_projected_graph` with the default weight (that of `weighted_projected_graph`, without its size check); a `weight_function` falls back. |
+| `nx.bipartite.min_edge_cover` | `matching_algorithm` | no | rustnx | As `nx.bipartite.min_edge_cover`: rustnx's Hopcroft-Karp matching, then NetworkX's own set operations. A `matching_algorithm` falls back. |
+| `nx.bipartite.eppstein_matching` | `top_nodes` | no | rustnx | As `nx.bipartite.eppstein_matching`, ported with its dict orders. Augmenting paths deep enough to approach Python's recursion limit fall back. |
+| `nx.bipartite.maximal_extendability` | none | no | rustnx | As `nx.bipartite.maximal_extendability`: the fewest node-disjoint paths between the two sides of the residual digraph, as maximum flows computed in parallel in Rust. |
+| `nx.bipartite.modularity` | `communities`, `nodes`, `weight`, `resolution` | no | rustnx | As `nx.bipartite.modularity` (NetworkX 3.7+). Degrees and each community's internal weight in Rust (Python's `sum()` semantics); NetworkX's own expressions over its sets combine them. |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 
