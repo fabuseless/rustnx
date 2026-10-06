@@ -149,6 +149,7 @@ FUNCTIONS = {
     "dinitz": {},
     "directed_configuration_model": {},
     "directed_havel_hakimi_graph": {},
+    "directed_joint_degree_graph": {},
     "disjoint_union": {},
     "disjoint_union_all": {},
     "dispersion": {},

@@ -896,7 +896,7 @@ SECTIONS.append(("Degree-sequence and tree generators", [
     "random_degree_sequence_graph", "random_powerlaw_tree", "random_powerlaw_tree_sequence",
     "random_labeled_tree", "random_labeled_rooted_tree", "random_labeled_rooted_forest",
     "random_cograph", "random_clustered_graph", "joint_degree_graph",
-    "is_valid_directed_joint_degree", "bipartite_configuration_model",
+    "directed_joint_degree_graph", "is_valid_directed_joint_degree", "bipartite_configuration_model",
     "bipartite_havel_hakimi_graph", "reverse_havel_hakimi_graph",
     "alternating_havel_hakimi_graph",
 ]))
@@ -916,6 +916,7 @@ NOTES.update({
     "random_cograph": RANDOM + " `n` up to 26.",
     "random_clustered_graph": RANDOM + " Pairs as lists or tuples of ints; an iterator is read once (if rustnx declines, NetworkX's code runs on the same pairs).",
     "joint_degree_graph": RANDOM + " A dict of dicts of ints; replays the iteration order of NetworkX's sets of unsaturated nodes.",
+    "directed_joint_degree_graph": RANDOM + " Non-negative int degree lists and a dict of dicts of ints; replays CPython's `set.pop()` order for the sets of chords (node pairs) and unsaturated nodes (checked once against the running Python).",
     "is_valid_directed_joint_degree": "Int degree lists and a dict of dicts of ints; anything NetworkX raises on falls back.",
     "bipartite_configuration_model": RANDOM + " As `nx.bipartite.configuration_model`. " + DEGSEQ,
     "bipartite_havel_hakimi_graph": "As `nx.bipartite.havel_hakimi_graph`. " + DEGSEQ,

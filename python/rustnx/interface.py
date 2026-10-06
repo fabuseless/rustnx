@@ -688,11 +688,15 @@ _SIZE_ESTIMATES = {
     "random_powerlaw_tree": lambda a: _size_of(a.get("n")),
     "random_powerlaw_tree_sequence": lambda a: _size_of(a.get("n")),
     "joint_degree_graph": lambda a: _joint_degree_size(a.get("joint_degrees")),
+    "directed_joint_degree_graph": lambda a: max(
+        _size_of(a.get("in_degrees")), _joint_degree_size(a.get("nkk"))
+    ),
 }
 
 
 def _joint_degree_size(joint_degrees):
-    """Twice the edges of the graph ``joint_degree_graph`` builds."""
+    """The edges (twice, for ``joint_degree_graph``) of the graph a joint
+    degree dict describes."""
     try:
         return sum(sum(row.values()) for row in joint_degrees.values())
     except Exception:

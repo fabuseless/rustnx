@@ -6178,6 +6178,34 @@ impl CoreGraph {
         Ok(Some((roots, rng.state())))
     }
 
+    /// `directed_joint_degree_graph` into `g`, for valid non-negative
+    /// degrees and the positive `nkk` entries `(k, l, count)`.
+    #[staticmethod]
+    fn dg_directed_joint_degree(
+        py: Python<'_>,
+        in_degrees: Vec<u32>,
+        out_degrees: Vec<u32>,
+        nkk: Vec<(u32, u32, u64)>,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        if in_degrees.len() != out_degrees.len() || in_degrees.len() >= 1 << 31 {
+            return Err(PyValueError::new_err("sequences of one length"));
+        }
+        rg_run(py, &state, g, None, |rng| {
+            degree_generators::directed_joint_degree(&in_degrees, &out_degrees, &nkk, rng)
+        })
+    }
+
+    /// `PySet::pop` replayed against `ops` (see `replay_set_pops`).
+    #[staticmethod]
+    fn dg_replay_set_pops(hashes: Vec<i64>, ops: Vec<(u8, u32)>) -> PyResult<(Vec<i64>, Vec<u32>)> {
+        if ops.iter().any(|&(_, k)| k as usize >= hashes.len()) {
+            return Err(PyValueError::new_err("keys index the hashes"));
+        }
+        Ok(degree_generators::replay_set_pops(&hashes, &ops))
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();

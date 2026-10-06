@@ -216,6 +216,26 @@ impl PySet {
         self.used = 0;
     }
 
+    /// `set.pop()` (`set_pop`): the first occupied slot from the search
+    /// finger on (wrapping around), which then moves past it. CPython keeps
+    /// the finger in the set object; callers keep it beside the set (0 for
+    /// a new set). `None` for an empty set (Python raises `KeyError`).
+    pub fn pop(&mut self, finger: &mut usize) -> Option<u32> {
+        if self.used == 0 {
+            return None;
+        }
+        let mask = self.mask();
+        let mut i = *finger & mask;
+        while self.keys[i] == EMPTY || self.keys[i] == DUMMY {
+            i = if i == mask { 0 } else { i + 1 };
+        }
+        let key = self.keys[i];
+        self.keys[i] = DUMMY;
+        self.used -= 1;
+        *finger = i + 1;
+        Some(key)
+    }
+
     /// `next(iter(s))`.
     pub fn first(&self) -> Option<u32> {
         self.keys

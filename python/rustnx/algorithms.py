@@ -170,6 +170,7 @@ __all__ = [
     "dinitz",
     "directed_configuration_model",
     "directed_havel_hakimi_graph",
+    "directed_joint_degree_graph",
     "disjoint_union",
     "disjoint_union_all",
     "dispersion",
@@ -13057,4 +13058,57 @@ def random_labeled_rooted_forest(n, *, seed=None):
         seed.setstate(state)  # NetworkX starts again from the first draw
         raise
     G.graph["roots"] = set(roots)
+    return G
+
+
+@functools.cache
+def _dg_set_pops_replayable():
+    """Whether ``PySet::pop`` (CPython's ``set.pop`` with its search finger)
+    gives this interpreter's order, checked on random adds, discards and
+    pops (``directed_joint_degree_graph`` pops from sets of nodes and of
+    pairs)."""
+    rng = random.Random(20261006)
+    keys = list(range(40)) + [1000 + 64 * i for i in range(30)] + [(i, i + 1) for i in range(30)]
+    hashes = [hash(k) for k in keys]
+    for _ in range(20):
+        s, ops, pops = set(), [], []
+        for _ in range(400):
+            r = rng.random()
+            if r < 0.6:
+                k = rng.randrange(len(keys))
+                ops.append((0, k))
+                s.add(keys[k])
+            elif r < 0.8:
+                k = rng.randrange(len(keys))
+                ops.append((1, k))
+                s.discard(keys[k])
+            else:
+                ops.append((2, 0))
+                pops.append(keys.index(s.pop()) if s else -1)
+        try:
+            found = _CoreGraph.dg_replay_set_pops(hashes, ops)
+        except Exception:
+            return False
+        if found != (pops, [keys.index(k) for k in s]):
+            return False
+    return True
+
+
+def directed_joint_degree_graph(in_degrees, out_degrees, nkk, seed=None):
+    _rg_seed(seed)
+    ins = _dg_ints(in_degrees, 0)
+    outs = _dg_ints(out_degrees, 0)
+    rows = _dg_int_dict_of_dicts(nkk)
+    if not (_sets_replayable() and _b21_tuple_hashes_match() and _dg_set_pops_replayable()):
+        raise NotImplementedError("Python's set order can't be replayed here")
+    if not _dg_networkx("is_valid_directed_joint_degree")(in_degrees, out_degrees, nkk):
+        raise nx.NetworkXError("Input is not realizable as a simple graph")
+    entries = [(k, l, value) for k, row in rows for l, value in row if value > 0]
+    if any(k < 0 or l < 0 for k, l, _ in entries):
+        raise NotImplementedError("rustnx needs non-negative degrees")
+    G = nx.DiGraph()
+    _rg_run(
+        seed,
+        lambda state: _CoreGraph.dg_directed_joint_degree(ins, outs, entries, state, G),
+    )
     return G

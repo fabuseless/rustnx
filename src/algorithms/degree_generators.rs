@@ -1111,3 +1111,233 @@ pub fn labeled_rooted_forest(n: usize, k: usize, rng: &mut Mt19937) -> Option<(B
     b.push_edge(u, roots[0]);
     Some((b, roots))
 }
+
+/// A Python set of node pairs (tuples): CPython's table over pair ids, its
+/// `pop` finger, and the tuple hashes.
+struct PairSet {
+    set: super::pyset::PySet,
+    finger: usize,
+    ids: std::collections::HashMap<(u32, u32), u32>,
+    pairs: Vec<(u32, u32)>,
+    hashes: Vec<i64>,
+}
+
+impl PairSet {
+    fn new() -> Self {
+        PairSet {
+            set: super::pyset::PySet::default(),
+            finger: 0,
+            ids: std::collections::HashMap::new(),
+            pairs: Vec::new(),
+            hashes: Vec::new(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.set.len()
+    }
+
+    fn add(&mut self, pair: (u32, u32)) {
+        let id = *self.ids.entry(pair).or_insert_with(|| {
+            self.pairs.push(pair);
+            self.hashes.push(super::operators::tuple_hash(&[
+                pair.0 as i64,
+                pair.1 as i64,
+            ]));
+            (self.pairs.len() - 1) as u32
+        });
+        self.set.add(id, &self.hashes);
+    }
+
+    fn discard(&mut self, pair: (u32, u32)) {
+        if let Some(&id) = self.ids.get(&pair) {
+            self.set.discard(id, &self.hashes);
+        }
+    }
+
+    fn pop(&mut self) -> Option<(u32, u32)> {
+        self.set
+            .pop(&mut self.finger)
+            .map(|id| self.pairs[id as usize])
+    }
+}
+
+/// A Python set of nodes (ints hash to themselves) and its `pop` finger.
+struct NodeSet {
+    set: super::pyset::PySet,
+    finger: usize,
+}
+
+/// `directed_joint_degree_graph` for valid input: non-negative in and out
+/// degrees of one length and the positive `nkk` entries `(k, l, count)` in
+/// dict order. Replays CPython's set order for the chord and unsaturated
+/// node sets (`pop`, `add`, `discard`). `None` where NetworkX raises.
+pub fn directed_joint_degree(
+    in_degrees: &[u32],
+    out_degrees: &[u32],
+    nkk: &[(u32, u32, u64)],
+    rng: &mut Mt19937,
+) -> Option<Built> {
+    use std::collections::{HashMap, HashSet};
+    let n = in_degrees.len();
+    let hashes: Vec<i64> = (0..n as i64).collect();
+    let mut nodes_in: HashMap<u32, Vec<u32>> = HashMap::new();
+    let mut nodes_out: HashMap<u32, Vec<u32>> = HashMap::new();
+    let mut unsat_in: HashMap<u32, NodeSet> = HashMap::new();
+    let mut unsat_out: HashMap<u32, NodeSet> = HashMap::new();
+    let mut non_chords: HashMap<(u32, u32), u64> = HashMap::new();
+    for (idx, &i) in in_degrees.iter().enumerate() {
+        if i > 0 {
+            nodes_in.entry(i).or_default().push(idx as u32);
+            let s = unsat_in.entry(i).or_insert_with(|| NodeSet {
+                set: Default::default(),
+                finger: 0,
+            });
+            s.set.add(idx as u32, &hashes);
+        }
+    }
+    for (idx, &o) in out_degrees.iter().enumerate() {
+        *non_chords.entry((o, in_degrees[idx])).or_insert(0) += 1;
+        if o > 0 {
+            nodes_out.entry(o).or_default().push(idx as u32);
+            let s = unsat_out.entry(o).or_insert_with(|| NodeSet {
+                set: Default::default(),
+                finger: 0,
+            });
+            s.set.add(idx as u32, &hashes);
+        }
+    }
+    let mut res_in: Vec<i64> = in_degrees.iter().map(|&d| d as i64).collect();
+    let mut res_out: Vec<i64> = out_degrees.iter().map(|&d| d as i64).collect();
+    let mut b = Built::new(n, true);
+    let mut edges: HashSet<u64> = HashSet::new();
+    let key = |u: u32, v: u32| ((u as u64) << 32) | v as u64;
+    for &(k, l, count) in nkk {
+        let mut chords = PairSet::new();
+        let out_k = nodes_out.get(&k)?;
+        let in_l = nodes_in.get(&l)?;
+        let (k_len, l_len) = (out_k.len(), in_l.len());
+        let want = count + non_chords.get(&(k, l)).copied().unwrap_or(0);
+        let population = k_len.checked_mul(l_len)?;
+        if want > population as u64 {
+            return None; // sample() raises
+        }
+        let sample = rng.sample_range(population, want as usize);
+        let mut num = 0;
+        while (chords.len() as u64) < count {
+            let x = *sample.get(num)?;
+            let i = out_k[x % k_len];
+            let j = in_l[x / k_len];
+            num += 1;
+            if i != j {
+                chords.add((i, j));
+            }
+        }
+        let mut k_unsat = unsat_out.remove(&k)?;
+        let mut l_unsat = unsat_in.remove(&l)?;
+        let mut left = count;
+        while left > 0 {
+            let (mut v, mut w) = chords.pop()?;
+            chords.add((v, w));
+            if res_out[v as usize] == 0 {
+                // `_directed_neighbor_switch`.
+                let w_prime = k_unsat.set.pop(&mut k_unsat.finger)?;
+                k_unsat.set.add(w_prime, &hashes);
+                let succ: Vec<u32> = b.succ[v as usize].clone();
+                let mut switched = false;
+                for x in succ {
+                    if x != w_prime && !edges.contains(&key(w_prime, x)) {
+                        b.remove_edge(v, x);
+                        edges.remove(&key(v, x));
+                        b.push_edge(w_prime, x);
+                        edges.insert(key(w_prime, x));
+                        if in_degrees[x as usize] == 0 {
+                            return None; // h_partition_in[x] raises
+                        }
+                        if in_degrees[x as usize] == l {
+                            chords.add((v, x));
+                            chords.discard((w_prime, x));
+                        }
+                        res_out[v as usize] += 1;
+                        res_out[w_prime as usize] -= 1;
+                        if res_out[w_prime as usize] == 0 {
+                            k_unsat.set.discard(w_prime, &hashes);
+                        }
+                        switched = true;
+                        break;
+                    }
+                }
+                if !switched {
+                    v = w_prime;
+                }
+            }
+            if res_in[w as usize] == 0 {
+                // `_directed_neighbor_switch_rev`.
+                let w_prime = l_unsat.set.pop(&mut l_unsat.finger)?;
+                l_unsat.set.add(w_prime, &hashes);
+                let pred: Vec<u32> = b.pred.as_ref()?[w as usize].clone();
+                let mut switched = false;
+                for x in pred {
+                    if x != w_prime && !edges.contains(&key(x, w_prime)) {
+                        b.remove_edge(x, w);
+                        edges.remove(&key(x, w));
+                        b.push_edge(x, w_prime);
+                        edges.insert(key(x, w_prime));
+                        if out_degrees[x as usize] == 0 {
+                            return None; // h_partition_out[x] raises
+                        }
+                        if out_degrees[x as usize] == k {
+                            chords.add((x, w));
+                            chords.discard((x, w_prime));
+                        }
+                        res_in[w as usize] += 1;
+                        res_in[w_prime as usize] -= 1;
+                        if res_in[w_prime as usize] == 0 {
+                            l_unsat.set.discard(w_prime, &hashes);
+                        }
+                        switched = true;
+                        break;
+                    }
+                }
+                if !switched {
+                    w = w_prime;
+                }
+            }
+            if edges.insert(key(v, w)) {
+                b.push_edge(v, w);
+            }
+            res_out[v as usize] -= 1;
+            res_in[w as usize] -= 1;
+            left -= 1;
+            chords.discard((v, w));
+            if res_out[v as usize] == 0 {
+                k_unsat.set.discard(v, &hashes);
+            }
+            if res_in[w as usize] == 0 {
+                l_unsat.set.discard(w, &hashes);
+            }
+        }
+        unsat_out.insert(k, k_unsat);
+        unsat_in.insert(l, l_unsat);
+    }
+    Some(b)
+}
+
+/// Replays `add` (op 0), `discard` (1) and `pop` (2) on one set of keys
+/// with the given hashes, for the check that `PySet::pop` matches the
+/// running interpreter: each pop's key (or -1), then the final order.
+pub fn replay_set_pops(hashes: &[i64], ops: &[(u8, u32)]) -> (Vec<i64>, Vec<u32>) {
+    let mut set = super::pyset::PySet::default();
+    let mut finger = 0;
+    let mut pops = Vec::new();
+    for &(op, k) in ops {
+        match op {
+            0 => set.add(k, hashes),
+            1 => {
+                set.discard(k, hashes);
+            }
+            _ => pops.push(set.pop(&mut finger).map_or(-1, |x| x as i64)),
+        }
+    }
+    (pops, set.iter().collect())
+}

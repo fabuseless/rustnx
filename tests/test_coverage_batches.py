@@ -7638,6 +7638,35 @@ def test_batch22_joint_degree(seed):
     _b22_check("joint_degree_graph", ({},))
 
 
+def _b22_directed_joint_degrees(D):
+    nkk = {}
+    for u, v in D.edges():
+        row = nkk.setdefault(D.out_degree(u), {})
+        row[D.in_degree(v)] = row.get(D.in_degree(v), 0) + 1
+    return [d for _, d in D.in_degree()], [d for _, d in D.out_degree()], nkk
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_batch22_directed_joint_degree(seed):
+    rng = random.Random(seed)
+    for n, m in [(rng.randint(1, 60), rng.randint(0, 200)), (rng.choice([4, 8, 15]), None)]:
+        if m is None:
+            m = rng.randint(n, n * (n - 1))  # dense: many neighbor switches
+        D = nx.gnm_random_graph(n, m, seed=seed, directed=True)
+        ins, outs, nkk = _b22_directed_joint_degrees(D)
+        _b22_check("directed_joint_degree_graph", (ins, outs, nkk))
+        plus = {k: {l: c + 1 for l, c in row.items()} for k, row in nkk.items()}
+        _b22_check("directed_joint_degree_graph", (ins, outs, plus))
+    _b22_check("directed_joint_degree_graph", ([], [], {}))
+    _b22_check("directed_joint_degree_graph", ([1, 0], [0, 1], {1: {1: 1}}))
+
+
+def test_batch22_set_pops_replayable():
+    from rustnx import algorithms
+
+    assert algorithms._dg_set_pops_replayable()
+
+
 @pytest.mark.parametrize("seed", range(8))
 def test_batch22_is_valid_directed_joint_degree(seed):
     rng = random.Random(seed)
