@@ -153,7 +153,15 @@ impl Mt19937 {
     /// `Random.sample(population, k)` for `k <= len(population)`: a pool
     /// for small populations, else rejection against the picks so far.
     pub fn sample<T: Copy>(&mut self, population: &[T], k: usize) -> Vec<T> {
-        let n = population.len();
+        self.sample_range(population.len(), k)
+            .into_iter()
+            .map(|j| population[j])
+            .collect()
+    }
+
+    /// `Random.sample(range(n), k)` for `k <= n`: the positions `sample`
+    /// picks from a population of length `n`, without building it.
+    pub fn sample_range(&mut self, n: usize, k: usize) -> Vec<usize> {
         assert!(k <= n, "sample larger than population");
         let mut setsize: u128 = 21;
         if k > 5 {
@@ -163,7 +171,7 @@ impl Mt19937 {
         }
         let mut result = Vec::with_capacity(k);
         if n as u128 <= setsize {
-            let mut pool = population.to_vec();
+            let mut pool: Vec<usize> = (0..n).collect();
             for i in 0..k {
                 let j = self.below(n - i);
                 result.push(pool[j]);
@@ -177,7 +185,7 @@ impl Mt19937 {
                     j = self.below(n);
                 }
                 selected.insert(j);
-                result.push(population[j]);
+                result.push(j);
             }
         }
         result

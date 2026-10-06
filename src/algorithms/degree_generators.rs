@@ -553,3 +553,526 @@ pub fn random_cograph(n: u32, rng: &mut Mt19937) -> Built {
         order: None,
     }
 }
+
+/// A Fenwick tree of non-negative counts over positions `0..n`.
+struct Fenwick {
+    tree: Vec<u64>,
+}
+
+impl Fenwick {
+    fn new(values: &[u64]) -> Self {
+        let n = values.len();
+        let mut tree = vec![0u64; n + 1];
+        for (i, &v) in values.iter().enumerate() {
+            tree[i + 1] += v;
+            let j = (i + 1) + (1 << (i + 1).trailing_zeros());
+            if j <= n {
+                tree[j] += tree[i + 1];
+            }
+        }
+        Fenwick { tree }
+    }
+
+    fn add(&mut self, i: usize, delta: i64) {
+        let mut i = i + 1;
+        while i < self.tree.len() {
+            self.tree[i] = self.tree[i].wrapping_add(delta as u64);
+            i += 1 << i.trailing_zeros();
+        }
+    }
+
+    /// The first position whose prefix sum (inclusive) reaches `target`
+    /// (`target >= 1` and at most the total).
+    fn lower_bound(&self, mut target: u64) -> usize {
+        let n = self.tree.len() - 1;
+        let mut pos = 0;
+        let mut step = n.checked_next_power_of_two().unwrap_or(0).max(1);
+        while step > 0 {
+            if pos + step <= n && self.tree[pos + step] < target {
+                pos += step;
+                target -= self.tree[pos];
+            }
+            step >>= 1;
+        }
+        pos
+    }
+}
+
+#[inline]
+fn pair_key(u: u32, v: u32) -> u64 {
+    let (a, b) = if u <= v { (u, v) } else { (v, u) };
+    ((a as u64) << 32) | b as u64
+}
+
+/// One `DegreeSequenceRandomGraph.generate()` run.
+struct DegreeSequenceRun<'a> {
+    degree: &'a [u32],
+    /// `4.0 * self.m`.
+    four_m: f64,
+    dmax: u64,
+    remaining: Vec<u32>,
+    alive: usize,
+    /// Nodes per remaining degree, for `max(remaining_degree.values())`.
+    histogram: Vec<usize>,
+    max_remaining: usize,
+    edges: std::collections::HashSet<u64>,
+    built: Built,
+}
+
+impl DegreeSequenceRun<'_> {
+    fn p(&self, u: u32, v: u32) -> f64 {
+        let num = self.degree[u as usize] as u64 * self.degree[v as usize] as u64;
+        1.0 - num as f64 / self.four_m
+    }
+
+    fn q(&mut self, u: u32, v: u32) -> f64 {
+        while self.histogram[self.max_remaining] == 0 {
+            self.max_remaining -= 1;
+        }
+        let m = self.max_remaining as u64;
+        let num = self.remaining[u as usize] as u64 * self.remaining[v as usize] as u64;
+        num as f64 / (m * m) as f64
+    }
+
+    fn has_edge(&self, u: u32, v: u32) -> bool {
+        self.edges.contains(&pair_key(u, v))
+    }
+
+    fn add_edge(&mut self, u: u32, v: u32) {
+        self.edges.insert(pair_key(u, v));
+        self.built.push_edge(u, v);
+    }
+
+    /// `update_remaining` for one end; whether it left the dict.
+    fn decrement(&mut self, u: u32) -> bool {
+        let d = self.remaining[u as usize] as usize;
+        self.histogram[d] -= 1;
+        self.remaining[u as usize] -= 1;
+        if d == 1 {
+            self.alive -= 1;
+            true
+        } else {
+            self.histogram[d - 1] += 1;
+            false
+        }
+    }
+}
+
+/// `random_degree_sequence_graph(sequence, tries)` for a graphical
+/// sequence whose sum and squared maximum are below 2^53: `Some(Some(g))`,
+/// `Some(None)` when every try fails, `None` where NetworkX would raise
+/// something else (an exhausted roulette wheel).
+pub fn random_degree_sequence(
+    degree: &[u32],
+    tries: usize,
+    rng: &mut Mt19937,
+) -> Option<Option<Built>> {
+    for _ in 0..tries {
+        if let Some(b) = degree_sequence_try(degree, rng)? {
+            return Some(Some(b));
+        }
+    }
+    Some(None)
+}
+
+/// One `generate()`: `Some(None)` for `NetworkXUnfeasible`.
+fn degree_sequence_try(degree: &[u32], rng: &mut Mt19937) -> Option<Option<Built>> {
+    let n = degree.len();
+    let total: u64 = degree.iter().map(|&d| d as u64).sum();
+    let dmax = degree.iter().copied().max().unwrap_or(0) as u64;
+    let mut histogram = vec![0usize; dmax as usize + 1];
+    for &d in degree {
+        histogram[d as usize] += 1;
+    }
+    histogram[0] = 0;
+    let mut run = DegreeSequenceRun {
+        degree,
+        four_m: 4.0 * (total as f64 / 2.0),
+        dmax,
+        remaining: degree.to_vec(),
+        alive: degree.iter().filter(|&&d| d > 0).count(),
+        histogram,
+        max_remaining: dmax as usize,
+        edges: std::collections::HashSet::new(),
+        built: Built::new(n, false),
+    };
+    if run.alive == 0 {
+        return Some(Some(run.built));
+    }
+    // Phase 1: pairs from the degree-weighted roulette wheel. Weights are
+    // ints and the wheel's running float stays exact while non-negative,
+    // so the first prefix sum above the draw picks the same key.
+    let mut weights = Fenwick::new(&run.remaining.iter().map(|&d| d as u64).collect::<Vec<_>>());
+    let mut rem_sum = total;
+    while rem_sum >= 2 * run.dmax * run.dmax {
+        let mut pick = || -> Option<u32> {
+            let rnd = rng.random() * rem_sum as f64;
+            let target = rnd.floor() as u64 + 1;
+            (target <= rem_sum).then(|| weights.lower_bound(target) as u32)
+        };
+        let a = pick()?;
+        let mut b = pick()?;
+        while b == a {
+            b = pick()?;
+        }
+        let (u, v) = if a < b { (a, b) } else { (b, a) };
+        if run.has_edge(u, v) {
+            continue;
+        }
+        if rng.random() < run.p(u, v) {
+            run.add_edge(u, v);
+            for x in [u, v] {
+                run.decrement(x);
+                weights.add(x as usize, -1);
+            }
+            rem_sum -= 2;
+        }
+    }
+    // Phase 2: uniform pairs from `list(remaining_deg.keys())` (in node
+    // order), with rejection.
+    let mut present = Fenwick::new(
+        &run.remaining
+            .iter()
+            .map(|&d| u64::from(d > 0))
+            .collect::<Vec<_>>(),
+    );
+    while run.alive as u64 >= 2 * run.dmax {
+        let (u, v) = loop {
+            let picks = rng.sample_range(run.alive, 2);
+            let a = present.lower_bound(picks[0] as u64 + 1) as u32;
+            let b = present.lower_bound(picks[1] as u64 + 1) as u32;
+            let (u, v) = if a < b { (a, b) } else { (b, a) };
+            if run.has_edge(u, v) {
+                continue;
+            }
+            if rng.random() < run.q(u, v) {
+                break (u, v);
+            }
+        };
+        if rng.random() < run.p(u, v) {
+            run.add_edge(u, v);
+            for x in [u, v] {
+                if run.decrement(x) {
+                    present.add(x as usize, -1);
+                }
+            }
+        }
+    }
+    // Phase 3: the remaining candidate pairs as an auxiliary graph `H`.
+    let mut rest: Vec<u32> = (0..n as u32)
+        .filter(|&x| run.remaining[x as usize] > 0)
+        .collect();
+    let mut hpos = vec![u32::MAX; n];
+    let mut hnodes: Vec<u32> = Vec::new();
+    let mut hrows: Vec<Vec<(u32, u32)>> = Vec::new();
+    let mut ends: Vec<(u32, u32)> = Vec::new();
+    for (i, &a) in rest.iter().enumerate() {
+        for &b in &rest[i + 1..] {
+            if run.has_edge(a, b) {
+                continue;
+            }
+            for x in [a, b] {
+                if hpos[x as usize] == u32::MAX {
+                    hpos[x as usize] = hnodes.len() as u32;
+                    hnodes.push(x);
+                    hrows.push(Vec::new());
+                }
+            }
+            let id = ends.len() as u32;
+            ends.push((a, b));
+            hrows[hpos[a as usize] as usize].push((b, id));
+            hrows[hpos[b as usize] as usize].push((a, id));
+        }
+    }
+    // `H.edges()` order, which removals only thin out.
+    let mut slot_of = vec![0u32; ends.len()];
+    let mut listed: Vec<(u32, u32)> = Vec::with_capacity(ends.len());
+    {
+        let mut seen = vec![false; hnodes.len()];
+        for (hi, &x) in hnodes.iter().enumerate() {
+            for &(y, id) in &hrows[hi] {
+                if !seen[hpos[y as usize] as usize] {
+                    slot_of[id as usize] = listed.len() as u32;
+                    listed.push((x, y));
+                }
+            }
+            seen[hi] = true;
+        }
+    }
+    let mut live = Fenwick::new(&vec![1u64; listed.len()]);
+    let mut dead = vec![false; ends.len()];
+    let mut live_count = listed.len();
+    let mut kill = |id: u32, live: &mut Fenwick, count: &mut usize| {
+        if !dead[id as usize] {
+            dead[id as usize] = true;
+            live.add(slot_of[id as usize] as usize, -1);
+            *count -= 1;
+        }
+    };
+    while run.alive > 0 {
+        rest.retain(|&x| run.remaining[x as usize] > 0);
+        // `suitable_edge`: the first remaining node still has a non-neighbor.
+        let first = rest[0];
+        if !rest[1..].iter().any(|&v| !run.has_edge(first, v)) {
+            return Some(None);
+        }
+        let (u, v) = loop {
+            if live_count == 0 {
+                return None; // choice() of an empty list raises
+            }
+            let i = rng.below(live_count);
+            let (a, b) = listed[live.lower_bound(i as u64 + 1)];
+            let (u, v) = if a < b { (a, b) } else { (b, a) };
+            if rng.random() < run.q(u, v) {
+                break (u, v);
+            }
+        };
+        if rng.random() < run.p(u, v) {
+            run.add_edge(u, v);
+            // `aux_graph.remove_edge(u, v)`, then nodes that are done.
+            let hu = hpos[u as usize] as usize;
+            let id = hrows[hu]
+                .iter()
+                .find(|&&(y, _)| y == v)
+                .map(|&(_, id)| id)?;
+            kill(id, &mut live, &mut live_count);
+            for x in [u, v] {
+                if run.decrement(x) {
+                    let hx = hpos[x as usize] as usize;
+                    for &(_, id) in &hrows[hx] {
+                        kill(id, &mut live, &mut live_count);
+                    }
+                }
+            }
+        }
+    }
+    Some(Some(run.built))
+}
+
+/// `joint_degree_graph` for a valid joint degree dict, given as the node
+/// count of each degree in NetworkX's order (`classes`: `(degree, count)`)
+/// and the entries to realise (`(k index, l index, count)` with `k >= l`,
+/// in dict order). `None` where NetworkX's neighbor switch fails.
+pub fn joint_degree(
+    classes: &[(u32, u32)],
+    entries: &[(u32, u32, u64)],
+    rng: &mut Mt19937,
+) -> Option<Built> {
+    use super::pyset::PySet;
+    let n: usize = classes.iter().map(|&(_, c)| c as usize).sum();
+    let hashes: Vec<i64> = (0..n as i64).collect();
+    let mut start = Vec::with_capacity(classes.len());
+    let mut residual = vec![0u32; n];
+    let mut next = 0u32;
+    for &(degree, count) in classes {
+        start.push(next);
+        for v in next..next + count {
+            residual[v as usize] = degree;
+        }
+        next += count;
+    }
+    let mut b = Built::new(n, false);
+    let mut edges: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    // `_neighbor_switch`: move one of `w`'s edges to the first node of
+    // `unsat` (skipping `avoid` when it has one stub left).
+    let switch = |b: &mut Built,
+                  edges: &mut std::collections::HashSet<u64>,
+                  residual: &mut [u32],
+                  w: u32,
+                  unsat: &mut PySet,
+                  avoid: Option<u32>|
+     -> Option<()> {
+        let w_prime = match avoid {
+            Some(a) if residual[a as usize] <= 1 => unsat.iter().find(|&x| x != a)?,
+            _ => unsat.first()?,
+        };
+        let switch_node = b.succ[w as usize]
+            .iter()
+            .copied()
+            .find(|&v| v != w_prime && !edges.contains(&pair_key(w_prime, v)))?;
+        b.remove_edge(w, switch_node);
+        edges.remove(&pair_key(w, switch_node));
+        b.push_edge(w_prime, switch_node);
+        edges.insert(pair_key(w_prime, switch_node));
+        residual[w as usize] += 1;
+        residual[w_prime as usize] -= 1;
+        if residual[w_prime as usize] == 0 {
+            unsat.discard(w_prime, &hashes);
+        }
+        Some(())
+    };
+    for &(ki, li, count) in entries {
+        let (ki, li) = (ki as usize, li as usize);
+        let (k_start, k_size) = (start[ki], classes[ki].1);
+        let (l_start, l_size) = (start[li], classes[li].1);
+        let same = ki == li;
+        let unsat_of = |s: u32, size: u32, residual: &[u32]| {
+            let mut set = PySet::default();
+            for v in s..s + size {
+                if residual[v as usize] > 0 {
+                    set.add(v, &hashes);
+                }
+            }
+            set
+        };
+        let mut k_unsat = unsat_of(k_start, k_size, &residual);
+        let mut l_unsat = if same {
+            PySet::default()
+        } else {
+            unsat_of(l_start, l_size, &residual)
+        };
+        let mut n_edges_add = if same { count / 2 } else { count };
+        while n_edges_add > 0 {
+            let v = k_start + rng.below(k_size as usize) as u32;
+            let w = l_start + rng.below(l_size as usize) as u32;
+            if v == w || edges.contains(&pair_key(v, w)) {
+                continue;
+            }
+            if residual[v as usize] == 0 {
+                switch(&mut b, &mut edges, &mut residual, v, &mut k_unsat, None)?;
+            }
+            if residual[w as usize] == 0 {
+                if same {
+                    switch(&mut b, &mut edges, &mut residual, w, &mut k_unsat, Some(v))?;
+                } else {
+                    switch(&mut b, &mut edges, &mut residual, w, &mut l_unsat, None)?;
+                }
+            }
+            b.push_edge(v, w);
+            edges.insert(pair_key(v, w));
+            residual[v as usize] -= 1;
+            residual[w as usize] -= 1;
+            n_edges_add -= 1;
+            if residual[v as usize] == 0 {
+                k_unsat.discard(v, &hashes);
+            }
+            if residual[w as usize] == 0 {
+                if same {
+                    k_unsat.discard(w, &hashes);
+                } else {
+                    l_unsat.discard(w, &hashes);
+                }
+            }
+        }
+    }
+    Some(b)
+}
+
+/// `is_valid_directed_joint_degree` for int sequences of one length and
+/// `nkk` entries `(k, l, value)` in dict order; `None` where NetworkX
+/// raises (a missing key, or dividing by a zero degree).
+pub fn is_valid_directed_joint_degree(
+    in_degrees: &[i64],
+    out_degrees: &[i64],
+    nkk: &[(i64, i64, i64)],
+) -> Option<bool> {
+    use std::collections::HashMap;
+    let mut v_in: HashMap<i64, i64> = HashMap::new();
+    let mut v_out: HashMap<i64, i64> = HashMap::new();
+    let mut forbidden: HashMap<(i64, i64), i64> = HashMap::new();
+    for (&i, &o) in in_degrees.iter().zip(out_degrees) {
+        *v_in.entry(i).or_insert(0) += 1;
+        *v_out.entry(o).or_insert(0) += 1;
+        *forbidden.entry((o, i)).or_insert(0) += 1;
+    }
+    // `S` in insertion order: `(degree, side)` keys, side 1 out, 0 in.
+    let mut order: Vec<(i64, u8)> = Vec::new();
+    let mut s: HashMap<(i64, u8), i64> = HashMap::new();
+    for &(k, l, val) in nkk {
+        if val > 0 {
+            for key in [(k, 1u8), (l, 0u8)] {
+                let entry = s.entry(key).or_insert_with(|| {
+                    order.push(key);
+                    0
+                });
+                *entry += val;
+            }
+            let vk = *v_out.get(&k)?;
+            let vl = *v_in.get(&l)?;
+            if val + forbidden.get(&(k, l)).copied().unwrap_or(0) > vk * vl {
+                return Some(false);
+            }
+        }
+    }
+    // `all(S[s] / s[0] == V[s] for s in S)`: below 2^53 the float quotient
+    // equals the int exactly when the division is exact.
+    for key in order {
+        let total = s[&key];
+        if key.0 == 0 {
+            return None;
+        }
+        let count = *(if key.1 == 1 { &v_out } else { &v_in }).get(&key.0)?;
+        if total != count * key.0 {
+            return Some(false);
+        }
+    }
+    Some(true)
+}
+
+/// The part of `random_labeled_rooted_forest(n)` after NetworkX picks the
+/// number of roots `k` (`1 <= k < n`): the forest and its roots, in
+/// `sample` order. `None` if the leaf iterator runs dry.
+pub fn labeled_rooted_forest(n: usize, k: usize, rng: &mut Mt19937) -> Option<(Built, Vec<u32>)> {
+    use super::pyset::PySet;
+    let hashes: Vec<i64> = (0..n as i64).collect();
+    let roots: Vec<u32> = rng
+        .sample_range(n, k)
+        .into_iter()
+        .map(|x| x as u32)
+        .collect();
+    // `p = set(range(n)).difference(roots)`: a copy of the full set with
+    // the roots discarded, in that table's order.
+    let mut full = PySet::default();
+    for v in 0..n as u32 {
+        full.add(v, &hashes);
+    }
+    let mut p = PySet::default();
+    p.merge(&full, &hashes);
+    drop(full);
+    for &r in &roots {
+        p.discard(r, &hashes);
+    }
+    p.after_difference_update(&hashes);
+    let mut in_p = vec![true; n];
+    for &r in &roots {
+        in_p[r as usize] = false;
+    }
+    let draws: Vec<u32> = (0..n - k - 1)
+        .map(|_| rng.randint(0, n as i64 - 1).map(|x| x as u32))
+        .collect::<Option<_>>()?;
+    let mut degree = vec![0i64; n];
+    for &x in &draws {
+        if in_p[x as usize] {
+            degree[x as usize] += 1;
+        }
+    }
+    let order: Vec<u32> = p.iter().collect();
+    // `iter(x for x in p if degree[x] == 0)`: lazy, so it sees the degrees
+    // as they are when `next` is called.
+    let mut at = 0usize;
+    let mut next_leaf = |degree: &[i64]| -> Option<u32> {
+        while at < order.len() {
+            let x = order[at];
+            at += 1;
+            if degree[x as usize] == 0 {
+                return Some(x);
+            }
+        }
+        None
+    };
+    let mut b = Built::new(n, false);
+    let mut u = next_leaf(&degree)?;
+    let mut last = u;
+    for &v in &draws {
+        b.push_edge(u, v);
+        degree[v as usize] -= 1;
+        if v < last && degree[v as usize] == 0 {
+            u = v;
+        } else {
+            u = next_leaf(&degree)?;
+            last = u;
+        }
+    }
+    b.push_edge(u, roots[0]);
+    Some((b, roots))
+}

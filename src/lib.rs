@@ -6068,6 +6068,104 @@ impl CoreGraph {
         })
     }
 
+    /// `random_degree_sequence_graph(sequence, tries)` for a graphical
+    /// sequence, into `g` (a `Graph`): `(built, state)`, `built` false when
+    /// every try failed (`g` untouched); `None` to let NetworkX run.
+    #[staticmethod]
+    fn dg_random_degree_sequence(
+        py: Python<'_>,
+        degree: Vec<u32>,
+        tries: usize,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<(bool, Vec<u32>)>> {
+        let total: u64 = degree.iter().map(|&d| d as u64).sum();
+        let dmax = degree.iter().copied().max().unwrap_or(0) as u64;
+        if total >= 1 << 53 || dmax * dmax >= 1 << 53 || degree.len() >= 1 << 31 {
+            return Err(PyValueError::new_err("degrees too large"));
+        }
+        let Some(mut rng) = pyrandom::Mt19937::from_state(&state) else {
+            return Ok(None);
+        };
+        let found =
+            py.detach(|| degree_generators::random_degree_sequence(&degree, tries, &mut rng));
+        let Some(found) = found else {
+            return Ok(None);
+        };
+        let built = found.is_some();
+        if let Some(b) = found {
+            fill_generated(py, &b, g, None)?;
+        }
+        Ok(Some((built, rng.state())))
+    }
+
+    /// `joint_degree_graph` into `g`: `classes` holds each degree's node
+    /// count in NetworkX's order, `entries` the `(k index, l index, count)`
+    /// to realise.
+    #[staticmethod]
+    fn dg_joint_degree(
+        py: Python<'_>,
+        classes: Vec<(u32, u32)>,
+        entries: Vec<(u32, u32, u64)>,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let n: u64 = classes.iter().map(|&(_, c)| c as u64).sum();
+        if n >= 1 << 31
+            || entries
+                .iter()
+                .any(|&(k, l, _)| k as usize >= classes.len() || l as usize >= classes.len())
+        {
+            return Err(PyValueError::new_err("bad joint degree classes"));
+        }
+        rg_run(py, &state, g, None, |rng| {
+            degree_generators::joint_degree(&classes, &entries, rng)
+        })
+    }
+
+    /// `is_valid_directed_joint_degree` for int sequences of one length and
+    /// `nkk` as `(k, l, value)` entries; `None` where NetworkX raises.
+    #[staticmethod]
+    fn dg_is_valid_directed_joint_degree(
+        py: Python<'_>,
+        in_degrees: Vec<i64>,
+        out_degrees: Vec<i64>,
+        nkk: Vec<(i64, i64, i64)>,
+    ) -> PyResult<Option<bool>> {
+        if in_degrees.len() != out_degrees.len() {
+            return Err(PyValueError::new_err("sequences of one length"));
+        }
+        Ok(py.detach(|| {
+            degree_generators::is_valid_directed_joint_degree(&in_degrees, &out_degrees, &nkk)
+        }))
+    }
+
+    /// `random_labeled_rooted_forest(n)` after NetworkX picked `k` roots
+    /// (`1 <= k < n`), into `g`: `(roots, state)`.
+    #[staticmethod]
+    #[allow(clippy::type_complexity)]
+    fn dg_labeled_rooted_forest(
+        py: Python<'_>,
+        n: usize,
+        k: usize,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<(Vec<u32>, Vec<u32>)>> {
+        if k == 0 || k >= n || n >= 1 << 31 {
+            return Err(PyValueError::new_err("need 1 <= k < n"));
+        }
+        let Some(mut rng) = pyrandom::Mt19937::from_state(&state) else {
+            return Ok(None);
+        };
+        let Some((b, roots)) =
+            py.detach(|| degree_generators::labeled_rooted_forest(n, k, &mut rng))
+        else {
+            return Ok(None);
+        };
+        fill_generated(py, &b, g, None)?;
+        Ok(Some((roots, rng.state())))
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();

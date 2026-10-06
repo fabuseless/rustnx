@@ -321,11 +321,13 @@ __all__ = [
     "is_tree",
     "is_valid_degree_sequence_erdos_gallai",
     "is_valid_degree_sequence_havel_hakimi",
+    "is_valid_directed_joint_degree",
     "is_weakly_connected",
     "is_weighted",
     "isolates",
     "jaccard_coefficient",
     "johnson",
+    "joint_degree_graph",
     "k_core",
     "k_corona",
     "k_crust",
@@ -446,8 +448,10 @@ __all__ = [
     "radius",
     "random_clustered_graph",
     "random_cograph",
+    "random_degree_sequence_graph",
     "random_geometric_graph",
     "random_graph",
+    "random_labeled_rooted_forest",
     "random_labeled_rooted_tree",
     "random_labeled_tree",
     "random_lobster",
@@ -12932,3 +12936,125 @@ def alternating_havel_hakimi_graph(aseq, bseq, create_using=None):
     return _dg_bipartite_havel_hakimi(
         2, aseq, bseq, create_using, "bipartite_alternating_havel_hakimi_graph"
     )
+
+
+def random_degree_sequence_graph(sequence, seed=None, tries=10):
+    _rg_seed(seed)
+    seq = _dg_ints(sequence)
+    if type(tries) is not int:
+        raise NotImplementedError("rustnx needs an int tries")
+    if not is_graphical(seq):
+        raise nx.NetworkXUnfeasible("degree sequence is not graphical")
+    dmax = max(seq, default=0)
+    if sum(seq) >= 2**53 or dmax * dmax >= 2**53:
+        raise NotImplementedError("rustnx needs degrees whose floats are exact")
+    G = nx.Graph()
+    built = _rg_run(
+        seed,
+        lambda state: _CoreGraph.dg_random_degree_sequence(seq, max(tries, 0), state, G),
+    )
+    if not built:
+        raise nx.NetworkXError(f"failed to generate graph in {tries} tries")
+    return G
+
+
+def _dg_int_dict_of_dicts(d):
+    """``d`` as ``(key, row)`` pairs, each row a list of ``(key, value)``,
+    if ``d`` is a dict of dicts of plain ints (values below 2**53)."""
+    if type(d) is not dict:
+        raise NotImplementedError("rustnx needs a dict of dicts of ints")
+    out = []
+    for k, row in d.items():
+        if type(k) is not int or type(row) is not dict or not -_DG_MAX < k < _DG_MAX:
+            raise NotImplementedError("rustnx needs a dict of dicts of ints")
+        items = list(row.items())
+        for l, value in items:
+            if type(l) is not int or type(value) is not int or not -_DG_MAX < l < _DG_MAX:
+                raise NotImplementedError("rustnx needs a dict of dicts of ints")
+            if not -(2**53) < value < 2**53:
+                raise NotImplementedError("rustnx needs small ints")
+        out.append((k, items))
+    return out
+
+
+def joint_degree_graph(joint_degrees, seed=None):
+    _rg_seed(seed)
+    rows = _dg_int_dict_of_dicts(joint_degrees)
+    if sum(max(v, 0) for _, row in rows for _, v in row) >= 2**53:
+        raise NotImplementedError("rustnx needs small ints")
+    if not _dg_networkx("is_valid_joint_degree")(joint_degrees):
+        raise nx.NetworkXError("Input joint degree dict not realizable as a simple graph")
+    degree_count = {k: sum(v for _, v in row) // k for k, row in rows if k > 0}
+    if sum(degree_count.values()) >= _DG_MAX:
+        raise NotImplementedError("too many nodes")
+    index = {k: i for i, k in enumerate(degree_count)}
+    entries = []
+    for k, row in rows:
+        for l, value in row:
+            if value > 0 and k >= l:
+                if k not in index or l not in index:
+                    raise NotImplementedError("NetworkX raises here")
+                entries.append((index[k], index[l], value))
+    G = nx.Graph()
+    _rg_run(
+        seed,
+        lambda state: _CoreGraph.dg_joint_degree(
+            list(degree_count.items()), entries, state, G
+        ),
+    )
+    return G
+
+
+def is_valid_directed_joint_degree(in_degrees, out_degrees, nkk):
+    ins = _dg_ints(in_degrees)
+    outs = _dg_ints(out_degrees)
+    if len(ins) != len(outs):
+        return False
+    rows = _dg_int_dict_of_dicts(nkk)
+    entries = [(k, l, value) for k, row in rows for l, value in row]
+    if sum(abs(v) for _, _, v in entries) >= 2**53:
+        raise NotImplementedError("rustnx needs small ints")
+    found = _CoreGraph.dg_is_valid_directed_joint_degree(ins, outs, entries)
+    if found is None:
+        raise NotImplementedError("NetworkX raises here")
+    return found
+
+
+def _dg_select_k(n, seed):
+    """``random_labeled_rooted_forest``'s ``_select_k``: the same draw and
+    the same running sum, with each term worked out from the previous one
+    (``C(n-1, k-1) * n**(n-k)``, exact in ints)."""
+    r = seed.randint(0, (n + 1) ** (n - 1) - 1)
+    cum_sum = 0
+    term = n ** (n - 1)
+    for k in range(1, n):
+        cum_sum += term
+        if r < cum_sum:
+            return k
+        term = term * (n - k) // (k * n)
+    return n
+
+
+def random_labeled_rooted_forest(n, *, seed=None):
+    _rg_seed(seed)
+    if type(n) is not int or not 0 <= n < _DG_MAX:
+        raise NotImplementedError("rustnx needs a small non-negative int n")
+    if not _sets_replayable():
+        raise NotImplementedError("this interpreter's sets can't be replayed")
+    G = nx.Graph()
+    if n == 0:
+        G.graph["roots"] = {}
+        return G
+    state = seed.getstate()
+    k = _dg_select_k(n, seed)
+    if k == n:
+        _CoreGraph.rg_empty(n, G)
+        G.graph["roots"] = set(range(n))
+        return G
+    try:
+        roots = _rg_run(seed, lambda s: _CoreGraph.dg_labeled_rooted_forest(n, k, s, G))
+    except NotImplementedError:
+        seed.setstate(state)  # NetworkX starts again from the first draw
+        raise
+    G.graph["roots"] = set(roots)
+    return G
