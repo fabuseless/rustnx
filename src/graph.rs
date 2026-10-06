@@ -187,14 +187,14 @@ impl CoreGraph {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum ValueKind {
+pub(crate) enum ValueKind {
     Hidden,
     Int,
     Float,
 }
 
 /// One edge attribute value as a number, and what Python type it was.
-fn parse_value(value: &Bound<'_, PyAny>) -> PyResult<(f64, ValueKind)> {
+pub(crate) fn parse_value(value: &Bound<'_, PyAny>) -> PyResult<(f64, ValueKind)> {
     if value.is_none() {
         return Ok((f64::NAN, ValueKind::Hidden));
     }

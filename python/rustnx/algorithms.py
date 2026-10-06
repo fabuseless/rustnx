@@ -18,6 +18,7 @@ import operator
 import random
 import sys
 import warnings
+import weakref
 
 import networkx as nx
 from networkx.algorithms.centrality import betweenness as _nx_betweenness
@@ -84,8 +85,12 @@ __all__ = [
     "bidirectional_dijkstra",
     "bidirectional_shortest_path",
     "binomial_tree",
+    "bipartite_average_clustering",
+    "bipartite_betweenness_centrality",
     "bipartite_closeness_centrality",
     "bipartite_degree_centrality",
+    "bipartite_min_edge_cover",
+    "bipartite_modularity",
     "bipartite_parse_edgelist",
     "bipartite_read_edgelist",
     "boruvka_mst_edges",
@@ -100,6 +105,7 @@ __all__ = [
     "butterflies",
     "cartesian_product",
     "caveman_graph",
+    "cd_index",
     "center",
     "centroid",
     "chain_decomposition",
@@ -112,6 +118,7 @@ __all__ = [
     "closeness_vitality",
     "clustering",
     "cn_soundarajan_hopcroft",
+    "collaboration_weighted_projected_graph",
     "color",
     "common_neighbor_centrality",
     "complement",
@@ -187,6 +194,7 @@ __all__ = [
     "eigenvector_centrality",
     "empty_graph",
     "enumerate_all_cliques",
+    "eppstein_matching",
     "eulerian_circuit",
     "eulerian_path",
     "extended_barabasi_albert_graph",
@@ -217,6 +225,7 @@ __all__ = [
     "generalized_degree",
     "generalized_petersen_graph",
     "generic_bfs_edges",
+    "generic_weighted_projected_graph",
     "get_counterexample",
     "get_counterexample_recursive",
     "get_edge_attributes",
@@ -333,6 +342,7 @@ __all__ = [
     "label_propagation_communities",
     "ladder_graph",
     "laplacian_matrix",
+    "latapy_clustering",
     "lexicographic_product",
     "lexicographical_topological_sort",
     "line_graph",
@@ -347,6 +357,7 @@ __all__ = [
     "max_flow_min_cost",
     "max_weight_clique",
     "max_weight_matching",
+    "maximal_extendability",
     "maximal_matching",
     "maximum_branching",
     "maximum_flow",
@@ -410,6 +421,7 @@ __all__ = [
     "onion_layers",
     "out_degree_centrality",
     "overall_reciprocity",
+    "overlap_weighted_projected_graph",
     "overlapping_modularity",
     "pagerank",
     "paley_graph",
@@ -459,6 +471,7 @@ __all__ = [
     "reverse",
     "rich_club_coefficient",
     "ring_of_cliques",
+    "robins_alexander_clustering",
     "root_to_leaf_paths",
     "root_trees",
     "rooted_product",
@@ -956,6 +969,8 @@ def pagerank(
 ):
     if len(G) == 0:
         return {}
+    if G._multigraph:
+        return _b26_multi_pagerank(G, alpha, personalization, max_iter, tol, nstart, weight, dangling)
     weight, _, has_hidden = _check_weight(G, weight)
     if weight is not None and has_hidden:
         raise NotImplementedError("rustnx does not support None edge weights here")
@@ -1832,7 +1847,7 @@ def _mst_algorithms():
     return getattr(mst, "ALGORITHMS", {"kruskal": None, "prim": None, "boruvka": None})
 
 
-def _spanning_edges(G, algorithm, weight, data, maximum):
+def _spanning_edges(G, algorithm, weight, data, maximum, keys=True):
     if G.is_directed():
         raise nx.NetworkXNotImplemented("not implemented for directed type")
     try:
@@ -1844,6 +1859,8 @@ def _spanning_edges(G, algorithm, weight, data, maximum):
     if algorithm != "kruskal":
         # Prim starts from `set(G).pop()`, which follows hash order.
         raise NotImplementedError("rustnx implements Kruskal's algorithm only")
+    if G._multigraph:
+        return _b26_multi_kruskal(G, weight, keys, data, not maximum)
     base = _networkx_graph(G)
     _unhidden_weight(G, weight)
     us, vs = G._core.kruskal(weight, maximum)
@@ -1865,11 +1882,11 @@ def _spanning_edges(G, algorithm, weight, data, maximum):
 
 
 def minimum_spanning_edges(G, algorithm="kruskal", weight="weight", keys=True, data=True, ignore_nan=False):
-    return _spanning_edges(G, algorithm, weight, data, maximum=False)
+    return _spanning_edges(G, algorithm, weight, data, maximum=False, keys=keys)
 
 
 def maximum_spanning_edges(G, algorithm="kruskal", weight="weight", keys=True, data=True, ignore_nan=False):
-    return _spanning_edges(G, algorithm, weight, data, maximum=True)
+    return _spanning_edges(G, algorithm, weight, data, maximum=True, keys=keys)
 
 
 def _spanning_tree(G, weight, algorithm, maximum):
@@ -2216,16 +2233,22 @@ def _degree_centrality(G, degrees):
 
 
 def degree_centrality(G):
+    if G._multigraph:
+        return _degree_centrality(G, _b26_multi_degrees(G)[0])
     return _degree_centrality(G, G._core.degrees())
 
 
 def in_degree_centrality(G):
     _directed_only(G)
+    if G._multigraph:
+        return _degree_centrality(G, _b26_multi_degrees(G)[1])
     return _degree_centrality(G, G._core.in_out_degrees()[0])
 
 
 def out_degree_centrality(G):
     _directed_only(G)
+    if G._multigraph:
+        return _degree_centrality(G, _b26_multi_degrees(G)[2])
     return _degree_centrality(G, G._core.in_out_degrees()[1])
 
 
@@ -4459,7 +4482,7 @@ def chain_decomposition(G, root=None):
 
 
 def is_eulerian(G):
-    plus_in, plus_out, bad = G._core.euler_balance()
+    plus_in, plus_out, bad = _b26_euler_balance(G)
     if G.is_directed():
         return not (plus_in or plus_out or bad) and is_strongly_connected(G)
     return not plus_in and is_connected(G)
@@ -4469,16 +4492,22 @@ def has_eulerian_path(G, source=None):
     if is_eulerian(G):
         return True
     s = None if source is None else _node_arg(G, source)
-    plus_in, plus_out, bad = G._core.euler_balance()
+    plus_in, plus_out, bad = _b26_euler_balance(G)
     if G.is_directed():
         if s is not None:
-            ins, outs = G._core.in_out_degrees()
+            if G._multigraph:
+                _, ins, outs = _b26_multi_degrees(G)
+            else:
+                ins, outs = G._core.in_out_degrees()
             if outs[s] - ins[s] != 1:
                 return False
         if bad:
             return False
         return plus_in <= 1 and plus_out <= 1 and is_weakly_connected(G)
-    if s is not None and G._core.degree_of(s) % 2 != 1:
+    if G._multigraph:
+        if s is not None and _b26_multi_degrees(G)[0][s] % 2 != 1:
+            return False
+    elif s is not None and G._core.degree_of(s) % 2 != 1:
         return False
     return plus_in == 2 and is_connected(G)
 
@@ -4654,6 +4683,8 @@ def to_prufer_sequence(T):
 def kruskal_mst_edges(G, minimum, weight="weight", keys=True, data=True, ignore_nan=False, partition=None):
     if partition is not None:
         raise NotImplementedError("rustnx does not support partition")
+    if G._multigraph:
+        return _b26_multi_kruskal(G, weight, keys, data, minimum)
     base = _networkx_graph(G)
     weight, _, has_hidden = _check_weight(G, weight)
     core = G._core  # after `_check_weight`, which may convert `weight`
@@ -5463,6 +5494,8 @@ def _prim_starts(G):
 def prim_mst_edges(G, minimum, weight="weight", keys=True, data=True, ignore_nan=False):
     if G.is_directed():
         raise NotImplementedError("rustnx implements prim_mst_edges for undirected graphs")
+    if G._multigraph:
+        return _b26_multi_prim(G, minimum, weight, keys, data, ignore_nan)
     base = _networkx_graph(G)
     weight = _unhidden_weight(G, weight)  # NaN weights fall back when converted
     nodes = G._nodes
@@ -8697,6 +8730,8 @@ def rich_club_coefficient(G, normalized=True, Q=100, seed=None):
 
 
 def s_metric(G):
+    if G._multigraph:
+        return float(G._core.b26_multi_s_metric(_b26_multi(G)))
     return float(G._core.s_metric_sum())
 
 
@@ -10197,6 +10232,8 @@ def to_dict_of_lists(G, nodelist=None):
 
 
 def number_of_selfloops(G):
+    if G._multigraph:
+        return G._core.b26_multi_counts(_b26_multi(G))[1]
     return G._core.number_of_selfloops()
 
 
@@ -12447,7 +12484,10 @@ def tree_broadcast_time(G, node=None):
 
 def density(B, nodes):
     n = len(B)
-    m = B._core.number_of_edges()
+    if B._multigraph:
+        m = B._core.b26_multi_counts(_b26_multi(B))[0]
+    else:
+        m = B._core.number_of_edges()
     nb = len(nodes)
     nt = n - nb
     if m == 0:
@@ -12542,3 +12582,386 @@ def intersection_all(graphs):
 
 def intersection(G, H):
     return intersection_all([G, H])
+
+
+# --- Batch 26: multigraphs and bipartite measures ---
+
+
+# Multigraph snapshot -> {(weighted, weight): MultiEdges}. Kept beside the
+# snapshot rather than on it, so snapshots still pickle.
+_B26_MULTI = weakref.WeakKeyDictionary()
+
+
+def _b26_multi(G, weight=None, weighted=False):
+    """Per-entry parallel-edge data of a multigraph snapshot (see
+    ``bipartite_more::MultiEdges``): counts and, with ``weighted``, sums,
+    first minima and first maxima of ``d.get(weight, 1)``. The snapshot
+    collapses parallel edges, so this is read from the source graph once
+    and kept while G lives (NetworkX caches G while the graph is unchanged)."""
+    if weighted and weight is not None and not isinstance(weight, str):
+        raise NotImplementedError("rustnx only supports string edge attribute names")
+    key = (weighted, weight if weighted else None)
+    cache = _B26_MULTI.get(G)
+    if cache is None:
+        cache = _B26_MULTI.setdefault(G, {})
+    data = cache.get(key)
+    if data is None:
+        if not G._source_unchanged():
+            raise NotImplementedError("the graph changed since it was converted")
+        data = G._core.b26_multi_edges(_node_list(G), G._source._adj, weighted, weight)
+        cache[key] = data
+    return data
+
+
+def _b26_multi_degrees(G):
+    """``(degree, in-degree, out-degree)`` lists of a multigraph, counting
+    parallel edges as ``G.degree`` does."""
+    return G._core.b26_multi_degrees(_b26_multi(G))
+
+
+def _b26_multi_pagerank(G, alpha, personalization, max_iter, tol, nstart, weight, dangling):
+    # `to_scipy_sparse_array` adds up parallel edges' weights (data=None
+    # looks up the key None too, defaulting to 1).
+    if callable(weight):
+        raise NotImplementedError("rustnx does not support callable weights")
+    me = _b26_multi(G, weight, weighted=True)
+    p = _node_vector(G, personalization)
+    if p is not None and sum(p) == 0:
+        raise ZeroDivisionError
+    scores = G._core.b26_multi_pagerank(
+        me,
+        float(alpha),
+        p,
+        max(0, operator.index(max_iter)),
+        float(tol),
+        _node_vector(G, nstart),
+        _node_vector(G, dangling),
+    )
+    if scores is None:
+        raise nx.PowerIterationFailedConvergence(max_iter)
+    return dict(zip(G._nodes, scores))
+
+
+def _b26_multi_edge_item(adj, a, b, pos, keys, data):
+    """``(u, v, k, d)`` (or the shorter forms) for the parallel edge whose
+    key is at position ``pos`` of ``adj[a][b]``."""
+    keydict = adj[a][b]
+    k = next(islice(keydict, pos, None))
+    if keys:
+        return (a, b, k, keydict[k]) if data else (a, b, k)
+    return (a, b, keydict[k]) if data else (a, b)
+
+
+def _b26_multi_kruskal(G, weight, keys, data, minimum):
+    """``kruskal_mst_edges`` on an undirected multigraph: each node pair's
+    first lightest (or heaviest) parallel edge, as NetworkX's stable sort
+    of every parallel edge picks it."""
+    if G.is_directed():
+        raise NotImplementedError("rustnx implements multigraph spanning trees for undirected graphs")
+    if callable(weight):
+        raise NotImplementedError("rustnx does not support callable weights")
+    base = _networkx_graph(G)
+    us, vs, ks = G._core.b26_multi_kruskal(_b26_multi(G, weight, weighted=True), not minimum)
+    guard = _MutationGuard(G)
+    nodes = G._nodes
+    adj = base._adj
+
+    def generate():
+        try:
+            for u, v, k in zip(us, vs, ks):
+                if guard.changed():
+                    raise RuntimeError("Graph changed during iteration")
+                yield _b26_multi_edge_item(adj, nodes[u], nodes[v], k, keys, data)
+        finally:
+            guard.release()
+
+    return generate()
+
+
+def _b26_multi_prim(G, minimum, weight, keys, data, ignore_nan):
+    if callable(weight):
+        raise NotImplementedError("rustnx does not support callable weights")
+    base = _networkx_graph(G)
+    me = _b26_multi(G, weight, weighted=True)
+    nodes = G._nodes
+
+    def produce():
+        adj = base._adj
+        us, vs, ks = G._core.b26_multi_prim(me, _prim_starts(G), bool(minimum))
+        for u, v, k in zip(us, vs, ks):
+            yield _b26_multi_edge_item(adj, nodes[u], nodes[v], k, keys, data)
+
+    from networkx.algorithms.tree import mst
+
+    def fallback(H):
+        return mst.prim_mst_edges(H, minimum, weight, keys, data, ignore_nan, backend="networkx")
+
+    return _guarded(G, produce, fallback)
+
+
+_B26_MODES = {"dot": 0, "min": 1, "max": 2}
+
+
+def _b26_hashes(G):
+    if not _sets_replayable():
+        raise NotImplementedError("Python's set order can't be replayed here")
+    return [hash(v) for v in G._nodes]
+
+
+def _b26_node_positions(G, nodes):
+    """Positions of ``nodes`` (a container, iterated once), raising
+    ``KeyError`` for the first one not in G as ``G[v]`` would."""
+    index = G._index
+    positions = []
+    for v in nodes:
+        try:
+            i = index.get(v)
+        except TypeError:
+            raise NotImplementedError("unhashable node") from None
+        if i is None:
+            raise KeyError(v)
+        positions.append(i)
+    return positions
+
+
+def latapy_clustering(G, nodes=None, mode="dot"):
+    if not is_bipartite(G):
+        raise nx.NetworkXError("Graph is not bipartite")
+    try:
+        code = _B26_MODES[mode]
+    except KeyError as err:
+        raise nx.NetworkXError("Mode for bipartite clustering must be: dot, min or max") from err
+    if nodes is None:
+        keys = G._nodes
+        positions = list(range(len(G)))
+    else:
+        keys = list(_b21_container(nodes))
+        positions = _b26_node_positions(G, keys)
+    values = G._core.b26_latapy(positions, code, _b26_hashes(G))
+    return dict(zip(keys, values))
+
+
+def bipartite_average_clustering(G, nodes=None, mode="dot"):
+    if nodes is None:
+        nodes = G._nodes
+    else:
+        _b21_container(nodes)  # iterated twice
+    ccs = latapy_clustering(G, nodes=nodes, mode=mode)
+    return sum(ccs[v] for v in nodes) / len(nodes)
+
+
+def robins_alexander_clustering(G):
+    if G.is_directed():
+        # 3.7 counts 4-cycles with `butterflies`, which rejects directed
+        # graphs; 3.4 to 3.6 count them along successors.
+        raise NotImplementedError("rustnx implements robins_alexander_clustering for undirected graphs")
+    if len(G) < 4 or G._core.number_of_edges() < 3:
+        return 0
+    if G._core.number_of_selfloops():
+        raise NotImplementedError("NetworkX versions count self-loops differently")
+    cycles4, paths2 = G._core.b26_cycles_and_paths()
+    L_3 = paths2 / 2
+    if L_3 == 0:
+        return 0
+    # 3.4 to 3.6: `4.0 * C_4 / L_3` with `C_4 = cycles / 4` exact; 3.7:
+    # `sum(butterflies(G).values()) / L_3`; both are `cycles4 / L_3`.
+    return cycles4 / L_3
+
+
+def bipartite_betweenness_centrality(G, nodes):
+    # Computed first: if rustnx declines, `nodes` is not yet consumed.
+    betweenness = betweenness_centrality(G, normalized=False, weight=None)
+    top = set(nodes)
+    bottom = set(G._nodes) - top
+    n = len(top)
+    m = len(bottom)
+    s, t = divmod(n - 1, m)
+    bet_max_top = (m**2 * (s + 1) ** 2 + m * (s + 1) * (2 * t - s - 1) - t * (2 * s - t + 3)) / 2.0
+    p, r = divmod(m - 1, n)
+    bet_max_bot = (n**2 * (p + 1) ** 2 + n * (p + 1) * (2 * r - p - 1) - r * (2 * p - r + 3)) / 2.0
+    for node in top:
+        betweenness[node] /= bet_max_top
+    for node in bottom:
+        betweenness[node] /= bet_max_bot
+    return betweenness
+
+
+def _b26_weighted_projection(B, nodes, kind):
+    """``overlap_`` (kind 0 Jaccard, 1 min) or ``collaboration_weighted_projected_graph`` (2)."""
+    base, _ = _b21_canonical_view(B)
+    node_list = list(_b21_container(nodes))
+    _, positions = _b21_projection_nodes(B, node_list)
+    hashes = _b26_hashes(B)
+    if B.is_directed():
+        B._ensure_exact_pred()  # `B.pred` rows in NetworkX's order
+    G = nx.DiGraph() if B.is_directed() else nx.Graph()
+    G.graph.update(base.graph)
+    G.add_nodes_from((n, base.nodes[n]) for n in node_list)
+    B._core.b26_projection(_node_list(B), positions, kind, hashes, _COMPENSATED_SUM, G)
+    return G
+
+
+def overlap_weighted_projected_graph(B, nodes, jaccard=True):
+    return _b26_weighted_projection(B, nodes, 0 if jaccard else 1)
+
+
+def collaboration_weighted_projected_graph(B, nodes):
+    return _b26_weighted_projection(B, nodes, 2)
+
+
+def generic_weighted_projected_graph(B, nodes, weight_function=None):
+    if weight_function is not None:
+        raise NotImplementedError("rustnx does not call weight functions")
+    # The default weight, `len(set(G[u]) & set(pred[v]))`, is that of
+    # `weighted_projected_graph` without its size check.
+    base, view = _b21_canonical_view(B)
+    _, positions = _b21_projection_nodes(B, nodes)
+    G = nx.DiGraph() if B.is_directed() else nx.Graph()
+    G.graph.update(base.graph)
+    _core._op_projection(view, positions, True, None, *_b21_target(G))
+    return G
+
+
+def bipartite_min_edge_cover(G, matching_algorithm=None):
+    _undirected_only(G)
+    if matching_algorithm is not None:
+        raise NotImplementedError("rustnx does not call matching algorithms")
+    if len(G) == 0:
+        return set()
+    # `networkx.algorithms.covering.min_edge_cover` with Hopcroft-Karp.
+    if number_of_isolates(G) > 0:
+        raise nx.NetworkXException(
+            "Graph has a node with no edge incident on it, so no edge cover exists."
+        )
+    adj = _networkx_graph(G)._adj
+    maximum_matching = hopcroft_karp_matching(G)
+    min_cover = set(maximum_matching.items())
+    uncovered_nodes = set(G._nodes) - {v for u, v in min_cover} - {u for u, v in min_cover}
+    for v in uncovered_nodes:
+        u = next(iter(adj[v]))
+        min_cover.add((u, v))
+        min_cover.add((v, u))
+    return min_cover
+
+
+def eppstein_matching(G, top_nodes=None):
+    if top_nodes is not None:
+        _b21_container(top_nodes)  # a fallback must see it whole
+    _, view = _b21_canonical_view(G)
+    left, _ = sets(G, top_nodes)
+    index = G._index
+    nodes = G._nodes
+    order = []
+    for v in left:
+        i = index.get(v)
+        if i is not None:
+            if not _b21_same_key(v, nodes[i]):
+                raise NotImplementedError("a top node differs from G's node object")
+            order.append(i)
+    found = G._core.b26_eppstein_from(order, sys.getrecursionlimit() // 4)
+    if found is None:
+        # NetworkX's `recurse` nests this deep; leave the outcome (perhaps
+        # a RecursionError) to it.
+        raise NotImplementedError("deep augmenting paths run in NetworkX")
+    return {nodes[k]: nodes[v] for k, v in found}
+
+
+def maximal_extendability(G):
+    _undirected_only(G)
+    if not is_connected(G):
+        raise nx.NetworkXError("Graph G is not connected")
+    if not is_bipartite(G):
+        raise nx.NetworkXError("Graph G is not bipartite")
+    U, V = sets(G)
+    maximum_matching = hopcroft_karp_matching(G)
+    if not is_perfect_matching(G, maximum_matching):
+        raise nx.NetworkXError("Graph G does not contain a perfect matching")
+    index = G._index
+    n = len(G)
+    in_u = [False] * n
+    in_v = [False] * n
+    for x in U:
+        in_u[index[x]] = True
+    for x in V:
+        in_v[index[x]] = True
+    mate = [index[maximum_matching[v]] for v in G._nodes]
+    k = G._core.b26_extendability(in_u, in_v, mate)
+    if k is None:
+        raise nx.NetworkXError("The residual graph of G is not strongly connected")
+    return k
+
+
+def _b26_euler_balance(G):
+    """``euler_balance`` (``(+1 in, +1 out, other unbalanced)`` counts, or
+    the number of odd degrees), counting a multigraph's parallel edges."""
+    if not G._multigraph:
+        return G._core.euler_balance()
+    deg, ins, outs = _b26_multi_degrees(G)
+    if not G.is_directed():
+        return sum(d % 2 for d in deg), 0, 0
+    plus_in = plus_out = bad = 0
+    for i, o in zip(ins, outs):
+        if i == o + 1:
+            plus_in += 1
+        elif o == i + 1:
+            plus_out += 1
+        elif i != o:
+            bad += 1
+    return plus_in, plus_out, bad
+
+
+def bipartite_modularity(G, communities, nodes, *, weight="weight", resolution=1):
+    # NetworkX 3.7+.
+    _undirected_only(G)
+    if not isinstance(communities, list):
+        communities = list(_b21_container(communities))
+    if not is_partition(G, communities):
+        from networkx.algorithms.community.quality import NotAPartition
+
+        raise NotAPartition(_networkx_graph(G), communities)
+    weight, rows = _cut_weight(G, weight)
+    comms = [set(c) for c in communities]
+    index = G._index
+    orders = [[index[v] for v in comm] for comm in comms]
+    # Degrees and each community's internal weight in Rust; the sums over
+    # sets below are NetworkX's own expressions.
+    degrees, internal = G._core.b26_modularity_parts(orders, _COMPENSATED_SUM, weight, rows)
+    degree = dict(zip(G._nodes, degrees))
+    red = set(nodes)
+    blue = set(G._nodes) - red
+    m = sum(degree[v] for v in red)
+    if m == 0:
+        return 0.0
+    norm = 1 / m**2
+
+    def community_contribution(comm, L_c):
+        k_c = sum(degree[u] for u in comm & red)
+        d_c = sum(degree[u] for u in comm & blue)
+        return L_c / m - resolution * k_c * d_c * norm
+
+    return sum(community_contribution(c, L_c) for c, L_c in zip(comms, internal))
+
+
+def cd_index(G, node, time_delta, *, time="time", weight=None):
+    _directed_only(G)
+    G = _networkx_graph(G)
+    # The scan of every node runs in Rust; the rest is NetworkX's own code,
+    # which only looks at `node`'s neighborhood.
+    if not _core.CoreGraph.b26_all_nodes_have(G._node, time):
+        raise nx.NetworkXError("Not all nodes have a 'time' attribute.")
+    try:
+        target_date = G.nodes[node][time] + time_delta
+        pred = {i for i in G.pred[node] if G.nodes[i][time] <= target_date}
+    except:  # noqa: E722  (as NetworkX)
+        raise nx.NetworkXError(
+            "Addition and comparison are not supported between 'time_delta' "
+            "and 'time' types."
+        )
+    b = [-1 if any(j in G[i] for j in G[node]) else 1 for i in pred]
+    n = len(pred.union(*(G.pred[s].keys() - {node} for s in G[node])))
+    if n == 0:
+        raise nx.NetworkXError("The cd index cannot be defined.")
+    if weight is None:
+        return round(sum(bi for bi in b) / n, 2)
+    weights = [G.nodes[i].get(weight, 1) for i in pred]
+    return round(sum(bi / wt for bi, wt in zip(b, weights)) / n, 2)

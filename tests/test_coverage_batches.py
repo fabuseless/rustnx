@@ -7354,3 +7354,398 @@ def test_batch21_fall_backs(seed, directed, restore_config):
         H._node[u]["late"] = 1  # attribute dicts aren't part of the snapshot
         H._adj[u][("new", u)] = {}  # nor is a row changed directly
         exact_outcome(_b21_graphs(nx.union), H, nx.path_graph([("p", 0), ("p", 1)]))
+
+
+# --- Batch 26: multigraphs and bipartite measures ---
+
+
+def _b26_multigraph(seed, directed, weights):
+    """A multigraph with parallel edges, parallel self-loops and edges
+    lacking the weight, from ``random_multigraph``."""
+    M = random_multigraph(seed, directed, "none" if weights == "missing" else weights)
+    rng = random.Random(seed)
+    nodes = list(M)
+    if nodes and rng.random() < 0.5:
+        v = rng.choice(nodes)
+        for _ in range(rng.randint(1, 3)):
+            M.add_edge(v, v, **({} if weights in ("none", "missing") else {"weight": 2}))
+    if weights == "missing":
+        for _, _, d in M.edges(data=True):
+            if rng.random() < 0.5:
+                d["weight"] = rng.randint(1, 4)
+    return M
+
+
+def _b26_pagerank_close(func):
+    """Run ``func`` with both backends: same keys in the same order and
+    values within 1e-9 (rustnx's PageRank doesn't use SciPy's sparse
+    kernels), or the same exception."""
+
+    def outcome(backend):
+        try:
+            return "ok", func(backend)
+        except Exception as exc:
+            return type(exc), str(exc)
+
+    ours, ref = outcome("rustnx"), outcome("networkx")
+    if ref[0] != "ok":
+        assert ours == ref
+        return
+    assert ours[0] == "ok", ours
+    assert list(ours[1]) == list(ref[1])
+    for k in ref[1]:
+        assert ours[1][k] == pytest.approx(ref[1][k], rel=1e-9, abs=1e-12), k
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float", "missing"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch26_multigraph_degrees(seed, directed, weights):
+    M = _b26_multigraph(seed, directed, weights)
+    nodes = list(M)
+    rng = random.Random(seed)
+    group = rng.sample(nodes, len(nodes) // 3)
+    exact_outcome(nx.degree_centrality, M)
+    exact_outcome(nx.in_degree_centrality, M)
+    exact_outcome(nx.out_degree_centrality, M)
+    exact_outcome(nx.number_of_selfloops, M)
+    exact_outcome(nx.s_metric, M)
+    exact_outcome(nx.has_eulerian_path, M)
+    exact_outcome(nx.is_semieulerian, M)
+    for source in nodes[:3]:
+        exact_outcome(nx.has_eulerian_path, M, source)
+    exact_outcome(nx.bipartite.density, M, group)
+    exact_outcome(nx.group_degree_centrality, M, group)
+    exact_outcome(nx.group_in_degree_centrality, M, group)
+    exact_outcome(nx.group_out_degree_centrality, M, group)
+    # Eulerian multigraphs: every edge doubled.
+    E = M.__class__()
+    E.add_nodes_from(M)
+    for u, v in M.edges():
+        E.add_edge(u, v)
+        E.add_edge(v, u)
+    exact_outcome(nx.has_eulerian_path, E)
+    exact_outcome(nx.is_semieulerian, E)
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float", "missing"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch26_multigraph_pagerank(seed, directed, weights):
+    M = _b26_multigraph(seed, directed, weights)
+    rng = random.Random(seed)
+    nodes = list(M)
+    personalization = {v: rng.randint(0, 3) for v in nodes[::2]}
+    if nodes:
+        personalization[nodes[0]] = 1
+    for kwargs in [{}, {"weight": None}, {"alpha": 0.5}, {"personalization": personalization},
+                   {"dangling": personalization}, {"nstart": {v: rng.random() for v in nodes}},
+                   {"tol": 1e-10, "max_iter": 1000}, {"weight": "missing"}]:
+        _b26_pagerank_close(lambda b: nx.pagerank(M, backend=b, **kwargs))
+    _b26_pagerank_close(lambda b: nx.pagerank(M, max_iter=1, backend=b))
+    _b26_pagerank_close(lambda b: nx.pagerank(M, personalization={nodes[0]: 0} if nodes else None, backend=b))
+
+
+def _b26_spanning(func, *args, **kwargs):
+    return lambda G, **kw: list(func(G, *args, **kwargs, **kw))
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float", "missing"])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch26_multigraph_spanning_trees(seed, weights):
+    from networkx.algorithms.tree import mst
+
+    M = _b26_multigraph(seed, False, weights)
+    if seed % 4 == 0:  # many ties
+        for _, _, d in M.edges(data=True):
+            d["weight"] = d.get("weight", 1) % 2
+    for func in [nx.minimum_spanning_edges, nx.maximum_spanning_edges]:
+        for keys in [True, False]:
+            for data in [True, False]:
+                exact_outcome(_b26_spanning(func, keys=keys, data=data), M)
+        exact_outcome(_b26_spanning(func, weight="other"), M)
+        exact_outcome(_b26_spanning(func, weight=None), M)
+        exact_outcome(_b26_spanning(func, algorithm="prim"), M)
+        exact_outcome(_b26_spanning(func, algorithm="boruvka"), M)
+        exact_outcome(_b26_spanning(func, algorithm="nope"), M)
+    for func in [nx.minimum_spanning_tree, nx.maximum_spanning_tree]:
+        exact_outcome(_b21_graphs(func), M)
+        exact_outcome(_b21_graphs(func), M, weight=None)
+    for minimum in [True, False]:
+        for keys in [True, False]:
+            exact_outcome(_b26_spanning(mst.kruskal_mst_edges, minimum, keys=keys), M)
+            exact_outcome(_b26_spanning(mst.prim_mst_edges, minimum, keys=keys), M)
+            exact_outcome(_b26_spanning(mst.prim_mst_edges, minimum, keys=keys, data=False), M)
+    # Directed multigraphs: Kruskal runs in NetworkX; the others reject them.
+    D = _b26_multigraph(seed, True, weights)
+    exact_outcome(_b26_spanning(mst.kruskal_mst_edges, True), D)
+    exact_outcome(_b26_spanning(mst.prim_mst_edges, True), D)
+    exact_outcome(_b26_spanning(nx.minimum_spanning_edges), D)
+
+
+def test_batch26_multigraph_spanning_fall_backs():
+    from networkx.algorithms.tree import mst
+
+    M = nx.MultiGraph()
+    M.add_edge(0, 1, weight=2)
+    M.add_edge(0, 1, weight=float("nan"))
+    M.add_edge(1, 2, weight=1)
+    for kwargs in [{}, {"ignore_nan": True}]:
+        exact_outcome(_b26_spanning(nx.minimum_spanning_edges, **kwargs), M)
+        exact_outcome(_b26_spanning(mst.prim_mst_edges, True, **kwargs), M)
+    M = nx.MultiGraph()
+    M.add_edge(0, 1, weight=None)
+    M.add_edge(0, 1, weight=1)
+    exact_outcome(_b26_spanning(nx.minimum_spanning_edges), M)
+    exact_outcome(nx.pagerank, M)
+
+
+def _b26_bipartite(seed, directed=False):
+    B, top = _b21_bipartite(seed, directed)
+    for _, _, d in B.edges(data=True):
+        d.pop("weight", None)
+    return B, top
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(60))
+def test_batch26_bipartite_clustering(seed, directed):
+    B, top = _b26_bipartite(seed, directed)
+    bottom = [v for v in B if v not in set(top)]
+    for mode in ["dot", "min", "max", "nope", ["dot"]]:
+        exact_outcome(nx.bipartite.latapy_clustering, B, mode=mode)
+        exact_outcome(nx.bipartite.average_clustering, B, mode=mode)
+    for nodes in [top, set(bottom), tuple(top[:3]), top[:2] + top[:2], top[:2] + ["missing"], []]:
+        exact_outcome(nx.bipartite.latapy_clustering, B, nodes)
+        exact_outcome(nx.bipartite.average_clustering, B, nodes)
+    exact_outcome(lambda B, **kw: nx.bipartite.latapy_clustering(B, iter(top), **kw), B)
+    exact_outcome(nx.bipartite.robins_alexander_clustering, B)
+    # Not bipartite: latapy raises, robins counts any 4-cycles.
+    G = graph_for(seed, directed)
+    exact_outcome(nx.bipartite.latapy_clustering, G)
+    exact_outcome(nx.bipartite.robins_alexander_clustering, G)
+    G.remove_edges_from(list(nx.selfloop_edges(G)))
+    exact_outcome(nx.bipartite.robins_alexander_clustering, G)
+    # Larger sets: resizes and dummies in the replayed set tables.
+    L = nx.bipartite.random_graph(60, 40, 0.15, seed=seed, directed=directed)
+    L = nx.relabel_nodes(L, {v: f"s{v}" for v in L if v % 3 == 0})
+    exact_outcome(nx.bipartite.latapy_clustering, L)
+    exact_outcome(nx.bipartite.latapy_clustering, L, mode="min")
+    exact_outcome(nx.bipartite.robins_alexander_clustering, L)
+    # Multigraphs see neighbors once.
+    M = nx.MultiDiGraph(B) if directed else nx.MultiGraph(B)
+    M.add_edges_from(list(B.edges)[::2])
+    exact_outcome(nx.bipartite.latapy_clustering, M)
+    exact_outcome(nx.bipartite.average_clustering, M, mode="max")
+    exact_outcome(nx.bipartite.robins_alexander_clustering, M)
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_batch26_bipartite_betweenness(seed):
+    B, top = _b26_bipartite(seed)
+    bottom = [v for v in B if v not in set(top)]
+    for nodes in [top, bottom, set(top), top[:1], top + ["missing"], list(B), []]:
+        exact_outcome(nx.bipartite.betweenness_centrality, B, nodes)
+    exact_outcome(lambda B, **kw: nx.bipartite.betweenness_centrality(B, iter(top), **kw), B)
+    M = nx.MultiGraph(B)
+    M.add_edges_from(list(B.edges)[::3])
+    exact_outcome(nx.bipartite.betweenness_centrality, M, top)
+    exact_outcome(nx.bipartite.betweenness_centrality, graph_for(seed, True), top)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(60))
+def test_batch26_weighted_projections(seed, directed):
+    B, top = _b21_bipartite(seed, directed)
+    bottom = [v for v in B if v not in set(top)]
+    funcs = [
+        nx.bipartite.overlap_weighted_projected_graph,
+        lambda B, nodes, **kw: nx.bipartite.overlap_weighted_projected_graph(B, nodes, jaccard=False, **kw),
+        nx.bipartite.collaboration_weighted_projected_graph,
+        nx.bipartite.generic_weighted_projected_graph,
+    ]
+    for func in funcs:
+        for side in [top, bottom, set(top), tuple(bottom), top + top[:2], top[:3] + ["missing"], list(B)]:
+            exact_outcome(_b21_graphs(func), B, side)
+        exact_outcome(_b21_graphs(lambda B, **kw: func(B, iter(top), **kw)), B)
+        G = graph_for(seed, directed)
+        exact_outcome(_b21_graphs(func), G, list(G)[::2])
+        L = nx.bipartite.random_graph(50, 30, 0.2, seed=seed, directed=directed)
+        exact_outcome(_b21_graphs(func), L, list(range(50)))
+        exact_outcome(_b21_graphs(func), random_multigraph(seed, directed, "none"), list(B)[:3])
+    jaccard = lambda G, u, v: len(set(G[u]) & set(G[v]))  # noqa: E731
+    exact_outcome(_b21_graphs(nx.bipartite.generic_weighted_projected_graph), B, top, weight_function=jaccard)
+
+
+def _b26_matchable(seed):
+    """A connected bipartite graph with a perfect matching (a ring of
+    matched pairs plus random extra edges), and its top side."""
+    rng = random.Random(seed)
+    k = rng.randint(1, 12)
+    G = nx.Graph()
+    tops = [f"t{i}" if seed % 2 else i for i in range(k)]
+    bots = [("b", i) for i in range(k)]
+    for i in range(k):
+        G.add_edge(tops[i], bots[i])
+        G.add_edge(tops[i], bots[(i + 1) % k])
+    for _ in range(rng.randint(0, 2 * k)):
+        G.add_edge(rng.choice(tops), rng.choice(bots))
+    nodes = list(G)
+    rng.shuffle(nodes)
+    H = nx.Graph()
+    H.add_nodes_from(nodes)
+    edges = list(G.edges)
+    rng.shuffle(edges)
+    H.add_edges_from(edges)
+    return H, tops
+
+
+@pytest.mark.parametrize("seed", range(60))
+def test_batch26_matching_and_covers(seed):
+    B, top = _b26_bipartite(seed)
+    connected = len(B) > 0 and nx.is_connected(B)
+    exact_outcome(with_set_order(nx.bipartite.min_edge_cover), B)
+    exact_outcome(nx.bipartite.eppstein_matching, B, top)
+    exact_outcome(nx.bipartite.eppstein_matching, B, set(top))
+    exact_outcome(nx.bipartite.eppstein_matching, B)
+    exact_outcome(lambda B, **kw: nx.bipartite.eppstein_matching(B, iter(top), **kw), B)
+    exact_outcome(nx.bipartite.maximal_extendability, B)
+    H, tops = _b26_matchable(seed)
+    exact_outcome(with_set_order(nx.bipartite.min_edge_cover), H)
+    exact_outcome(nx.bipartite.eppstein_matching, H, tops)
+    exact_outcome(nx.bipartite.eppstein_matching, H)
+    exact_outcome(nx.bipartite.maximal_extendability, H)
+    # Not bipartite, directed, empty, isolated nodes, bad top nodes.
+    G = graph_for(seed, False)
+    exact_outcome(nx.bipartite.maximal_extendability, G)
+    exact_outcome(with_set_order(nx.bipartite.min_edge_cover), G)
+    exact_outcome(nx.bipartite.eppstein_matching, H, tops[:1])
+    exact_outcome(nx.bipartite.eppstein_matching, graph_for(seed, True), list(graph_for(seed, True))[:3])
+    exact_outcome(nx.bipartite.maximal_extendability, nx.DiGraph(H))
+    exact_outcome(with_set_order(nx.bipartite.min_edge_cover), nx.DiGraph(H))
+    for E in [nx.Graph(), nx.empty_graph(3), nx.path_graph(2), nx.path_graph(3), nx.cycle_graph(6)]:
+        exact_outcome(with_set_order(nx.bipartite.min_edge_cover), E)
+        exact_outcome(nx.bipartite.maximal_extendability, E)
+        exact_outcome(nx.bipartite.eppstein_matching, E, [0])
+    exact_outcome(with_set_order(nx.bipartite.min_edge_cover), H, matching_algorithm=nx.bipartite.eppstein_matching)
+    del connected
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float", "missing"])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch26_bipartite_modularity(seed, weights):
+    if not hasattr(nx.bipartite, "modularity"):
+        pytest.skip("bipartite modularity is new in NetworkX 3.7")
+    B, top = _b26_bipartite(seed)
+    rng = random.Random(seed)
+    for u, v, d in B.edges(data=True):
+        if weights == "int" or (weights == "missing" and rng.random() < 0.5):
+            d["weight"] = rng.randint(1, 5)
+        elif weights == "float":
+            d["weight"] = rng.choice([0.5, 1.25, 2.0, 3.1])
+    nodes = list(B)
+    rng.shuffle(nodes)
+    k = rng.randint(1, max(1, len(nodes)))
+    communities = [set(nodes[i::k]) for i in range(k)]
+    exact_outcome(nx.bipartite.modularity, B, communities, top)
+    exact_outcome(nx.bipartite.modularity, B, communities, set(top), resolution=0.5)
+    exact_outcome(nx.bipartite.modularity, B, communities, top, weight=None)
+    exact_outcome(nx.bipartite.modularity, B, communities, top, weight="other")
+    exact_outcome(lambda B, **kw: nx.bipartite.modularity(B, iter(communities), top, **kw), B)
+    exact_outcome(nx.bipartite.modularity, B, communities[:-1], top)
+    exact_outcome(nx.bipartite.modularity, B, communities, top + ["missing"])
+    exact_outcome(nx.bipartite.modularity, nx.DiGraph(B), communities, top)
+    exact_outcome(nx.bipartite.modularity, nx.Graph(), [], [])
+
+
+def test_batch26_runs_in_rust():
+    from networkx.algorithms.tree import mst
+
+    M = _b26_multigraph(3, False, "int")
+    D = _b26_multigraph(3, True, "int")
+    B, top = _b26_bipartite(5)
+    H, tops = _b26_matchable(7)
+    calls = [
+        lambda: nx.pagerank(M, backend="rustnx"),
+        lambda: nx.pagerank(D, weight=None, backend="rustnx"),
+        lambda: nx.degree_centrality(M, backend="rustnx"),
+        lambda: nx.in_degree_centrality(D, backend="rustnx"),
+        lambda: nx.out_degree_centrality(D, backend="rustnx"),
+        lambda: list(nx.minimum_spanning_edges(M, backend="rustnx")),
+        lambda: list(nx.maximum_spanning_edges(M, keys=False, backend="rustnx")),
+        lambda: nx.minimum_spanning_tree(M, backend="rustnx"),
+        lambda: nx.maximum_spanning_tree(M, backend="rustnx"),
+        lambda: list(mst.kruskal_mst_edges(M, True, backend="rustnx")),
+        lambda: list(mst.prim_mst_edges(M, False, backend="rustnx")),
+        lambda: nx.s_metric(M, backend="rustnx"),
+        lambda: nx.has_eulerian_path(M, backend="rustnx"),
+        lambda: nx.is_semieulerian(D, backend="rustnx"),
+        lambda: nx.bipartite.density(M, list(M)[:3], backend="rustnx"),
+        lambda: nx.group_degree_centrality(M, list(M)[:3], backend="rustnx"),
+        lambda: nx.group_in_degree_centrality(D, list(D)[:3], backend="rustnx"),
+        lambda: nx.group_out_degree_centrality(D, list(D)[:3], backend="rustnx"),
+        lambda: nx.bipartite.latapy_clustering(B, backend="rustnx"),
+        lambda: nx.bipartite.average_clustering(B, backend="rustnx"),
+        lambda: nx.bipartite.robins_alexander_clustering(B, backend="rustnx"),
+        lambda: nx.bipartite.betweenness_centrality(B, top, backend="rustnx"),
+        lambda: nx.bipartite.overlap_weighted_projected_graph(B, top, backend="rustnx"),
+        lambda: nx.bipartite.collaboration_weighted_projected_graph(B, top, backend="rustnx"),
+        lambda: nx.bipartite.generic_weighted_projected_graph(B, top, backend="rustnx"),
+        lambda: nx.bipartite.min_edge_cover(H, backend="rustnx"),
+        lambda: nx.bipartite.eppstein_matching(H, tops, backend="rustnx"),
+        lambda: nx.bipartite.maximal_extendability(H, backend="rustnx"),
+    ]
+    if hasattr(nx.bipartite, "modularity"):
+        calls.append(lambda: nx.bipartite.modularity(B, [set(B)], top, backend="rustnx"))
+    if "number_of_selfloops" in nx.utils.backends._registered_algorithms:  # 3.5+
+        calls.append(lambda: nx.number_of_selfloops(M, backend="rustnx"))
+    for call in calls:
+        call()
+
+
+def test_batch26_deep_eppstein_falls_back(restore_config):
+    # A long path: augmenting paths recurse deeper than rustnx goes.
+    import sys
+
+    n = sys.getrecursionlimit()
+    G = nx.path_graph(n // 2)
+    top = list(range(0, n // 2, 2))
+    exact_outcome(nx.bipartite.eppstein_matching, G, top)
+
+
+@pytest.mark.parametrize("seed", range(30))
+def test_batch26_cd_index(seed):
+    import datetime
+
+    G = graph_for(seed, True)
+    rng = random.Random(seed)
+    for v in G:
+        G.nodes[v]["time"] = rng.randint(0, 10)
+        if rng.random() < 0.5:
+            G.nodes[v]["w"] = rng.choice([1, 2, 0.5])
+    for node in list(G)[:4] + ["missing"]:
+        for delta in [0, 3, 100, "x"]:
+            exact_outcome(nx.cd_index, G, node, delta)
+            exact_outcome(nx.cd_index, G, node, delta, weight="w")
+    D = G.copy()
+    start = datetime.datetime(2020, 1, 1)
+    for v in D:
+        D.nodes[v]["when"] = start + datetime.timedelta(days=D.nodes[v]["time"])
+    for node in list(D)[:3]:
+        exact_outcome(nx.cd_index, D, node, datetime.timedelta(days=4), time="when")
+    if len(G) > 1:
+        del G.nodes[list(G)[-1]]["time"]
+        exact_outcome(nx.cd_index, G, list(G)[0], 3)
+    exact_outcome(nx.cd_index, G.to_undirected(), list(G)[0], 3)
+    exact_outcome(nx.cd_index, G, list(G)[0], 3, time=["unhashable"])
+
+
+def test_batch26_multigraph_snapshot_pickles():
+    import pickle
+
+    M = _b26_multigraph(2, False, "int")
+    nx.pagerank(M, backend="rustnx")  # caches the snapshot and its parallel-edge data
+    nx.degree_centrality(M, backend="rustnx")
+    M2 = pickle.loads(pickle.dumps(M))
+    _b26_pagerank_close(lambda b: nx.pagerank(M2, backend=b))
+    exact_outcome(nx.degree_centrality, M2)
