@@ -6284,6 +6284,40 @@ impl CoreGraph {
         Ok(true)
     }
 
+    /// Whether `kernighan_lin_bisection` can run in rustnx with `weight`
+    /// (`skip_hidden`: `None` weights hide edges, 3.6+; before, they fail).
+    fn kl_supported(&self, weight: Option<&str>, skip_hidden: bool) -> bool {
+        self.b25_kl_weights(weight, skip_hidden).is_some()
+    }
+
+    /// `kernighan_lin_bisection`'s sweeps (see `cliques::kernighan_lin`):
+    /// the final sides, or `None` when a sweep has no moves.
+    #[allow(clippy::too_many_arguments)]
+    fn kernighan_lin(
+        &self,
+        py: Python<'_>,
+        weight: Option<&str>,
+        skip_hidden: bool,
+        order: Vec<u32>,
+        side: Vec<bool>,
+        max_iter: usize,
+        compensated: bool,
+    ) -> PyResult<Option<Vec<bool>>> {
+        if side.len() != self.n
+            || order.len() != self.n
+            || order.iter().any(|&v| v as usize >= self.n)
+        {
+            return Err(PyIndexError::new_err("node index out of range"));
+        }
+        let weights = self
+            .b25_kl_weights(weight, skip_hidden)
+            .ok_or_else(|| PyNotImplementedError::new_err("unsupported weights"))?;
+        py.detach(|| {
+            cliques::kernighan_lin(&self.succ, &weights, &order, side, max_iter, compensated)
+        })
+        .map_err(|_| PyNotImplementedError::new_err("an int overflowed"))
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -6908,6 +6942,42 @@ impl CoreGraph {
             return Err(PyValueError::new_err("one hash per node"));
         }
         Ok(())
+    }
+
+    /// Edge weights as Python numbers aligned with `succ` (`None` for an
+    /// edge `kernighan_lin_bisection` skips), or `None` where rustnx can't
+    /// follow NetworkX: mixed or unusual types, `None` before 3.6, values
+    /// that aren't finite or that could overflow an int64 total.
+    fn b25_kl_weights(
+        &self,
+        weight: Option<&str>,
+        skip_hidden: bool,
+    ) -> Option<Vec<Option<flow::Val>>> {
+        let m = self.succ.targets.len();
+        let Some(attr) = weight else {
+            return Some(vec![Some(flow::Val::I(1)); m]);
+        };
+        let w = self.weight_slice(Some(attr), false).ok()??;
+        let info = self.weights.get(attr);
+        let (all_int, plain) = info.map_or((true, true), |i| (i.all_int, i.plain));
+        if !plain || self.weights_mixed(Some(attr)) {
+            return None;
+        }
+        w.iter()
+            .map(|&x| {
+                if x.is_nan() {
+                    return skip_hidden.then_some(None);
+                }
+                if !x.is_finite() || (all_int && x.abs() >= (1u64 << 31) as f64) {
+                    return None;
+                }
+                Some(Some(if all_int {
+                    flow::Val::I(x as i64)
+                } else {
+                    flow::Val::F(x)
+                }))
+            })
+            .collect()
     }
 
     /// In-edges in NetworkX's `G._pred` order (rows of `G._adj` for

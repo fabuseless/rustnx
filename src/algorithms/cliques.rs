@@ -7,6 +7,7 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap};
 
+use super::flow::{py_sum, Val};
 use super::operators::tuple_hash;
 use super::pyrandom::Mt19937;
 use super::pyset::PySet;
@@ -1311,4 +1312,154 @@ pub fn k_clique_communities(
         out.push(PySet::from_iter(comp, clique_hashes).iter().collect());
     }
     out
+}
+
+/// `nx.utils.BinaryHeap` on node positions: a dict of current values and a
+/// heap of `(value, count, key)` entries, stale ones skipped on `pop`.
+struct KlHeap {
+    current: Vec<Option<Val>>,
+    len: usize,
+    heap: BinaryHeap<Reverse<KlEntry>>,
+    count: u64,
+}
+
+#[derive(Clone, Copy)]
+struct KlEntry(Val, u64, u32);
+
+impl PartialEq for KlEntry {
+    fn eq(&self, o: &Self) -> bool {
+        self.cmp(o) == std::cmp::Ordering::Equal
+    }
+}
+impl Eq for KlEntry {}
+impl PartialOrd for KlEntry {
+    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
+impl Ord for KlEntry {
+    fn cmp(&self, o: &Self) -> std::cmp::Ordering {
+        // Values are finite (callers check), and counts are unique.
+        self.0
+            .cmp(o.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(self.1.cmp(&o.1))
+    }
+}
+
+impl KlHeap {
+    fn new(n: usize) -> Self {
+        KlHeap {
+            current: vec![None; n],
+            len: 0,
+            heap: BinaryHeap::new(),
+            count: 0,
+        }
+    }
+
+    fn insert(&mut self, key: u32, value: Val, allow_increase: bool) {
+        let slot = &mut self.current[key as usize];
+        if let Some(old) = *slot {
+            if !(value.lt(old) || (allow_increase && value.gt(old))) {
+                return;
+            }
+        } else {
+            self.len += 1;
+        }
+        *slot = Some(value);
+        self.heap.push(Reverse(KlEntry(value, self.count, key)));
+        self.count += 1;
+    }
+
+    fn pop(&mut self) -> (u32, Val) {
+        loop {
+            let Reverse(KlEntry(value, _, key)) = self.heap.pop().expect("a live entry");
+            if let Some(v) = self.current[key as usize] {
+                if value.eq(v) {
+                    self.current[key as usize] = None;
+                    self.len -= 1;
+                    return (key, value);
+                }
+            }
+        }
+    }
+}
+
+/// `kernighan_lin_bisection`'s sweeps after its setup: `side` (by
+/// position), `order` the order the heaps are filled in, and each edge's
+/// weight aligned with `adj` (`None` for an edge NetworkX skips). Returns
+/// the final sides, or `None` when a sweep has no moves (`min([])` raises).
+/// `Err` where an int overflows.
+pub fn kernighan_lin(
+    adj: &Csr,
+    weights: &[Option<Val>],
+    order: &[u32],
+    mut side: Vec<bool>,
+    max_iter: usize,
+    compensated: bool,
+) -> Result<Option<Vec<bool>>, ()> {
+    let n = side.len();
+    let fail = |_| ();
+    for _ in 0..max_iter {
+        let mut heaps = [KlHeap::new(n), KlHeap::new(n)];
+        for &u in order {
+            let r = adj.range(u as usize);
+            let terms = adj.targets[r.clone()]
+                .iter()
+                .zip(&weights[r])
+                .filter_map(|(&v, w)| w.map(|w| if side[v as usize] { Ok(w) } else { w.neg() }))
+                .collect::<Result<Vec<Val>, _>>()
+                .map_err(fail)?;
+            let cost = py_sum(terms, compensated).map_err(fail)?;
+            if side[u as usize] {
+                heaps[1].insert(u, cost, false);
+            } else {
+                heaps[0].insert(u, cost.neg().map_err(fail)?, false);
+            }
+        }
+        let update = |heaps: &mut [KlHeap; 2], x: u32| -> Result<(), ()> {
+            let side_x = side[x as usize];
+            let r = adj.range(x as usize);
+            for (&y, w) in adj.targets[r.clone()].iter().zip(&weights[r]) {
+                let Some(mut w) = *w else { continue };
+                let side_y = side[y as usize];
+                if side_y == side_x {
+                    w = w.neg().map_err(fail)?;
+                }
+                let heap = &mut heaps[side_y as usize];
+                if let Some(cost) = heap.current[y as usize] {
+                    let cost = cost.add(Val::I(2).mul(w).map_err(fail)?).map_err(fail)?;
+                    heap.insert(y, cost, true);
+                }
+            }
+            Ok(())
+        };
+        let mut costs: Vec<(Val, u32, u32)> = Vec::new();
+        let mut total = Val::I(0);
+        while heaps[0].len > 0 && heaps[1].len > 0 {
+            let (u, cost_u) = heaps[0].pop();
+            update(&mut heaps, u)?;
+            let (v, cost_v) = heaps[1].pop();
+            update(&mut heaps, v)?;
+            total = total.add(cost_u.add(cost_v).map_err(fail)?).map_err(fail)?;
+            costs.push((total, u, v));
+        }
+        // min(costs): the smallest total, the first on ties
+        let Some(mut best) = (!costs.is_empty()).then_some(0) else {
+            return Ok(None);
+        };
+        for (i, c) in costs.iter().enumerate() {
+            if c.0.lt(costs[best].0) {
+                best = i;
+            }
+        }
+        if costs[best].0.ge(Val::I(0)) {
+            break;
+        }
+        for &(_, u, v) in &costs[..=best] {
+            side[u as usize] = true;
+            side[v as usize] = false;
+        }
+    }
+    Ok(Some(side))
 }

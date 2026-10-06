@@ -7494,6 +7494,42 @@ def test_batch25_independent_set_state():
     exact_outcome(with_set_order(nx.dominating_set), nx.Graph())
 
 
+@pytest.mark.parametrize("weights", ["none", "int", "float", "missing"])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch25_kernighan_lin(seed, weights):
+    G = graph_for(seed, False, weights)
+    nodes = list(G)
+    kl = nx.community.kernighan_lin_bisection
+    for s in range(3):
+        exact_outcome(with_set_order(kl), G, seed=s)
+        exact_outcome(with_set_order(kl), G, seed=s, max_iter=1)
+        exact_outcome(with_set_order(kl), G, weight=None, seed=s)
+    halves = [nodes[::2], nodes[1::2]]
+    for partition in [tuple(set(h) for h in halves), halves, [halves[0], halves[0]], (nodes, [])]:
+        exact_outcome(with_set_order(kl), G, partition, seed=1)
+    exact_outcome(with_set_order(lambda G, **kw: kl(G, iter(halves), seed=1, **kw)), G)
+    exact_outcome(with_set_order(kl), G, seed=1, max_iter=0)
+    exact_outcome(with_set_order(kl), G, seed=1, max_iter=-2)
+    if weights == "int" and nodes:
+        H = G.copy()
+        u, v = next(iter(H.edges()), (nodes[0], nodes[0]))
+        H.add_edge(u, v, weight=None)  # hidden in 3.6+, an error before
+        exact_outcome(with_set_order(kl), H, seed=1)
+
+
+def test_batch25_kernighan_lin_state():
+    # The caller's generator ends where NetworkX leaves it.
+    G = nx.gnm_random_graph(300, 900, seed=3)
+    states = []
+    for backend in ["rustnx", "networkx"]:
+        rng = random.Random(7)
+        parts = nx.community.kernighan_lin_bisection(G, seed=rng, backend=backend)
+        states.append(([list(p) for p in parts], rng.random()))
+    assert states[0] == states[1]
+    for G in [nx.Graph(), nx.empty_graph(1), nx.MultiGraph([(0, 1), (0, 1)]), nx.DiGraph([(0, 1)])]:
+        exact_outcome(with_set_order(nx.community.kernighan_lin_bisection), G, seed=1)
+
+
 @pytest.mark.parametrize("seed", range(40))
 def test_batch25_approximation(seed):
     G = graph_for(seed, False)

@@ -318,6 +318,7 @@ FUNCTIONS = {
     "k_shell": {},
     "k_truss": {},
     "katz_centrality": {},
+    "kernighan_lin_bisection": {},
     "kl_connected_subgraph": {},
     "kneser_graph": {},
     "kosaraju_strongly_connected_components": {},

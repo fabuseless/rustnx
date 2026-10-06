@@ -339,6 +339,7 @@ __all__ = [
     "k_shell",
     "k_truss",
     "katz_centrality",
+    "kernighan_lin_bisection",
     "kl_connected_subgraph",
     "kneser_graph",
     "kosaraju_strongly_connected_components",
@@ -13072,3 +13073,88 @@ def metric_closure(G, weight="weight"):
     if not G._core.metric_closure_fill(weight, all_int, nodes, order, M._node, M._adj):
         raise nx.NetworkXError("G is not a connected graph. metric_closure is not defined.")
     return M
+
+
+@functools.cache
+def _b25_kl_shuffles_first():
+    """Whether the installed ``kernighan_lin_bisection`` is 3.4's and 3.5's:
+    it always shuffles the nodes first and keeps sides in a list; 3.6+
+    shuffles only without ``partition`` and skips edges weighted ``None``."""
+    return "side = [0] * n" in _source_text(_registered("kernighan_lin_bisection"))
+
+
+_B25_CONTAINERS = (set, frozenset, list, tuple)
+
+
+def kernighan_lin_bisection(G, partition=None, max_iter=10, weight="weight", seed=None):
+    _undirected_only(G)
+    if type(max_iter) is not int:
+        raise NotImplementedError("rustnx supports int max_iter only")
+    old = _b25_kl_shuffles_first()
+    if callable(weight):
+        raise NotImplementedError("rustnx does not support callable weights")
+    if weight is not None:
+        _check_weight(G, weight, distances=True)
+    if not G._core.kl_supported(weight, not old):
+        raise NotImplementedError("rustnx can't follow these weights")
+    if partition is not None and not (
+        type(partition) in (list, tuple)
+        and len(partition) == 2
+        and all(type(c) in _B25_CONTAINERS for c in partition)
+    ):
+        # NetworkX may consume it (after shuffling, in 3.4 and 3.5).
+        raise NotImplementedError("rustnx needs partition as two containers")
+    index = G._index
+    nodes = list(_node_list(G))
+    n = len(nodes)
+    if old:
+        labels = nodes
+        seed.shuffle(labels)
+        if partition is None:
+            in_a = [False] * (n // 2) + [True] * ((n + 1) // 2)
+        else:
+            A, B = partition
+            if not _b25_is_partition(G, [A, B]):
+                raise nx.NetworkXError("partition invalid")
+            position = {v: i for i, v in enumerate(labels)}
+            in_a = [False] * n
+            for a in A:
+                in_a[position[a]] = True
+        order = [index[v] for v in labels]
+    else:
+        if partition is None:
+            seed.shuffle(nodes)
+            mid = len(nodes) // 2
+            A = nodes[:mid]
+        else:
+            A, B = partition
+            if not _b25_is_partition(G, [A, B]):
+                raise nx.NetworkXError("partition invalid")
+        members = set(A) if type(A) is list and partition is None else A
+        in_a = [node in members for node in nodes]
+        labels = nodes
+        order = list(range(n))
+    side = [False] * n
+    positions = [index[v] for v in labels]
+    for p, s in zip(positions, in_a):
+        side[p] = s
+    final = G._core.kernighan_lin(weight, not old, order, side, max(max_iter, 0), _COMPENSATED_SUM)
+    if final is None:
+        min([])  # NetworkX's min(costs) of an empty sweep raises this ValueError
+    part1 = {v for v, p in zip(labels, positions) if not final[p]}
+    part2 = {v for v, p in zip(labels, positions) if final[p]}
+    return part1, part2
+
+
+def _b25_is_partition(G, communities):
+    """NetworkX's ``is_partition`` (its 3.4 to 3.7 code agrees)."""
+    index = G._index
+
+    def inside(n):
+        try:
+            return n in index
+        except TypeError:
+            return False
+
+    nodes = {n for c in communities for n in c if inside(n)}
+    return len(G) == len(nodes) == sum(len(c) for c in communities)

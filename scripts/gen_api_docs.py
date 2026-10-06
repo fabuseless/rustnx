@@ -888,7 +888,7 @@ QUALIFIED.update({
 SETORDER = " Replays NetworkX's set operations (CPython's set table, checked once against the running Python), so results come in the same order."
 SECTIONS.append(("Cliques, structure and approximation", [
     "find_cliques", "find_cliques_recursive", "make_max_clique_graph", "make_clique_bipartite",
-    "k_clique_communities", "dominating_set", "maximal_independent_set", "chordal_graph_cliques",
+    "k_clique_communities", "kernighan_lin_bisection", "dominating_set", "maximal_independent_set", "chordal_graph_cliques",
     "find_asteroidal_triple", "hamiltonian_path", "large_clique_size", "ramsey_R2",
     "clique_removal", "maximum_independent_set", "max_clique", "treewidth_min_degree",
     "approximate_local_node_connectivity", "approximate_node_connectivity",
@@ -902,6 +902,7 @@ NOTES.update({
     "make_clique_bipartite": "Fills a plain `nx.Graph` result in Rust; other `create_using` graphs are filled by NetworkX's calls." + SETORDER,
     "k_clique_communities": "`cliques` falls back. Percolation in Rust; the communities are unions of NetworkX's own frozensets, taken in the set order NetworkX uses." + SETORDER,
     "dominating_set": "Replays `pop()` and set differences." + SETORDER,
+    "kernighan_lin_bisection": "The node shuffle runs on `seed` itself; the sweeps (NetworkX's `BinaryHeap`, with int or float costs added as Python adds them) run in Rust. Follows the installed version (3.6 rewrote it). Weights must be all ints (below 2**31) or all floats; `partition` must be a list or tuple of two sets, lists or tuples; anything else falls back.",
     "maximal_independent_set": "Replays the `seed.choice` draws on CPython's Mersenne Twister (a `random.Random` only) and the set of available nodes. Returns a list before 3.7, a set from 3.7, as the installed NetworkX does.",
     "chordal_graph_cliques": "Each component's subgraph copy and the maximum-cardinality search are replayed in Rust; the frozensets iterate as NetworkX's do. Errors arrive after the cliques yielded before them.",
     "find_asteroidal_triple": "Visits non-edges in NetworkX's order (3.4 iterates a set of edge tuples; rustnx replays the tuple hashes too).",
@@ -927,6 +928,7 @@ QUALIFIED.update({
 })
 SUBMODULE.update({
     "k_clique_communities": "nx.community",
+    "kernighan_lin_bisection": "nx.community",
     "large_clique_size": "nx.approximation",
     "ramsey_R2": "nx.approximation",
     "clique_removal": "nx.approximation",

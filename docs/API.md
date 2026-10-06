@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 515 NetworkX functions. Call them as usual (for
+rustnx implements 538 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -776,6 +776,34 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.bipartite.degree_centrality` | `nodes` | no | NetworkX | As `nx.bipartite.degree_centrality`; dict order follows NetworkX's sets. |
 | `nx.bipartite.projected_graph` | `B`, `nodes`, `multigraph` | no | rustnx | As `nx.bipartite.projected_graph`; replays the set of second neighbors. `multigraph=True`, and `nodes` that is not a container, fall back. |
 | `nx.bipartite.weighted_projected_graph` | `B`, `nodes`, `ratio` | no | rustnx | As `nx.bipartite.weighted_projected_graph`; replays the set of second neighbors. |
+
+### Cliques, structure and approximation
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |
+|---|---|---|---|---|
+| `nx.find_cliques` | `nodes` | yes | rustnx | Bron-Kerbosch with NetworkX's pivots in Rust; cliques come in batches once iteration starts, as NetworkX copies the graph then. Replays NetworkX's set operations (CPython's set table, checked once against the running Python), so results come in the same order. `nodes` other than a list falls back. |
+| `nx.find_cliques_recursive` | `nodes` | yes | rustnx | As `find_cliques`, with the setup (and its errors) at call time. Directed graphs use successors before 3.6, as NetworkX does. |
+| `nx.make_max_clique_graph` | `create_using` | no | rustnx | Overlapping cliques found from each node's cliques instead of comparing every pair. Replays NetworkX's set operations (CPython's set table, checked once against the running Python), so results come in the same order. |
+| `nx.make_clique_bipartite` | `fpos`, `create_using`, `name` | no | rustnx | Fills a plain `nx.Graph` result in Rust; other `create_using` graphs are filled by NetworkX's calls. Replays NetworkX's set operations (CPython's set table, checked once against the running Python), so results come in the same order. |
+| `nx.community.k_clique_communities` | `k`, `cliques` | no | rustnx | `cliques` falls back. Percolation in Rust; the communities are unions of NetworkX's own frozensets, taken in the set order NetworkX uses. Replays NetworkX's set operations (CPython's set table, checked once against the running Python), so results come in the same order. |
+| `nx.community.kernighan_lin_bisection` | `partition`, `max_iter`, `weight`, `seed` | no | rustnx | The node shuffle runs on `seed` itself; the sweeps (NetworkX's `BinaryHeap`, with int or float costs added as Python adds them) run in Rust. Follows the installed version (3.6 rewrote it). Weights must be all ints (below 2**31) or all floats; `partition` must be a list or tuple of two sets, lists or tuples; anything else falls back. |
+| `nx.dominating_set` | `start_with` | yes | NetworkX | Replays `pop()` and set differences. Replays NetworkX's set operations (CPython's set table, checked once against the running Python), so results come in the same order. |
+| `nx.maximal_independent_set` | `nodes`, `seed` | no | rustnx | Replays the `seed.choice` draws on CPython's Mersenne Twister (a `random.Random` only) and the set of available nodes. Returns a list before 3.7, a set from 3.7, as the installed NetworkX does. |
+| `nx.chordal_graph_cliques` | none | no | rustnx | Each component's subgraph copy and the maximum-cardinality search are replayed in Rust; the frozensets iterate as NetworkX's do. Errors arrive after the cliques yielded before them. |
+| `nx.find_asteroidal_triple` | none | no | rustnx | Visits non-edges in NetworkX's order (3.4 iterates a set of edge tuples; rustnx replays the tuple hashes too). |
+| `nx.tournament.hamiltonian_path` | none | no | rustnx | Replays the nested subgraph views (their node order follows set order below half the graph). No recursion, so tournaments too deep for NetworkX's recursion limit still get a path. |
+| `nx.approximation.large_clique_size` | none | no | rustnx | Replays NetworkX's set operations (CPython's set table, checked once against the running Python), so results come in the same order. |
+| `nx.approximation.ramsey_R2` | none | no | rustnx | Replays the recursion's subgraph copies (node and row order) on an explicit stack, so graphs too deep for NetworkX's recursion limit still get an answer. Replays NetworkX's set operations (CPython's set table, checked once against the running Python), so results come in the same order. |
+| `nx.approximation.clique_removal` | none | no | rustnx | As `ramsey_R2`. |
+| `nx.approximation.maximum_independent_set` | none | no | rustnx | As `ramsey_R2`. |
+| `nx.approximation.max_clique` | none | no | rustnx | As `ramsey_R2`, on the complement. |
+| `nx.approximation.treewidth_min_degree` | none | no | rustnx | The heuristic (its ties follow set order) and the choice of each bag's neighbor run in Rust; the bags are then built with NetworkX's set operations, so the frozensets iterate the same way. |
+| `nx.approximation.local_node_connectivity` | `source`, `target`, `cutoff` | no | rustnx | Integer `cutoff` only. Nodes not in G fall back. |
+| `nx.approximation.node_connectivity` | `s`, `t` | no | rustnx | Searches run in parallel; each is capped at the current minimum, which leaves the result unchanged. |
+| `nx.approximation.all_pairs_node_connectivity` | `nbunch`, `cutoff` | no | rustnx | Pairs run in parallel. Integer `cutoff` only; `nbunch` with nodes not in G falls back. |
+| `nx.algorithms.connectivity.build_auxiliary_node_connectivity` | none | yes | NetworkX | Builds the digraph's dicts in Rust in NetworkX's order. |
+| `nx.algorithms.connectivity.build_auxiliary_edge_connectivity` | none | yes | NetworkX | Builds the digraph's dicts in Rust in NetworkX's order. |
+| `nx.algorithms.approximation.steinertree.metric_closure` | `weight` | no | rustnx | Dijkstra from every node in parallel, and the closure's dicts built in Rust in NetworkX's order (edges follow `set(G)`'s order). Warns as the installed NetworkX does (deprecated in 3.6). Falls back when weights mix ints and floats (NetworkX's length types then depend on the path). |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 
