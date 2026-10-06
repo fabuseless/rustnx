@@ -727,6 +727,14 @@ _SIZE_ESTIMATES = {
     "join_trees": lambda a: sum(len(pair[0]) for pair in a["rooted_trees"])
     if isinstance(a.get("rooted_trees"), (list, tuple))
     else _LARGE,
+    "random_cograph": lambda a: _power(2, a.get("n")),
+    # `tries` (default 100) doesn't make the tree larger.
+    "random_powerlaw_tree": lambda a: _size_of(a.get("n")),
+    "random_powerlaw_tree_sequence": lambda a: _size_of(a.get("n")),
+    "joint_degree_graph": lambda a: _joint_degree_size(a.get("joint_degrees")),
+    "directed_joint_degree_graph": lambda a: max(
+        _size_of(a.get("in_degrees")), _joint_degree_size(a.get("nkk"))
+    ),
 }
 
 
@@ -736,6 +744,15 @@ def _tree_count_size(order):
     if "sum(1 for" in algorithms._gen_source("number_of_nonisomorphic_trees"):
         return _power(3, order)
     return _size_of(order)
+
+
+def _joint_degree_size(joint_degrees):
+    """The edges (twice, for ``joint_degree_graph``) of the graph a joint
+    degree dict describes."""
+    try:
+        return sum(sum(row.values()) for row in joint_degrees.values())
+    except Exception:
+        return _LARGE
 
 
 def _size_of(value):

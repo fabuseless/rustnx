@@ -10,6 +10,7 @@ pub mod connectivity;
 pub mod conversion;
 pub mod cores_more;
 pub mod dag;
+pub mod degree_generators;
 pub mod directed;
 pub mod distance;
 pub mod flow;

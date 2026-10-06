@@ -46,6 +46,7 @@ __all__ = [
     "all_simple_paths",
     "all_topological_sorts",
     "all_triangles",
+    "alternating_havel_hakimi_graph",
     "ancestors",
     "antichain_width",
     "antichains",
@@ -91,7 +92,9 @@ __all__ = [
     "bipartite_average_clustering",
     "bipartite_betweenness_centrality",
     "bipartite_closeness_centrality",
+    "bipartite_configuration_model",
     "bipartite_degree_centrality",
+    "bipartite_havel_hakimi_graph",
     "bipartite_min_edge_cover",
     "bipartite_modularity",
     "bipartite_parse_edgelist",
@@ -138,6 +141,7 @@ __all__ = [
     "compose_all",
     "condensation",
     "conductance",
+    "configuration_model",
     "connected_caveman_graph",
     "connected_components",
     "connected_dominating_set",
@@ -162,6 +166,7 @@ __all__ = [
     "degree_mixing_dict",
     "degree_mixing_matrix",
     "degree_pearson_correlation_coefficient",
+    "degree_sequence_tree",
     "dense_gnm_random_graph",
     "densest_subgraph",
     "density",
@@ -180,6 +185,9 @@ __all__ = [
     "dijkstra_path_length",
     "dijkstra_predecessor_and_distance",
     "dinitz",
+    "directed_configuration_model",
+    "directed_havel_hakimi_graph",
+    "directed_joint_degree_graph",
     "disjoint_union",
     "disjoint_union_all",
     "dispersion",
@@ -208,6 +216,7 @@ __all__ = [
     "eppstein_matching",
     "eulerian_circuit",
     "eulerian_path",
+    "expected_degree_graph",
     "extended_barabasi_albert_graph",
     "fast_could_be_isomorphic",
     "fast_gnp_random_graph",
@@ -275,6 +284,7 @@ __all__ = [
     "has_cycle",
     "has_eulerian_path",
     "has_path",
+    "havel_hakimi_graph",
     "hexagonal_lattice_graph",
     "hkn_harary_graph",
     "hnm_harary_graph",
@@ -340,12 +350,14 @@ __all__ = [
     "is_tree",
     "is_valid_degree_sequence_erdos_gallai",
     "is_valid_degree_sequence_havel_hakimi",
+    "is_valid_directed_joint_degree",
     "is_weakly_connected",
     "is_weighted",
     "isolates",
     "jaccard_coefficient",
     "johnson",
     "join_trees",
+    "joint_degree_graph",
     "k_clique_communities",
     "k_core",
     "k_corona",
@@ -485,11 +497,19 @@ __all__ = [
     "ra_index_soundarajan_hopcroft",
     "radius",
     "ramsey_R2",
+    "random_clustered_graph",
+    "random_cograph",
+    "random_degree_sequence_graph",
     "random_geometric_graph",
     "random_graph",
+    "random_labeled_rooted_forest",
+    "random_labeled_rooted_tree",
+    "random_labeled_tree",
     "random_lobster",
     "random_lobster_graph",
     "random_partition_graph",
+    "random_powerlaw_tree",
+    "random_powerlaw_tree_sequence",
     "random_regular_graph",
     "random_tournament",
     "random_uniform_k_out_graph",
@@ -507,6 +527,7 @@ __all__ = [
     "relabel_nodes",
     "resource_allocation_index",
     "reverse",
+    "reverse_havel_hakimi_graph",
     "rich_club_coefficient",
     "ring_of_cliques",
     "robins_alexander_clustering",
@@ -14099,3 +14120,552 @@ def _b25_is_partition(G, communities):
 
     nodes = {n for c in communities for n in c if inside(n)}
     return len(G) == len(nodes) == sum(len(c) for c in communities)
+
+
+# --- Batch 22: degree-sequence generators ---
+#
+# Degree-sequence, tree and cograph generators. Seeded ones replay
+# NetworkX's draws on `random.Random` in Rust like batch 18 (`_rg_seed`,
+# `_rg_run`); all of them fill a fresh NetworkX graph from Rust rows
+# (`fill_generated`). NetworkX's checks run here, in NetworkX's order, before
+# anything is drawn, so a fallback always starts from the caller's state.
+
+_DG_MAX = 2**31
+
+
+def _dg_ints(seq, low=None):
+    """``seq`` (a list or tuple of plain ints, each above ``-2**31`` and
+    below ``2**31``, and at least ``low`` if given) as a list."""
+    if type(seq) not in (list, tuple):
+        raise NotImplementedError("rustnx needs a list or tuple of ints")
+    for x in seq:
+        if type(x) is not int or not -_DG_MAX < x < _DG_MAX or (low is not None and x < low):
+            raise NotImplementedError("rustnx needs small ints here")
+    return list(seq)
+
+
+def _dg_stubs(*seqs):
+    """Raise unless the stub lists built from ``seqs`` stay small."""
+    if sum(max(d, 0) for seq in seqs for d in seq) >= _DG_MAX:
+        raise NotImplementedError("too many stubs")
+
+
+def _dg_into(G, instance):
+    """``G``, or the ``create_using`` instance cleared and holding ``G``'s
+    nodes and edges (NetworkX fills the instance it was given)."""
+    if instance is None:
+        return G
+    instance.clear()
+    instance._node.update(G._node)
+    instance._adj.update(G._adj)
+    if G.is_directed():
+        instance._pred.update(G._pred)
+    return instance
+
+
+def _dg_reject_directed(target, message="Directed Graph not supported", error=nx.NetworkXError):
+    if issubclass(target[0], nx.DiGraph):
+        _gen_reject(target, error(message))
+
+
+def _dg_networkx(name):
+    """NetworkX's own ``name`` (past dispatch and ``py_random_state``)."""
+    return nx.utils.backends._registered_algorithms[name].orig_func
+
+
+def configuration_model(deg_sequence, create_using=None, seed=None):
+    _rg_seed(seed)
+    seq = _dg_ints(deg_sequence)
+    if sum(seq) % 2 != 0:
+        raise nx.NetworkXError("Invalid degree sequence: sum of degrees must be even, not odd")
+    target = _gen_target(create_using, nx.MultiGraph)
+    _dg_reject_directed(target, "not implemented for directed graphs", nx.NetworkXNotImplemented)
+    _dg_stubs(seq)
+    G = target[0]()
+    # `[n] * d` is empty for negative degrees.
+    _rg_run(seed, lambda state: _CoreGraph.dg_configuration([max(d, 0) for d in seq], state, G))
+    return _dg_into(G, target[1])
+
+
+def directed_configuration_model(
+    in_degree_sequence, out_degree_sequence, create_using=None, seed=None
+):
+    _rg_seed(seed)
+    ins = _dg_ints(in_degree_sequence)
+    outs = _dg_ints(out_degree_sequence)
+    if sum(ins) != sum(outs):
+        raise nx.NetworkXError("Invalid degree sequences: sequences must have equal sums")
+    # NetworkX doesn't check the class's direction here.
+    target = _gen_target(create_using, nx.MultiDiGraph)
+    _dg_stubs(ins, outs)
+    G = target[0]()
+    _rg_run(
+        seed,
+        lambda state: _CoreGraph.dg_directed_configuration(
+            [max(d, 0) for d in outs], [max(d, 0) for d in ins], state, G
+        ),
+    )
+    return _dg_into(G, target[1])
+
+
+def expected_degree_graph(w, seed=None, selfloops=True):
+    _rg_seed(seed)
+    if type(w) not in (list, tuple):
+        raise NotImplementedError("rustnx needs a list or tuple of weights")
+    weights = _rg_floats(*w)
+    n = len(weights)
+    if n >= _DG_MAX:
+        raise NotImplementedError("too many nodes")
+    G = nx.Graph()
+    if n == 0 or max(weights) == 0:
+        _CoreGraph.rg_empty(n, G)
+        return G
+    if not all(0 <= x < math.inf for x in weights):
+        raise NotImplementedError("rustnx needs finite non-negative weights")
+    # Python's own sum (compensated from Python 3.12) and division.
+    rho = 1 / sum(w)
+    _rg_run(
+        seed,
+        lambda state: _CoreGraph.dg_expected_degree(weights, rho, bool(selfloops), state, G),
+    )
+    return G
+
+
+def havel_hakimi_graph(deg_sequence, create_using=None):
+    seq = _dg_ints(deg_sequence)
+    if not is_graphical(seq):
+        raise nx.NetworkXError("Invalid degree sequence")
+    target = _gen_target(create_using)
+    _dg_reject_directed(target, "Directed graphs are not supported")
+    G = target[0]()
+    _CoreGraph.dg_havel_hakimi(seq, G)
+    return _dg_into(G, target[1])
+
+
+def directed_havel_hakimi_graph(in_deg_sequence, out_deg_sequence, create_using=None):
+    ins = nx.utils.make_list_of_ints(in_deg_sequence)
+    outs = nx.utils.make_list_of_ints(out_deg_sequence)
+    maxn = max(len(ins), len(outs))
+    target = _gen_target(create_using, nx.DiGraph)
+    if maxn == 0:
+        return _dg_into(target[0](), target[1])
+    ins = ins + [0] * (maxn - len(ins))
+    outs = outs + [0] * (maxn - len(outs))
+    if any(x < 0 for x in ins) or any(x < 0 for x in outs):
+        _gen_reject(target, nx.NetworkXError("Invalid degree sequences. Sequence values must be positive."))
+    if sum(ins) != sum(outs):
+        _gen_reject(target, nx.NetworkXError("Invalid degree sequences. Sequences must have equal sums."))
+    if maxn >= _DG_MAX or any(x >= _DG_MAX for x in ins) or any(x >= _DG_MAX for x in outs):
+        raise NotImplementedError("rustnx needs small ints here")
+    G = target[0]()
+    if not _CoreGraph.dg_directed_havel_hakimi(ins, outs, G):
+        _gen_reject(target, nx.NetworkXError("Non-digraphical integer sequence"))
+    return _dg_into(G, target[1])
+
+
+@functools.cache
+def _dg_tree_legacy():
+    """Whether ``degree_sequence_tree`` is NetworkX 3.4/3.5's (parity and
+    node count checks; may remove node 0) rather than 3.6's (checks with
+    ``is_valid_tree_degree_sequence``). ``None`` if unrecognized."""
+    source = _source_text(nx.degree_sequence_tree)
+    if "is_valid_tree_degree_sequence(deg_sequence)" in source and "if deg_sequence == [0]:" in source:
+        return False
+    if "len(deg_sequence) - degree_sum // 2 != 1" in source and "G.remove_node(0)" in source:
+        return True
+    return None
+
+
+def _dg_tree_checks(deg_sequence, legacy):
+    """``degree_sequence_tree``'s checks (raising NetworkX's errors); the
+    sequence as a list."""
+    seq = _dg_ints(deg_sequence)
+    if legacy:
+        degree_sum = sum(seq)
+        if degree_sum % 2 != 0:
+            raise nx.NetworkXError("Invalid degree sequence: sum of degrees must be even, not odd")
+        if len(seq) - degree_sum // 2 != 1:
+            raise nx.NetworkXError(
+                "Invalid degree sequence: tree must have number of nodes equal"
+                " to one less than the number of edges"
+            )
+    else:
+        valid, reason = nx.utils.is_valid_tree_degree_sequence(seq)
+        if not valid:
+            raise nx.NetworkXError(reason)
+    return seq
+
+
+def _dg_tree(seq, target, legacy):
+    G = target[0]()
+    if not legacy and seq == [0]:
+        G.add_node(0)
+    else:
+        _CoreGraph.dg_degree_sequence_tree(seq, legacy, G)
+    return _dg_into(G, target[1])
+
+
+def degree_sequence_tree(deg_sequence, create_using=None):
+    legacy = _dg_tree_legacy()
+    if legacy is None:
+        raise NotImplementedError("unrecognized NetworkX degree_sequence_tree")
+    seq = _dg_tree_checks(deg_sequence, legacy)
+    target = _gen_target(create_using)
+    _dg_reject_directed(target)
+    return _dg_tree(seq, target, legacy)
+
+
+@functools.cache
+def _dg_powerlaw_legacy():
+    """Whether ``random_powerlaw_tree_sequence`` accepts any sequence summing
+    to ``2n - 2`` (3.4, 3.5) rather than calling
+    ``is_valid_tree_degree_sequence`` (3.6+). ``None`` if unrecognized."""
+    source = _source_text(nx.random_powerlaw_tree_sequence)
+    if "valid, _ = nx.utils.is_valid_tree_degree_sequence(zseq)" in source:
+        return False
+    if "if 2 * n - sum(zseq) == 2:" in source:
+        return True
+    return None
+
+
+def _dg_powerlaw_sequence(n, gamma, seed, tries):
+    _rg_seed(seed)
+    if type(n) is not int or not 0 <= n < _DG_MAX:
+        raise NotImplementedError("rustnx needs a small non-negative int n")
+    if type(tries) is not int or tries >= _DG_MAX:
+        raise NotImplementedError("rustnx needs a small int tries")
+    legacy = _dg_powerlaw_legacy()
+    if legacy is None:
+        raise NotImplementedError("unrecognized NetworkX random_powerlaw_tree_sequence")
+    (gamma,) = _rg_floats(gamma)
+    alpha = gamma - 1
+    if alpha == 0:
+        raise NotImplementedError("NetworkX divides by zero here")
+    seq = _rg_run(
+        seed,
+        lambda state: _CoreGraph.dg_powerlaw_tree_sequence(n, alpha, max(tries, 0), legacy, state),
+    )
+    return seq
+
+
+def random_powerlaw_tree_sequence(n, gamma=3, seed=None, tries=100):
+    seq = _dg_powerlaw_sequence(n, gamma, seed, tries)
+    if seq is None:
+        raise nx.NetworkXError(f"Exceeded max ({tries}) attempts for a valid tree sequence.")
+    return seq
+
+
+def random_powerlaw_tree(n, gamma=3, seed=None, tries=100, *, create_using=None):
+    create_using = _check_create_using(create_using, directed=False, multigraph=False)
+    legacy = _dg_tree_legacy()
+    if legacy is None:
+        raise NotImplementedError("unrecognized NetworkX degree_sequence_tree")
+    # Everything that could fall back is checked before drawing.
+    target = _gen_target(create_using)
+    seq = random_powerlaw_tree_sequence(n, gamma=gamma, seed=seed, tries=tries)
+    return _dg_tree(_dg_tree_checks(seq, legacy), target, legacy)
+
+
+def _dg_labeled_tree(n, seed, rooted):
+    _rg_seed(seed)
+    if type(n) is not int or not 0 <= n < _DG_MAX:
+        raise NotImplementedError("rustnx needs a small non-negative int n")
+    if n == 0:
+        raise nx.NetworkXPointlessConcept("the null graph is not a tree")
+    G = nx.Graph()
+    if n == 1:
+        G.add_node(0)
+        if rooted:
+            G.graph["root"] = seed.randint(0, 0)
+        return G
+    root = _rg_run(seed, lambda state: _CoreGraph.dg_labeled_tree(n, rooted, state, G))
+    if rooted:
+        G.graph["root"] = root
+    return G
+
+
+def random_labeled_tree(n, *, seed=None):
+    return _dg_labeled_tree(n, seed, False)
+
+
+def random_labeled_rooted_tree(n, *, seed=None):
+    return _dg_labeled_tree(n, seed, True)
+
+
+def random_cograph(n, seed=None):
+    _rg_seed(seed)
+    if type(n) is not int or n > 26:
+        raise NotImplementedError("rustnx needs a small int n")
+    G = nx.Graph()
+    _rg_run(seed, lambda state: _CoreGraph.dg_cograph(max(n, 0), state, G))
+    return G
+
+
+def random_clustered_graph(joint_degree_sequence, create_using=None, seed=None):
+    _rg_seed(seed)
+    items = joint_degree_sequence
+    if type(items) in (list, tuple):
+        return _dg_clustered(items, create_using, seed)
+    if not hasattr(items, "__next__"):
+        raise NotImplementedError("rustnx needs a list of degree pairs")
+    # NetworkX reads an iterator into a list first; where rustnx can't go
+    # on, NetworkX's own code runs on that list.
+    items = list(items)
+    try:
+        return _dg_clustered(items, create_using, seed)
+    except NotImplementedError:
+        return _dg_networkx("random_clustered_graph")(items, create_using, seed)
+
+
+def _dg_clustered(items, create_using, seed):
+    for degrees in items:
+        if type(degrees) not in (list, tuple) or len(degrees) < 2:
+            raise NotImplementedError("rustnx needs pairs of ints")
+        _dg_ints(degrees[:2])
+    if len(items) >= _DG_MAX:
+        raise NotImplementedError("too many nodes")
+    target = _gen_target(create_using, nx.MultiGraph)
+    _dg_reject_directed(target)
+    # `range(d)` is empty for negative counts.
+    single = [max(d[0], 0) for d in items]
+    triangle = [max(d[1], 0) for d in items]
+    if sum(single) % 2 != 0 or sum(triangle) % 3 != 0:
+        _gen_reject(target, nx.NetworkXError("Invalid degree sequence"))
+    _dg_stubs(single, triangle)
+    G = target[0]()
+    _rg_run(seed, lambda state: _CoreGraph.dg_clustered(single, triangle, state, G))
+    return _dg_into(G, target[1])
+
+
+def _dg_bipartite_args(aseq, bseq, create_using):
+    """The checks NetworkX's bipartite degree-sequence generators share:
+    ``(target, aseq, bseq, labels)``."""
+    target = _gen_target(create_using, nx.MultiGraph)
+    _dg_reject_directed(target)
+    a = _dg_ints(aseq, 0)
+    b = _dg_ints(bseq, 0)
+    suma, sumb = sum(a), sum(b)
+    if not suma == sumb:
+        _gen_reject(
+            target,
+            nx.NetworkXError(f"invalid degree sequences, sum(aseq)!=sum(bseq),{suma},{sumb}"),
+        )
+    if len(a) + len(b) >= _DG_MAX:
+        raise NotImplementedError("too many nodes")
+    _dg_stubs(a)
+    return target, a, b, [0] * len(a) + [1] * len(b)
+
+
+def bipartite_configuration_model(aseq, bseq, create_using=None, seed=None):
+    _rg_seed(seed)
+    target, a, b, labels = _dg_bipartite_args(aseq, bseq, create_using)
+    G = target[0]()
+    _rg_run(
+        seed,
+        lambda state: _CoreGraph.dg_bipartite_configuration(a, b, state, G, "bipartite", labels),
+    )
+    G = _dg_into(G, target[1])
+    if a and max(a) != 0:
+        G.name = "bipartite_configuration_model"
+    return G
+
+
+def _dg_bipartite_havel_hakimi(kind, aseq, bseq, create_using, name):
+    target, a, b, labels = _dg_bipartite_args(aseq, bseq, create_using)
+    G = target[0]()
+    _CoreGraph.dg_bipartite_havel_hakimi(a, b, kind, G, "bipartite", labels)
+    G = _dg_into(G, target[1])
+    if a and max(a) != 0:
+        G.name = name
+    return G
+
+
+def bipartite_havel_hakimi_graph(aseq, bseq, create_using=None):
+    return _dg_bipartite_havel_hakimi(0, aseq, bseq, create_using, "bipartite_havel_hakimi_graph")
+
+
+def reverse_havel_hakimi_graph(aseq, bseq, create_using=None):
+    return _dg_bipartite_havel_hakimi(
+        1, aseq, bseq, create_using, "bipartite_reverse_havel_hakimi_graph"
+    )
+
+
+def alternating_havel_hakimi_graph(aseq, bseq, create_using=None):
+    return _dg_bipartite_havel_hakimi(
+        2, aseq, bseq, create_using, "bipartite_alternating_havel_hakimi_graph"
+    )
+
+
+def random_degree_sequence_graph(sequence, seed=None, tries=10):
+    _rg_seed(seed)
+    seq = _dg_ints(sequence)
+    if type(tries) is not int:
+        raise NotImplementedError("rustnx needs an int tries")
+    if not is_graphical(seq):
+        raise nx.NetworkXUnfeasible("degree sequence is not graphical")
+    dmax = max(seq, default=0)
+    if sum(seq) >= 2**53 or dmax * dmax >= 2**53:
+        raise NotImplementedError("rustnx needs degrees whose floats are exact")
+    G = nx.Graph()
+    built = _rg_run(
+        seed,
+        lambda state: _CoreGraph.dg_random_degree_sequence(seq, max(tries, 0), state, G),
+    )
+    if not built:
+        raise nx.NetworkXError(f"failed to generate graph in {tries} tries")
+    return G
+
+
+def _dg_int_dict_of_dicts(d):
+    """``d`` as ``(key, row)`` pairs, each row a list of ``(key, value)``,
+    if ``d`` is a dict of dicts of plain ints (values below 2**53)."""
+    if type(d) is not dict:
+        raise NotImplementedError("rustnx needs a dict of dicts of ints")
+    out = []
+    for k, row in d.items():
+        if type(k) is not int or type(row) is not dict or not -_DG_MAX < k < _DG_MAX:
+            raise NotImplementedError("rustnx needs a dict of dicts of ints")
+        items = list(row.items())
+        for l, value in items:
+            if type(l) is not int or type(value) is not int or not -_DG_MAX < l < _DG_MAX:
+                raise NotImplementedError("rustnx needs a dict of dicts of ints")
+            if not -(2**53) < value < 2**53:
+                raise NotImplementedError("rustnx needs small ints")
+        out.append((k, items))
+    return out
+
+
+def joint_degree_graph(joint_degrees, seed=None):
+    _rg_seed(seed)
+    rows = _dg_int_dict_of_dicts(joint_degrees)
+    if sum(max(v, 0) for _, row in rows for _, v in row) >= 2**53:
+        raise NotImplementedError("rustnx needs small ints")
+    if not _dg_networkx("is_valid_joint_degree")(joint_degrees):
+        raise nx.NetworkXError("Input joint degree dict not realizable as a simple graph")
+    degree_count = {k: sum(v for _, v in row) // k for k, row in rows if k > 0}
+    if sum(degree_count.values()) >= _DG_MAX:
+        raise NotImplementedError("too many nodes")
+    index = {k: i for i, k in enumerate(degree_count)}
+    entries = []
+    for k, row in rows:
+        for l, value in row:
+            if value > 0 and k >= l:
+                if k not in index or l not in index:
+                    raise NotImplementedError("NetworkX raises here")
+                entries.append((index[k], index[l], value))
+    G = nx.Graph()
+    _rg_run(
+        seed,
+        lambda state: _CoreGraph.dg_joint_degree(
+            list(degree_count.items()), entries, state, G
+        ),
+    )
+    return G
+
+
+def is_valid_directed_joint_degree(in_degrees, out_degrees, nkk):
+    ins = _dg_ints(in_degrees)
+    outs = _dg_ints(out_degrees)
+    if len(ins) != len(outs):
+        return False
+    rows = _dg_int_dict_of_dicts(nkk)
+    entries = [(k, l, value) for k, row in rows for l, value in row]
+    if sum(abs(v) for _, _, v in entries) >= 2**53:
+        raise NotImplementedError("rustnx needs small ints")
+    found = _CoreGraph.dg_is_valid_directed_joint_degree(ins, outs, entries)
+    if found is None:
+        raise NotImplementedError("NetworkX raises here")
+    return found
+
+
+def _dg_select_k(n, seed):
+    """``random_labeled_rooted_forest``'s ``_select_k``: the same draw and
+    the same running sum, with each term worked out from the previous one
+    (``C(n-1, k-1) * n**(n-k)``, exact in ints)."""
+    r = seed.randint(0, (n + 1) ** (n - 1) - 1)
+    cum_sum = 0
+    term = n ** (n - 1)
+    for k in range(1, n):
+        cum_sum += term
+        if r < cum_sum:
+            return k
+        term = term * (n - k) // (k * n)
+    return n
+
+
+def random_labeled_rooted_forest(n, *, seed=None):
+    _rg_seed(seed)
+    if type(n) is not int or not 0 <= n < _DG_MAX:
+        raise NotImplementedError("rustnx needs a small non-negative int n")
+    if not _sets_replayable():
+        raise NotImplementedError("this interpreter's sets can't be replayed")
+    G = nx.Graph()
+    if n == 0:
+        G.graph["roots"] = {}
+        return G
+    state = seed.getstate()
+    k = _dg_select_k(n, seed)
+    if k == n:
+        _CoreGraph.rg_empty(n, G)
+        G.graph["roots"] = set(range(n))
+        return G
+    try:
+        roots = _rg_run(seed, lambda s: _CoreGraph.dg_labeled_rooted_forest(n, k, s, G))
+    except NotImplementedError:
+        seed.setstate(state)  # NetworkX starts again from the first draw
+        raise
+    G.graph["roots"] = set(roots)
+    return G
+
+
+@functools.cache
+def _dg_set_pops_replayable():
+    """Whether ``PySet::pop`` (CPython's ``set.pop`` with its search finger)
+    gives this interpreter's order, checked on random adds, discards and
+    pops (``directed_joint_degree_graph`` pops from sets of nodes and of
+    pairs)."""
+    rng = random.Random(20261006)
+    keys = list(range(40)) + [1000 + 64 * i for i in range(30)] + [(i, i + 1) for i in range(30)]
+    hashes = [hash(k) for k in keys]
+    for _ in range(20):
+        s, ops, pops = set(), [], []
+        for _ in range(400):
+            r = rng.random()
+            if r < 0.6:
+                k = rng.randrange(len(keys))
+                ops.append((0, k))
+                s.add(keys[k])
+            elif r < 0.8:
+                k = rng.randrange(len(keys))
+                ops.append((1, k))
+                s.discard(keys[k])
+            else:
+                ops.append((2, 0))
+                pops.append(keys.index(s.pop()) if s else -1)
+        try:
+            found = _CoreGraph.dg_replay_set_pops(hashes, ops)
+        except Exception:
+            return False
+        if found != (pops, [keys.index(k) for k in s]):
+            return False
+    return True
+
+
+def directed_joint_degree_graph(in_degrees, out_degrees, nkk, seed=None):
+    _rg_seed(seed)
+    ins = _dg_ints(in_degrees, 0)
+    outs = _dg_ints(out_degrees, 0)
+    rows = _dg_int_dict_of_dicts(nkk)
+    if not (_sets_replayable() and _b21_tuple_hashes_match() and _dg_set_pops_replayable()):
+        raise NotImplementedError("Python's set order can't be replayed here")
+    if not _dg_networkx("is_valid_directed_joint_degree")(in_degrees, out_degrees, nkk):
+        raise nx.NetworkXError("Input is not realizable as a simple graph")
+    entries = [(k, l, value) for k, row in rows for l, value in row if value > 0]
+    if any(k < 0 or l < 0 for k, l, _ in entries):
+        raise NotImplementedError("rustnx needs non-negative degrees")
+    G = nx.DiGraph()
+    _rg_run(
+        seed,
+        lambda state: _CoreGraph.dg_directed_joint_degree(ins, outs, entries, state, G),
+    )
+    return G
