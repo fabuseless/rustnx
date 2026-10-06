@@ -234,3 +234,45 @@ pub fn replay(rng: &mut Mt19937, ops: &[(u8, i64, i64)]) -> Vec<Draw> {
         })
         .collect()
 }
+
+// --- Batch 23 additions ---
+
+impl Mt19937 {
+    /// `Random.expovariate(lambd)`: `-log(1.0 - random()) / lambd` (the
+    /// same in 3.10 to 3.14).
+    pub fn expovariate(&mut self, lambd: f64) -> f64 {
+        -(1.0 - self.random()).ln() / lambd
+    }
+
+    /// NumPy's `random_interval(max)` (legacy `RandomState`, whose
+    /// `shuffle` and `permutation` use it) for `max < 2^32`: masked 32-bit
+    /// draws until one is at most `max`.
+    pub fn np_interval(&mut self, max: u32) -> u32 {
+        if max == 0 {
+            return 0;
+        }
+        let mut mask = max;
+        mask |= mask >> 1;
+        mask |= mask >> 2;
+        mask |= mask >> 4;
+        mask |= mask >> 8;
+        mask |= mask >> 16;
+        loop {
+            let value = self.genrand_uint32() & mask;
+            if value <= max {
+                return value;
+            }
+        }
+    }
+
+    /// NumPy's legacy `RandomState.permutation(n)` for `n < 2^32`: `arange(n)`
+    /// shuffled from the end.
+    pub fn np_permutation(&mut self, n: usize) -> Vec<u32> {
+        let mut x: Vec<u32> = (0..n as u32).collect();
+        for i in (1..n).rev() {
+            let j = self.np_interval(i as u32) as usize;
+            x.swap(i, j);
+        }
+        x
+    }
+}

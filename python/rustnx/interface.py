@@ -110,6 +110,7 @@ _LINEAR_TIME = {
     "flow_hierarchy",
     "full_join",
     "generic_bfs_edges",
+    "geometric_edges",
     "get_edge_attributes",
     "get_node_attributes",
     "greedy_color",
@@ -326,6 +327,7 @@ MULTIGRAPH_FUNCTIONS = {
     "find_cliques_recursive",
     "find_negative_cycle",
     "generic_bfs_edges",
+    "geometric_edges",
     "global_efficiency",
     "group_degree_centrality",
     "group_in_degree_centrality",
@@ -383,6 +385,7 @@ MULTIGRAPH_FUNCTIONS = {
     "predecessor",
     "prim_mst_edges",
     "radius",
+    "random_k_lift",
     "s_metric",
     "sets",
     "shortest_path",
@@ -735,6 +738,13 @@ _SIZE_ESTIMATES = {
     "directed_joint_degree_graph": lambda a: max(
         _size_of(a.get("in_degrees")), _joint_degree_size(a.get("nkk"))
     ),
+    "navigable_small_world_graph": lambda a: _power(a.get("n"), a.get("dim", 2)),
+    "relaxed_caveman_graph": lambda a: _product(a.get("l"), a.get("k"), a.get("k")),
+    "random_shell_graph": lambda a: sum(_size_of(s[0]) + _size_of(s[1]) for s in a["constructor"]),
+    "k_random_intersection_graph": lambda a: _product(a.get("n"), a.get("k")),
+    "general_random_intersection_graph": lambda a: _product(a.get("n"), a.get("m")),
+    "maybe_regular_expander": lambda a: _product(a.get("n"), a.get("d")),
+    "maybe_regular_expander_graph": lambda a: _product(a.get("n"), a.get("d")),
 }
 
 

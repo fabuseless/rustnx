@@ -14,6 +14,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyByteArray, PyBytes, PyDict, PyFloat, PyInt, PyList, PyTuple};
 
 use algorithms::link_analysis::{self, PagerankInput};
+use algorithms::random_generators_more as more_random;
 use algorithms::shortest_paths_more as more_paths;
 use algorithms::traversal::{self, DijkstraState, NegativeCycle};
 use algorithms::{
@@ -7097,6 +7098,571 @@ impl CoreGraph {
         Ok(degree_generators::replay_set_pops(&hashes, &ops))
     }
 
+    // --- Batch 23: growth and geometric generators ---
+
+    /// `duplication_divergence_graph` (`n >= 2`, `0 < p <= 1`) into `g`.
+    #[staticmethod]
+    fn b23_duplication_divergence(
+        py: Python<'_>,
+        n: usize,
+        p: f64,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        rg_run(py, &state, g, None, |rng| {
+            Some(more_random::duplication_divergence(n, p, rng))
+        })
+    }
+
+    /// `partial_duplication_graph` (`1 <= n <= big_n`) into `g`.
+    #[staticmethod]
+    fn b23_partial_duplication(
+        py: Python<'_>,
+        big_n: usize,
+        n: usize,
+        p: f64,
+        q: f64,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        rg_run(py, &state, g, None, |rng| {
+            Some(more_random::partial_duplication(big_n, n, p, q, rng))
+        })
+    }
+
+    /// `scale_free_graph` from the default 3-cycle into the empty
+    /// `MultiDiGraph` `g`.
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    fn b23_scale_free(
+        py: Python<'_>,
+        n: usize,
+        alpha: f64,
+        beta: f64,
+        delta_in: f64,
+        delta_out: f64,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        rg_run(py, &state, g, None, |rng| {
+            Some(more_random::scale_free(
+                n, alpha, beta, delta_in, delta_out, rng,
+            ))
+        })
+    }
+
+    /// `random_shell_graph`: per shell `(n, kind, m, intra)` (see
+    /// `random_generators_more::Shell`).
+    #[staticmethod]
+    fn b23_random_shell(
+        py: Python<'_>,
+        shells: Vec<(usize, u8, u64, u64)>,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let shells: Vec<more_random::Shell> = shells
+            .into_iter()
+            .map(|(n, kind, m, intra)| more_random::Shell { n, kind, m, intra })
+            .collect();
+        rg_run(py, &state, g, None, |rng| {
+            Some(more_random::random_shell(&shells, rng))
+        })
+    }
+
+    /// `navigable_small_world_graph` into the empty `DiGraph` `g`, with the
+    /// lattice points as tuples; `weights[d]` is `d ** -r`.
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    fn b23_navigable_small_world<'py>(
+        py: Python<'py>,
+        n: usize,
+        dim: usize,
+        p: f64,
+        q: u64,
+        weights: Vec<f64>,
+        state: Vec<u32>,
+        g: &Bound<'py, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let total = (0..dim).try_fold(1usize, |acc, _| acc.checked_mul(n));
+        let Some(total) = total.filter(|&t| t < (1 << 31)) else {
+            return Ok(None);
+        };
+        if weights.len() < dim * n.saturating_sub(1) + 1 {
+            return Err(PyValueError::new_err("one weight per lattice distance"));
+        }
+        let Some(mut rng) = pyrandom::Mt19937::from_state(&state) else {
+            return Ok(None);
+        };
+        let b = py.detach(|| more_random::navigable_small_world(n, dim, p, q, &weights, &mut rng));
+        let mut labels = Vec::with_capacity(total);
+        let mut digits = vec![0usize; dim];
+        for _ in 0..total {
+            labels.push(PyTuple::new(py, &digits)?.into_any());
+            for c in (0..dim).rev() {
+                digits[c] += 1;
+                if digits[c] < n {
+                    break;
+                }
+                digits[c] = 0;
+            }
+        }
+        fill_built(py, &b, g, Some(labels), &[])?;
+        Ok(Some(rng.state()))
+    }
+
+    /// `soft_random_geometric_graph` with drawn positions and the default
+    /// `p_dist` into `g` (node attribute `pos_key`, each a list).
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    fn b23_soft_geometric<'py>(
+        py: Python<'py>,
+        n: usize,
+        dim: usize,
+        radius: f64,
+        p: f64,
+        compensated: bool,
+        state: Vec<u32>,
+        g: &Bound<'py, PyAny>,
+        pos_key: &Bound<'py, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let Some(mut rng) = pyrandom::Mt19937::from_state(&state) else {
+            return Ok(None);
+        };
+        let found =
+            py.detach(|| more_random::soft_geometric(n, dim, radius, p, compensated, &mut rng));
+        let Some((coords, b)) = found else {
+            return Ok(None);
+        };
+        let pos = b23_rows(py, &coords, dim)?;
+        fill_built(py, &b, g, None, &[(pos_key, &pos)])?;
+        Ok(Some(rng.state()))
+    }
+
+    /// `thresholded_random_geometric_graph` with drawn weights and
+    /// positions into `g` (attributes `weight_key`, then `pos_key`).
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    fn b23_thresholded_geometric<'py>(
+        py: Python<'py>,
+        n: usize,
+        dim: usize,
+        radius: f64,
+        theta: f64,
+        p: f64,
+        state: Vec<u32>,
+        g: &Bound<'py, PyAny>,
+        pos_key: &Bound<'py, PyAny>,
+        weight_key: &Bound<'py, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let Some(mut rng) = pyrandom::Mt19937::from_state(&state) else {
+            return Ok(None);
+        };
+        let found =
+            py.detach(|| more_random::thresholded_geometric(n, dim, radius, theta, p, &mut rng));
+        let Some((weights, coords, b)) = found else {
+            return Ok(None);
+        };
+        let pos = b23_rows(py, &coords, dim)?;
+        let w = PyList::new(py, weights)?;
+        fill_built(py, &b, g, None, &[(weight_key, &w), (pos_key, &pos)])?;
+        Ok(Some(rng.state()))
+    }
+
+    /// `geographical_threshold_graph` with drawn weights and positions, the
+    /// default metric and `p_dist`, into `g`.
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    fn b23_geographical_threshold<'py>(
+        py: Python<'py>,
+        n: usize,
+        dim: usize,
+        theta: f64,
+        state: Vec<u32>,
+        g: &Bound<'py, PyAny>,
+        pos_key: &Bound<'py, PyAny>,
+        weight_key: &Bound<'py, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let Some(mut rng) = pyrandom::Mt19937::from_state(&state) else {
+            return Ok(None);
+        };
+        let found = py.detach(|| more_random::geographical_threshold(n, dim, theta, &mut rng));
+        let Some((weights, coords, b)) = found else {
+            return Ok(None);
+        };
+        let pos = b23_rows(py, &coords, dim)?;
+        let w = PyList::new(py, weights)?;
+        fill_built(py, &b, g, None, &[(weight_key, &w), (pos_key, &pos)])?;
+        Ok(Some(rng.state()))
+    }
+
+    /// `geometric_soft_configuration_graph` without `kappas`, given the
+    /// constants NetworkX computes (`consts`: `kappa_0, base, power,
+    /// 2 * pi, R, beta, max(1, beta), mu, 2 / zeta * log(n / pi), R_c`).
+    #[staticmethod]
+    fn b23_soft_configuration<'py>(
+        py: Python<'py>,
+        n: usize,
+        consts: Vec<f64>,
+        state: Vec<u32>,
+        g: &Bound<'py, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let [kappa_0, base, power, two_pi, big_r, beta, beta_max, mu, r_hat_head, r_c] = consts[..]
+        else {
+            return Err(PyValueError::new_err("ten constants"));
+        };
+        let c = more_random::SoftConfig {
+            kappa_0,
+            base,
+            power,
+            two_pi,
+            big_r,
+            beta,
+            beta_max,
+            mu,
+            r_hat_head,
+            r_c,
+        };
+        let Some(mut rng) = pyrandom::Mt19937::from_state(&state) else {
+            return Ok(None);
+        };
+        let found = py.detach(|| more_random::soft_configuration(n, &c, &mut rng));
+        let Some((thetas, kappas, radii, b)) = found else {
+            return Ok(None);
+        };
+        let (kt, kk, kr) = (
+            pyo3::types::PyString::new(py, "theta"),
+            pyo3::types::PyString::new(py, "kappa"),
+            pyo3::types::PyString::new(py, "radius"),
+        );
+        let (t, k, r) = (
+            PyList::new(py, thetas)?,
+            PyList::new(py, kappas)?,
+            PyList::new(py, radii)?,
+        );
+        fill_built(
+            py,
+            &b,
+            g,
+            None,
+            &[(kt.as_any(), &t), (kk.as_any(), &k), (kr.as_any(), &r)],
+        )?;
+        Ok(Some(rng.state()))
+    }
+
+    /// The random intersection graphs into `g`: `kind` 0 uniform (`p`:
+    /// `[p]`, `m` bottom nodes; node attribute `bipartite` 0), 1 `k` random
+    /// (`m`, `k`), 2 general (`p` per bottom node).
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    fn b23_intersection<'py>(
+        py: Python<'py>,
+        kind: u8,
+        n: usize,
+        m: usize,
+        k: usize,
+        p: Vec<f64>,
+        state: Vec<u32>,
+        g: &Bound<'py, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        if (kind == 0 && p.len() != 1) || (kind == 1 && n > 0 && k > m) {
+            return Err(PyValueError::new_err("bad intersection graph arguments"));
+        }
+        if kind == 0 {
+            let key = pyo3::types::PyString::new(py, "bipartite");
+            let zeros = PyList::new(py, vec![0i64; n])?;
+            return rg_run(py, &state, g, Some((key.as_any(), &zeros)), |rng| {
+                more_random::uniform_intersection(n, m, p[0], rng)
+            });
+        }
+        rg_run(py, &state, g, None, |rng| {
+            Some(match kind {
+                1 => more_random::k_intersection(n, m, k, rng),
+                _ => more_random::general_intersection(n, &p, rng),
+            })
+        })
+    }
+
+    /// `random_k_lift(G, k)` into the empty graph `h` of `G`'s class.
+    #[staticmethod]
+    fn b23_k_lift<'py>(
+        py: Python<'py>,
+        g: &Bound<'py, PyAny>,
+        k: usize,
+        state: Vec<u32>,
+        h: &Bound<'py, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let src = nxdicts::NxDicts::of_graph(g)?;
+        let directed = src.pred.is_some();
+        let multigraph = g
+            .call_method0(pyo3::intern!(py, "is_multigraph"))?
+            .is_truthy()?;
+        let index = PyDict::new(py);
+        let mut nodes = Vec::with_capacity(src.node.len());
+        for (i, key) in src.node.keys().iter().enumerate() {
+            index.set_item(&key, i)?;
+            nodes.push(key);
+        }
+        if nodes.len().checked_mul(k).is_none_or(|t| t >= 1 << 31) {
+            return Ok(None);
+        }
+        let position = |key: &Bound<'py, PyAny>| -> PyResult<usize> {
+            index
+                .get_item(key)?
+                .ok_or_else(|| PyNotImplementedError::new_err("the graph's dicts disagree"))?
+                .extract()
+        };
+        // `G.edges()`: an undirected edge from the row met first, one pair
+        // per parallel edge.
+        let mut edges: Vec<(u32, u32)> = Vec::new();
+        let mut seen = vec![false; nodes.len()];
+        for (key, row) in src.adj.iter() {
+            let u = position(&key)?;
+            for (nbr, data) in row.cast_into::<PyDict>()?.iter() {
+                let v = position(&nbr)?;
+                if !directed && seen[v] {
+                    continue;
+                }
+                let reps = if multigraph {
+                    data.cast_into::<PyDict>()?.len()
+                } else {
+                    1
+                };
+                for _ in 0..reps {
+                    edges.push((u as u32, v as u32));
+                }
+            }
+            seen[u] = true;
+        }
+        let Some(mut rng) = pyrandom::Mt19937::from_state(&state) else {
+            return Ok(None);
+        };
+        let n = nodes.len();
+        let sim = py.detach(|| more_random::k_lift(n, &edges, k, directed, multigraph, &mut rng));
+        let mut labels = Vec::with_capacity(n * k);
+        for v in &nodes {
+            for i in 0..k {
+                labels.push(Some((v, i).into_pyobject(py)?.into_any()));
+            }
+        }
+        let dicts = nxdicts::NxDicts::of_graph(h)?;
+        if !dicts.is_empty() || dicts.pred.is_some() != directed {
+            return Err(PyValueError::new_err("the graph to fill is not empty"));
+        }
+        nxdicts::write_sim(&dicts, &sim, &labels, |_, _| Ok(()))?;
+        Ok(Some(rng.state()))
+    }
+
+    /// Bipartite `preferential_attachment_graph` into the empty undirected
+    /// graph `g` (node attribute `bipartite`).
+    #[staticmethod]
+    fn b23_bipartite_preferential<'py>(
+        py: Python<'py>,
+        aseq: Vec<i64>,
+        p: f64,
+        state: Vec<u32>,
+        g: &Bound<'py, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let multigraph = g
+            .call_method0(pyo3::intern!(py, "is_multigraph"))?
+            .is_truthy()?;
+        let Some(mut rng) = pyrandom::Mt19937::from_state(&state) else {
+            return Ok(None);
+        };
+        let sim = py.detach(|| more_random::bipartite_preferential(&aseq, p, multigraph, &mut rng));
+        let na = aseq.len();
+        let key = pyo3::types::PyString::new(py, "bipartite");
+        let (zero, one) = (PyInt::new(py, 0), PyInt::new(py, 1));
+        b23_write(py, &sim, g, |u, data| {
+            data.set_item(&key, if (u as usize) < na { &zero } else { &one })
+        })?;
+        Ok(Some(rng.state()))
+    }
+
+    /// `relaxed_caveman_graph` into the empty `Graph` `g`.
+    #[staticmethod]
+    fn b23_relaxed_caveman(
+        py: Python<'_>,
+        l: usize,
+        k: usize,
+        p: f64,
+        state: Vec<u32>,
+        g: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        if l.checked_mul(k).is_none_or(|n| n >= 1 << 31) {
+            return Ok(None);
+        }
+        rg_run(py, &state, g, None, |rng| {
+            Some(more_random::relaxed_caveman(l, k, p, rng))
+        })
+    }
+
+    /// `geometric_edges`: the pairs of `nodes` (positions `positions`, each
+    /// a sequence of numbers of one length) within `radius`, sorted by
+    /// position, as `(u, v)` tuples; `None` to let NetworkX run (positions
+    /// SciPy reads differently, or a pair within rounding error of the
+    /// radius).
+    #[staticmethod]
+    fn b23_geometric_edges<'py>(
+        py: Python<'py>,
+        nodes: Vec<Bound<'py, PyAny>>,
+        positions: Vec<Bound<'py, PyAny>>,
+        radius: f64,
+        p: f64,
+    ) -> PyResult<Option<Bound<'py, PyList>>> {
+        if nodes.len() != positions.len() || nodes.is_empty() {
+            return Ok(None);
+        }
+        let mut coords = Vec::new();
+        let mut dim = None;
+        for pos in &positions {
+            if pos.is_instance_of::<pyo3::types::PyString>() {
+                return Ok(None);
+            }
+            let Ok(row) = pos.extract::<Vec<f64>>() else {
+                return Ok(None);
+            };
+            if *dim.get_or_insert(row.len()) != row.len() || row.iter().any(|x| !x.is_finite()) {
+                return Ok(None);
+            }
+            coords.extend(row);
+        }
+        let dim = dim.unwrap_or(0);
+        if dim == 0 {
+            return Ok(None);
+        }
+        let Some(pairs) = py.detach(|| random_generators::geometric_pairs(&coords, dim, radius, p))
+        else {
+            return Ok(None);
+        };
+        let out = PyList::empty(py);
+        for (u, v) in pairs {
+            out.append((&nodes[u as usize], &nodes[v as usize]))?;
+        }
+        Ok(Some(out))
+    }
+
+    /// `random_internet_as_graph` into the empty `Graph` `g`, given the
+    /// constants `AS_graph_generator` computes from `n` (`n, n_m, n_cp` and
+    /// `d_m, d_cp, d_c, p_m_m, p_cp_m, p_cp_cp`).
+    #[staticmethod]
+    fn b23_internet_as<'py>(
+        py: Python<'py>,
+        counts: (i64, i64, i64),
+        rates: Vec<f64>,
+        state: Vec<u32>,
+        g: &Bound<'py, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let [d_m, d_cp, d_c, p_m_m, p_cp_m, p_cp_cp] = rates[..] else {
+            return Err(PyValueError::new_err("six rates"));
+        };
+        let (n, n_m, n_cp) = counts;
+        if n >= 1 << 24 {
+            return Ok(None);
+        }
+        let c = more_random::AsParams {
+            n,
+            n_m,
+            n_cp,
+            d_m,
+            d_cp,
+            d_c,
+            p_m_m,
+            p_cp_m,
+            p_cp_cp,
+        };
+        let Some(mut rng) = pyrandom::Mt19937::from_state(&state) else {
+            return Ok(None);
+        };
+        let out = py.detach(|| more_random::internet_as(&c, &mut rng));
+        let s = |x: &str| pyo3::types::PyString::new(py, x);
+        let (k_type, k_peers, k_customer) = (s("type"), s("peers"), s("customer"));
+        let kinds = [s("T"), s("M"), s("CP"), s("C")];
+        fill_built_with(py, &out.b, g, None, |u, data| {
+            let kind = out.kinds[u as usize];
+            data.set_item(&k_type, &kinds[kind as usize])?;
+            if kind != 0 {
+                data.set_item(&k_peers, out.peers[u as usize])?;
+            }
+            Ok(())
+        })?;
+        // `add_edge(i, j, type=kind, customer=customer)`: one dict per edge,
+        // shared by both rows.
+        let adj = g.getattr("_adj")?.cast_into::<PyDict>()?;
+        let (transit, peer, none) = (s("transit"), s("peer"), s("none"));
+        for &(u, v, is_transit) in &out.edges {
+            let row = adj
+                .get_item(u)?
+                .ok_or_else(|| PyValueError::new_err("missing row"))?
+                .cast_into::<PyDict>()?;
+            let data = row
+                .get_item(v)?
+                .ok_or_else(|| PyValueError::new_err("missing edge"))?
+                .cast_into::<PyDict>()?;
+            if is_transit {
+                data.set_item(&k_type, &transit)?;
+                data.set_item(&k_customer, u.to_string())?;
+            } else {
+                data.set_item(&k_type, &peer)?;
+                data.set_item(&k_customer, &none)?;
+            }
+        }
+        Ok(Some(rng.state()))
+    }
+
+    /// Replays set algebra on `pyset::PySet` (the runtime check of
+    /// `random_internet_as_graph`'s union, intersection and difference);
+    /// see `random_generators_more::replay_set_algebra`.
+    #[staticmethod]
+    fn b23_replay_set_algebra(
+        hashes: Vec<i64>,
+        nsets: usize,
+        ops: Vec<(u8, u32, u32, u32)>,
+    ) -> PyResult<Vec<Vec<u32>>> {
+        for &(op, dst, a, b) in &ops {
+            let bad_key = op <= 1 && a as usize >= hashes.len();
+            let bad_set =
+                dst as usize >= nsets || (op >= 2 && (a as usize >= nsets || b as usize >= nsets));
+            if bad_key || bad_set {
+                return Err(PyIndexError::new_err("set or key out of range"));
+            }
+        }
+        Ok(more_random::replay_set_algebra(&hashes, nsets, &ops))
+    }
+
+    /// `maybe_regular_expander_graph` into the empty graph `g` (`n` nodes),
+    /// from a NumPy `RandomState`'s MT19937 `state` (624 key words and the
+    /// position).
+    #[staticmethod]
+    fn b23_maybe_regular_expander<'py>(
+        py: Python<'py>,
+        n: usize,
+        d: usize,
+        max_tries: i64,
+        state: Vec<u32>,
+        g: &Bound<'py, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        if n < 3 || d < 2 || n - 1 < d || n >= 1 << 31 {
+            return Err(PyValueError::new_err("bad expander arguments"));
+        }
+        let Some(mut rng) = pyrandom::Mt19937::from_state(&state) else {
+            return Ok(None);
+        };
+        let Some(edges) =
+            py.detach(|| more_random::maybe_regular_expander(n, d, max_tries, &mut rng))
+        else {
+            return Ok(None);
+        };
+        let directed = g.call_method0("is_directed")?.is_truthy()?;
+        let multigraph = g.call_method0("is_multigraph")?.is_truthy()?;
+        let mut sim = generators::Sim::new(directed, multigraph, n, edges.len());
+        sim.add_nodes(0..n as u32);
+        for (u, v) in edges {
+            sim.add_edge(u, v);
+        }
+        b23_write(py, &sim, g, |_, _| Ok(()))?;
+        Ok(Some(rng.state()))
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();
@@ -8712,6 +9278,39 @@ fn fill_generated<'py>(
     g: &Bound<'py, PyAny>,
     node_attr: Option<(&Bound<'py, PyAny>, &Bound<'py, PyList>)>,
 ) -> PyResult<()> {
+    let attrs: Vec<_> = node_attr.into_iter().collect();
+    fill_built(py, b, g, None, &attrs)
+}
+
+/// [`fill_generated`] with node keys `labels` (default: the ints `0..n`)
+/// and node attributes `{key: values[u], ...}` set in the order given.
+/// Nodes missing from `b.order` are left out.
+fn fill_built<'py>(
+    py: Python<'py>,
+    b: &random_generators::Built,
+    g: &Bound<'py, PyAny>,
+    labels: Option<Vec<Bound<'py, PyAny>>>,
+    attrs: &[(&Bound<'py, PyAny>, &Bound<'py, PyList>)],
+) -> PyResult<()> {
+    if attrs.iter().any(|(_, values)| values.len() != b.n()) {
+        return Err(PyValueError::new_err("one attribute value per node"));
+    }
+    fill_built_with(py, b, g, labels, |u, data| {
+        for (key, values) in attrs {
+            data.set_item(key, values.get_item(u as usize)?)?;
+        }
+        Ok(())
+    })
+}
+
+/// [`fill_built`] with each node's attributes set by `fill(u, data)`.
+fn fill_built_with<'py>(
+    py: Python<'py>,
+    b: &random_generators::Built,
+    g: &Bound<'py, PyAny>,
+    labels: Option<Vec<Bound<'py, PyAny>>>,
+    fill: impl FnMut(u32, &Bound<'py, PyDict>) -> PyResult<()>,
+) -> PyResult<()> {
     let n = b.n();
     let dicts = nxdicts::NxDicts::of_graph(g)?;
     if !dicts.is_empty() {
@@ -8720,10 +9319,8 @@ fn fill_generated<'py>(
     if dicts.pred.is_some() != b.pred.is_some() {
         return Err(PyValueError::new_err("the graph's direction differs"));
     }
-    if let Some((_, values)) = node_attr {
-        if values.len() != n {
-            return Err(PyValueError::new_err("one attribute value per node"));
-        }
+    if labels.as_ref().is_some_and(|l| l.len() != n) {
+        return Err(PyValueError::new_err("one label per node"));
     }
     let multi = g
         .call_method0(pyo3::intern!(py, "is_multigraph"))?
@@ -8737,13 +9334,46 @@ fn fill_generated<'py>(
         }
     };
     let sim = py.detach(|| generators::Sim::from_rows(&b.succ, b.pred.as_deref(), order, multi));
-    let labels: Vec<Option<Bound<'py, PyAny>>> = (0..n as u64)
+    let labels: Vec<Option<Bound<'py, PyAny>>> = match labels {
+        Some(l) => l.into_iter().map(Some).collect(),
+        None => (0..n as u64)
+            .map(|i| Some(PyInt::new(py, i).into_any()))
+            .collect(),
+    };
+    nxdicts::write_sim(&dicts, &sim, &labels, fill)
+}
+
+// --- Batch 23: growth and geometric generators (helpers) ---
+
+/// `coords` as one list of `dim` floats per node (`[seed.random() for i in
+/// range(dim)]`).
+fn b23_rows<'py>(py: Python<'py>, coords: &[f64], dim: usize) -> PyResult<Bound<'py, PyList>> {
+    let pos = PyList::empty(py);
+    if dim == 0 {
+        return Ok(pos);
+    }
+    for row in coords.chunks(dim) {
+        pos.append(PyList::new(py, row)?)?;
+    }
+    Ok(pos)
+}
+
+/// Writes `sim` (int node keys) into the empty graph `g`, setting each
+/// node's attributes with `fill`.
+fn b23_write<'py>(
+    py: Python<'py>,
+    sim: &generators::Sim,
+    g: &Bound<'py, PyAny>,
+    fill: impl FnMut(u32, &Bound<'py, PyDict>) -> PyResult<()>,
+) -> PyResult<()> {
+    let dicts = nxdicts::NxDicts::of_graph(g)?;
+    if !dicts.is_empty() || dicts.pred.is_some() != sim.directed {
+        return Err(PyValueError::new_err("the graph to fill is not empty"));
+    }
+    let labels: Vec<Option<Bound<'py, PyAny>>> = (0..sim.capacity() as u64)
         .map(|i| Some(PyInt::new(py, i).into_any()))
         .collect();
-    nxdicts::write_sim(&dicts, &sim, &labels, |u, data| match node_attr {
-        Some((key, values)) => data.set_item(key, values.get_item(u as usize)?),
-        None => Ok(()),
-    })
+    nxdicts::write_sim(&dicts, sim, &labels, fill)
 }
 
 // --- Batch 24: generators and transforms ---
