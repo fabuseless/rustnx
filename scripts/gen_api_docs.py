@@ -883,6 +883,37 @@ QUALIFIED.update({
     "weighted_projected_graph": "nx.bipartite.weighted_projected_graph",
 })
 
+# Batch 24: generators and transforms.
+B24_GEN = GENERATOR.replace(" `create_using` may be a NetworkX graph class or instance (instances that NetworkX would fill and then reject fall back).", "")
+B24_CREATE = " `create_using` may be a NetworkX graph class or instance (instances that NetworkX would fill and then reject fall back)."
+SECTIONS.append(("Generators and transforms (batch 24)", [
+    "margulis_gabber_galil_graph", "chordal_cycle_graph", "hkn_harary_graph", "hnm_harary_graph",
+    "prefix_tree", "prefix_tree_recursive", "interval_graph", "visibility_graph",
+    "nonisomorphic_trees", "number_of_nonisomorphic_trees", "join_trees", "mycielskian",
+    "stochastic_graph", "contracted_nodes", "contracted_edge", "quotient_graph",
+    "modular_product", "inverse_line_graph",
+]))
+NOTES.update({
+    "margulis_gabber_galil_graph": B24_GEN + INTS + B24_CREATE,
+    "chordal_cycle_graph": B24_GEN + INTS + B24_CREATE,
+    "hkn_harary_graph": B24_GEN + INTS + B24_CREATE + " Adds the circulant edges in the order of the installed NetworkX (it changed in 3.6).",
+    "hnm_harary_graph": B24_GEN + INTS + B24_CREATE + " Adds the circulant edges in the order of the installed NetworkX (it changed in 3.6).",
+    "prefix_tree": B24_GEN + " Paths in a list or tuple, each a list, tuple or str; other iterables, and items whose hashing or comparison raises, fall back.",
+    "prefix_tree_recursive": B24_GEN + " As `prefix_tree`; paths deep enough to approach Python's recursion limit fall back (NetworkX recurses per level).",
+    "interval_graph": B24_GEN + " Intervals in a list or tuple, each a list or tuple of ints (below 2**52 in size) or floats; other values fall back.",
+    "visibility_graph": B24_GEN + " A list or tuple of ints (below 2**52 in size) or floats, with NetworkX's float arithmetic; other values fall back.",
+    "nonisomorphic_trees": B24_GEN + " A generator, as in NetworkX (errors come at the first `next()`); 3.4's `create=\"matrix\"` falls back.",
+    "number_of_nonisomorphic_trees": B24_GEN + " NetworkX 3.4 enumerates the trees, rustnx uses the counting formula of 3.5+ (same values); counts beyond 128 bits fall back.",
+    "join_trees": B24_GEN + " " + OPERATOR + " Plain `Graph` and `DiGraph` trees in a list or tuple, an int `first_label`; mixed directedness falls back.",
+    "mycielskian": "Relabels with rustnx's `convert_node_labels_to_integers`, then adds the new nodes and edges in Rust in NetworkX's order. An int `iterations` only.",
+    "stochastic_graph": "Copies the graph as `DiGraph(G)` does and sets each weight from Python's `sum()` of the out-weights; weights must be ints (below 2**53 in size) or floats. `copy=False` (mutates the input) and multigraphs fall back.",
+    "contracted_nodes": "Copies the graph in Rust as `G.copy()` does, then runs NetworkX's own contraction steps on the copy (they touch only `v`'s edges). `copy=False` falls back." + PLAIN,
+    "contracted_edge": "As `contracted_nodes`." + PLAIN,
+    "quotient_graph": "Default `edge_relation` and `edge_data` only (callables per pair of blocks fall back), a partition covering every node in non-empty blocks, int (or missing) weights (float sums follow set order and fall back), `create_using=None`. A `node_data` callable is called per block, as in NetworkX." + PLAIN,
+    "modular_product": OPERATOR + " Attribute tuples are built with NetworkX's set order of keys; edge attribute names that `add_edge(**attr)` rejects fall back.",
+    "inverse_line_graph": "Replays NetworkX's partition into cells (including the one set it iterates, with CPython's set table) and adds the result's edges in `combinations` order.",
+})
+
 
 def location(name):
     if name in DAG_ONLY:
