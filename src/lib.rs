@@ -6051,6 +6051,113 @@ impl CoreGraph {
         }))
     }
 
+    /// Fills the new `nx.DiGraph` dicts as `build_auxiliary_edge_connectivity`
+    /// (`node_ids` None) or `build_auxiliary_node_connectivity` (`node_ids`
+    /// the nodes, giving `f"{i}A"` / `f"{i}B"` nodes with `id` attributes)
+    /// leaves them; `nodes` are G's nodes.
+    #[pyo3(signature = (nodes, h_node, h_succ, h_pred, node_ids))]
+    fn auxiliary_fill<'py>(
+        &self,
+        py: Python<'py>,
+        nodes: &Bound<'py, PyList>,
+        h_node: Bound<'py, PyDict>,
+        h_succ: Bound<'py, PyDict>,
+        h_pred: Bound<'py, PyDict>,
+        node_ids: bool,
+    ) -> PyResult<()> {
+        if nodes.len() != self.n {
+            return Err(PyValueError::new_err("node list does not match this graph"));
+        }
+        let pairs = py.detach(|| cliques::auxiliary_edge_pairs(&self.succ, self.n, self.directed));
+        let dicts = nxdicts::NxDicts::new(h_node, h_succ, Some(h_pred));
+        let capacity = pyo3::intern!(py, "capacity");
+        let one = 1i64.into_pyobject(py)?;
+        let edge = |a: &nxdicts::NodeRows<'py>,
+                    b: &nxdicts::NodeRows<'py>,
+                    ka: &Bound<'py, PyAny>,
+                    kb: &Bound<'py, PyAny>|
+         -> PyResult<()> {
+            let d = PyDict::new(py);
+            d.set_item(capacity, &one)?;
+            a.succ.set_item(kb, &d)?;
+            b.back().set_item(ka, d)
+        };
+        if !node_ids {
+            let keys: Vec<Bound<'py, PyAny>> = nodes.iter().collect();
+            let rows = keys
+                .iter()
+                .map(|k| dicts.create_node(k))
+                .collect::<PyResult<Vec<_>>>()?;
+            for (a, b) in pairs {
+                let (a, b) = (a as usize, b as usize);
+                edge(&rows[a], &rows[b], &keys[a], &keys[b])?;
+            }
+            return Ok(());
+        }
+        let id = pyo3::intern!(py, "id");
+        let mut a_keys = Vec::with_capacity(self.n);
+        let mut b_keys = Vec::with_capacity(self.n);
+        let mut a_rows = Vec::with_capacity(self.n);
+        let mut b_rows = Vec::with_capacity(self.n);
+        for (i, node) in nodes.iter().enumerate() {
+            let ka = pyo3::types::PyString::new(py, &format!("{i}A")).into_any();
+            let kb = pyo3::types::PyString::new(py, &format!("{i}B")).into_any();
+            let ra = dicts.create_node(&ka)?;
+            ra.attrs.set_item(id, &node)?;
+            let rb = dicts.create_node(&kb)?;
+            rb.attrs.set_item(id, &node)?;
+            edge(&ra, &rb, &ka, &kb)?;
+            a_keys.push(ka);
+            b_keys.push(kb);
+            a_rows.push(ra);
+            b_rows.push(rb);
+        }
+        for (s, t) in pairs {
+            let (s, t) = (s as usize, t as usize);
+            edge(&b_rows[s], &a_rows[t], &b_keys[s], &a_keys[t])?;
+        }
+        Ok(())
+    }
+
+    /// `find_asteroidal_triple` (undirected, 6 or more nodes); `tuple_set`
+    /// for NetworkX 3.4's order of non-edges.
+    fn asteroidal_triple(
+        &self,
+        py: Python<'_>,
+        hashes: Vec<i64>,
+        tuple_set: bool,
+    ) -> PyResult<Option<(u32, u32, u32)>> {
+        self.b25_check_hashes(&hashes)?;
+        Ok(py.detach(|| cliques::asteroidal_triple(&self.succ, self.n, &hashes, tuple_set)))
+    }
+
+    /// `k_clique_communities`: the maximal cliques of size `k` or more and,
+    /// per community, the indices of its cliques in the order
+    /// `frozenset.union` takes them. `clique_hashes(cliques)` gives each
+    /// clique's `frozenset` hash.
+    fn k_clique_communities<'py>(
+        &self,
+        py: Python<'py>,
+        hashes: Vec<i64>,
+        k: usize,
+        clique_hashes: &Bound<'py, PyAny>,
+    ) -> PyResult<(Vec<Vec<u32>>, Vec<Vec<u32>>)> {
+        self.b25_check_hashes(&hashes)?;
+        let found: Vec<Vec<u32>> = py.detach(|| {
+            cliques::all_cliques(&self.succ, self.n, hashes.clone())
+                .into_iter()
+                .filter(|c| c.len() >= k)
+                .collect()
+        });
+        let fs_hashes: Vec<i64> = clique_hashes.call1((found.clone(),))?.extract()?;
+        if fs_hashes.len() != found.len() {
+            return Err(PyValueError::new_err("one hash per clique"));
+        }
+        let comps =
+            py.detach(|| cliques::k_clique_communities(&found, &fs_hashes, &hashes, self.n, k));
+        Ok((found, comps))
+    }
+
     /// `greedy_color` (largest_first): processing order and each node's color.
     fn greedy_color(&self, py: Python<'_>) -> (Vec<u32>, Vec<u32>) {
         let degree = self.degrees();

@@ -7,6 +7,7 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap};
 
+use super::operators::tuple_hash;
 use super::pyrandom::Mt19937;
 use super::pyset::PySet;
 use crate::graph::Csr;
@@ -1065,4 +1066,192 @@ pub fn approx_node_connectivity(
         },
     );
     k.into_inner()
+}
+
+/// The edges `build_auxiliary_edge_connectivity` adds, first occurrences
+/// only (repeats find the edge already there): `G.edges()` in order, and
+/// for undirected graphs `(u, v)` then `(v, u)` for each.
+pub fn auxiliary_edge_pairs(succ: &Csr, n: usize, directed: bool) -> Vec<(u32, u32)> {
+    let mut out = Vec::new();
+    for u in 0..n {
+        for &v in succ.neighbors(u) {
+            if directed {
+                out.push((u as u32, v));
+            } else if v as usize >= u {
+                out.push((u as u32, v));
+                if v as usize != u {
+                    out.push((v, u as u32));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `find_asteroidal_triple` on an undirected simple graph of 6 or more
+/// nodes, visiting the non-edges as `nx.non_edges` does, or (`tuple_set`,
+/// NetworkX 3.4) in the order of a set of edge tuples.
+pub fn asteroidal_triple(
+    adj: &Csr,
+    n: usize,
+    hashes: &[i64],
+    tuple_set: bool,
+) -> Option<(u32, u32, u32)> {
+    let pairs = if tuple_set {
+        // 3.4: `set(nx.complement(G).edges)`, each edge `(u, v)` with `v`
+        // after `u`, iterated in the set's order (tuple hashes).
+        let mut mark = vec![usize::MAX; n];
+        let mut edges = Vec::new();
+        for u in 0..n {
+            for &v in adj.neighbors(u) {
+                mark[v as usize] = u;
+            }
+            for v in u + 1..n {
+                if mark[v] != u {
+                    edges.push((u as u32, v as u32));
+                }
+            }
+        }
+        let tuple_hashes: Vec<i64> = edges
+            .iter()
+            .map(|&(u, v)| tuple_hash(&[hashes[u as usize], hashes[v as usize]]))
+            .collect();
+        let set = PySet::from_iter(0..edges.len() as u32, &tuple_hashes);
+        set.iter().map(|e| edges[e as usize]).collect()
+    } else {
+        // non_edges: u = nodes.pop(), then nodes - set(G[u])
+        let mut out = Vec::new();
+        let mut nodes = PySet::from_iter(0..n as u32, hashes);
+        while let Some(u) = nodes.pop() {
+            let row = PySet::from_iter(adj.neighbors(u as usize).iter().copied(), hashes);
+            out.extend(nodes.difference(&row, hashes).iter().map(|v| (u, v)));
+        }
+        out
+    };
+    let all = PySet::from_iter(0..n as u32, hashes);
+    // component_structure[x]: components of G minus x's closed
+    // neighborhood; only equality between labels matters.
+    let mut labels: Vec<Option<Vec<u32>>> = vec![None; n];
+    let mut queue = Vec::new();
+    let mut label_of = |x: u32, labels: &mut Vec<Option<Vec<u32>>>| {
+        if labels[x as usize].is_none() {
+            let mut lab = vec![u32::MAX; n];
+            lab[x as usize] = 0;
+            for &y in adj.neighbors(x as usize) {
+                lab[y as usize] = 0;
+            }
+            let mut next = 1;
+            for s in 0..n {
+                if lab[s] != u32::MAX {
+                    continue;
+                }
+                lab[s] = next;
+                queue.clear();
+                queue.push(s as u32);
+                while let Some(v) = queue.pop() {
+                    for &w in adj.neighbors(v as usize) {
+                        if lab[w as usize] == u32::MAX {
+                            lab[w as usize] = next;
+                            queue.push(w);
+                        }
+                    }
+                }
+                next += 1;
+            }
+            labels[x as usize] = Some(lab);
+        }
+    };
+    for (u, v) in pairs {
+        let closed = |x: u32| {
+            let mut s =
+                PySet::from_iter(adj.neighbors(x as usize).iter().copied(), hashes).copy(hashes);
+            s.add(x, hashes);
+            s
+        };
+        let union = closed(u).union(&closed(v), hashes);
+        for w in all.difference(&union, hashes).iter() {
+            for x in [u, v, w] {
+                label_of(x, &mut labels);
+            }
+            let lab = |x: u32, y: u32| labels[x as usize].as_ref().expect("computed")[y as usize];
+            if lab(u, v) == lab(u, w) && lab(v, u) == lab(v, w) && lab(w, u) == lab(w, v) {
+                return Some((u, v, w));
+            }
+        }
+    }
+    None
+}
+
+/// `k_clique_communities` from `cliques` (the maximal cliques of size `k`
+/// or more, in `find_cliques`' order) and each clique's `frozenset` hash:
+/// for each community, the cliques it joins in the iteration order of
+/// `connected_components`' set (`frozenset.union` takes them in that order).
+pub fn k_clique_communities(
+    cliques: &[Vec<u32>],
+    clique_hashes: &[i64],
+    hashes: &[i64],
+    n: usize,
+    k: usize,
+) -> Vec<Vec<u32>> {
+    let count = cliques.len();
+    let mut member: Vec<Vec<u32>> = vec![Vec::new(); n];
+    for (i, c) in cliques.iter().enumerate() {
+        for &v in c {
+            member[v as usize].push(i as u32);
+        }
+    }
+    let mut in_clique = vec![u32::MAX; n];
+    let mut rows: Vec<Vec<u32>> = vec![Vec::new(); count];
+    let mut edges = std::collections::HashSet::new();
+    for (i, c) in cliques.iter().enumerate() {
+        // _get_adjacent_cliques: walk frozenset(c) in its order
+        let fs = PySet::from_iter(c.iter().copied(), hashes);
+        let mut adjacent = PySet::default();
+        for v in fs.iter() {
+            for &j in &member[v as usize] {
+                if j as usize != i {
+                    adjacent.add(j, clique_hashes);
+                }
+            }
+        }
+        for &v in c {
+            in_clique[v as usize] = i as u32;
+        }
+        for j in adjacent.iter() {
+            let common = cliques[j as usize]
+                .iter()
+                .filter(|&&v| in_clique[v as usize] == i as u32)
+                .count();
+            if common + 1 >= k {
+                let key = (i.min(j as usize), i.max(j as usize));
+                if edges.insert(key) {
+                    rows[i].push(j);
+                    rows[j as usize].push(i as u32);
+                }
+            }
+        }
+    }
+    // connected_components(perc_graph): sets built in BFS order
+    let mut seen = vec![false; count];
+    let mut out = Vec::new();
+    for s in 0..count {
+        if seen[s] {
+            continue;
+        }
+        seen[s] = true;
+        let mut comp = vec![s as u32];
+        let mut at = 0;
+        while at < comp.len() {
+            let v = comp[at] as usize;
+            at += 1;
+            for &w in &rows[v] {
+                if !seen[w as usize] {
+                    seen[w as usize] = true;
+                    comp.push(w);
+                }
+            }
+        }
+        out.push(PySet::from_iter(comp, clique_hashes).iter().collect());
+    }
+    out
 }

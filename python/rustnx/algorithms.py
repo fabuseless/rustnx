@@ -98,6 +98,8 @@ __all__ = [
     "bridge_augmentation",
     "bridge_components",
     "bridges",
+    "build_auxiliary_edge_connectivity",
+    "build_auxiliary_node_connectivity",
     "build_flow_dict",
     "build_residual_network",
     "butterflies",
@@ -200,6 +202,7 @@ __all__ = [
     "fast_gnp_random_graph",
     "fast_label_propagation_communities",
     "faster_could_be_isomorphic",
+    "find_asteroidal_triple",
     "find_cliques",
     "find_cliques_recursive",
     "find_cycle",
@@ -326,6 +329,7 @@ __all__ = [
     "isolates",
     "jaccard_coefficient",
     "johnson",
+    "k_clique_communities",
     "k_core",
     "k_corona",
     "k_crust",
@@ -12963,3 +12967,70 @@ def approximate_all_pairs_node_connectivity(G, nbunch=None, cutoff=None):
         if not directed:
             all_pairs[v][u] = k
     return all_pairs
+
+
+def build_auxiliary_edge_connectivity(G):
+    H = nx.DiGraph()
+    G._core.auxiliary_fill(_node_list(G), H._node, H._succ, H._pred, False)
+    return H
+
+
+def build_auxiliary_node_connectivity(G):
+    nodes = _node_list(G)
+    H = nx.DiGraph()
+    G._core.auxiliary_fill(nodes, H._node, H._succ, H._pred, True)
+    H.graph["mapping"] = {node: i for i, node in enumerate(nodes)}
+    return H
+
+
+@functools.cache
+def _b25_asteroidal_tuple_set():
+    """Whether the installed ``find_asteroidal_triple`` iterates a set of
+    the complement's edges (3.4) rather than ``nx.non_edges``."""
+    return "E_complement" in _source_text(_registered("find_asteroidal_triple"))
+
+
+def find_asteroidal_triple(G):
+    _undirected_only(G)
+    if len(G) < 6:
+        return None
+    tuple_set = _b25_asteroidal_tuple_set()
+    if tuple_set and not _b21_tuple_hashes_match():
+        raise NotImplementedError("this interpreter's tuple hashes can't be replayed")
+    found = G._core.asteroidal_triple(_b25_hashes(G), tuple_set)
+    if found is None:
+        return None
+    nodes = G._nodes
+    return [nodes[i] for i in found]
+
+
+def _b25_frozenset_hashes(G):
+    nodes = G._nodes
+
+    def clique_hashes(cliques):
+        return [hash(frozenset([nodes[i] for i in c])) for c in cliques]
+
+    return clique_hashes
+
+
+def k_clique_communities(G, k, cliques=None):
+    if cliques is not None:
+        raise NotImplementedError("rustnx finds the cliques itself")
+    if type(k) is not int:
+        raise NotImplementedError("rustnx supports int k only")
+    hashes = None if G.is_directed() else _b25_hashes(G)
+
+    def compute():
+        if k < 2:
+            raise nx.NetworkXError(f"k={k}, k must be greater than 1.")
+        if hashes is None:
+            raise nx.NetworkXNotImplemented("not implemented for directed type")
+        found, communities = G._core.k_clique_communities(hashes, k, _b25_frozenset_hashes(G))
+        nodes = G._nodes
+        frozen = [frozenset([nodes[i] for i in c]) for c in found]
+        for community in communities:
+            yield frozenset.union(*[frozen[i] for i in community])
+
+    return _computed_on_first_next(
+        G, compute, lambda H: nx.community.k_clique_communities(H, k, backend="networkx")
+    )
