@@ -8,6 +8,16 @@ versions may change behavior.
 ## [Unreleased]
 
 ### Added
+- Float settings. `betweenness_centrality`, `edge_betweenness_centrality`
+  and `pagerank` have a fast mode (the default, whose floats can differ from
+  NetworkX's in the last bits) and an exact mode (bit for bit NetworkX's).
+  Choose globally with `nx.config.backends.rustnx.exact_floats` or per
+  function with `nx.config.backends.rustnx.exact_floats_overrides` (per
+  function wins), also through `rustnx.enable(...)`, `RUSTNX_EXACT_FLOATS`
+  and `RUSTNX_EXACT_FLOATS_OVERRIDES`. `rustnx.float_settings()` and
+  `rustnx.explain_floats()` report what applies; `verbose` (or
+  `RUSTNX_VERBOSE=1`) logs it as functions run, and every call is logged at
+  DEBUG on the `rustnx` logger. See the README's "Fast and exact floats".
 - 20 more functions: `degree_centrality`, `in_degree_centrality`,
   `out_degree_centrality`, `node_connected_component`,
   `articulation_points`, `biconnected_components`,
@@ -179,6 +189,15 @@ versions may change behavior.
   early exit that fills the set in a different order).
 
 ### Changed
+- `betweenness_centrality` and `edge_betweenness_centrality` with exact
+  floats add per-source contributions in NetworkX's order, matching it bit
+  for bit (a few percent slower than fast floats).
+- `pagerank` with exact floats builds the sparse matrix in Rust and runs the
+  installed NetworkX's own SciPy code on it, matching it bit for bit; with
+  exact floats, multigraphs run in NetworkX.
+- Pickled rustnx graphs also store whether each weight attribute holds only
+  plain ints and floats (format `RNX4`), so an unpickled graph builds SciPy
+  matrices in Rust as the original does. Older pickles still load.
 - `rustnx.enable()` also puts rustnx first in
   `nx.config.backend_priority.generators`, which NetworkX uses for every
   function that returns a graph (generators, readers, graph builders, and

@@ -6,7 +6,9 @@ reference implementation.
 
 import logging
 import math
+import os
 import random
+import sys
 
 import networkx as nx
 import pytest
@@ -57,7 +59,31 @@ def both(func, *args, **kwargs):
 def assert_close_dicts(ours, ref):
     assert list(ours) == list(ref)  # same keys in the same order
     for key in ref:
-        assert ours[key] == pytest.approx(ref[key], rel=1e-12, abs=1e-12), key
+        if isinstance(ref[key], float) and math.isnan(ref[key]):
+            assert math.isnan(ours[key]), key
+        else:
+            assert ours[key] == pytest.approx(ref[key], rel=1e-12, abs=1e-12), key
+
+
+def both_modes(func, *args, **kwargs):
+    """rustnx with exact floats, rustnx with fast floats (the default) and
+    NetworkX, for the functions with a float setting."""
+    with nx.config.backends.rustnx(exact_floats=True):
+        exact = func(*args, backend="rustnx", **kwargs)
+    fast = func(*args, backend="rustnx", **kwargs)
+    ref = func(*args, backend="networkx", **kwargs)
+    return exact, fast, ref
+
+
+def assert_exact_dicts(ours, ref):
+    """Same keys in the same order, and floats bit for bit equal (NaN where
+    NetworkX has NaN)."""
+    assert list(ours) == list(ref)
+    for key in ref:
+        if isinstance(ref[key], float) and math.isnan(ref[key]):
+            assert math.isnan(ours[key]), key
+        else:
+            assert ours[key].hex() == ref[key].hex(), key
 
 
 @pytest.mark.parametrize("seed", SEEDS)
@@ -110,14 +136,15 @@ def test_betweenness(seed, directed, weights):
     weight = None if weights == "none" else "weight"
     for normalized in [True, False]:
         for endpoints in [False, True]:
-            ours, ref = both(
+            exact, fast, ref = both_modes(
                 nx.betweenness_centrality,
                 G,
                 normalized=normalized,
                 weight=weight,
                 endpoints=endpoints,
             )
-            assert_close_dicts(ours, ref)
+            assert_exact_dicts(exact, ref)
+            assert_close_dicts(fast, ref)
 
 
 @pytest.mark.parametrize("seed", range(20))
@@ -125,15 +152,11 @@ def test_betweenness_sampled(seed):
     G = random_graph(seed, directed=seed % 2 == 0, weights="int")
     k = max(1, len(G) // 3)
     for endpoints in [False, True]:
-        ours, ref = both(
+        exact, fast, ref = both_modes(
             nx.betweenness_centrality, G, k=k, endpoints=endpoints, seed=seed
         )
-        assert list(ours) == list(ref)
-        for key in ref:
-            if math.isnan(ref[key]):
-                assert math.isnan(ours[key])
-            else:
-                assert ours[key] == pytest.approx(ref[key], rel=1e-12, abs=1e-12)
+        assert_exact_dicts(exact, ref)
+        assert_close_dicts(fast, ref)
 
 
 @pytest.mark.parametrize("weights", ["none", "int", "float"])
@@ -397,8 +420,9 @@ def assert_pagerank_close(ours, ref):
 def test_pagerank(seed, directed, weights):
     G = random_graph(seed, directed, weights)
     weight = None if weights == "none" else "weight"
-    ours, ref = both(nx.pagerank, G, weight=weight)
-    assert_pagerank_close(ours, ref)
+    exact, fast, ref = both_modes(nx.pagerank, G, weight=weight)
+    assert_exact_dicts(exact, ref)
+    assert_pagerank_close(fast, ref)  # rustnx's own power iteration
 
 
 @pytest.mark.parametrize("seed", range(20))
@@ -418,18 +442,125 @@ def test_pagerank_options(seed):
         {"tol": 1e-10, "max_iter": 1000},
     ]
     for kwargs in options:
-        ours, ref = both(nx.pagerank, G, **kwargs)
-        assert_pagerank_close(ours, ref)
+        exact, fast, ref = both_modes(nx.pagerank, G, **kwargs)
+        assert_exact_dicts(exact, ref)
+        assert_pagerank_close(fast, ref)
 
 
-def test_pagerank_errors():
+@pytest.mark.parametrize("exact", [True, False])
+def test_pagerank_errors(exact):
     G = nx.DiGraph(nx.path_graph(10))
-    with pytest.raises(nx.PowerIterationFailedConvergence):
-        nx.pagerank(G, max_iter=1, backend="rustnx")
-    with pytest.raises(ZeroDivisionError):
-        nx.pagerank(G, personalization={0: 0}, backend="rustnx")
-    assert nx.pagerank(nx.DiGraph(), backend="rustnx") == {}
+    with nx.config.backends.rustnx(exact_floats=exact):
+        with pytest.raises(nx.PowerIterationFailedConvergence):
+            nx.pagerank(G, max_iter=1, backend="rustnx")
+        with pytest.raises(ZeroDivisionError):
+            nx.pagerank(G, personalization={0: 0}, backend="rustnx")
+        assert nx.pagerank(nx.DiGraph(), backend="rustnx") == {}
 
+
+# --- Float settings -----------------------------------------------------------------
+
+
+def test_float_settings_default_fast():
+    settings = rustnx.float_settings()
+    assert set(settings) == {"betweenness_centrality", "edge_betweenness_centrality", "pagerank"}
+    for s in settings.values():
+        assert s["exact"] is False
+        assert s["set_by"] == "the global exact_floats setting"
+
+
+def test_float_override_wins_over_global(restore_config):
+    G = random_graph(1, False, "float")
+    ref = nx.betweenness_centrality(G, backend="networkx")
+    cfg = nx.config.backends.rustnx
+    cfg.exact_floats = True
+    cfg.exact_floats_overrides = {"betweenness_centrality": False, "pagerank": False}
+    settings = rustnx.float_settings()
+    assert settings["betweenness_centrality"]["exact"] is False
+    assert settings["betweenness_centrality"]["set_by"] == "exact_floats_overrides['betweenness_centrality']"
+    assert settings["edge_betweenness_centrality"]["exact"] is True
+    assert_close_dicts(nx.betweenness_centrality(G, backend="rustnx"), ref)
+    cfg.exact_floats = False
+    cfg.exact_floats_overrides = {"betweenness_centrality": True}
+    assert_exact_dicts(nx.betweenness_centrality(G, backend="rustnx"), ref)
+    assert rustnx.float_settings()["pagerank"]["exact"] is False
+
+
+def test_float_settings_enable(restore_config):
+    rustnx.enable(exact_floats=True, exact_floats_overrides={"pagerank": False}, verbose=True)
+    cfg = nx.config.backends.rustnx
+    assert (cfg.exact_floats, cfg.exact_floats_overrides, cfg.verbose) == (True, {"pagerank": False}, True)
+    rustnx.enable()  # leaves the settings alone
+    assert (cfg.exact_floats, cfg.exact_floats_overrides, cfg.verbose) == (True, {"pagerank": False}, True)
+    rustnx.enable(exact_floats_overrides={"betweenness_centrality": True})  # merged
+    assert cfg.exact_floats_overrides == {"pagerank": False, "betweenness_centrality": True}
+    with pytest.raises(ValueError, match="no float setting for pagernk"):
+        rustnx.enable(exact_floats_overrides={"pagernk": True})
+
+
+def test_float_settings_report_typos(restore_config):
+    nx.config.backends.rustnx.exact_floats_overrides = {"pagernk": True}
+    assert rustnx.float_settings()["unknown_overrides"] == ["pagernk"]
+    assert "pagernk" in rustnx.explain_floats()
+
+
+@pytest.mark.parametrize(
+    "env, expected",
+    [
+        ({}, (False, {}, False)),
+        ({"RUSTNX_EXACT_FLOATS": "1"}, (True, {}, False)),
+        ({"RUSTNX_EXACT_FLOATS": "off"}, (False, {}, False)),
+        ({"RUSTNX_EXACT_FLOATS_OVERRIDES": "pagerank, betweenness_centrality=0"},
+         (False, {"pagerank": True, "betweenness_centrality": False}, False)),
+        ({"RUSTNX_VERBOSE": "yes"}, (False, {}, True)),
+    ],
+)
+def test_float_settings_environment(env, expected):
+    import subprocess
+
+    code = (
+        "import networkx as nx; c = nx.config.backends.rustnx; "
+        "print(repr((c.exact_floats, c.exact_floats_overrides, c.verbose)))"
+    )
+    clean = {k: v for k, v in os.environ.items() if not k.startswith("RUSTNX_")}
+    out = subprocess.run([sys.executable, "-c", code], env={**clean, **env},
+                         capture_output=True, text=True, check=True).stdout
+    assert out.strip() == repr(expected)
+
+
+def test_float_settings_logging(restore_config, caplog):
+    from rustnx import _config
+
+    G = random_graph(2, True, "int")
+    _config._announced.clear()
+    with caplog.at_level(logging.DEBUG, logger="rustnx"):
+        nx.pagerank(G, backend="rustnx")
+    assert any("rustnx pagerank: fast floats" in r.getMessage() and r.levelno == logging.DEBUG
+               for r in caplog.records)
+    caplog.clear()
+    nx.config.backends.rustnx.verbose = True
+    nx.config.backends.rustnx.exact_floats_overrides = {"pagerank": True}
+    with caplog.at_level(logging.INFO, logger="rustnx"):
+        nx.pagerank(G, backend="rustnx")
+        nx.pagerank(G, backend="rustnx")  # announced once per setting
+    infos = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+    assert len(infos) == 1
+    assert "exact floats (set by exact_floats_overrides['pagerank'])" in infos[0]
+
+
+def test_exact_floats_declines_inexact_inputs(restore_config):
+    M = nx.MultiDiGraph([(0, 1), (0, 1), (1, 2), (2, 0), (2, 3)])
+    ref = nx.pagerank(M, backend="networkx")
+    # Fast floats (the default): runs in Rust, close to NetworkX.
+    assert_pagerank_close(nx.pagerank(M, backend="rustnx"), ref)
+    nx.config.backends.rustnx.exact_floats_overrides = {"pagerank": True}
+    # Explicitly asked for: raises, saying why and what to change.
+    with pytest.raises(NotImplementedError) as info:
+        nx.pagerank(M, backend="rustnx")
+    assert "exact_floats_overrides['pagerank'] = False" in str(info.value.__cause__)
+    # Automatic dispatch: NetworkX runs it instead.
+    rustnx.enable()
+    assert nx.pagerank(M) == ref
 
 # --- Changing the graph during iteration ---------------------------------------
 
@@ -953,10 +1084,11 @@ def test_edge_betweenness(seed, directed, weights):
     G = random_graph(seed, directed, weights)
     weight = None if weights == "none" else "weight"
     for normalized in [True, False]:
-        ours, ref = both(
+        exact, fast, ref = both_modes(
             nx.edge_betweenness_centrality, G, normalized=normalized, weight=weight
         )
-        assert_close_dicts(ours, ref)
+        assert_exact_dicts(exact, ref)
+        assert_close_dicts(fast, ref)
 
 
 @pytest.mark.parametrize("seed", range(20))
@@ -964,14 +1096,16 @@ def test_edge_betweenness_sampled(seed):
     G = random_graph(seed, directed=seed % 2 == 0, weights="int")
     k = max(1, len(G) // 3)
     for weight in [None, "weight"]:
-        ours, ref = both(nx.edge_betweenness_centrality, G, k=k, weight=weight, seed=seed)
-        assert_close_dicts(ours, ref)
+        exact, fast, ref = both_modes(nx.edge_betweenness_centrality, G, k=k, weight=weight, seed=seed)
+        assert_exact_dicts(exact, ref)
+        assert_close_dicts(fast, ref)
 
 
 def test_edge_betweenness_small_graphs():
     for G in [nx.Graph(), nx.Graph([(0, 0)]), nx.path_graph(2), nx.DiGraph([(1, 0)])]:
-        ours, ref = both(nx.edge_betweenness_centrality, G)
-        assert_close_dicts(ours, ref)
+        exact, fast, ref = both_modes(nx.edge_betweenness_centrality, G)
+        assert_exact_dicts(exact, ref)
+        assert_close_dicts(fast, ref)
 
 
 # --- rustnx.enable() ---------------------------------------------------------------
@@ -981,8 +1115,11 @@ def test_edge_betweenness_small_graphs():
 def restore_config():
     priority = nx.config.backend_priority
     old = priority.algos, priority.generators, nx.config.fallback_to_nx
+    cfg = nx.config.backends.rustnx
+    floats = cfg.exact_floats, dict(cfg.exact_floats_overrides), cfg.verbose
     yield
     priority.algos, priority.generators, nx.config.fallback_to_nx = old
+    cfg.exact_floats, cfg.exact_floats_overrides, cfg.verbose = floats
 
 
 @pytest.mark.parametrize("before", [[], ["networkx"], ["rustnx", "networkx"], ["networkx", "rustnx"]])
