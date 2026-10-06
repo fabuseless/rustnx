@@ -6243,6 +6243,51 @@ impl CoreGraph {
         })
     }
 
+    /// `geometric_edges`: the pairs of `nodes` (positions `positions`, each
+    /// a sequence of numbers of one length) within `radius`, sorted by
+    /// position, as `(u, v)` tuples; `None` to let NetworkX run (positions
+    /// SciPy reads differently, or a pair within rounding error of the
+    /// radius).
+    #[staticmethod]
+    fn b23_geometric_edges<'py>(
+        py: Python<'py>,
+        nodes: Vec<Bound<'py, PyAny>>,
+        positions: Vec<Bound<'py, PyAny>>,
+        radius: f64,
+        p: f64,
+    ) -> PyResult<Option<Bound<'py, PyList>>> {
+        if nodes.len() != positions.len() || nodes.is_empty() {
+            return Ok(None);
+        }
+        let mut coords = Vec::new();
+        let mut dim = None;
+        for pos in &positions {
+            if pos.is_instance_of::<pyo3::types::PyString>() {
+                return Ok(None);
+            }
+            let Ok(row) = pos.extract::<Vec<f64>>() else {
+                return Ok(None);
+            };
+            if *dim.get_or_insert(row.len()) != row.len() || row.iter().any(|x| !x.is_finite()) {
+                return Ok(None);
+            }
+            coords.extend(row);
+        }
+        let dim = dim.unwrap_or(0);
+        if dim == 0 {
+            return Ok(None);
+        }
+        let Some(pairs) = py.detach(|| random_generators::geometric_pairs(&coords, dim, radius, p))
+        else {
+            return Ok(None);
+        };
+        let out = PyList::empty(py);
+        for (u, v) in pairs {
+            out.append((&nodes[u as usize], &nodes[v as usize]))?;
+        }
+        Ok(Some(out))
+    }
+
     /// `maybe_regular_expander_graph` into the empty graph `g` (`n` nodes),
     /// from a NumPy `RandomState`'s MT19937 `state` (624 key words and the
     /// position).

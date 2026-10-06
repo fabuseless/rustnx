@@ -200,6 +200,7 @@ FUNCTIONS = {
     "generalized_petersen_graph": {},
     "generic_bfs_edges": {},
     "geographical_threshold_graph": {},
+    "geometric_edges": {},
     "geometric_soft_configuration_graph": {},
     "get_counterexample": {},
     "get_counterexample_recursive": {},

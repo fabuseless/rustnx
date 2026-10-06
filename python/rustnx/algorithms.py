@@ -221,6 +221,7 @@ __all__ = [
     "generalized_petersen_graph",
     "generic_bfs_edges",
     "geographical_threshold_graph",
+    "geometric_edges",
     "geometric_soft_configuration_graph",
     "get_counterexample",
     "get_counterexample_recursive",
@@ -13008,3 +13009,21 @@ def maybe_regular_expander(n, d, *, create_using=None, max_tries=100, seed=None)
     # NetworkX 3.4 and 3.5's name; 3.6 renamed it (the old name warns and
     # calls the new one, without dispatching).
     return _b23_expander(n, d, create_using, max_tries, seed)
+
+
+def geometric_edges(G, radius, p=2, *, pos_name="pos"):
+    base = _b19_source(G)
+    if base is None:
+        raise NotImplementedError("rustnx reads positions from the NetworkX graph")
+    nodes = list(base._node)
+    positions = [data.get(pos_name) for data in base._node.values()]
+    for n, pos in zip(nodes, positions):
+        if pos is None:
+            raise nx.NetworkXError(f"Node {n} (and all nodes) must have a '{pos_name}' attribute.")
+    rf, pf = _rg_floats(radius, p)
+    if not nodes or not (0 <= rf < math.inf) or not (1 <= pf < math.inf):
+        raise NotImplementedError("rustnx can't match NetworkX here")
+    edges = _CoreGraph.b23_geometric_edges(nodes, positions, rf, pf)
+    if edges is None:
+        raise NotImplementedError("rustnx can't match SciPy's KD-tree here")
+    return edges
