@@ -163,6 +163,11 @@ def _copy_locked(func):
                 scope[name] = _wrapper_for(value.name, value)
         elif (
             isinstance(value, types.FunctionType)
+            and (getattr(value, "__module__", None), getattr(value, "__name__", None)) in HELPERS
+        ):
+            scope[name] = HELPERS[(value.__module__, value.__name__)]
+        elif (
+            isinstance(value, types.FunctionType)
             and (getattr(value, "__module__", "") or "").startswith("networkx")
             # Decorated helpers (`np_random_state`, ...) are compiled
             # wrappers that convert their arguments; copying one would skip
@@ -187,6 +192,12 @@ def _wrapper_for(name, dispatchable):
 
 # Filled in by algorithms.py: every NetworkX function run as a hybrid.
 HYBRIDS = set()
+
+# NetworkX helper functions replaced inside hybrids: (module, name) ->
+# replacement. Filled in by algorithms.py; each replacement returns exactly
+# what the helper returns (for example the same integers from a faster
+# formula and a cache), so NetworkX's code around it is unchanged.
+HELPERS = {}
 
 
 @functools.cache

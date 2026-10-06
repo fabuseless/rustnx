@@ -274,6 +274,12 @@ LINKS = "Scores pairs in batches as the generator is consumed, so `ebunch` (defa
 COMMUNITIES = "Community values must be ints, floats, strings, bools or `None`; others fall back."
 LENGTHS = "Falls back when weights mix ints and floats (NetworkX's length types then depend on the path)."
 NOTES = {
+    "random_k_out_graph": "Replays the installed NetworkX's draws: 3.4's pure-Python version on `random.Random`, and from 3.5 its NumPy version on a legacy `RandomState` (an int or `None` seed included; NumPy `Generator` seeds fall back), with 3.5 and 3.6's NumPy-int adjacency keys. 3x to 5x faster from 3.5, 70x to 150x on 3.4.",
+    "graph_atlas": "NetworkX's atlas file parsed once per process (NetworkX re-reads it on every call): the same graphs, about 600x faster.",
+    "graph_atlas_g": "As `graph_atlas`: all 1,253 graphs, about 2x faster.",
+    "random_unlabeled_tree": "NetworkX's own sampling code, with the numbers of rooted trees and forests (big integers it recomputes on every call) from a per-process cache filled with the same recurrence in O(n^2). Identical draws and graphs; 5x to 40x faster on a first call, about 150x on later ones.",
+    "random_unlabeled_rooted_tree": "As `random_unlabeled_tree`.",
+    "random_unlabeled_rooted_forest": "As `random_unlabeled_tree`.",
     "k_factor": "NetworkX's own code, with its expensive inner call run in rustnx (`max_weight_matching` on the gadget graph). Bit-for-bit identical; 12x to 29x faster.",
     "junction_tree": "NetworkX's own code, with its expensive inner call run in rustnxs (`complete_to_chordal_graph`, `chordal_graph_cliques`, `maximum_spanning_tree`). Bit-for-bit identical; about 35x faster.",
     "find_induced_nodes": "NetworkX's own code, with its expensive inner call run in rustnx (`is_chordal`); the rest is NetworkX's set-order search, unchanged. Bit-for-bit identical; about 1.6x faster.",
@@ -936,6 +942,10 @@ SECTIONS.append(("Linear algebra, NumPy/SciPy and other hybrids", [
     "normalized_laplacian_matrix", "bethe_hessian_matrix", "magnetic_laplacian_matrix",
     "attr_matrix", "attr_sparse_matrix", "tournament_matrix", "eigenvector_centrality_numpy", "hits",
     "k_factor", "junction_tree", "find_induced_nodes",
+]))
+SECTIONS.append(("Generators (generators and I/O round)", [
+    "random_k_out_graph", "graph_atlas", "graph_atlas_g", "random_unlabeled_tree",
+    "random_unlabeled_rooted_tree", "random_unlabeled_rooted_forest",
 ]))
 SECTIONS.append(("Bipartite measures", [
     "latapy_clustering", "bipartite_average_clustering", "robins_alexander_clustering",

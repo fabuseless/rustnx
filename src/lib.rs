@@ -7563,6 +7563,33 @@ impl CoreGraph {
         })
     }
 
+    /// `random_k_out_graph`'s edges, in the order NetworkX adds them, and
+    /// the generator's new state: `numpy` replays NetworkX 3.5+'s NumPy
+    /// version on a legacy `RandomState` state, otherwise 3.4's pure-Python
+    /// version on a `random.Random` state. `None` lets NetworkX run.
+    #[staticmethod]
+    #[allow(clippy::type_complexity)]
+    fn k_out_edges(
+        py: Python<'_>,
+        n: usize,
+        k: usize,
+        alpha: f64,
+        self_loops: bool,
+        numpy: bool,
+        state: Vec<u32>,
+    ) -> Option<(Vec<u32>, Vec<u32>, Vec<u32>)> {
+        let mut rng = pyrandom::Mt19937::from_state(&state)?;
+        let edges = py.detach(|| {
+            if numpy {
+                algorithms::random_generators_more::k_out_numpy(&mut rng, n, k, alpha, self_loops)
+            } else {
+                algorithms::random_generators_more::k_out_py34(&mut rng, n, k, alpha, self_loops)
+            }
+        })?;
+        let (us, vs) = edges.into_iter().unzip();
+        Some((us, vs, rng.state()))
+    }
+
     /// `geometric_edges`: the pairs of `nodes` (positions `positions`, each
     /// a sequence of numbers of one length) within `radius`, sorted by
     /// position, as `(u, v)` tuples; `None` to let NetworkX run (positions

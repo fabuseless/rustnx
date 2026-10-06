@@ -758,6 +758,10 @@ def _product(*values):
 
 # Generators whose size isn't their largest argument.
 _SIZE_ESTIMATES = {
+    # The cost is reading NetworkX's atlas file up to graph `i` (all of it
+    # for graph_atlas_g); rustnx parses it once per process.
+    "graph_atlas": lambda a: a.get("i") if type(a.get("i")) is int else _LARGE,
+    "graph_atlas_g": lambda a: _LARGE,
     "balanced_tree": lambda a: _power(a.get("r"), a.get("h")),
     "binomial_tree": lambda a: _power(2, a.get("n")),
     "hypercube_graph": lambda a: _power(2, a.get("n")),

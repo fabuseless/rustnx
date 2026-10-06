@@ -94,7 +94,47 @@ BLOCKED = {
 # in anything rustnx could do in Rust), or they are O(1) per call, so
 # dispatch would only add overhead. An area is complete when every function
 # is done or listed here.
+SMALL_GRAPH = (
+    "a fixed graph of at most 77 nodes that NetworkX builds in under 0.35 ms (measured); rustnx's dispatch alone costs about 20 microseconds, and its small-input rule keeps such calls in NetworkX anyway"
+)
+
 STAYS = {
+    'bull_graph': SMALL_GRAPH,
+    'chvatal_graph': SMALL_GRAPH,
+    'cubical_graph': SMALL_GRAPH,
+    'davis_southern_women_graph': SMALL_GRAPH,
+    'desargues_graph': SMALL_GRAPH,
+    'diamond_graph': SMALL_GRAPH,
+    'dodecahedral_graph': SMALL_GRAPH,
+    'florentine_families_graph': SMALL_GRAPH,
+    'frucht_graph': SMALL_GRAPH,
+    'heawood_graph': SMALL_GRAPH,
+    'hoffman_singleton_graph': SMALL_GRAPH,
+    'house_graph': SMALL_GRAPH,
+    'house_x_graph': SMALL_GRAPH,
+    'icosahedral_graph': SMALL_GRAPH,
+    'karate_club_graph': SMALL_GRAPH,
+    'krackhardt_kite_graph': SMALL_GRAPH,
+    'les_miserables_graph': SMALL_GRAPH,
+    'moebius_kantor_graph': SMALL_GRAPH,
+    'octahedral_graph': SMALL_GRAPH,
+    'pappus_graph': SMALL_GRAPH,
+    'petersen_graph': SMALL_GRAPH,
+    'sedgewick_maze_graph': SMALL_GRAPH,
+    'shrikhande_graph': SMALL_GRAPH,
+    'tetrahedral_graph': SMALL_GRAPH,
+    'triad_graph': SMALL_GRAPH,
+    'trivial_graph': SMALL_GRAPH,
+    'null_graph': SMALL_GRAPH,
+    'truncated_cube_graph': SMALL_GRAPH,
+    'truncated_tetrahedron_graph': SMALL_GRAPH,
+    'tutte_graph': SMALL_GRAPH,
+    'number_of_nonisomorphic_trees': 'a count NetworkX computes in microseconds (2 microseconds for n=20, measured); dispatch would only add time',
+    'is_valid_joint_degree': 'a few checks over the given dict (4 microseconds for a small one, measured); converting and dispatching cost as much',
+    'random_kernel_graph': "calls the caller's Python kernel function and SciPy's root finder for every step; those calls are the cost",
+    'spectral_graph_forge': 'its time is in LAPACK (a dense eigendecomposition) and NumPy',
+    'random_regular_expander_graph': "its time is in SciPy's ARPACK eigensolver, whose random start also changes how many graphs it tries; with rustnx's generator inside it measured 0.5x to 1.5x",
+    'is_regular_expander': "its time is in SciPy's ARPACK eigensolver; with the matrix built in Rust it measured 1.0x to 1.4x",
     'adjacency_spectrum': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
     'laplacian_spectrum': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
     'normalized_laplacian_spectrum': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
