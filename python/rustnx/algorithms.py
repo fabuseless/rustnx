@@ -449,6 +449,7 @@ __all__ = [
     "radius",
     "random_geometric_graph",
     "random_graph",
+    "random_internet_as_graph",
     "random_k_lift",
     "random_lobster",
     "random_lobster_graph",
@@ -13027,3 +13028,63 @@ def geometric_edges(G, radius, p=2, *, pos_name="pos"):
     if edges is None:
         raise NotImplementedError("rustnx can't match SciPy's KD-tree here")
     return edges
+
+
+@functools.cache
+def _b23_set_algebra_replayable():
+    """Whether rustnx's replicas of CPython's ``set.union``,
+    ``intersection`` and ``difference`` give this interpreter's iteration
+    order (``random_internet_as_graph`` builds its candidate sets with
+    them), checked on random sets of all relative sizes."""
+    rng = random.Random(20261006)
+    keys = list(range(400)) + [1000 + 64 * i for i in range(60)] + [-1, -5, 2**61 - 1, 2**62]
+    nsets = 6
+    sets = [set() for _ in range(nsets)]
+    ops = []
+    for _ in range(4000):
+        r, dst = rng.random(), rng.randrange(nsets)
+        if r < 0.6:
+            k = rng.randrange(len(keys))
+            sets[dst].add(keys[k])
+            ops.append((0, dst, k, 0))
+        elif r < 0.75:
+            k = rng.randrange(len(keys))
+            sets[dst].discard(keys[k])
+            ops.append((1, dst, k, 0))
+        else:
+            a, b = rng.sample(range(nsets), 2)
+            op = rng.choice([2, 3, 4])
+            if op == 2:
+                sets[dst] = sets[a].union(sets[b])
+            elif op == 3:
+                sets[dst] = sets[a].intersection(sets[b])
+            else:
+                sets[dst] = sets[a].difference(sets[b])
+            ops.append((op, dst, a, b))
+    position = {k: i for i, k in enumerate(keys)}
+    try:
+        got = _CoreGraph.b23_replay_set_algebra([hash(k) for k in keys], nsets, ops)
+    except Exception:
+        return False
+    return got == [[position[k] for k in s] for s in sets]
+
+
+def random_internet_as_graph(n, seed=None):
+    _rg_seed(seed)
+    if type(n) is not int or not 0 <= n < 2**24:
+        raise NotImplementedError("rustnx needs a non-negative int n")
+    if not (_sets_replayable() and _b23_set_algebra_replayable()):
+        raise NotImplementedError("Python's set order can't be replayed here")
+    # AS_graph_generator's constants that don't depend on a draw.
+    counts = (n, round(0.15 * n), round(0.05 * n))
+    rates = [
+        2 + 2.5 * n / 10000,
+        2 + 1.5 * n / 10000,
+        1 + 5 * n / 100000,
+        1 + 2 * n / 10000,
+        0.2 + 2 * n / 10000,
+        0.05 + 2 * n / 100000,
+    ]
+    G = nx.Graph()
+    _rg_run(seed, lambda state: _CoreGraph.b23_internet_as(counts, rates, state, G))
+    return G

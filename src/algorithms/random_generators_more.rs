@@ -687,3 +687,325 @@ pub fn maybe_regular_expander(
     }
     Some(edges.iter().map(|id| pairs[id as usize]).collect())
 }
+
+/// CPython's `a.union(b)` of two sets: a copy of `a` (a new set merged
+/// with it), then merged with `b`.
+fn set_union(a: &PySet, b: &PySet, hashes: &[i64]) -> PySet {
+    let mut r = PySet::default();
+    r.merge(a, hashes);
+    r.merge(b, hashes);
+    r
+}
+
+/// CPython's `a.intersection(b)` of two sets: iterate the smaller (`b` on
+/// a tie), adding the members of the other.
+fn set_intersection(a: &PySet, b: &PySet, hashes: &[i64]) -> PySet {
+    let (iterated, other) = if b.len() > a.len() { (a, b) } else { (b, a) };
+    let mut r = PySet::default();
+    for k in iterated.iter() {
+        if other.contains(k, hashes) {
+            r.add(k, hashes);
+        }
+    }
+    r
+}
+
+/// CPython's `a.difference(b)` of two sets: a copy of `a` with `b`'s keys
+/// discarded when `a` is over four times larger, else the keys of `a` not
+/// in `b`, added in `a`'s order.
+fn set_difference(a: &PySet, b: &PySet, hashes: &[i64]) -> PySet {
+    if (a.len() >> 2) > b.len() {
+        let mut r = PySet::default();
+        r.merge(a, hashes);
+        for k in b.iter() {
+            r.discard(k, hashes);
+        }
+        r.after_difference_update(hashes);
+        return r;
+    }
+    let mut r = PySet::default();
+    for k in a.iter() {
+        if !b.contains(k, hashes) {
+            r.add(k, hashes);
+        }
+    }
+    r
+}
+
+/// Replays set algebra for the runtime check that the replicas above match
+/// the running interpreter: `(op, dst, a, b)` with op 0 `s[dst].add(a)`,
+/// 1 `s[dst].discard(a)`, 2 `s[dst] = s[a].union(s[b])`, 3 intersection,
+/// 4 difference. Returns every set's keys in iteration order.
+pub fn replay_set_algebra(
+    hashes: &[i64],
+    nsets: usize,
+    ops: &[(u8, u32, u32, u32)],
+) -> Vec<Vec<u32>> {
+    let mut sets: Vec<PySet> = (0..nsets).map(|_| PySet::default()).collect();
+    for &(op, dst, a, b) in ops {
+        let (dst, ai, bi) = (dst as usize, a as usize, b as usize);
+        match op {
+            0 => sets[dst].add(a, hashes),
+            1 => {
+                sets[dst].discard(a, hashes);
+            }
+            2 => sets[dst] = set_union(&sets[ai], &sets[bi], hashes),
+            3 => sets[dst] = set_intersection(&sets[ai], &sets[bi], hashes),
+            _ => sets[dst] = set_difference(&sets[ai], &sets[bi], hashes),
+        }
+    }
+    sets.iter().map(|s| s.iter().collect()).collect()
+}
+
+/// Python's `round(x)` for a float (ties to even), as an int.
+fn py_round(x: f64) -> i64 {
+    x.round_ties_even() as i64
+}
+
+/// The constants `AS_graph_generator.__init__` computes from `n` alone
+/// (Python's arithmetic, done by the caller).
+pub struct AsParams {
+    pub n: i64,
+    pub n_m: i64,
+    pub n_cp: i64,
+    pub d_m: f64,
+    pub d_cp: f64,
+    pub d_c: f64,
+    pub p_m_m: f64,
+    pub p_cp_m: f64,
+    pub p_cp_cp: f64,
+}
+
+/// `random_internet_as_graph`'s result: the graph, each node's kind (0 T,
+/// 1 M, 2 CP, 3 C) and `peers` count, and each edge (in insertion order)
+/// with whether it is a transit link (`customer` is then `str(u)`).
+pub struct AsGraph {
+    pub b: Built,
+    pub kinds: Vec<u8>,
+    pub peers: Vec<u32>,
+    pub edges: Vec<(u32, u32, bool)>,
+}
+
+/// NetworkX's `uniform_int_from_avg(a, m, seed)`.
+fn uniform_int_from_avg(a: i64, m: f64, rng: &mut Mt19937) -> i64 {
+    let b = 2.0 * m - a as f64;
+    let fb = b.floor();
+    let p = (b - fb) / 2.0;
+    let x1 = py_round(rng.random() * (fb - a as f64) + a as f64);
+    let x2 = i64::from(rng.random() < p);
+    x1 + x2
+}
+
+/// NetworkX's `choose_pref_attach(degs, seed)` for a non-empty dict given as
+/// keys and int values in order.
+fn choose_pref_attach(keys: &[u32], values: &[u64], rng: &mut Mt19937) -> u32 {
+    let s: u64 = values.iter().sum();
+    if s == 0 {
+        return rng.choice(keys);
+    }
+    let v = rng.random() * s as f64;
+    let mut i = 0;
+    let mut acc = values[0];
+    while v > acc as f64 {
+        i += 1;
+        acc += values[i];
+    }
+    keys[i]
+}
+
+struct AsState<'a> {
+    rng: &'a mut Mt19937,
+    hashes: Vec<i64>,
+    regions: Vec<PySet>,
+    /// `nodes['T']`, `['M']`, `['CP']`, `['C']`.
+    nodes: [PySet; 4],
+    customers: Vec<PySet>,
+    providers: Vec<PySet>,
+    out: AsGraph,
+}
+
+impl AsState<'_> {
+    fn add_edge(&mut self, i: u32, j: u32, transit: bool) {
+        self.out.b.push_edge(i, j);
+        self.out.edges.push((i, j, transit));
+    }
+
+    fn degree(&self, v: u32) -> u64 {
+        self.out.b.succ[v as usize].len() as u64
+    }
+
+    fn choose_node_pref_attach(&mut self, options: &PySet) -> u32 {
+        let keys: Vec<u32> = options.iter().collect();
+        let values: Vec<u64> = keys.iter().map(|&v| self.degree(v)).collect();
+        choose_pref_attach(&keys, &values, self.rng)
+    }
+
+    fn add_customer(&mut self, i: u32, j: u32) {
+        let h = &self.hashes;
+        self.customers[j as usize].add(i, h);
+        self.providers[i as usize].add(j, h);
+        let ps: Vec<u32> = self.providers[j as usize].iter().collect();
+        for z in ps {
+            self.customers[z as usize].add(i, h);
+            self.providers[i as usize].add(z, h);
+        }
+    }
+
+    fn add_node(&mut self, i: u32, kind: u8, reg2prob: f64, avg_deg: f64, t_edge_prob: f64) {
+        let regs = if self.rng.random() < reg2prob { 2 } else { 1 };
+        let mut node_options = PySet::default();
+        self.out.b.succ.push(Vec::new());
+        self.out.kinds.push(kind);
+        self.out.peers.push(0);
+        self.customers.push(PySet::default());
+        self.providers.push(PySet::default());
+        self.nodes[kind as usize].add(i, &self.hashes);
+        for r in self.rng.sample(&[0usize, 1, 2, 3, 4], regs) {
+            node_options = set_union(&node_options, &self.regions[r], &self.hashes);
+            self.regions[r].add(i, &self.hashes);
+        }
+        let edge_num = uniform_int_from_avg(1, avg_deg, self.rng);
+        let mut t_options = set_intersection(&node_options, &self.nodes[0], &self.hashes);
+        let mut m_options = set_intersection(&node_options, &self.nodes[1], &self.hashes);
+        m_options.discard(i, &self.hashes);
+        let mut d = 0;
+        while d < edge_num && (!t_options.is_empty() || !m_options.is_empty()) {
+            let j = if m_options.is_empty()
+                || (!t_options.is_empty() && self.rng.random() < t_edge_prob)
+            {
+                let j = self.choose_node_pref_attach(&t_options);
+                t_options.discard(j, &self.hashes);
+                j
+            } else {
+                let j = self.choose_node_pref_attach(&m_options);
+                m_options.discard(j, &self.hashes);
+                j
+            };
+            self.add_edge(i, j, true);
+            self.add_customer(i, j);
+            d += 1;
+        }
+    }
+
+    /// Discards `v` and `v`'s neighbors from `options`.
+    fn drop_self_and_neighbors(&self, options: &mut PySet, v: u32) {
+        options.discard(v, &self.hashes);
+        for &j in &self.out.b.succ[v as usize] {
+            options.discard(j, &self.hashes);
+        }
+    }
+
+    fn add_m_peering_link(&mut self, m: u32) {
+        let h = &self.hashes;
+        let options = set_difference(&self.nodes[1], &self.customers[m as usize], h);
+        let mut options = set_difference(&options, &self.providers[m as usize], h);
+        self.drop_self_and_neighbors(&mut options, m);
+        if options.is_empty() {
+            return;
+        }
+        let keys: Vec<u32> = options.iter().collect();
+        let values: Vec<u64> = keys
+            .iter()
+            .map(|&v| self.out.peers[v as usize] as u64)
+            .collect();
+        let j = choose_pref_attach(&keys, &values, self.rng);
+        self.add_edge(m, j, false);
+        self.out.peers[m as usize] += 1;
+        self.out.peers[j as usize] += 1;
+    }
+
+    fn add_cp_peering_link(&mut self, cp: u32, to_kind: usize) {
+        let h = &self.hashes;
+        let mut options = PySet::default();
+        for r in &self.regions {
+            if r.contains(cp, h) {
+                options = set_union(&options, r, h);
+            }
+        }
+        let mut options = set_intersection(&self.nodes[to_kind], &options, h);
+        options.discard(cp, h);
+        let mut options = set_difference(&options, &self.providers[cp as usize], h);
+        self.drop_self_and_neighbors(&mut options, cp);
+        if options.is_empty() {
+            return;
+        }
+        let keys: Vec<u32> = options.iter().collect();
+        let j = self.rng.sample(&keys, 1)[0];
+        self.add_edge(cp, j, false);
+        self.out.peers[cp as usize] += 1;
+        self.out.peers[j as usize] += 1;
+    }
+
+    fn add_peering_links(&mut self, from_kind: usize, to_kind: usize, m: f64) {
+        let members: Vec<u32> = self.nodes[from_kind].iter().collect();
+        for i in members {
+            let num = uniform_int_from_avg(0, m, self.rng);
+            for _ in 0..num.max(0) {
+                if from_kind == 1 {
+                    self.add_m_peering_link(i);
+                } else {
+                    self.add_cp_peering_link(i, to_kind);
+                }
+            }
+        }
+    }
+}
+
+/// `random_internet_as_graph(n)`: `AS_graph_generator(n, seed).generate()`
+/// with every set replayed as CPython's (the order of node options, of
+/// preferential choices and of the peering loops follows them).
+pub fn internet_as(c: &AsParams, rng: &mut Mt19937) -> AsGraph {
+    let n_t = c.n.min(py_round(rng.random() * 2.0 + 4.0)).max(0);
+    let n_c = (c.n - n_t - c.n_m - c.n_cp).max(0);
+    let total = (n_t + c.n_m.max(0) + c.n_cp.max(0) + n_c) as usize;
+    let mut st = AsState {
+        rng,
+        hashes: (0..total as i64).collect(),
+        regions: (0..5).map(|_| PySet::default()).collect(),
+        nodes: Default::default(),
+        customers: Vec::with_capacity(total),
+        providers: Vec::with_capacity(total),
+        out: AsGraph {
+            b: Built::new(0, false),
+            kinds: Vec::with_capacity(total),
+            peers: Vec::with_capacity(total),
+            edges: Vec::new(),
+        },
+    };
+    // t_graph: a clique of T nodes, each in every region.
+    for i in 0..n_t as u32 {
+        st.out.b.succ.push(Vec::new());
+        st.out.kinds.push(0);
+        st.out.peers.push(0);
+        for r in 0..5 {
+            st.regions[r].add(i, &st.hashes);
+        }
+        for j in 0..i {
+            st.add_edge(i, j, false);
+        }
+        st.customers.push(PySet::default());
+        st.providers.push(PySet::default());
+    }
+    let mut t = PySet::default();
+    for i in 0..n_t as u32 {
+        t.add(i, &st.hashes);
+    }
+    st.nodes[0] = t;
+    let mut i = n_t as u32;
+    for _ in 0..c.n_m.max(0) {
+        st.add_node(i, 1, 0.2, c.d_m, 0.375);
+        i += 1;
+    }
+    for _ in 0..c.n_cp.max(0) {
+        st.add_node(i, 2, 0.05, c.d_cp, 0.375);
+        i += 1;
+    }
+    for _ in 0..n_c {
+        st.add_node(i, 3, 0.0, c.d_c, 0.125);
+        i += 1;
+    }
+    st.add_peering_links(1, 1, c.p_m_m);
+    st.add_peering_links(2, 1, c.p_cp_m);
+    st.add_peering_links(2, 2, c.p_cp_cp);
+    st.out
+}

@@ -6288,6 +6288,94 @@ impl CoreGraph {
         Ok(Some(out))
     }
 
+    /// `random_internet_as_graph` into the empty `Graph` `g`, given the
+    /// constants `AS_graph_generator` computes from `n` (`n, n_m, n_cp` and
+    /// `d_m, d_cp, d_c, p_m_m, p_cp_m, p_cp_cp`).
+    #[staticmethod]
+    fn b23_internet_as<'py>(
+        py: Python<'py>,
+        counts: (i64, i64, i64),
+        rates: Vec<f64>,
+        state: Vec<u32>,
+        g: &Bound<'py, PyAny>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let [d_m, d_cp, d_c, p_m_m, p_cp_m, p_cp_cp] = rates[..] else {
+            return Err(PyValueError::new_err("six rates"));
+        };
+        let (n, n_m, n_cp) = counts;
+        if n >= 1 << 24 {
+            return Ok(None);
+        }
+        let c = more_random::AsParams {
+            n,
+            n_m,
+            n_cp,
+            d_m,
+            d_cp,
+            d_c,
+            p_m_m,
+            p_cp_m,
+            p_cp_cp,
+        };
+        let Some(mut rng) = pyrandom::Mt19937::from_state(&state) else {
+            return Ok(None);
+        };
+        let out = py.detach(|| more_random::internet_as(&c, &mut rng));
+        let s = |x: &str| pyo3::types::PyString::new(py, x);
+        let (k_type, k_peers, k_customer) = (s("type"), s("peers"), s("customer"));
+        let kinds = [s("T"), s("M"), s("CP"), s("C")];
+        fill_built_with(py, &out.b, g, None, |u, data| {
+            let kind = out.kinds[u as usize];
+            data.set_item(&k_type, &kinds[kind as usize])?;
+            if kind != 0 {
+                data.set_item(&k_peers, out.peers[u as usize])?;
+            }
+            Ok(())
+        })?;
+        // `add_edge(i, j, type=kind, customer=customer)`: one dict per edge,
+        // shared by both rows.
+        let adj = g.getattr("_adj")?.cast_into::<PyDict>()?;
+        let (transit, peer, none) = (s("transit"), s("peer"), s("none"));
+        for &(u, v, is_transit) in &out.edges {
+            let row = adj
+                .get_item(u)?
+                .ok_or_else(|| PyValueError::new_err("missing row"))?
+                .cast_into::<PyDict>()?;
+            let data = row
+                .get_item(v)?
+                .ok_or_else(|| PyValueError::new_err("missing edge"))?
+                .cast_into::<PyDict>()?;
+            if is_transit {
+                data.set_item(&k_type, &transit)?;
+                data.set_item(&k_customer, u.to_string())?;
+            } else {
+                data.set_item(&k_type, &peer)?;
+                data.set_item(&k_customer, &none)?;
+            }
+        }
+        Ok(Some(rng.state()))
+    }
+
+    /// Replays set algebra on `pyset::PySet` (the runtime check of
+    /// `random_internet_as_graph`'s union, intersection and difference);
+    /// see `random_generators_more::replay_set_algebra`.
+    #[staticmethod]
+    fn b23_replay_set_algebra(
+        hashes: Vec<i64>,
+        nsets: usize,
+        ops: Vec<(u8, u32, u32, u32)>,
+    ) -> PyResult<Vec<Vec<u32>>> {
+        for &(op, dst, a, b) in &ops {
+            let bad_key = op <= 1 && a as usize >= hashes.len();
+            let bad_set =
+                dst as usize >= nsets || (op >= 2 && (a as usize >= nsets || b as usize >= nsets));
+            if bad_key || bad_set {
+                return Err(PyIndexError::new_err("set or key out of range"));
+            }
+        }
+        Ok(more_random::replay_set_algebra(&hashes, nsets, &ops))
+    }
+
     /// `maybe_regular_expander_graph` into the empty graph `g` (`n` nodes),
     /// from a NumPy `RandomState`'s MT19937 `state` (624 key words and the
     /// position).
@@ -7850,6 +7938,25 @@ fn fill_built<'py>(
     labels: Option<Vec<Bound<'py, PyAny>>>,
     attrs: &[(&Bound<'py, PyAny>, &Bound<'py, PyList>)],
 ) -> PyResult<()> {
+    if attrs.iter().any(|(_, values)| values.len() != b.n()) {
+        return Err(PyValueError::new_err("one attribute value per node"));
+    }
+    fill_built_with(py, b, g, labels, |u, data| {
+        for (key, values) in attrs {
+            data.set_item(key, values.get_item(u as usize)?)?;
+        }
+        Ok(())
+    })
+}
+
+/// [`fill_built`] with each node's attributes set by `fill(u, data)`.
+fn fill_built_with<'py>(
+    py: Python<'py>,
+    b: &random_generators::Built,
+    g: &Bound<'py, PyAny>,
+    labels: Option<Vec<Bound<'py, PyAny>>>,
+    fill: impl FnMut(u32, &Bound<'py, PyDict>) -> PyResult<()>,
+) -> PyResult<()> {
     let n = b.n();
     let dicts = nxdicts::NxDicts::of_graph(g)?;
     if !dicts.is_empty() {
@@ -7858,10 +7965,8 @@ fn fill_built<'py>(
     if dicts.pred.is_some() != b.pred.is_some() {
         return Err(PyValueError::new_err("the graph's direction differs"));
     }
-    if attrs.iter().any(|(_, values)| values.len() != n)
-        || labels.as_ref().is_some_and(|l| l.len() != n)
-    {
-        return Err(PyValueError::new_err("one attribute value per node"));
+    if labels.as_ref().is_some_and(|l| l.len() != n) {
+        return Err(PyValueError::new_err("one label per node"));
     }
     let multi = g
         .call_method0(pyo3::intern!(py, "is_multigraph"))?
@@ -7881,12 +7986,7 @@ fn fill_built<'py>(
             .map(|i| Some(PyInt::new(py, i).into_any()))
             .collect(),
     };
-    nxdicts::write_sim(&dicts, &sim, &labels, |u, data| {
-        for (key, values) in attrs {
-            data.set_item(key, values.get_item(u as usize)?)?;
-        }
-        Ok(())
-    })
+    nxdicts::write_sim(&dicts, &sim, &labels, fill)
 }
 
 // --- Batch 23: growth and geometric generators (helpers) ---

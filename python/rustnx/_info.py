@@ -428,6 +428,7 @@ FUNCTIONS = {
     "radius": {},
     "random_geometric_graph": {},
     "random_graph": {},
+    "random_internet_as_graph": {},
     "random_k_lift": {},
     "random_lobster": {},
     "random_lobster_graph": {},

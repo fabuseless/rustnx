@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 534 NetworkX functions. Call them as usual (for
+rustnx implements 535 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -796,10 +796,11 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.uniform_random_intersection_graph` | `n`, `m`, `p`, `seed` | no | rustnx | Replays NetworkX's draws on CPython's `random.Random` (any `seed` NetworkX turns into one, including `None`: the global generator, left where NetworkX would leave it); NumPy generators fall back. `create_using` takes `None` or a NetworkX graph class; instances and subclasses fall back. Replays the projection's sets. `p >= 1` falls back. |
 | `nx.k_random_intersection_graph` | `n`, `m`, `k`, `seed` | no | rustnx | Replays NetworkX's draws on CPython's `random.Random` (any `seed` NetworkX turns into one, including `None`: the global generator, left where NetworkX would leave it); NumPy generators fall back. `create_using` takes `None` or a NetworkX graph class; instances and subclasses fall back. Replays the projection's sets. |
 | `nx.general_random_intersection_graph` | `n`, `m`, `p`, `seed` | no | rustnx | Replays NetworkX's draws on CPython's `random.Random` (any `seed` NetworkX turns into one, including `None`: the global generator, left where NetworkX would leave it); NumPy generators fall back. `create_using` takes `None` or a NetworkX graph class; instances and subclasses fall back. Replays the projection's sets. |
-| `nx.random_k_lift` | `k`, `seed` | no | rustnx | Replays NetworkX's draws on CPython's `random.Random` (any `seed` NetworkX turns into one, including `None`: the global generator, left where NetworkX would leave it); NumPy generators fall back. `create_using` takes `None` or a NetworkX graph class; instances and subclasses fall back. NetworkX 3.7+. Plain NetworkX graph classes only. |
+| `nx.random_k_lift` | `k`, `seed` | yes | rustnx | Replays NetworkX's draws on CPython's `random.Random` (any `seed` NetworkX turns into one, including `None`: the global generator, left where NetworkX would leave it); NumPy generators fall back. `create_using` takes `None` or a NetworkX graph class; instances and subclasses fall back. NetworkX 3.7+. Plain NetworkX graph classes only. |
 | `nx.bipartite.preferential_attachment_graph` | `aseq`, `p`, `create_using`, `seed` | no | rustnx | Replays NetworkX's draws on CPython's `random.Random` (any `seed` NetworkX turns into one, including `None`: the global generator, left where NetworkX would leave it); NumPy generators fall back. `create_using` takes `None` or a NetworkX graph class; instances and subclasses fall back. As `nx.bipartite.preferential_attachment_graph`. |
 | `nx.maybe_regular_expander_graph` | `n`, `d`, `create_using`, `max_tries`, `seed` | no | rustnx | Replays NumPy's legacy `RandomState` (MT19937; `seed=None` is NumPy's global one) and NetworkX's set of edges; `numpy.random.Generator` seeds fall back. NetworkX 3.6+. Running out of `max_tries` falls back. |
 | `nx.maybe_regular_expander` | `n`, `d`, `create_using`, `max_tries`, `seed` | no | rustnx | As `maybe_regular_expander_graph`, under its NetworkX 3.4 and 3.5 name. |
+| `nx.random_internet_as_graph` | `n`, `seed` | no | rustnx | Replays NetworkX's draws on CPython's `random.Random` (any `seed` NetworkX turns into one, including `None`: the global generator, left where NetworkX would leave it); NumPy generators fall back. `create_using` takes `None` or a NetworkX graph class; instances and subclasses fall back. Replays every set the generator builds (CPython's set table and its union, intersection and difference, checked once against the running Python), which decide its candidate order. |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 

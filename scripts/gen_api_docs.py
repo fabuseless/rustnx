@@ -892,7 +892,7 @@ SECTIONS.append(("Growth, geometric and community random generators", [
     "geometric_soft_configuration_graph", "geometric_edges",
     "uniform_random_intersection_graph", "k_random_intersection_graph",
     "general_random_intersection_graph", "random_k_lift", "preferential_attachment_graph",
-    "maybe_regular_expander_graph", "maybe_regular_expander",
+    "maybe_regular_expander_graph", "maybe_regular_expander", "random_internet_as_graph",
 ]))
 NOTES.update({
     "duplication_divergence_graph": RANDOM + " `p == 0` with `n > 2` falls back (NetworkX never returns).",
@@ -914,6 +914,7 @@ NOTES.update({
     "preferential_attachment_graph": RANDOM + " As `nx.bipartite.preferential_attachment_graph`.",
     "maybe_regular_expander_graph": "Replays NumPy's legacy `RandomState` (MT19937; `seed=None` is NumPy's global one) and NetworkX's set of edges; `numpy.random.Generator` seeds fall back. NetworkX 3.6+. Running out of `max_tries` falls back.",
     "maybe_regular_expander": "As `maybe_regular_expander_graph`, under its NetworkX 3.4 and 3.5 name.",
+    "random_internet_as_graph": RANDOM + " Replays every set the generator builds (CPython's set table and its union, intersection and difference, checked once against the running Python), which decide its candidate order.",
 })
 ISOMORPHISM_ONLY["preferential_attachment_graph"] = "nx.bipartite"
 

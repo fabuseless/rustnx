@@ -7669,6 +7669,7 @@ def test_batch23_dispatch(_b18_priority):
         ("random_k_lift", (nx.MultiDiGraph(nx.path_graph(150)), 2), {}),
         ("preferential_attachment_graph", ([2] * 150, 0.5), {}),
         ("relaxed_caveman_graph", (10, 12, 0.2), {}),
+        ("random_internet_as_graph", (150,), {}),
     ]
     runs = []
     original = algorithms._rg_run
@@ -7684,3 +7685,12 @@ def test_batch23_dispatch(_b18_priority):
             _b18_same_graph(G, H)
     finally:
         algorithms._rg_run = original
+
+
+@pytest.mark.parametrize("n", [0, 1, 3, 5, 6, 7, 10, 30, 150, 600])
+def test_batch23_internet_as(n):
+    from rustnx import algorithms
+
+    assert algorithms._b23_set_algebra_replayable()
+    _b23_check("random_internet_as_graph", (n,), seeds=range(4))
+    _b23_check("random_internet_as_graph", (-1,), seeds=[0], falls_back=True)
