@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 526 NetworkX functions. Call them as usual (for
+rustnx implements 527 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -792,6 +792,7 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.bipartite.eppstein_matching` | `top_nodes` | no | rustnx | As `nx.bipartite.eppstein_matching`, ported with its dict orders. Augmenting paths deep enough to approach Python's recursion limit fall back. |
 | `nx.bipartite.maximal_extendability` | none | no | rustnx | As `nx.bipartite.maximal_extendability`: the fewest node-disjoint paths between the two sides of the residual digraph, as maximum flows computed in parallel in Rust. |
 | `nx.bipartite.modularity` | `communities`, `nodes`, `weight`, `resolution` | no | rustnx | As `nx.bipartite.modularity` (NetworkX 3.7+). Degrees and each community's internal weight in Rust (Python's `sum()` semantics); NetworkX's own expressions over its sets combine them. |
+| `nx.cd_index` | `node`, `time_delta`, `time`, `weight` | no | rustnx | Checks every node's time attribute in Rust; the rest (the node's neighborhood) is NetworkX's own code. |
 
 ## rustworkx-compatible API (`rustnx.rx`)
 
