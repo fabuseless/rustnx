@@ -7666,6 +7666,7 @@ def test_batch23_dispatch(_b18_priority):
         ("k_random_intersection_graph", (150, 20, 2), {}),
         ("general_random_intersection_graph", (150, 20, [0.1] * 20), {}),
         ("random_k_lift", (nx.path_graph(150), 2), {}),
+        ("random_k_lift", (nx.MultiDiGraph(nx.path_graph(150)), 2), {}),
         ("preferential_attachment_graph", ([2] * 150, 0.5), {}),
         ("relaxed_caveman_graph", (10, 12, 0.2), {}),
     ]

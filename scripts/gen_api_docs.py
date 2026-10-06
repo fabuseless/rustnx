@@ -882,6 +882,40 @@ QUALIFIED.update({
     "projected_graph": "nx.bipartite.projected_graph",
     "weighted_projected_graph": "nx.bipartite.weighted_projected_graph",
 })
+# Batch 23: growth and geometric generators (seeded like batch 18).
+KD = " Pairs whose distance is within 1e-9 (relative) of the radius make the call fall back, since SciPy's KD-tree may round them either way."
+SECTIONS.append(("Growth, geometric and community random generators", [
+    "duplication_divergence_graph", "partial_duplication_graph", "scale_free_graph",
+    "random_shell_graph", "relaxed_caveman_graph", "gaussian_random_partition_graph",
+    "navigable_small_world_graph", "geographical_threshold_graph",
+    "soft_random_geometric_graph", "thresholded_random_geometric_graph",
+    "geometric_soft_configuration_graph", "geometric_edges",
+    "uniform_random_intersection_graph", "k_random_intersection_graph",
+    "general_random_intersection_graph", "random_k_lift", "preferential_attachment_graph",
+    "maybe_regular_expander_graph", "maybe_regular_expander",
+]))
+NOTES.update({
+    "duplication_divergence_graph": RANDOM + " `p == 0` with `n > 2` falls back (NetworkX never returns).",
+    "partial_duplication_graph": RANDOM,
+    "scale_free_graph": RANDOM + " `initial_graph` falls back.",
+    "random_shell_graph": RANDOM + " Replays the edge reordering of NetworkX's relabelled copies and unions. Shells NetworkX can't connect fall back.",
+    "relaxed_caveman_graph": RANDOM,
+    "gaussian_random_partition_graph": RANDOM + " Draws the block sizes with `seed.gauss` in Python, then runs `random_partition_graph` in Rust.",
+    "navigable_small_world_graph": RANDOM + " Lattices of 2^24 or more points fall back.",
+    "geographical_threshold_graph": RANDOM + " Given `pos` or `weight`, a `metric` or a `p_dist` fall back. A pair within rounding error of `theta` makes the call fall back (`math.dist` and Rust's distance may differ in the last bit).",
+    "soft_random_geometric_graph": RANDOM + " Given `pos` and a `p_dist` fall back." + KD,
+    "thresholded_random_geometric_graph": RANDOM + " Given `pos` or `weight` fall back." + KD,
+    "geometric_soft_configuration_graph": RANDOM + " `kappas` falls back (its handling differs between NetworkX versions).",
+    "geometric_edges": "Positions must be sequences of numbers of one length; anything else falls back." + KD,
+    "uniform_random_intersection_graph": RANDOM + " Replays the projection's sets. `p >= 1` falls back.",
+    "k_random_intersection_graph": RANDOM + " Replays the projection's sets.",
+    "general_random_intersection_graph": RANDOM + " Replays the projection's sets.",
+    "random_k_lift": RANDOM + " NetworkX 3.7+. Plain NetworkX graph classes only.",
+    "preferential_attachment_graph": RANDOM + " As `nx.bipartite.preferential_attachment_graph`.",
+    "maybe_regular_expander_graph": "Replays NumPy's legacy `RandomState` (MT19937; `seed=None` is NumPy's global one) and NetworkX's set of edges; `numpy.random.Generator` seeds fall back. NetworkX 3.6+. Running out of `max_tries` falls back.",
+    "maybe_regular_expander": "As `maybe_regular_expander_graph`, under its NetworkX 3.4 and 3.5 name.",
+})
+ISOMORPHISM_ONLY["preferential_attachment_graph"] = "nx.bipartite"
 
 
 def location(name):

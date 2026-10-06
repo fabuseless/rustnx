@@ -352,6 +352,7 @@ MULTIGRAPH_FUNCTIONS = {
     "periphery",
     "predecessor",
     "radius",
+    "random_k_lift",
     "sets",
     "shortest_path",
     "shortest_path_length",
