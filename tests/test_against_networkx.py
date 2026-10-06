@@ -736,6 +736,7 @@ def test_backend_function_list_matches_implementations():
         "all_triangles",
         "antichain_width",
         "barycenter",
+        "bipartite_modularity",
         "butterflies",
         "centroid",
         "connected_dominating_set",
@@ -746,7 +747,9 @@ def test_backend_function_list_matches_implementations():
         "is_connected_dominating_set",
         "is_cover",
         "is_perfect_graph",
+        "maybe_regular_expander_graph",
         "overlapping_modularity",
+        "random_k_lift",
         "random_lobster",
         "random_lobster_graph",
         "tree_centroid",
@@ -1445,9 +1448,8 @@ MULTI_GRAPH_FUNCS = [
     lambda G, **kw: nx.harmonic_centrality(G, distance="weight", **kw),
     nx.is_bipartite,
     # Not supported for multigraphs: must fall back cleanly.
-    lambda G, **kw: nx.pagerank(G, **kw),
-    lambda G, **kw: nx.pagerank(G, weight="weight", **kw),
     lambda G, **kw: nx.greedy_color(G, **kw),
+    lambda G, **kw: nx.core_number(G, **kw),
 ]
 
 
@@ -1503,9 +1505,9 @@ def test_cached_multigraph_conversion_not_reused(restore_config):
     nx.config.backend_priority.algos = ["rustnx"]
     nx.single_source_shortest_path_length(M, list(M)[0])  # caches a conversion
     nx.config.backend_priority.algos = []
-    ref = nx.pagerank(M)
+    ref = nx.greedy_color(M)
     nx.config.backend_priority.algos = ["rustnx"]
-    assert nx.pagerank(M) == ref  # pagerank sums parallel weights: NetworkX runs it
+    assert nx.greedy_color(M) == ref  # not a multigraph function: NetworkX runs it
 
 
 def test_version_numbers_agree():

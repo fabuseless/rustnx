@@ -265,6 +265,8 @@ def algorithm_calls(H, directed):
     calls["vf2pp_is_isomorphic"] = lambda G, b: nx.vf2pp_is_isomorphic(G, G, node_label="x", backend=b)
     calls["faster_could_be"] = lambda G, b: nx.faster_could_be_isomorphic(G, G, backend=b)
     calls["could_be"] = lambda G, b: nx.could_be_isomorphic(G, G, backend=b)
+    # Batch 23: native graphs carry no positions, so NetworkX's error.
+    calls["geometric_edges"] = lambda G, b: nx.geometric_edges(G, 0.5, backend=b)
 
     def quiet(func):  # Weisfeiler-Lehman hashes warn about changes in 3.5
         def run(*args, **kwargs):
@@ -468,6 +470,53 @@ def algorithm_calls(H, directed):
         calls["moral_graph"] = lambda G, b: state(nx.moral_graph(G, backend=b))
     calls["projected_graph"] = lambda G, b: state(nx.bipartite.projected_graph(G, nodes[::2], backend=b))
     calls["bipartite_density"] = lambda G, b: nx.bipartite.density(G, nodes[::2], backend=b)
+    # Batch 26: bipartite measures (most graphs here aren't bipartite: the
+    # errors must match too).
+    calls["latapy_clustering"] = lambda G, b: list(nx.bipartite.latapy_clustering(G, backend=b).items())
+    calls["robins_alexander"] = lambda G, b: nx.bipartite.robins_alexander_clustering(G, backend=b)
+    calls["bipartite_betweenness"] = lambda G, b: list(
+        nx.bipartite.betweenness_centrality(G, nodes[::2], backend=b).items()
+    )
+    calls["overlap_projection"] = lambda G, b: state(
+        nx.bipartite.overlap_weighted_projected_graph(G, nodes[::2], backend=b)
+    )
+    calls["collaboration_projection"] = lambda G, b: state(
+        nx.bipartite.collaboration_weighted_projected_graph(G, nodes[::2], backend=b)
+    )
+    if not directed:
+        calls["bipartite_min_edge_cover"] = lambda G, b: list(nx.bipartite.min_edge_cover(G, backend=b))
+    # Batch 24: generators and transforms.
+    if len(nodes) >= 2:
+        u, v = nodes[0], nodes[1]
+        calls["contracted_nodes"] = lambda G, b: state(nx.contracted_nodes(G, u, v, backend=b))
+    if directed:
+        calls["stochastic_graph"] = lambda G, b: state(nx.stochastic_graph(G, backend=b))
+    else:
+        calls["mycielskian"] = lambda G, b: state(nx.mycielskian(G, backend=b))
+        calls["modular_product"] = lambda G, b: state(nx.modular_product(G, other, backend=b))
+        calls["inverse_line_graph"] = lambda G, b: state(nx.inverse_line_graph(G, backend=b))
+    blocks = [nodes[i : i + 3] for i in range(0, len(nodes), 3)]
+    calls["quotient_graph"] = lambda G, b: [
+        (sorted(map(str, n)), sorted(d)) for n, d in nx.quotient_graph(G, blocks, backend=b).nodes(data=True)
+    ]
+    # Batch 25: cliques, structure and approximation.
+    calls["dominating_set"] = lambda G, b: list(nx.dominating_set(G, backend=b)) if nodes else None
+    calls["auxiliary_node"] = lambda G, b: state(
+        nx.algorithms.connectivity.build_auxiliary_node_connectivity(G, backend=b)
+    )
+    calls["approx_node_connectivity"] = lambda G, b: nx.approximation.node_connectivity(G, backend=b)
+    if directed:
+        calls["hamiltonian_path"] = lambda G, b: nx.tournament.hamiltonian_path(G, backend=b)
+    else:
+        calls["find_cliques"] = lambda G, b: list(nx.find_cliques(G, backend=b))
+        calls["k_clique_communities"] = lambda G, b: [
+            list(c) for c in nx.community.k_clique_communities(G, 3, backend=b)
+        ]
+        calls["max_clique"] = lambda G, b: list(nx.approximation.max_clique(G, backend=b))
+        calls["treewidth_min_degree"] = lambda G, b: (lambda w, T: (w, [list(x) for x in T]))(
+            *nx.approximation.treewidth_min_degree(G, backend=b)
+        )
+        calls["chordal_graph_cliques"] = lambda G, b: [list(c) for c in nx.chordal_graph_cliques(G, backend=b)]
     return calls
 
 

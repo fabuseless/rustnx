@@ -142,10 +142,26 @@ impl Mt19937 {
         a + (b - a) * self.random()
     }
 
+    /// `Random.paretovariate(alpha)`: `(1.0 - random()) ** (-1.0 / alpha)`.
+    /// Python raises where `pow` overflows (an infinite result here) and
+    /// for `alpha == 0`; callers check both.
+    pub fn paretovariate(&mut self, alpha: f64) -> f64 {
+        let u = 1.0 - self.random();
+        u.powf(-1.0 / alpha)
+    }
+
     /// `Random.sample(population, k)` for `k <= len(population)`: a pool
     /// for small populations, else rejection against the picks so far.
     pub fn sample<T: Copy>(&mut self, population: &[T], k: usize) -> Vec<T> {
-        let n = population.len();
+        self.sample_range(population.len(), k)
+            .into_iter()
+            .map(|j| population[j])
+            .collect()
+    }
+
+    /// `Random.sample(range(n), k)` for `k <= n`: the positions `sample`
+    /// picks from a population of length `n`, without building it.
+    pub fn sample_range(&mut self, n: usize, k: usize) -> Vec<usize> {
         assert!(k <= n, "sample larger than population");
         let mut setsize: u128 = 21;
         if k > 5 {
@@ -155,7 +171,7 @@ impl Mt19937 {
         }
         let mut result = Vec::with_capacity(k);
         if n as u128 <= setsize {
-            let mut pool = population.to_vec();
+            let mut pool: Vec<usize> = (0..n).collect();
             for i in 0..k {
                 let j = self.below(n - i);
                 result.push(pool[j]);
@@ -169,7 +185,7 @@ impl Mt19937 {
                     j = self.below(n);
                 }
                 selected.insert(j);
-                result.push(population[j]);
+                result.push(j);
             }
         }
         result
@@ -179,7 +195,8 @@ impl Mt19937 {
 /// Replays `random.Random` calls for the tests: `(op, a, b)` with op 0
 /// `random()`, 1 `getrandbits(a)`, 2 `_randbelow(a)`, 3 `randrange(a, b)`,
 /// 4 `randint(a, b)`, 5 `choice(range(a))`, 6 `uniform(a, b)` (as
-/// floats), 7 `sample(range(a), b)`, 8 `shuffle(list(range(a)))`.
+/// floats), 7 `sample(range(a), b)`, 8 `shuffle(list(range(a)))`, 9
+/// `paretovariate(a / b)` (as floats).
 /// Each op's results come back as floats or ints; `None` for an op whose
 /// arguments the replica doesn't cover.
 pub enum Draw {
@@ -212,7 +229,50 @@ pub fn replay(rng: &mut Mt19937, ops: &[(u8, i64, i64)]) -> Vec<Draw> {
                 rng.shuffle(&mut x);
                 Draw::Ints(x)
             }
+            9 if a != 0 && b != 0 => Draw::Float(rng.paretovariate(a as f64 / b as f64)),
             _ => Draw::Unsupported,
         })
         .collect()
+}
+
+// --- Batch 23 additions ---
+
+impl Mt19937 {
+    /// `Random.expovariate(lambd)`: `-log(1.0 - random()) / lambd` (the
+    /// same in 3.10 to 3.14).
+    pub fn expovariate(&mut self, lambd: f64) -> f64 {
+        -(1.0 - self.random()).ln() / lambd
+    }
+
+    /// NumPy's `random_interval(max)` (legacy `RandomState`, whose
+    /// `shuffle` and `permutation` use it) for `max < 2^32`: masked 32-bit
+    /// draws until one is at most `max`.
+    pub fn np_interval(&mut self, max: u32) -> u32 {
+        if max == 0 {
+            return 0;
+        }
+        let mut mask = max;
+        mask |= mask >> 1;
+        mask |= mask >> 2;
+        mask |= mask >> 4;
+        mask |= mask >> 8;
+        mask |= mask >> 16;
+        loop {
+            let value = self.genrand_uint32() & mask;
+            if value <= max {
+                return value;
+            }
+        }
+    }
+
+    /// NumPy's legacy `RandomState.permutation(n)` for `n < 2^32`: `arange(n)`
+    /// shuffled from the end.
+    pub fn np_permutation(&mut self, n: usize) -> Vec<u32> {
+        let mut x: Vec<u32> = (0..n as u32).collect();
+        for i in (1..n).rev() {
+            let j = self.np_interval(i as u32) as usize;
+            x.swap(i, j);
+        }
+        x
+    }
 }

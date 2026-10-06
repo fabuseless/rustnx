@@ -323,7 +323,7 @@ NOTES = {
     "harmonic_centrality": "Bit-for-bit identical. A small `nbunch` with many `sources` falls back.",
     "eigenvector_centrality": "Bit-for-bit identical. `nstart` must give a value for every node.",
     "katz_centrality": "Bit-for-bit identical. `nstart` and a per-node `beta` fall back.",
-    "pagerank": "Parallel on large graphs. Matches NetworkX to about 1e-16 (NetworkX computes it with SciPy sparse arithmetic). `None` weights fall back.",
+    "pagerank": "Parallel on large graphs. Matches NetworkX to about 1e-16 (NetworkX computes it with SciPy sparse arithmetic). `None` weights fall back. Multigraphs add up parallel edges' weights, as NetworkX's sparse matrix does.",
     "betweenness_centrality_subset": "Parallel. Bit-for-bit identical (per-source sums are added in source order). Missing sources and `None` weights fall back.",
     "edge_betweenness_centrality_subset": "Parallel. Bit-for-bit identical. Missing sources, tuple node labels and `None` weights fall back.",
     "newman_betweenness_centrality": "Also reachable as `nx.load_centrality`. Parallel. Bit-for-bit identical. Only int or str node labels (NetworkX sorts nodes on ties); others fall back.",
@@ -437,10 +437,10 @@ NOTES = {
     "bfs_predecessors": "`sort_neighbors` falls back. Gives the installed NetworkX's deprecation warning (3.7+).",
     "bfs_successors": "`sort_neighbors` falls back.",
     "bfs_layers": "The first layer follows the installed NetworkX's order.",
-    "minimum_spanning_edges": "Kruskal; Prim and Borůvka fall back. Yields the graph's own edge data dicts.",
-    "maximum_spanning_edges": "Kruskal; Prim and Borůvka fall back. Yields the graph's own edge data dicts.",
-    "minimum_spanning_tree": "Kruskal; Prim and Borůvka fall back.",
-    "maximum_spanning_tree": "Kruskal; Prim and Borůvka fall back.",
+    "minimum_spanning_edges": "Kruskal; Prim and Borůvka fall back. Yields the graph's own edge data dicts. Multigraphs: each node pair's first lightest (heaviest for maximum trees) parallel edge, with its key, as NetworkX's stable sort picks it.",
+    "maximum_spanning_edges": "Kruskal; Prim and Borůvka fall back. Yields the graph's own edge data dicts. Multigraphs: each node pair's first lightest (heaviest for maximum trees) parallel edge, with its key, as NetworkX's stable sort picks it.",
+    "minimum_spanning_tree": "Kruskal; Prim and Borůvka fall back. Multigraphs: each node pair's first lightest (heaviest for maximum trees) parallel edge, with its key, as NetworkX's stable sort picks it.",
+    "maximum_spanning_tree": "Kruskal; Prim and Borůvka fall back. Multigraphs: each node pair's first lightest (heaviest for maximum trees) parallel edge, with its key, as NetworkX's stable sort picks it.",
     "lexicographical_topological_sort": "`key` falls back, and so do nodes that aren't all ints and floats (no NaN) or all strings.",
     "all_topological_sorts": "Sorts are generated lazily.",
     "dag_longest_path": "`topo_order` falls back, and so do `None` weights and a `default_weight` other than the one the graph was converted with.",
@@ -457,7 +457,7 @@ NOTES = {
     "edge_dfs": "A `source` that is neither a node nor a list, tuple, set or dict of hashable nodes falls back.",
     "kosaraju_strongly_connected_components": "Component sets are filled in the installed NetworkX's order.",
     "condensation": "`scc` falls back. Member sets follow `strongly_connected_components`' order.",
-    "kruskal_mst_edges": "`partition` falls back. Yields the graph's own edge data dicts.",
+    "kruskal_mst_edges": "`partition` falls back. Yields the graph's own edge data dicts. Multigraphs: each node pair's first lightest (heaviest for maximum trees) parallel edge, with its key, as NetworkX's stable sort picks it. Directed multigraphs fall back.",
     "to_prufer_sequence": "Bit-for-bit identical.",
     "bridges": "`root` falls back (NetworkX then lists a subgraph copy's edges, in set order).",
     "local_bridges": "Spans with float, mixed or negative weights fall back.",
@@ -467,7 +467,7 @@ NOTES = {
     "dominance_frontiers": "Follows the installed NetworkX's version (3.7 adds `start` last). Sets iterate in NetworkX's order.",
     "eulerian_circuit": "Computed when iteration starts, as NetworkX does. A `source` not in the graph falls back.",
     "eulerian_path": "Computed when iteration starts, as NetworkX does. A `source` not in the graph falls back.",
-    "has_eulerian_path": "A `source` not in the graph falls back.",
+    "has_eulerian_path": "A `source` not in the graph falls back. Multigraph degrees count parallel edges.",
     "cycle_basis": "A `root` not in the graph falls back.",
     "find_cycle": "A `source` that isn't one node of the graph, and invalid orientations on directed graphs, fall back.",
     "floyd_warshall": "Parallel. Follows the installed NetworkX's version (3.4/3.5 count missing weights as 1.0 and don't check for negative cycles). Dict and row key orders match. Mixed int and float weights fall back, as do `None` weights before 3.6.",
@@ -489,7 +489,7 @@ NOTES = {
     "minimum_spanning_arborescence": "Edmonds' algorithm as NetworkX runs it, in Rust; the result's edges come in NetworkX's (set iteration) order. Weights must be Python ints or floats, and `partition` values `EdgePartition` members or `None`. Changes G's weights exactly as NetworkX does (edges without `attr` gain it).",
     "greedy_branching": "Only int or str node labels (NetworkX sorts edges by weight, then nodes); others fall back. `attr=None` uses the random state as NetworkX does.",
     "branching_weight": "Weights mixing ints and floats fall back.",
-    "prim_mst_edges": "Undirected graphs; directed ones fall back. Trees start from the nodes NetworkX pops from `set(G)` (rustnx replays the same set operations). Yields the graph's own edge data dicts.",
+    "prim_mst_edges": "Undirected graphs; directed ones fall back. Trees start from the nodes NetworkX pops from `set(G)` (rustnx replays the same set operations). Yields the graph's own edge data dicts. Multigraphs: the first lightest (heaviest) parallel edge, as NetworkX's heap order picks it.",
     "boruvka_mst_edges": "Rounds run in Rust. Where a component's best edge is tied, rustnx replays NetworkX's set of the component's nodes to scan it in the same order. Yields the graph's own edge data dicts.",
     "partition_spanning_tree": "Kruskal with the partition in Rust. `partition` values must be `EdgePartition` members or `None`.",
     "from_prufer_sequence": "Takes no graph: runs in rustnx with `backend='rustnx'` or `nx.config.backend_priority.generators` (set by `rustnx.enable()`). Sequences of non-ints fall back.",
@@ -711,7 +711,7 @@ NOTES.update({
     "to_numpy_array": "Entries from Rust, assigned with NumPy as NetworkX does." + NODELIST + " Structured dtypes, `None` weights, and result dtypes other than float64 (or int64 with int weights) fall back.",
     "biadjacency_matrix": SPARSE + " A `row_order` that isn't a list or tuple falls back.",
     "to_dict_of_lists": "Neighbor objects come from the graph's own adjacency dicts. A `nodelist` that isn't a list, tuple, set or dict, or names missing nodes, falls back.",
-    "number_of_selfloops": "Dispatchable from NetworkX 3.5 on.",
+    "number_of_selfloops": "Dispatchable from NetworkX 3.5 on. Multigraphs count every parallel self-loop.",
     "is_weighted": "Reads the original graph's edge data in Rust. Dispatchable from NetworkX 3.5 on; native graphs fall back.",
     "is_negatively_weighted": "`None` weights and `weight=None` fall back.",
     "get_node_attributes": "Reads the original graph's node data in Rust. Dispatchable from NetworkX 3.5 on.",
@@ -881,6 +881,213 @@ QUALIFIED.update({
     "bipartite_degree_centrality": "nx.bipartite.degree_centrality",
     "projected_graph": "nx.bipartite.projected_graph",
     "weighted_projected_graph": "nx.bipartite.weighted_projected_graph",
+})
+# Batch 23: growth and geometric generators (seeded like batch 18).
+KD = " Pairs whose distance is within 1e-9 (relative) of the radius make the call fall back, since SciPy's KD-tree may round them either way."
+SECTIONS.append(("Growth, geometric and community random generators", [
+    "duplication_divergence_graph", "partial_duplication_graph", "scale_free_graph",
+    "random_shell_graph", "relaxed_caveman_graph", "gaussian_random_partition_graph",
+    "navigable_small_world_graph", "geographical_threshold_graph",
+    "soft_random_geometric_graph", "thresholded_random_geometric_graph",
+    "geometric_soft_configuration_graph", "geometric_edges",
+    "uniform_random_intersection_graph", "k_random_intersection_graph",
+    "general_random_intersection_graph", "random_k_lift", "preferential_attachment_graph",
+    "maybe_regular_expander_graph", "maybe_regular_expander", "random_internet_as_graph",
+]))
+NOTES.update({
+    "duplication_divergence_graph": RANDOM + " `p == 0` with `n > 2` falls back (NetworkX never returns).",
+    "partial_duplication_graph": RANDOM,
+    "scale_free_graph": RANDOM + " `initial_graph` falls back.",
+    "random_shell_graph": RANDOM + " Replays the edge reordering of NetworkX's relabelled copies and unions. Shells NetworkX can't connect fall back.",
+    "relaxed_caveman_graph": RANDOM,
+    "gaussian_random_partition_graph": RANDOM + " Draws the block sizes with `seed.gauss` in Python, then runs `random_partition_graph` in Rust.",
+    "navigable_small_world_graph": RANDOM + " Lattices of 2^24 or more points fall back.",
+    "geographical_threshold_graph": RANDOM + " Given `pos` or `weight`, a `metric` or a `p_dist` fall back. A pair within rounding error of `theta` makes the call fall back (`math.dist` and Rust's distance may differ in the last bit).",
+    "soft_random_geometric_graph": RANDOM + " Given `pos` and a `p_dist` fall back." + KD,
+    "thresholded_random_geometric_graph": RANDOM + " Given `pos` or `weight` fall back." + KD,
+    "geometric_soft_configuration_graph": RANDOM + " `kappas` falls back (its handling differs between NetworkX versions).",
+    "geometric_edges": "Positions must be sequences of numbers of one length; anything else falls back." + KD,
+    "uniform_random_intersection_graph": RANDOM + " Replays the projection's sets. `p >= 1` falls back.",
+    "k_random_intersection_graph": RANDOM + " Replays the projection's sets.",
+    "general_random_intersection_graph": RANDOM + " Replays the projection's sets.",
+    "random_k_lift": RANDOM + " NetworkX 3.7+. Plain NetworkX graph classes only.",
+    "preferential_attachment_graph": RANDOM + " As `nx.bipartite.preferential_attachment_graph`.",
+    "maybe_regular_expander_graph": "Replays NumPy's legacy `RandomState` (MT19937; `seed=None` is NumPy's global one) and NetworkX's set of edges; `numpy.random.Generator` seeds fall back. NetworkX 3.6+. Running out of `max_tries` falls back.",
+    "maybe_regular_expander": "As `maybe_regular_expander_graph`, under its NetworkX 3.4 and 3.5 name.",
+    "random_internet_as_graph": RANDOM + " Replays every set the generator builds (CPython's set table and its union, intersection and difference, checked once against the running Python), which decide its candidate order.",
+})
+SUBMODULE["preferential_attachment_graph"] = "nx.bipartite"
+
+# Batch 26: multigraphs and bipartite measures.
+B26_SETS = " Replays NetworkX's sets of second neighbors (CPython's set table, checked once against the running Python)."
+SECTIONS.append(("Bipartite measures", [
+    "latapy_clustering", "bipartite_average_clustering", "robins_alexander_clustering",
+    "bipartite_betweenness_centrality", "overlap_weighted_projected_graph",
+    "collaboration_weighted_projected_graph", "generic_weighted_projected_graph",
+    "bipartite_min_edge_cover", "eppstein_matching", "maximal_extendability",
+    "bipartite_modularity", "cd_index",
+]))
+NOTES.update({
+    "latapy_clustering": "As `nx.bipartite.latapy_clustering` (also `nx.bipartite.clustering`)." + B26_SETS + " Multigraphs see each neighbor once, as in NetworkX. One-shot iterators of nodes fall back.",
+    "bipartite_average_clustering": "As `nx.bipartite.average_clustering`; the average is Python's own `sum()` of the clustering values. One-shot iterators fall back.",
+    "robins_alexander_clustering": "As `nx.bipartite.robins_alexander_clustering`: counts 4-cycles and 3-paths in Rust (every version gives the same value). Directed graphs and graphs with self-loops fall back (NetworkX versions treat them differently).",
+    "bipartite_betweenness_centrality": "As `nx.bipartite.betweenness_centrality`: rustnx's unnormalized betweenness, rescaled with NetworkX's own expressions. Multigraphs are supported.",
+    "overlap_weighted_projected_graph": "As `nx.bipartite.overlap_weighted_projected_graph`." + B26_SETS + " Edges are added in NetworkX's order.",
+    "collaboration_weighted_projected_graph": "As `nx.bipartite.collaboration_weighted_projected_graph`." + B26_SETS + " Each weight is Python's `sum()` over the set intersection, in its replayed order.",
+    "generic_weighted_projected_graph": "As `nx.bipartite.generic_weighted_projected_graph` with the default weight (that of `weighted_projected_graph`, without its size check); a `weight_function` falls back.",
+    "bipartite_min_edge_cover": "As `nx.bipartite.min_edge_cover`: rustnx's Hopcroft-Karp matching, then NetworkX's own set operations. A `matching_algorithm` falls back.",
+    "eppstein_matching": "As `nx.bipartite.eppstein_matching`, ported with its dict orders. Augmenting paths deep enough to approach Python's recursion limit fall back.",
+    "maximal_extendability": "As `nx.bipartite.maximal_extendability`: the fewest node-disjoint paths between the two sides of the residual digraph, as maximum flows computed in parallel in Rust.",
+    "bipartite_modularity": "As `nx.bipartite.modularity` (NetworkX 3.7+). Degrees and each community's internal weight in Rust (Python's `sum()` semantics); NetworkX's own expressions over its sets combine them.",
+    "cd_index": "Checks every node's time attribute in Rust; the rest (the node's neighborhood) is NetworkX's own code.",
+    "s_metric": "Multigraphs count every parallel edge.",
+    "is_semieulerian": "Multigraph degrees count parallel edges.",
+})
+QUALIFIED.update({
+    "latapy_clustering": "nx.bipartite.latapy_clustering",
+    "bipartite_average_clustering": "nx.bipartite.average_clustering",
+    "robins_alexander_clustering": "nx.bipartite.robins_alexander_clustering",
+    "bipartite_betweenness_centrality": "nx.bipartite.betweenness_centrality",
+    "overlap_weighted_projected_graph": "nx.bipartite.overlap_weighted_projected_graph",
+    "collaboration_weighted_projected_graph": "nx.bipartite.collaboration_weighted_projected_graph",
+    "generic_weighted_projected_graph": "nx.bipartite.generic_weighted_projected_graph",
+    "bipartite_min_edge_cover": "nx.bipartite.min_edge_cover",
+    "eppstein_matching": "nx.bipartite.eppstein_matching",
+    "maximal_extendability": "nx.bipartite.maximal_extendability",
+    "bipartite_modularity": "nx.bipartite.modularity",
+# Batch 24: generators and transforms.
+})
+B24_GEN = GENERATOR.replace(" `create_using` may be a NetworkX graph class or instance (instances that NetworkX would fill and then reject fall back).", "")
+B24_CREATE = " `create_using` may be a NetworkX graph class or instance (instances that NetworkX would fill and then reject fall back)."
+SECTIONS.append(("Generators and transforms (batch 24)", [
+    "margulis_gabber_galil_graph", "chordal_cycle_graph", "hkn_harary_graph", "hnm_harary_graph",
+    "prefix_tree", "prefix_tree_recursive", "interval_graph", "visibility_graph",
+    "nonisomorphic_trees", "join_trees", "mycielskian",
+    "stochastic_graph", "contracted_nodes", "contracted_edge", "quotient_graph",
+    "modular_product", "inverse_line_graph",
+]))
+NOTES.update({
+    "margulis_gabber_galil_graph": B24_GEN + INTS + B24_CREATE,
+    "chordal_cycle_graph": B24_GEN + INTS + B24_CREATE,
+    "hkn_harary_graph": B24_GEN + INTS + B24_CREATE + " Adds the circulant edges in the order of the installed NetworkX (it changed in 3.6).",
+    "hnm_harary_graph": B24_GEN + INTS + B24_CREATE + " Adds the circulant edges in the order of the installed NetworkX (it changed in 3.6).",
+    "prefix_tree": B24_GEN + " Paths in a list or tuple, each a list, tuple or str; other iterables, and items whose hashing or comparison raises, fall back.",
+    "prefix_tree_recursive": B24_GEN + " As `prefix_tree`; paths deep enough to approach Python's recursion limit fall back (NetworkX recurses per level).",
+    "interval_graph": B24_GEN + " Intervals in a list or tuple, each a list or tuple of ints (below 2**52 in size) or floats; other values fall back.",
+    "visibility_graph": B24_GEN + " A list or tuple of ints (below 2**52 in size) or floats, with NetworkX's float arithmetic; other values fall back.",
+    "nonisomorphic_trees": B24_GEN + " A generator, as in NetworkX (errors come at the first `next()`); 3.4's `create=\"matrix\"` falls back.",
+    "join_trees": B24_GEN + " " + OPERATOR + " Plain `Graph` and `DiGraph` trees in a list or tuple, an int `first_label`; mixed directedness falls back.",
+    "mycielskian": "Relabels with rustnx's `convert_node_labels_to_integers`, then adds the new nodes and edges in Rust in NetworkX's order. An int `iterations` only.",
+    "stochastic_graph": "Copies the graph as `DiGraph(G)` does and sets each weight from Python's `sum()` of the out-weights; weights must be ints (below 2**53 in size) or floats. `copy=False` (mutates the input) and multigraphs fall back.",
+    "contracted_nodes": "Copies the graph in Rust as `G.copy()` does, then runs NetworkX's own contraction steps on the copy (they touch only `v`'s edges). `copy=False` falls back." + PLAIN,
+    "contracted_edge": "As `contracted_nodes`." + PLAIN,
+    "quotient_graph": "Default `edge_relation` and `edge_data` only (callables per pair of blocks fall back), a partition covering every node in non-empty blocks, int (or missing) weights (float sums follow set order and fall back), `create_using=None`. A `node_data` callable is called per block, as in NetworkX." + PLAIN,
+    "modular_product": OPERATOR + " Attribute tuples are built with NetworkX's set order of keys; edge attribute names that `add_edge(**attr)` rejects fall back.",
+    "inverse_line_graph": "Replays NetworkX's partition into cells (including the one set it iterates, with CPython's set table) and adds the result's edges in `combinations` order.",
+})
+
+
+# Batch 25: cliques, structure and approximation.
+SETORDER = " Replays NetworkX's set operations (CPython's set table, checked once against the running Python), so results come in the same order."
+SECTIONS.append(("Cliques, structure and approximation", [
+    "find_cliques", "find_cliques_recursive", "make_max_clique_graph", "make_clique_bipartite",
+    "k_clique_communities", "kernighan_lin_bisection", "dominating_set", "maximal_independent_set", "chordal_graph_cliques",
+    "find_asteroidal_triple", "hamiltonian_path", "large_clique_size", "ramsey_R2",
+    "clique_removal", "maximum_independent_set", "max_clique", "treewidth_min_degree",
+    "approximate_local_node_connectivity", "approximate_node_connectivity",
+    "approximate_all_pairs_node_connectivity", "build_auxiliary_node_connectivity",
+    "build_auxiliary_edge_connectivity", "metric_closure",
+]))
+NOTES.update({
+    "find_cliques": "Bron-Kerbosch with NetworkX's pivots in Rust; cliques come in batches once iteration starts, as NetworkX copies the graph then." + SETORDER + " `nodes` other than a list falls back.",
+    "find_cliques_recursive": "As `find_cliques`, with the setup (and its errors) at call time. Directed graphs use successors before 3.6, as NetworkX does.",
+    "make_max_clique_graph": "Overlapping cliques found from each node's cliques instead of comparing every pair." + SETORDER,
+    "make_clique_bipartite": "Fills a plain `nx.Graph` result in Rust; other `create_using` graphs are filled by NetworkX's calls." + SETORDER,
+    "k_clique_communities": "`cliques` falls back. Percolation in Rust; the communities are unions of NetworkX's own frozensets, taken in the set order NetworkX uses." + SETORDER,
+    "dominating_set": "Replays `pop()` and set differences." + SETORDER,
+    "kernighan_lin_bisection": "The node shuffle runs on `seed` itself; the sweeps (NetworkX's `BinaryHeap`, with int or float costs added as Python adds them) run in Rust. Follows the installed version (3.6 rewrote it). Weights must be all ints (below 2**31) or all floats; `partition` must be a list or tuple of two sets, lists or tuples; anything else falls back.",
+    "maximal_independent_set": "Replays the `seed.choice` draws on CPython's Mersenne Twister (a `random.Random` only) and the set of available nodes. Returns a list before 3.7, a set from 3.7, as the installed NetworkX does.",
+    "chordal_graph_cliques": "Each component's subgraph copy and the maximum-cardinality search are replayed in Rust; the frozensets iterate as NetworkX's do. Errors arrive after the cliques yielded before them.",
+    "find_asteroidal_triple": "Visits non-edges in NetworkX's order (3.4 iterates a set of edge tuples; rustnx replays the tuple hashes too).",
+    "hamiltonian_path": "Replays the nested subgraph views (their node order follows set order below half the graph). No recursion, so tournaments too deep for NetworkX's recursion limit still get a path.",
+    "large_clique_size": SETORDER.strip(),
+    "ramsey_R2": "Replays the recursion's subgraph copies (node and row order) on an explicit stack, so graphs too deep for NetworkX's recursion limit still get an answer." + SETORDER,
+    "clique_removal": "As `ramsey_R2`.",
+    "maximum_independent_set": "As `ramsey_R2`.",
+    "max_clique": "As `ramsey_R2`, on the complement.",
+    "treewidth_min_degree": "The heuristic (its ties follow set order) and the choice of each bag's neighbor run in Rust; the bags are then built with NetworkX's set operations, so the frozensets iterate the same way.",
+    "approximate_local_node_connectivity": "Integer `cutoff` only. Nodes not in G fall back.",
+    "approximate_node_connectivity": "Searches run in parallel; each is capped at the current minimum, which leaves the result unchanged.",
+    "approximate_all_pairs_node_connectivity": "Pairs run in parallel. Integer `cutoff` only; `nbunch` with nodes not in G falls back.",
+    "build_auxiliary_node_connectivity": "Builds the digraph's dicts in Rust in NetworkX's order.",
+    "build_auxiliary_edge_connectivity": "Builds the digraph's dicts in Rust in NetworkX's order.",
+    "metric_closure": "Dijkstra from every node in parallel, and the closure's dicts built in Rust in NetworkX's order (edges follow `set(G)`'s order). Warns as the installed NetworkX does (deprecated in 3.6). " + LENGTHS,
+})
+QUALIFIED.update({
+    "approximate_local_node_connectivity": "nx.approximation.local_node_connectivity",
+    "approximate_node_connectivity": "nx.approximation.node_connectivity",
+    "approximate_all_pairs_node_connectivity": "nx.approximation.all_pairs_node_connectivity",
+    "hamiltonian_path": "nx.tournament.hamiltonian_path",
+})
+SUBMODULE.update({
+    "k_clique_communities": "nx.community",
+    "kernighan_lin_bisection": "nx.community",
+    "large_clique_size": "nx.approximation",
+    "ramsey_R2": "nx.approximation",
+    "clique_removal": "nx.approximation",
+    "maximum_independent_set": "nx.approximation",
+    "max_clique": "nx.approximation",
+    "treewidth_min_degree": "nx.approximation",
+    "metric_closure": "nx.algorithms.approximation.steinertree",
+    "build_auxiliary_node_connectivity": "nx.algorithms.connectivity",
+    "build_auxiliary_edge_connectivity": "nx.algorithms.connectivity",
+})
+
+
+# Batch 22: degree-sequence and tree generators.
+DEGSEQ = (
+    "Sequences must be lists or tuples of ints; other values fall back. "
+    "`create_using` may be `None` or a NetworkX graph class or instance "
+    "(instances NetworkX would fill and then reject fall back)."
+)
+SECTIONS.append(("Degree-sequence and tree generators", [
+    "configuration_model", "directed_configuration_model", "expected_degree_graph",
+    "havel_hakimi_graph", "directed_havel_hakimi_graph", "degree_sequence_tree",
+    "random_degree_sequence_graph", "random_powerlaw_tree", "random_powerlaw_tree_sequence",
+    "random_labeled_tree", "random_labeled_rooted_tree", "random_labeled_rooted_forest",
+    "random_cograph", "random_clustered_graph", "joint_degree_graph",
+    "directed_joint_degree_graph", "is_valid_directed_joint_degree", "bipartite_configuration_model",
+    "bipartite_havel_hakimi_graph", "reverse_havel_hakimi_graph",
+    "alternating_havel_hakimi_graph",
+]))
+NOTES.update({
+    "configuration_model": RANDOM + " " + DEGSEQ,
+    "directed_configuration_model": RANDOM + " " + DEGSEQ,
+    "expected_degree_graph": RANDOM + " Weights must be finite non-negative ints or floats; `1 / sum(w)` is Python's own. A draw NetworkX can't take a log of falls back.",
+    "havel_hakimi_graph": DEGSEQ + " Nodes are numbered among the nonzero degrees, as in NetworkX.",
+    "directed_havel_hakimi_graph": "Sequences as NetworkX's `make_list_of_ints` accepts them (values below 2**31). `create_using` may be `None` or a NetworkX graph class or instance (instances NetworkX would fill and then reject fall back).",
+    "degree_sequence_tree": DEGSEQ + " Follows the installed NetworkX's checks (3.6 changed them and stopped removing node 0).",
+    "random_degree_sequence_graph": RANDOM + " Degrees whose sum or squared maximum reach 2**53 fall back. The degree-weighted draws use a Fenwick tree (exact for int weights), so it is much faster than NetworkX on large sequences.",
+    "random_powerlaw_tree": RANDOM + " Follows the installed NetworkX's tree check (3.6 changed it). An overflowing power draw falls back.",
+    "random_powerlaw_tree_sequence": RANDOM + " Follows the installed NetworkX's tree check (3.6 changed it).",
+    "random_labeled_tree": RANDOM,
+    "random_labeled_rooted_tree": RANDOM,
+    "random_labeled_rooted_forest": RANDOM + " The number of roots is drawn in Python (big ints); the forest replays CPython's set order for `set(range(n)).difference(roots)`.",
+    "random_cograph": RANDOM + " `n` up to 26.",
+    "random_clustered_graph": RANDOM + " Pairs as lists or tuples of ints; an iterator is read once (if rustnx declines, NetworkX's code runs on the same pairs).",
+    "joint_degree_graph": RANDOM + " A dict of dicts of ints; replays the iteration order of NetworkX's sets of unsaturated nodes.",
+    "directed_joint_degree_graph": RANDOM + " Non-negative int degree lists and a dict of dicts of ints; replays CPython's `set.pop()` order for the sets of chords (node pairs) and unsaturated nodes (checked once against the running Python).",
+    "is_valid_directed_joint_degree": "Int degree lists and a dict of dicts of ints; anything NetworkX raises on falls back.",
+    "bipartite_configuration_model": RANDOM + " As `nx.bipartite.configuration_model`. " + DEGSEQ,
+    "bipartite_havel_hakimi_graph": "As `nx.bipartite.havel_hakimi_graph`. " + DEGSEQ,
+    "reverse_havel_hakimi_graph": "As `nx.bipartite.reverse_havel_hakimi_graph`. " + DEGSEQ,
+    "alternating_havel_hakimi_graph": "As `nx.bipartite.alternating_havel_hakimi_graph`. " + DEGSEQ,
+})
+QUALIFIED.update({
+    "bipartite_configuration_model": "nx.bipartite.configuration_model",
+    "bipartite_havel_hakimi_graph": "nx.bipartite.havel_hakimi_graph",
+    "reverse_havel_hakimi_graph": "nx.bipartite.reverse_havel_hakimi_graph",
+    "alternating_havel_hakimi_graph": "nx.bipartite.alternating_havel_hakimi_graph",
 })
 
 

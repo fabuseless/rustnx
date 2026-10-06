@@ -5,6 +5,7 @@ Same approach as test_against_networkx.py: run each function with
 results, including the iteration order of returned sets.
 """
 
+import copy
 import inspect
 import random
 import warnings
@@ -7354,3 +7355,2021 @@ def test_batch21_fall_backs(seed, directed, restore_config):
         H._node[u]["late"] = 1  # attribute dicts aren't part of the snapshot
         H._adj[u][("new", u)] = {}  # nor is a row changed directly
         exact_outcome(_b21_graphs(nx.union), H, nx.path_graph([("p", 0), ("p", 1)]))
+
+
+# --- Batch 26: multigraphs and bipartite measures ---
+
+
+def _b26_multigraph(seed, directed, weights):
+    """A multigraph with parallel edges, parallel self-loops and edges
+    lacking the weight, from ``random_multigraph``."""
+    M = random_multigraph(seed, directed, "none" if weights == "missing" else weights)
+    rng = random.Random(seed)
+    nodes = list(M)
+    if nodes and rng.random() < 0.5:
+        v = rng.choice(nodes)
+        for _ in range(rng.randint(1, 3)):
+            M.add_edge(v, v, **({} if weights in ("none", "missing") else {"weight": 2}))
+    if weights == "missing":
+        for _, _, d in M.edges(data=True):
+            if rng.random() < 0.5:
+                d["weight"] = rng.randint(1, 4)
+    return M
+
+
+def _b26_pagerank_close(func):
+    """Run ``func`` with both backends: same keys in the same order and
+    values within 1e-9 (rustnx's PageRank doesn't use SciPy's sparse
+    kernels), or the same exception."""
+
+    def outcome(backend):
+        try:
+            return "ok", func(backend)
+        except Exception as exc:
+            return type(exc), str(exc)
+
+    ours, ref = outcome("rustnx"), outcome("networkx")
+    if ref[0] != "ok":
+        assert ours == ref
+        return
+    assert ours[0] == "ok", ours
+    assert list(ours[1]) == list(ref[1])
+    for k in ref[1]:
+        assert ours[1][k] == pytest.approx(ref[1][k], rel=1e-9, abs=1e-12), k
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float", "missing"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch26_multigraph_degrees(seed, directed, weights):
+    M = _b26_multigraph(seed, directed, weights)
+    nodes = list(M)
+    rng = random.Random(seed)
+    group = rng.sample(nodes, len(nodes) // 3)
+    exact_outcome(nx.degree_centrality, M)
+    exact_outcome(nx.in_degree_centrality, M)
+    exact_outcome(nx.out_degree_centrality, M)
+    exact_outcome(nx.number_of_selfloops, M)
+    exact_outcome(nx.s_metric, M)
+    exact_outcome(nx.has_eulerian_path, M)
+    exact_outcome(nx.is_semieulerian, M)
+    for source in nodes[:3]:
+        exact_outcome(nx.has_eulerian_path, M, source)
+    exact_outcome(nx.bipartite.density, M, group)
+    exact_outcome(nx.group_degree_centrality, M, group)
+    exact_outcome(nx.group_in_degree_centrality, M, group)
+    exact_outcome(nx.group_out_degree_centrality, M, group)
+    # Eulerian multigraphs: every edge doubled.
+    E = M.__class__()
+    E.add_nodes_from(M)
+    for u, v in M.edges():
+        E.add_edge(u, v)
+        E.add_edge(v, u)
+    exact_outcome(nx.has_eulerian_path, E)
+    exact_outcome(nx.is_semieulerian, E)
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float", "missing"])
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch26_multigraph_pagerank(seed, directed, weights):
+    M = _b26_multigraph(seed, directed, weights)
+    rng = random.Random(seed)
+    nodes = list(M)
+    personalization = {v: rng.randint(0, 3) for v in nodes[::2]}
+    if nodes:
+        personalization[nodes[0]] = 1
+    for kwargs in [{}, {"weight": None}, {"alpha": 0.5}, {"personalization": personalization},
+                   {"dangling": personalization}, {"nstart": {v: rng.random() for v in nodes}},
+                   {"tol": 1e-10, "max_iter": 1000}, {"weight": "missing"}]:
+        _b26_pagerank_close(lambda b: nx.pagerank(M, backend=b, **kwargs))
+    _b26_pagerank_close(lambda b: nx.pagerank(M, max_iter=1, backend=b))
+    _b26_pagerank_close(lambda b: nx.pagerank(M, personalization={nodes[0]: 0} if nodes else None, backend=b))
+
+
+def _b26_spanning(func, *args, **kwargs):
+    return lambda G, **kw: list(func(G, *args, **kwargs, **kw))
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float", "missing"])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch26_multigraph_spanning_trees(seed, weights):
+    from networkx.algorithms.tree import mst
+
+    M = _b26_multigraph(seed, False, weights)
+    if seed % 4 == 0:  # many ties
+        for _, _, d in M.edges(data=True):
+            d["weight"] = d.get("weight", 1) % 2
+    for func in [nx.minimum_spanning_edges, nx.maximum_spanning_edges]:
+        for keys in [True, False]:
+            for data in [True, False]:
+                exact_outcome(_b26_spanning(func, keys=keys, data=data), M)
+        exact_outcome(_b26_spanning(func, weight="other"), M)
+        exact_outcome(_b26_spanning(func, weight=None), M)
+        exact_outcome(_b26_spanning(func, algorithm="prim"), M)
+        exact_outcome(_b26_spanning(func, algorithm="boruvka"), M)
+        exact_outcome(_b26_spanning(func, algorithm="nope"), M)
+    for func in [nx.minimum_spanning_tree, nx.maximum_spanning_tree]:
+        exact_outcome(_b21_graphs(func), M)
+        exact_outcome(_b21_graphs(func), M, weight=None)
+    for minimum in [True, False]:
+        for keys in [True, False]:
+            exact_outcome(_b26_spanning(mst.kruskal_mst_edges, minimum, keys=keys), M)
+            exact_outcome(_b26_spanning(mst.prim_mst_edges, minimum, keys=keys), M)
+            exact_outcome(_b26_spanning(mst.prim_mst_edges, minimum, keys=keys, data=False), M)
+    # Directed multigraphs: Kruskal runs in NetworkX; the others reject them.
+    D = _b26_multigraph(seed, True, weights)
+    exact_outcome(_b26_spanning(mst.kruskal_mst_edges, True), D)
+    exact_outcome(_b26_spanning(mst.prim_mst_edges, True), D)
+    exact_outcome(_b26_spanning(nx.minimum_spanning_edges), D)
+
+
+def test_batch26_multigraph_spanning_fall_backs():
+    from networkx.algorithms.tree import mst
+
+    M = nx.MultiGraph()
+    M.add_edge(0, 1, weight=2)
+    M.add_edge(0, 1, weight=float("nan"))
+    M.add_edge(1, 2, weight=1)
+    for kwargs in [{}, {"ignore_nan": True}]:
+        exact_outcome(_b26_spanning(nx.minimum_spanning_edges, **kwargs), M)
+        exact_outcome(_b26_spanning(mst.prim_mst_edges, True, **kwargs), M)
+    M = nx.MultiGraph()
+    M.add_edge(0, 1, weight=None)
+    M.add_edge(0, 1, weight=1)
+    exact_outcome(_b26_spanning(nx.minimum_spanning_edges), M)
+    exact_outcome(nx.pagerank, M)
+
+
+def _b26_bipartite(seed, directed=False):
+    B, top = _b21_bipartite(seed, directed)
+    for _, _, d in B.edges(data=True):
+        d.pop("weight", None)
+    return B, top
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(60))
+def test_batch26_bipartite_clustering(seed, directed):
+    B, top = _b26_bipartite(seed, directed)
+    bottom = [v for v in B if v not in set(top)]
+    for mode in ["dot", "min", "max", "nope", ["dot"]]:
+        exact_outcome(nx.bipartite.latapy_clustering, B, mode=mode)
+        exact_outcome(nx.bipartite.average_clustering, B, mode=mode)
+    for nodes in [top, set(bottom), tuple(top[:3]), top[:2] + top[:2], top[:2] + ["missing"], []]:
+        exact_outcome(nx.bipartite.latapy_clustering, B, nodes)
+        exact_outcome(nx.bipartite.average_clustering, B, nodes)
+    exact_outcome(lambda B, **kw: nx.bipartite.latapy_clustering(B, iter(top), **kw), B)
+    exact_outcome(nx.bipartite.robins_alexander_clustering, B)
+    # Not bipartite: latapy raises, robins counts any 4-cycles.
+    G = graph_for(seed, directed)
+    exact_outcome(nx.bipartite.latapy_clustering, G)
+    exact_outcome(nx.bipartite.robins_alexander_clustering, G)
+    G.remove_edges_from(list(nx.selfloop_edges(G)))
+    exact_outcome(nx.bipartite.robins_alexander_clustering, G)
+    # Larger sets: resizes and dummies in the replayed set tables.
+    L = nx.bipartite.random_graph(60, 40, 0.15, seed=seed, directed=directed)
+    L = nx.relabel_nodes(L, {v: f"s{v}" for v in L if v % 3 == 0})
+    exact_outcome(nx.bipartite.latapy_clustering, L)
+    exact_outcome(nx.bipartite.latapy_clustering, L, mode="min")
+    exact_outcome(nx.bipartite.robins_alexander_clustering, L)
+    # Multigraphs see neighbors once.
+    M = nx.MultiDiGraph(B) if directed else nx.MultiGraph(B)
+    M.add_edges_from(list(B.edges)[::2])
+    exact_outcome(nx.bipartite.latapy_clustering, M)
+    exact_outcome(nx.bipartite.average_clustering, M, mode="max")
+    exact_outcome(nx.bipartite.robins_alexander_clustering, M)
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_batch26_bipartite_betweenness(seed):
+    B, top = _b26_bipartite(seed)
+    bottom = [v for v in B if v not in set(top)]
+    for nodes in [top, bottom, set(top), top[:1], top + ["missing"], list(B), []]:
+        exact_outcome(nx.bipartite.betweenness_centrality, B, nodes)
+    exact_outcome(lambda B, **kw: nx.bipartite.betweenness_centrality(B, iter(top), **kw), B)
+    M = nx.MultiGraph(B)
+    M.add_edges_from(list(B.edges)[::3])
+    exact_outcome(nx.bipartite.betweenness_centrality, M, top)
+    exact_outcome(nx.bipartite.betweenness_centrality, graph_for(seed, True), top)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(60))
+def test_batch26_weighted_projections(seed, directed):
+    B, top = _b21_bipartite(seed, directed)
+    bottom = [v for v in B if v not in set(top)]
+    funcs = [
+        nx.bipartite.overlap_weighted_projected_graph,
+        lambda B, nodes, **kw: nx.bipartite.overlap_weighted_projected_graph(B, nodes, jaccard=False, **kw),
+        nx.bipartite.collaboration_weighted_projected_graph,
+        nx.bipartite.generic_weighted_projected_graph,
+    ]
+    for func in funcs:
+        for side in [top, bottom, set(top), tuple(bottom), top + top[:2], top[:3] + ["missing"], list(B)]:
+            exact_outcome(_b21_graphs(func), B, side)
+        exact_outcome(_b21_graphs(lambda B, **kw: func(B, iter(top), **kw)), B)
+        G = graph_for(seed, directed)
+        exact_outcome(_b21_graphs(func), G, list(G)[::2])
+        L = nx.bipartite.random_graph(50, 30, 0.2, seed=seed, directed=directed)
+        exact_outcome(_b21_graphs(func), L, list(range(50)))
+        exact_outcome(_b21_graphs(func), random_multigraph(seed, directed, "none"), list(B)[:3])
+    jaccard = lambda G, u, v: len(set(G[u]) & set(G[v]))  # noqa: E731
+    exact_outcome(_b21_graphs(nx.bipartite.generic_weighted_projected_graph), B, top, weight_function=jaccard)
+
+
+def _b26_matchable(seed):
+    """A connected bipartite graph with a perfect matching (a ring of
+    matched pairs plus random extra edges), and its top side."""
+    rng = random.Random(seed)
+    k = rng.randint(1, 12)
+    G = nx.Graph()
+    tops = [f"t{i}" if seed % 2 else i for i in range(k)]
+    bots = [("b", i) for i in range(k)]
+    for i in range(k):
+        G.add_edge(tops[i], bots[i])
+        G.add_edge(tops[i], bots[(i + 1) % k])
+    for _ in range(rng.randint(0, 2 * k)):
+        G.add_edge(rng.choice(tops), rng.choice(bots))
+    nodes = list(G)
+    rng.shuffle(nodes)
+    H = nx.Graph()
+    H.add_nodes_from(nodes)
+    edges = list(G.edges)
+    rng.shuffle(edges)
+    H.add_edges_from(edges)
+    return H, tops
+
+
+@pytest.mark.parametrize("seed", range(60))
+def test_batch26_matching_and_covers(seed):
+    B, top = _b26_bipartite(seed)
+    connected = len(B) > 0 and nx.is_connected(B)
+    exact_outcome(with_set_order(nx.bipartite.min_edge_cover), B)
+    exact_outcome(nx.bipartite.eppstein_matching, B, top)
+    exact_outcome(nx.bipartite.eppstein_matching, B, set(top))
+    exact_outcome(nx.bipartite.eppstein_matching, B)
+    exact_outcome(lambda B, **kw: nx.bipartite.eppstein_matching(B, iter(top), **kw), B)
+    exact_outcome(nx.bipartite.maximal_extendability, B)
+    H, tops = _b26_matchable(seed)
+    exact_outcome(with_set_order(nx.bipartite.min_edge_cover), H)
+    exact_outcome(nx.bipartite.eppstein_matching, H, tops)
+    exact_outcome(nx.bipartite.eppstein_matching, H)
+    exact_outcome(nx.bipartite.maximal_extendability, H)
+    # Not bipartite, directed, empty, isolated nodes, bad top nodes.
+    G = graph_for(seed, False)
+    exact_outcome(nx.bipartite.maximal_extendability, G)
+    exact_outcome(with_set_order(nx.bipartite.min_edge_cover), G)
+    exact_outcome(nx.bipartite.eppstein_matching, H, tops[:1])
+    exact_outcome(nx.bipartite.eppstein_matching, graph_for(seed, True), list(graph_for(seed, True))[:3])
+    exact_outcome(nx.bipartite.maximal_extendability, nx.DiGraph(H))
+    exact_outcome(with_set_order(nx.bipartite.min_edge_cover), nx.DiGraph(H))
+    for E in [nx.Graph(), nx.empty_graph(3), nx.path_graph(2), nx.path_graph(3), nx.cycle_graph(6)]:
+        exact_outcome(with_set_order(nx.bipartite.min_edge_cover), E)
+        exact_outcome(nx.bipartite.maximal_extendability, E)
+        exact_outcome(nx.bipartite.eppstein_matching, E, [0])
+    exact_outcome(with_set_order(nx.bipartite.min_edge_cover), H, matching_algorithm=nx.bipartite.eppstein_matching)
+    del connected
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float", "missing"])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch26_bipartite_modularity(seed, weights):
+    if not hasattr(nx.bipartite, "modularity"):
+        pytest.skip("bipartite modularity is new in NetworkX 3.7")
+    B, top = _b26_bipartite(seed)
+    rng = random.Random(seed)
+    for u, v, d in B.edges(data=True):
+        if weights == "int" or (weights == "missing" and rng.random() < 0.5):
+            d["weight"] = rng.randint(1, 5)
+        elif weights == "float":
+            d["weight"] = rng.choice([0.5, 1.25, 2.0, 3.1])
+    nodes = list(B)
+    rng.shuffle(nodes)
+    k = rng.randint(1, max(1, len(nodes)))
+    communities = [set(nodes[i::k]) for i in range(k)]
+    exact_outcome(nx.bipartite.modularity, B, communities, top)
+    exact_outcome(nx.bipartite.modularity, B, communities, set(top), resolution=0.5)
+    exact_outcome(nx.bipartite.modularity, B, communities, top, weight=None)
+    exact_outcome(nx.bipartite.modularity, B, communities, top, weight="other")
+    exact_outcome(lambda B, **kw: nx.bipartite.modularity(B, iter(communities), top, **kw), B)
+    exact_outcome(nx.bipartite.modularity, B, communities[:-1], top)
+    exact_outcome(nx.bipartite.modularity, B, communities, top + ["missing"])
+    exact_outcome(nx.bipartite.modularity, nx.DiGraph(B), communities, top)
+    exact_outcome(nx.bipartite.modularity, nx.Graph(), [], [])
+
+
+def test_batch26_runs_in_rust():
+    from networkx.algorithms.tree import mst
+
+    M = _b26_multigraph(3, False, "int")
+    D = _b26_multigraph(3, True, "int")
+    B, top = _b26_bipartite(5)
+    H, tops = _b26_matchable(7)
+    calls = [
+        lambda: nx.pagerank(M, backend="rustnx"),
+        lambda: nx.pagerank(D, weight=None, backend="rustnx"),
+        lambda: nx.degree_centrality(M, backend="rustnx"),
+        lambda: nx.in_degree_centrality(D, backend="rustnx"),
+        lambda: nx.out_degree_centrality(D, backend="rustnx"),
+        lambda: list(nx.minimum_spanning_edges(M, backend="rustnx")),
+        lambda: list(nx.maximum_spanning_edges(M, keys=False, backend="rustnx")),
+        lambda: nx.minimum_spanning_tree(M, backend="rustnx"),
+        lambda: nx.maximum_spanning_tree(M, backend="rustnx"),
+        lambda: list(mst.kruskal_mst_edges(M, True, backend="rustnx")),
+        lambda: list(mst.prim_mst_edges(M, False, backend="rustnx")),
+        lambda: nx.s_metric(M, backend="rustnx"),
+        lambda: nx.has_eulerian_path(M, backend="rustnx"),
+        lambda: nx.is_semieulerian(D, backend="rustnx"),
+        lambda: nx.bipartite.density(M, list(M)[:3], backend="rustnx"),
+        lambda: nx.group_degree_centrality(M, list(M)[:3], backend="rustnx"),
+        lambda: nx.group_in_degree_centrality(D, list(D)[:3], backend="rustnx"),
+        lambda: nx.group_out_degree_centrality(D, list(D)[:3], backend="rustnx"),
+        lambda: nx.bipartite.latapy_clustering(B, backend="rustnx"),
+        lambda: nx.bipartite.average_clustering(B, backend="rustnx"),
+        lambda: nx.bipartite.robins_alexander_clustering(B, backend="rustnx"),
+        lambda: nx.bipartite.betweenness_centrality(B, top, backend="rustnx"),
+        lambda: nx.bipartite.overlap_weighted_projected_graph(B, top, backend="rustnx"),
+        lambda: nx.bipartite.collaboration_weighted_projected_graph(B, top, backend="rustnx"),
+        lambda: nx.bipartite.generic_weighted_projected_graph(B, top, backend="rustnx"),
+        lambda: nx.bipartite.min_edge_cover(H, backend="rustnx"),
+        lambda: nx.bipartite.eppstein_matching(H, tops, backend="rustnx"),
+        lambda: nx.bipartite.maximal_extendability(H, backend="rustnx"),
+    ]
+    if hasattr(nx.bipartite, "modularity"):
+        calls.append(lambda: nx.bipartite.modularity(B, [set(B)], top, backend="rustnx"))
+    if "number_of_selfloops" in nx.utils.backends._registered_algorithms:  # 3.5+
+        calls.append(lambda: nx.number_of_selfloops(M, backend="rustnx"))
+    for call in calls:
+        call()
+
+
+def test_batch26_deep_eppstein_falls_back(restore_config):
+    # A long path: augmenting paths recurse deeper than rustnx goes.
+    import sys
+
+    n = sys.getrecursionlimit()
+    G = nx.path_graph(n // 2)
+    top = list(range(0, n // 2, 2))
+    exact_outcome(nx.bipartite.eppstein_matching, G, top)
+
+
+@pytest.mark.parametrize("seed", range(30))
+def test_batch26_cd_index(seed):
+    import datetime
+
+    G = graph_for(seed, True)
+    rng = random.Random(seed)
+    for v in G:
+        G.nodes[v]["time"] = rng.randint(0, 10)
+        if rng.random() < 0.5:
+            G.nodes[v]["w"] = rng.choice([1, 2, 0.5])
+    for node in list(G)[:4] + ["missing"]:
+        for delta in [0, 3, 100, "x"]:
+            exact_outcome(nx.cd_index, G, node, delta)
+            exact_outcome(nx.cd_index, G, node, delta, weight="w")
+    D = G.copy()
+    start = datetime.datetime(2020, 1, 1)
+    for v in D:
+        D.nodes[v]["when"] = start + datetime.timedelta(days=D.nodes[v]["time"])
+    for node in list(D)[:3]:
+        exact_outcome(nx.cd_index, D, node, datetime.timedelta(days=4), time="when")
+    if len(G) > 1:
+        del G.nodes[list(G)[-1]]["time"]
+        exact_outcome(nx.cd_index, G, list(G)[0], 3)
+    exact_outcome(nx.cd_index, G.to_undirected(), list(G)[0], 3)
+    exact_outcome(nx.cd_index, G, list(G)[0], 3, time=["unhashable"])
+
+
+def test_batch26_multigraph_snapshot_pickles():
+    import pickle
+
+    M = _b26_multigraph(2, False, "int")
+    nx.pagerank(M, backend="rustnx")  # caches the snapshot and its parallel-edge data
+    nx.degree_centrality(M, backend="rustnx")
+    M2 = pickle.loads(pickle.dumps(M))
+    _b26_pagerank_close(lambda b: nx.pagerank(M2, backend=b))
+    exact_outcome(nx.degree_centrality, M2)
+
+
+# --- Batch 24: generators and transforms ---
+
+
+def _b24_fresh(name, make_args):
+    """Compare a call whose arguments are one-shot iterators (made afresh for
+    each run): rustnx must hand them to NetworkX untouched."""
+    func = _b17_func(name)
+    ref = _b17_outcome(lambda: func(*make_args(), backend="networkx"))
+    old = nx.config.backend_priority.generators
+    nx.config.backend_priority.generators = ["rustnx"]
+    try:
+        ours = _b17_outcome(lambda: func(*make_args(), backend="rustnx"))
+        assert ours[0] is NotImplementedError
+        ours = _b17_outcome(lambda: func(*make_args()))
+    finally:
+        nx.config.backend_priority.generators = old
+    assert ours == ref
+
+
+def _b24_check(name, *args, **kwargs):
+    """`_b17_check`, also requiring that rustnx ran the call itself."""
+    ref = _b17_check(name, *args, **kwargs)
+    if ref is not None and ref[0] == "ok":
+        G = _b17_func(name)(*args, backend="rustnx", **kwargs)
+        assert _b17_snapshot(G) == ref[1]
+    return ref
+
+
+@pytest.mark.parametrize("create_using", _B17_CLASSES)
+def test_batch24_expanders(create_using):
+    for n in [-2, 0, 1, 2, 3, 5, 8, 11]:
+        _b17_check("margulis_gabber_galil_graph", n, create_using=create_using)
+        _b17_check("chordal_cycle_graph", n, create_using=create_using)
+    _b17_check("margulis_gabber_galil_graph", 2.0, create_using=create_using)
+    if create_using in (None, nx.MultiGraph):
+        _b24_check("margulis_gabber_galil_graph", 7, create_using=create_using)
+        _b24_check("chordal_cycle_graph", 13, create_using=create_using)
+
+
+def test_batch24_expanders_instances():
+    for name in ["margulis_gabber_galil_graph", "chordal_cycle_graph"]:
+        for cls in _B17_CLASSES[1:]:
+            ref = nx.path_graph(3, create_using=cls)
+            ref.graph["x"] = 1
+            ours = ref.copy()
+            ref_out = _b17_outcome(lambda: _b17_func(name)(5, create_using=ref, backend="networkx"))
+            ours_out = _b17_outcome(lambda: _b17_func(name)(5, create_using=ours, backend="rustnx"))
+            if ours_out[0] is NotImplementedError:
+                ours_out = _b17_outcome(lambda: _b17_func(name)(5, create_using=ours))
+            assert ours_out == ref_out
+            assert _b17_snapshot(ours) == _b17_snapshot(ref)
+
+
+@pytest.mark.parametrize("create_using", _B17_CLASSES)
+def test_batch24_harary(create_using):
+    for k in range(-1, 8):
+        for n in range(-1, 12):
+            _b17_check("hkn_harary_graph", k, n, create_using=create_using)
+    for n in range(-1, 10):
+        for m in range(-1, n * (n - 1) // 2 + 2):
+            _b17_check("hnm_harary_graph", n, m, create_using=create_using)
+    _b24_check("hkn_harary_graph", 5, 12, create_using=create_using)
+    _b24_check("hkn_harary_graph", 5, 13, create_using=create_using)
+    _b24_check("hnm_harary_graph", 13, 40, create_using=create_using)
+    _b24_check("hnm_harary_graph", 12, 41, create_using=create_using)
+    _b17_check("hkn_harary_graph", 2.0, 5, create_using=create_using)
+    instance = nx.path_graph(4, create_using=create_using or nx.Graph)
+    _b17_check("hkn_harary_graph", 3, 8, create_using=instance)
+
+
+def _b24_paths(seed):
+    rng = random.Random(seed)
+    alphabet = [0, 1, 2, "a", "b", (1, 2), 1.0, True, -1]
+    paths = []
+    for _ in range(rng.randint(0, 25)):
+        length = rng.randint(0, 6)
+        path = [rng.choice(alphabet[: rng.randint(2, len(alphabet))]) for _ in range(length)]
+        kind = rng.random()
+        paths.append(tuple(path) if kind < 0.3 else path)
+    if rng.random() < 0.3:
+        paths.append("".join(rng.choice("abc") for _ in range(rng.randint(0, 5))))
+    return paths
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_batch24_prefix_tree(seed):
+    paths = _b24_paths(seed)
+    for name in ["prefix_tree", "prefix_tree_recursive"]:
+        _b24_check(name, paths)
+        _b24_check(name, tuple(paths))
+
+
+def test_batch24_prefix_tree_edge_cases():
+    cases = [
+        [], [[]], [""], ["", ""], ["ab", "abc", "b", ""], [[1, 2], [1.0, 3], [True, 2], [1]],
+        [["x", [1]]], [[{1}]], [5], [{1: 2}], [[float("nan")]],
+    ]
+    for paths in cases:
+        for name in ["prefix_tree", "prefix_tree_recursive"]:
+            _b17_check(name, paths)
+        _b24_fresh("prefix_tree", lambda: (iter([[1, 2], [1]]),))
+        _b24_fresh("prefix_tree", lambda: ([iter([1, 2])],))
+    for name in ["prefix_tree", "prefix_tree_recursive"]:
+        _b24_check(name, ["ab", "abc", "b", ""])
+    deep = [list(range(2000)), list(range(5))]
+    _b24_check("prefix_tree", deep)
+    _b17_check("prefix_tree_recursive", deep)  # NetworkX's recursion fails
+
+
+def _b24_intervals(seed):
+    rng = random.Random(seed)
+    out = []
+    for _ in range(rng.randint(0, 30)):
+        if rng.random() < 0.5:
+            a = rng.randint(-5, 10)
+            b = a + rng.randint(0, 6)
+        else:
+            a = rng.choice([0.5, 1.0, 2.25, -3.5])
+            b = a + rng.choice([0, 1, 2.5])
+        iv = [a, b] if rng.random() < 0.5 else (a, b)
+        out.append(iv)
+    if out and rng.random() < 0.3:
+        out.append(list(out[0]))  # a repeated interval
+    return out
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_batch24_interval_graph(seed):
+    intervals = _b24_intervals(seed)
+    _b24_check("interval_graph", intervals)
+
+
+def test_batch24_interval_graph_edge_cases():
+    nan = float("nan")
+    for intervals in [
+        [], [(1, 2)], [(1, 2), (1, 2)], [(1, 2), (1.0, 2.0)], [(1, 2, 3)], [(3, 1)],
+        [(1, 2), (3, 1), [5]], [(1, 2), [5], (3, 1)], [("a", "b"), ("b", "c")], [(nan, 1), (0, 2)],
+        [(1, nan)], [(True, 2), (0, False)], [(0, 2**60), (2**60 - 1, 2**61)], [{1, 2}], "ab",
+        [(float("-inf"), float("inf")), (5, 6)],
+    ]:
+        _b17_check("interval_graph", intervals)
+    _b24_fresh("interval_graph", lambda: (iter([(1, 2), (2, 3)]),))
+    _b24_fresh("visibility_graph", lambda: (iter([1, 2, 3]),))
+    _b24_check("interval_graph", [(1, 2), (1.0, 2.0), (0, 1)])
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_batch24_visibility_graph(seed):
+    rng = random.Random(seed)
+    n = rng.randint(0, 40)
+    kind = seed % 4
+    if kind == 0:
+        series = [rng.randint(-3, 6) for _ in range(n)]
+    elif kind == 1:
+        series = [rng.choice([0.1, 0.25, 1.5, -2.0, 3.3]) for _ in range(n)]
+    elif kind == 2:
+        series = [rng.choice([1, 2.5, 0, 0.1, 7]) for _ in range(n)]
+    else:
+        series = [rng.random() * 10 for _ in range(n)]
+    _b24_check("visibility_graph", series)
+    _b24_check("visibility_graph", tuple(series))
+
+
+def test_batch24_visibility_graph_edge_cases():
+    nan, inf = float("nan"), float("inf")
+    for series in [[], [3], [1, 1, 1], [0, nan, 0], [inf, 0, inf], [2**60, 0, 2**60],
+                   ["a", "b"], [True, False, True], range(5), [1, None]]:
+        _b17_check("visibility_graph", series)
+
+
+def _b24_tree_snapshots(name, order, backend):
+    try:
+        return ("ok", [_b17_snapshot(G) for G in _b17_func(name)(order, backend=backend)])
+    except Exception as exc:
+        return (type(exc), str(exc))
+
+
+def test_batch24_nonisomorphic_trees():
+    for order in [-2, -1, 0, 1, 2, 3, 4, 5, 6, 9, 11]:
+        ref = _b24_tree_snapshots("nonisomorphic_trees", order, "networkx")
+        assert _b24_tree_snapshots("nonisomorphic_trees", order, "rustnx") == ref
+    # Errors come at the first `next()`, as from NetworkX's generator.
+    it = nx.nonisomorphic_trees(-1, backend="rustnx")
+    with pytest.raises(ValueError):
+        next(it)
+    _b17_check("nonisomorphic_trees", 2.0)
+
+
+def _b24_undirected(seed):
+    G = _b21_decorate(graph_for(seed, False), seed)
+    return G
+
+
+@pytest.mark.parametrize("seed", range(30))
+def test_batch24_mycielskian(seed):
+    G = _b24_undirected(seed)
+    for iterations in [0, 1, 2, -1]:
+        exact_outcome(_b21_graphs(nx.mycielskian), G, iterations)
+    runs_in_rustnx(nx.mycielskian, G, 2)
+    exact_outcome(_b21_graphs(nx.mycielskian), nx.DiGraph(G))
+    exact_outcome(_b21_graphs(nx.mycielskian), G, 1.0)
+
+
+def _b24_weighted_digraph(seed):
+    rng = random.Random(seed)
+    G = _b21_decorate(graph_for(seed, True), seed)
+    for u, v, d in G.edges(data=True):
+        r = rng.random()
+        if r < 0.3:
+            d["weight"] = rng.randint(-2, 4)
+        elif r < 0.6:
+            d["weight"] = rng.choice([0.5, 1.25, -1.0, 3.0])
+        elif r < 0.7:
+            d.pop("weight", None)
+    return G
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_batch24_stochastic_graph(seed):
+    G = _b24_weighted_digraph(seed)
+    exact_outcome(_b21_graphs(nx.stochastic_graph), G)
+    exact_outcome(_b21_graphs(nx.stochastic_graph), G, weight="w")
+    exact_outcome(_b21_graphs(nx.stochastic_graph), G, weight=None)
+    runs_in_rustnx(nx.stochastic_graph, G)
+    if G.number_of_edges():
+        H = G.copy()
+        u, v = next(iter(H.edges()))
+        H[u][v]["weight"] = "x"
+        exact_outcome(_b21_graphs(nx.stochastic_graph), H)
+        H[u][v]["weight"] = 2**60
+        exact_outcome(_b21_graphs(nx.stochastic_graph), H)
+    _b24_on_copies(nx.stochastic_graph, G, copy=False)
+    exact_outcome(_b21_graphs(nx.stochastic_graph), G.to_undirected())
+
+
+def test_batch24_stochastic_graph_zero_degree():
+    G = nx.DiGraph([(0, 1, {"weight": 0}), (0, 2, {"weight": 0}), (1, 2, {"weight": 1}),
+                    (1, 0, {"weight": -1}), (2, 0, {"weight": 0.0}), (2, 1, {"weight": -0.0})])
+    exact_outcome(_b21_graphs(nx.stochastic_graph), G)
+
+
+def _b24_contraction_args(G, seed):
+    rng = random.Random(seed)
+    nodes = list(G)
+    pairs = [(rng.choice(nodes), rng.choice(nodes)) for _ in range(3)] if nodes else []
+    edges = list(G.edges())
+    if edges:
+        pairs.append(rng.choice(edges))
+        pairs.append(edges[0][::-1])
+    if nodes:
+        pairs += [(nodes[0], nodes[0]), (nodes[0], "missing"), ("missing", nodes[-1])]
+    return pairs
+
+
+def _b24_has_store_param():
+    return "store_contraction_as" in inspect.signature(_b17_func("contracted_nodes")).parameters
+
+
+def _b24_on_copies(func, G, *args, **kwargs):
+    """Run ``func`` on deep copies of G with each backend (rustnx falling
+    back through ``backend_priority`` if it declines) and compare the
+    results and what became of the inputs: NetworkX's contraction can
+    write into dicts the input shares with its copy."""
+
+    def run(backend):
+        H = copy.deepcopy(G)
+        try:
+            if backend == "priority":
+                old = nx.config.backend_priority.algos
+                nx.config.backend_priority.algos = ["rustnx"]
+                try:
+                    out = func(H, *args, **kwargs)
+                finally:
+                    nx.config.backend_priority.algos = old
+            else:
+                out = func(H, *args, backend=backend, **kwargs)
+            result = ("ok", _b21_graph_state(out, H))
+        except Exception as exc:
+            result = (type(exc), exc.args)
+        return result, _b21_graph_state(H)
+
+    ours = run("rustnx")
+    if ours[0][0] is NotImplementedError:
+        ours = run("priority")
+    assert ours == run("networkx")
+    return ours
+
+
+@pytest.mark.parametrize("seed", range(30))
+@pytest.mark.parametrize("directed", [False, True])
+def test_batch24_contracted_nodes(seed, directed):
+    G = _b21_decorate(graph_for(seed, directed), seed)
+    for i, (u, v, d) in enumerate(G.edges(data=True)):
+        if i % 5 == 0:
+            d["contraction"] = {"old": i}
+    for i, v in enumerate(G):
+        if i % 4 == 0:
+            G.nodes[v]["contraction"] = {"was": i}
+    stores = ["contraction", None, "c"] if _b24_has_store_param() else ["contraction"]
+    for u, v in _b24_contraction_args(G, seed):
+        for self_loops in [True, False]:
+            for store in stores:
+                kw = {"store_contraction_as": store} if store != "contraction" else {}
+                _b24_on_copies(nx.contracted_nodes, G, u, v, self_loops=self_loops, **kw)
+                _b24_on_copies(nx.contracted_edge, G, (u, v), self_loops=self_loops, **kw)
+    _b24_on_copies(nx.contracted_edge, G, (1, 2, 3))
+    _b24_on_copies(nx.contracted_edge, G, (1,))
+    if G.number_of_edges():
+        u, v = next(iter(G.edges()))
+        runs_in_rustnx(nx.contracted_nodes, G, u, v)
+        runs_in_rustnx(nx.contracted_edge, G, (u, v))
+        _b24_on_copies(nx.contracted_nodes, G, u, v, copy=False)
+        _b24_on_copies(nx.contracted_edge, G, (u, v), copy=False)
+
+
+def _b24_small(seed, n_max):
+    rng = random.Random(seed)
+    n = rng.randint(0, n_max)
+    G = nx.gnp_random_graph(n, rng.choice([0.2, 0.5, 0.8]), seed=seed)
+    if rng.random() < 0.5:
+        G = nx.relabel_nodes(G, {v: f"v{v}" for v in G})
+    if n and rng.random() < 0.2:
+        v = rng.choice(list(G))
+        G.add_edge(v, v)
+    return _b21_decorate(G, seed)
+
+
+@pytest.mark.parametrize("seed", range(30))
+def test_batch24_modular_product(seed):
+    G, H = _b24_small(seed, 7), _b24_small(seed + 100, 6)
+    exact_outcome(_b21_graphs(nx.modular_product), G, H)
+    exact_outcome(_b21_graphs(nx.modular_product), H, G)
+    runs_in_rustnx(nx.modular_product, G, H)
+    exact_outcome(_b21_graphs(nx.modular_product), G.to_directed(), H)
+    if G.number_of_edges() and H.number_of_edges():
+        K = G.copy()
+        u, v = next(iter(K.edges()))
+        K[u][v][3] = "x"
+        exact_outcome(_b21_graphs(nx.modular_product), K, H)
+        K[u][v].pop(3)
+        K[u][v]["u_of_edge"] = 1
+        exact_outcome(_b21_graphs(nx.modular_product), K, H)
+
+
+def _b24_line_graph_input(seed):
+    rng = random.Random(seed)
+    G = graph_for(seed, False)
+    G.remove_edges_from(list(nx.selfloop_edges(G)))
+    L = nx.line_graph(G)
+    if rng.random() < 0.5:
+        L = nx.convert_node_labels_to_integers(L, ordering=rng.choice(["default", "sorted"]))
+    H = nx.Graph()
+    nodes = list(L)
+    rng.shuffle(nodes)
+    H.add_nodes_from(nodes)
+    edges = list(L.edges())
+    rng.shuffle(edges)
+    H.add_edges_from(edges)
+    return H
+
+
+@pytest.mark.parametrize("seed", range(60))
+def test_batch24_inverse_line_graph(seed):
+    L = _b24_line_graph_input(seed)
+    exact_outcome(_b21_graphs(nx.inverse_line_graph), L)
+    if L.number_of_edges() and nx.is_connected(L):
+        runs_in_rustnx(nx.inverse_line_graph, L)
+    G = graph_for(seed, False)
+    exact_outcome(_b21_graphs(nx.inverse_line_graph), G)
+    G.remove_edges_from(list(nx.selfloop_edges(G)))
+    exact_outcome(_b21_graphs(nx.inverse_line_graph), G)
+
+
+def test_batch24_inverse_line_graph_edge_cases():
+    for G in [nx.Graph(), nx.Graph([(5, 5)]), nx.empty_graph(1), nx.empty_graph(3),
+              nx.complete_graph(4), nx.complete_graph(3), nx.path_graph(2), nx.star_graph(3),
+              nx.Graph([(0, 1), (2, 3)]), nx.complete_graph(5), nx.wheel_graph(5),
+              nx.petersen_graph(), nx.Graph([(0, 1), (1, 2), (2, 0), (0, 3)]),
+              nx.DiGraph([(0, 1)]), nx.MultiGraph([(0, 1)])]:
+        exact_outcome(_b21_graphs(nx.inverse_line_graph), G)
+
+
+def _b24_tree(seed, directed=False):
+    rng = random.Random(seed)
+    n = rng.randint(1, 15)
+    T = nx.Graph()
+    T.add_node(0)
+    for v in range(1, n):
+        T.add_edge(v, rng.randrange(v))
+    if rng.random() < 0.5:
+        T = nx.relabel_nodes(T, {v: f"t{seed}-{v}" for v in T})
+    if directed:
+        T = nx.bfs_tree(T, next(iter(T)))
+    H = T.__class__()
+    nodes = list(T)
+    rng.shuffle(nodes)
+    H.add_nodes_from(nodes)
+    edges = list(T.edges())
+    rng.shuffle(edges)
+    H.add_edges_from(edges)
+    return _b21_decorate(H, seed)
+
+
+@pytest.mark.parametrize("seed", range(30))
+def test_batch24_join_trees(seed):
+    rng = random.Random(seed)
+    directed = seed % 3 == 0
+    trees = [_b24_tree(seed * 10 + i, directed) for i in range(rng.randint(1, 4))]
+    pairs = [(T, rng.choice(list(T))) for T in trees]
+    for kw in [{}, {"label_attribute": "old"}, {"first_label": 5}, {"label_attribute": "color", "first_label": -3}]:
+        exact_outcome(_b21_graphs(nx.join_trees), pairs, **kw)
+        exact_outcome(_b21_graphs(nx.join_trees), tuple(pairs), **kw)
+    runs_in_rustnx(nx.join_trees, pairs)
+    exact_outcome(_b21_graphs(nx.join_trees), [])
+    exact_outcome(_b21_graphs(nx.join_trees), [], first_label=4)
+    exact_outcome(_b21_graphs(nx.join_trees), pairs + [(trees[0], "missing")])
+    exact_outcome(_b21_graphs(nx.join_trees), pairs, first_label=1.5)
+    mixed = [(_b24_tree(seed, not directed), 0)] + pairs
+    exact_outcome(_b21_graphs(nx.join_trees), mixed)
+
+
+def _b24_quotient_state(H):
+    """`_b21_graph_state`, with the default "graph" node attribute (a fresh
+    subgraph view) replaced by its nodes and edges."""
+    if not isinstance(H, nx.Graph):
+        return H
+    H = H.copy()
+    for v, d in H.nodes(data=True):
+        if isinstance(d.get("graph"), nx.Graph):
+            S = d["graph"]
+            d["graph"] = (type(S).__name__, list(S.nodes), list(S.edges))
+    return _b21_graph_state(H)
+
+
+def _b24_partition(G, seed):
+    rng = random.Random(seed)
+    nodes = list(G)
+    rng.shuffle(nodes)
+    blocks, i = [], 0
+    while i < len(nodes):
+        k = rng.randint(1, 4)
+        block = nodes[i : i + k]
+        blocks.append(rng.choice([list, tuple, set, frozenset])(block))
+        i += k
+    return blocks
+
+
+@pytest.mark.parametrize("seed", range(40))
+@pytest.mark.parametrize("directed", [False, True])
+def test_batch24_quotient_graph(seed, directed):
+    G = _b21_decorate(graph_for(seed, directed, "int" if seed % 2 else "none"), seed)
+    for _, _, d in G.edges(data=True):
+        if isinstance(d.get("weight"), float):
+            d["weight"] = int(d["weight"] * 2)  # float sums fall back
+    part = _b24_partition(G, seed)
+    q = lambda *a, **kw: _b24_quotient_state(nx.quotient_graph(*a, **kw))
+    exact_outcome(q, G, part)
+    exact_outcome(q, G, part, relabel=True)
+    exact_outcome(q, G, {i: b for i, b in enumerate(part)})
+    exact_outcome(q, G, part, weight="w")
+    exact_outcome(q, G, part, node_data=lambda b: {"size": len(b)})
+    runs_in_rustnx(nx.quotient_graph, G, part)
+    # Cases rustnx leaves to NetworkX, or NetworkX's errors.
+    exact_outcome(q, G, part[:-1])
+    exact_outcome(q, G, part + [[]])
+    exact_outcome(q, G, part + [part[0]])
+    exact_outcome(q, G, lambda u, v: str(u)[-1] == str(v)[-1])
+    exact_outcome(q, G, part, edge_relation=lambda b, c: True)
+    exact_outcome(q, G, part, create_using=nx.MultiGraph)
+    if G.number_of_edges():
+        H = G.copy()
+        u, v = next(iter(H.edges()))
+        H[u][v]["weight"] = 0.5
+        exact_outcome(q, H, part)
+
+
+# --- Batch 25: cliques, structure and approximation ---
+
+from itertools import combinations  # noqa: E402
+
+from networkx.algorithms import approximation as _b25_approx  # noqa: E402
+from networkx.algorithms import connectivity as _b25_conn  # noqa: E402
+from networkx.algorithms.approximation.steinertree import metric_closure as _b25_metric_closure  # noqa: E402
+
+
+def _b25_simple(G):
+    """G without self-loops (the approximation functions' usual input)."""
+    H = G.copy()
+    H.remove_edges_from(list(nx.selfloop_edges(H)))
+    return H
+
+
+def _b25_chordal(G):
+    """A chordal supergraph of G: its min-fill-in triangulation."""
+    C = _b25_simple(G)
+    for bag in _b25_approx.treewidth_min_fill_in(C, backend="networkx")[1]:
+        C.add_edges_from(combinations(bag, 2))
+    return C
+
+
+def _b25_decomposition(func):
+    """``treewidth_*`` results with the bags' iteration order and edges."""
+
+    def run(*args, **kwargs):
+        width, T = func(*args, **kwargs)
+        return width, [list(b) for b in T], [(list(u), list(v)) for u, v in T.edges()]
+
+    return run
+
+
+def test_b25_set_algebra_probe():
+    from rustnx import algorithms
+
+    assert algorithms._b25_set_algebra_replayable()
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch25_cliques(seed, directed):
+    G = graph_for(seed, directed)
+    exact_outcome(listed(nx.find_cliques), G)
+    exact_outcome(listed(nx.find_cliques_recursive), G)
+    nodes = list(G)
+    if nodes:
+        v = nodes[seed % len(nodes)]
+        nbrs = [w for w in G[v] if w != v]
+        for prefix in ([v], [v] + nbrs[:1], [v] + nbrs[:2], [v, v], [v, "missing"], [[1], v]):
+            exact_outcome(listed(nx.find_cliques), G, prefix)
+            exact_outcome(listed(nx.find_cliques_recursive), G, prefix)
+        exact_outcome(listed(nx.find_cliques), G, (v,))  # a tuple falls back
+    exact_outcome(_b21_graphs(nx.make_max_clique_graph), G)
+    exact_outcome(_b21_graphs(nx.make_max_clique_graph), G, create_using=nx.DiGraph)
+    exact_outcome(_b21_graphs(nx.make_clique_bipartite), G)
+    exact_outcome(_b21_graphs(nx.make_clique_bipartite), G, create_using=nx.MultiGraph)
+    for k in (1, 2, 3, 4):
+        exact_outcome(listed(nx.community.k_clique_communities), G, k)
+    exact_outcome(listed(nx.community.k_clique_communities), G, 3, cliques=list(nx.find_cliques(_b25_simple(G).to_undirected())))
+
+
+def test_batch25_clique_edge_cases():
+    for G in [nx.Graph(), nx.empty_graph(3), nx.complete_graph(5), nx.path_graph(4)]:
+        exact_outcome(listed(nx.find_cliques), G)
+        exact_outcome(listed(nx.find_cliques_recursive), G)
+        exact_outcome(listed(nx.find_cliques), G, [0])
+        exact_outcome(listed(nx.find_cliques_recursive), G, [0, 1])
+        exact_outcome(_b21_graphs(nx.make_max_clique_graph), G)
+        exact_outcome(_b21_graphs(nx.make_clique_bipartite), G)
+    # Clique nodes named like make_clique_bipartite's clique labels.
+    G = nx.relabel_nodes(nx.path_graph(5), lambda v: -v)
+    exact_outcome(_b21_graphs(nx.make_clique_bipartite), G)
+    # The caller's node objects start each clique (1.0 is G's node 1).
+    exact_outcome(listed(nx.find_cliques), nx.complete_graph(4), [1.0])
+    exact_outcome(listed(nx.find_cliques_recursive), nx.complete_graph(4), [1.0, 2])
+    B = nx.DiGraph([(9, 9)])
+    exact_outcome(_b21_graphs(lambda G, **kw: nx.make_max_clique_graph(G, create_using=B, **kw)), nx.path_graph(3))
+
+
+def test_batch25_find_cliques_laziness():
+    # find_cliques reads G at the first next(); later changes don't matter.
+    results = []
+    for ours in [True, False]:
+        G = nx.gnp_random_graph(30, 0.3, seed=3)
+        gen = nx.find_cliques(_b13_converted(G, "find_cliques") if ours else G)
+        G.add_edge(0, 1)
+        G.add_edge(2, 3)
+        first = next(gen)
+        G.add_edge(4, 5)
+        results.append([first] + list(gen))
+    assert results[0] == results[1]
+    # find_cliques_recursive copies G at the call.
+    results = []
+    for ours in [True, False]:
+        G = nx.gnp_random_graph(30, 0.3, seed=4)
+        gen = nx.find_cliques_recursive(_b13_converted(G, "find_cliques_recursive") if ours else G)
+        G.add_edge(0, 1)
+        results.append(list(gen))
+    assert results[0] == results[1]
+    # Large outputs come in batches as iteration goes on.
+    G = nx.gnm_random_graph(3000, 9000, seed=5)
+    assert list(islice(nx.find_cliques(G, backend="rustnx"), 5)) == list(
+        islice(nx.find_cliques(G, backend="networkx"), 5)
+    )
+    exact_outcome(listed(nx.find_cliques), G)
+    exact_outcome(listed(nx.community.k_clique_communities), G, 3)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch25_dominating_and_independent_sets(seed, directed):
+    G = graph_for(seed, directed)
+    exact_outcome(with_set_order(nx.dominating_set), G)
+    nodes = list(G)
+    for start in nodes[-1:] + ["missing", [1]]:
+        exact_outcome(with_set_order(nx.dominating_set), G, start)
+    for s in range(3):
+        exact_outcome(with_set_order(nx.maximal_independent_set), G, seed=s)
+        exact_outcome(with_set_order(lambda G, **kw: nx.maximal_independent_set(G, seed=random.Random(s), **kw)), G)
+        exact_outcome(with_set_order(nx.maximal_independent_set), G, nodes[:1], seed=s)
+        exact_outcome(with_set_order(nx.maximal_independent_set), G, nodes[:3], seed=s)
+        exact_outcome(with_set_order(nx.maximal_independent_set), G, ["missing"], seed=s)
+
+
+def test_batch25_independent_set_state():
+    # The generator ends where NetworkX's draws leave it.
+    G = nx.gnm_random_graph(200, 500, seed=1)
+    states = []
+    for backend in ["rustnx", "networkx"]:
+        rng = random.Random(42)
+        result = nx.maximal_independent_set(G, seed=rng, backend=backend)
+        states.append((list(result), rng.random()))
+    assert states[0] == states[1]
+    exact_outcome(with_set_order(nx.dominating_set), nx.Graph())
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float", "missing"])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch25_kernighan_lin(seed, weights):
+    G = graph_for(seed, False, weights)
+    nodes = list(G)
+    kl = nx.community.kernighan_lin_bisection
+    for s in range(3):
+        exact_outcome(with_set_order(kl), G, seed=s)
+        exact_outcome(with_set_order(kl), G, seed=s, max_iter=1)
+        exact_outcome(with_set_order(kl), G, weight=None, seed=s)
+    halves = [nodes[::2], nodes[1::2]]
+    for partition in [tuple(set(h) for h in halves), halves, [halves[0], halves[0]], (nodes, [])]:
+        exact_outcome(with_set_order(kl), G, partition, seed=1)
+    exact_outcome(with_set_order(lambda G, **kw: kl(G, iter(halves), seed=1, **kw)), G)
+    exact_outcome(with_set_order(kl), G, seed=1, max_iter=0)
+    exact_outcome(with_set_order(kl), G, seed=1, max_iter=-2)
+    if weights == "int" and nodes:
+        H = G.copy()
+        u, v = next(iter(H.edges()), (nodes[0], nodes[0]))
+        H.add_edge(u, v, weight=None)  # hidden in 3.6+, an error before
+        exact_outcome(with_set_order(kl), H, seed=1)
+
+
+def test_batch25_kernighan_lin_state():
+    # The caller's generator ends where NetworkX leaves it.
+    G = nx.gnm_random_graph(300, 900, seed=3)
+    states = []
+    for backend in ["rustnx", "networkx"]:
+        rng = random.Random(7)
+        parts = nx.community.kernighan_lin_bisection(G, seed=rng, backend=backend)
+        states.append(([list(p) for p in parts], rng.random()))
+    assert states[0] == states[1]
+    for G in [nx.Graph(), nx.empty_graph(1), nx.MultiGraph([(0, 1), (0, 1)]), nx.DiGraph([(0, 1)])]:
+        exact_outcome(with_set_order(nx.community.kernighan_lin_bisection), G, seed=1)
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_batch25_approximation(seed):
+    G = graph_for(seed, False)
+    H = _b25_simple(G)
+    exact_outcome(_b25_approx.large_clique_size, G)
+    for A in [G, H]:
+        exact_outcome(with_set_order(_b25_approx.ramsey_R2), A)
+        exact_outcome(with_set_order(_b25_approx.clique_removal), A)
+        exact_outcome(with_set_order(_b25_approx.maximum_independent_set), A)
+        exact_outcome(with_set_order(_b25_approx.max_clique), A)
+        exact_outcome(_b25_decomposition(_b25_approx.treewidth_min_degree), A)
+    # The shared decomposition replay (treewidth_min_fill_in uses it too).
+    exact_outcome(_b25_decomposition(_b25_approx.treewidth_min_fill_in), G)
+    exact_outcome(_b25_approx.large_clique_size, graph_for(seed, True))
+    exact_outcome(_b25_approx.ramsey_R2, graph_for(seed, True))
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(40))
+def test_batch25_approximate_connectivity(seed, directed):
+    G = graph_for(seed, directed)
+    nodes = list(G)
+    exact_outcome(_b25_approx.node_connectivity, G)
+    exact_outcome(_b25_approx.node_connectivity, _b25_simple(nx.k_core(_b25_simple(G).to_undirected(), 2)))
+    exact_outcome(_b25_approx.all_pairs_node_connectivity, G)
+    exact_outcome(_b25_approx.all_pairs_node_connectivity, G, nbunch=nodes[:6])
+    exact_outcome(_b25_approx.all_pairs_node_connectivity, G, nbunch=nodes[:4], cutoff=1)
+    exact_outcome(_b25_approx.all_pairs_node_connectivity, G, nbunch=nodes[:2] + ["missing"])
+    if len(nodes) >= 2:
+        s, t = nodes[0], nodes[-1]
+        for cutoff in [None, 0, 1, 2, True, 1.5, -1]:
+            exact_outcome(_b25_approx.local_node_connectivity, G, s, t, cutoff=cutoff)
+            exact_outcome(_b25_approx.local_node_connectivity, G, t, s, cutoff=cutoff)
+        exact_outcome(_b25_approx.local_node_connectivity, G, s, s)
+        exact_outcome(_b25_approx.local_node_connectivity, G, s, "missing")
+        exact_outcome(_b25_approx.node_connectivity, G, s, t)
+        exact_outcome(_b25_approx.node_connectivity, G, s, "missing")
+        exact_outcome(_b25_approx.node_connectivity, G, s)
+    exact_outcome(_b25_approx.node_connectivity, nx.DiGraph() if directed else nx.Graph())
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_batch25_structure(seed):
+    G = graph_for(seed, False)
+    D = graph_for(seed, True)
+    rng = random.Random(seed)
+    T = nx.tournament.random_tournament(rng.randint(0, 40), seed=seed)
+    exact_outcome(nx.tournament.hamiltonian_path, T)
+    exact_outcome(nx.tournament.hamiltonian_path, D)
+    exact_outcome(nx.tournament.hamiltonian_path, G)
+    for A in [G, _b25_simple(G), _b25_chordal(G), D]:
+        exact_outcome(listed(nx.chordal_graph_cliques), A)
+    H = _b25_simple(G)
+    exact_outcome(nx.find_asteroidal_triple, H)
+    exact_outcome(nx.find_asteroidal_triple, nx.gnp_random_graph(rng.randint(5, 25), 0.4, seed=seed))
+    exact_outcome(nx.find_asteroidal_triple, nx.random_labeled_tree(rng.randint(5, 25), seed=seed)
+                  if hasattr(nx, "random_labeled_tree") else nx.path_graph(9))
+    exact_outcome(nx.find_asteroidal_triple, D)
+
+
+def test_batch25_structure_edge_cases():
+    for T in [nx.DiGraph(), nx.DiGraph([(0, 1)]), nx.tournament.random_tournament(1)]:
+        exact_outcome(nx.tournament.hamiltonian_path, T)
+    loop = nx.Graph([(0, 1), (1, 2), (2, 0), (2, 2)])
+    for A in [loop, nx.Graph([(5, 5)]), nx.cycle_graph(5), nx.Graph()]:
+        exact_outcome(listed(nx.chordal_graph_cliques), A)
+    # chordal_graph_cliques reads G at the first next().
+    results = []
+    for ours in [True, False]:
+        G = nx.path_graph(6)
+        gen = nx.chordal_graph_cliques(_b13_converted(G, "chordal_graph_cliques") if ours else G)
+        G.add_edge(0, 2)
+        results.append([sorted(c) for c in gen])
+    assert results[0] == results[1]
+    exact_outcome(nx.find_asteroidal_triple, nx.cycle_graph(6))
+    exact_outcome(nx.find_asteroidal_triple, nx.cycle_graph(5))
+    # Subgraphs of views filter the underlying graph: these fall back.
+    T = nx.tournament.random_tournament(30, seed=1)
+    exact_outcome(nx.tournament.hamiltonian_path, T.subgraph(list(T)[:20]))
+    G = nx.gnp_random_graph(30, 0.3, seed=2)
+    V = G.subgraph(list(G)[:20])
+    for func in [_b25_approx.ramsey_R2, _b25_approx.maximum_independent_set, _b25_approx.max_clique]:
+        exact_outcome(with_set_order(func), V)
+    exact_outcome(listed(nx.chordal_graph_cliques), _b25_chordal(G).subgraph(list(G)[:20]))
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch25_auxiliary_graphs(seed, directed):
+    G = graph_for(seed, directed)
+    M = random_multigraph(seed, directed, "int")
+    for A in [G, M]:
+        exact_outcome(_b21_graphs(_b25_conn.build_auxiliary_edge_connectivity), A)
+        exact_outcome(_b21_graphs(_b25_conn.build_auxiliary_node_connectivity), A)
+
+
+@pytest.mark.parametrize("weights", ["none", "int", "float"])
+@pytest.mark.parametrize("seed", range(30))
+def test_batch25_metric_closure(seed, weights):
+    G = graph_for(seed, False, weights)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        exact_outcome(_b21_graphs(_b25_metric_closure), G)
+        if len(G):
+            C = G.subgraph(max(nx.connected_components(G), key=len)).copy()
+            exact_outcome(_b21_graphs(_b25_metric_closure), C)
+            exact_outcome(_b21_graphs(_b25_metric_closure), C, weight=None)
+            exact_outcome(_b21_graphs(_b25_metric_closure), C, weight=lambda u, v, d: 2)
+        exact_outcome(_b21_graphs(_b25_metric_closure), graph_for(seed, True))
+
+
+def test_batch25_metric_closure_warns_like_networkx():
+    G = nx.path_graph(4)
+    caught = []
+    for backend in ["rustnx", "networkx"]:
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            _b25_metric_closure(G, backend=backend)
+        caught.append([(x.category, str(x.message)) for x in w])
+    assert caught[0] == caught[1]
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(10))
+def test_batch25_multigraphs(seed, directed, restore_config):
+    M = random_multigraph(seed, directed, "int")
+    exact_outcome(listed(nx.find_cliques), M)
+    exact_outcome(listed(nx.find_cliques_recursive), M)
+    exact_outcome(with_set_order(nx.dominating_set), M)
+    # These fall back (or raise as NetworkX does).
+    exact_outcome(_b21_graphs(nx.make_max_clique_graph), M)
+    exact_outcome(_b25_approx.large_clique_size, M)
+    exact_outcome(with_set_order(_b25_approx.max_clique), M)
+    exact_outcome(_b25_approx.node_connectivity, M)
+    exact_outcome(listed(nx.chordal_graph_cliques), M)
+    exact_outcome(nx.tournament.hamiltonian_path, M)
+
+
+def test_batch25_dispatch_through_priority(restore_config, monkeypatch):
+    from rustnx import interface
+
+    calls = []
+    for name in ["find_cliques", "dominating_set", "build_auxiliary_node_connectivity"]:
+        original = getattr(interface, name)
+
+        def counting(*args, _original=original, **kwargs):
+            calls.append(1)
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(interface, name, counting)
+    old_generators = getattr(nx.config.backend_priority, "generators", None)
+    try:
+        nx.config.backend_priority.algos = ["rustnx"]
+        if old_generators is not None:
+            nx.config.backend_priority.generators = ["rustnx"]
+        G = nx.gnm_random_graph(800, 2400, seed=2)
+        assert list(nx.find_cliques(G)) == list(nx.find_cliques(G, backend="networkx"))
+        assert list(nx.dominating_set(G)) == list(nx.dominating_set(G, backend="networkx"))
+        H = _b25_conn.build_auxiliary_node_connectivity(G)
+        assert _b21_graph_state(H) == _b21_graph_state(
+            _b25_conn.build_auxiliary_node_connectivity(G, backend="networkx")
+        )
+        assert len(calls) == 3, "rustnx was not used"
+    finally:
+        if old_generators is not None:
+            nx.config.backend_priority.generators = old_generators
+
+
+# --- Batch 22: degree-sequence generators ---
+
+
+def _b22_func(name):
+    """The installed NetworkX's dispatchable ``name``; skips if it has none."""
+    registry = nx.utils.backends._registered_algorithms
+    if name not in registry:
+        pytest.skip(f"this NetworkX has no {name}")
+    return registry[name]
+
+
+def _b22_same_graph(G, H):
+    """Assert ``G`` and ``H`` are equal in everything NetworkX exposes:
+    class, graph dict (keys, value types, sets in iteration order), node
+    order and data, every adjacency row's order, edge data, multigraph keys,
+    and edge dicts shared by the two rows holding an edge."""
+
+    def typed(value):
+        if isinstance(value, (set, frozenset)):
+            return (type(value), [typed(x) for x in value])
+        if isinstance(value, (list, tuple)):
+            return (type(value), [typed(x) for x in value])
+        if isinstance(value, dict):
+            return (type(value), [(typed(k), typed(v)) for k, v in value.items()])
+        return (type(value), value)
+
+    assert type(G) is type(H)
+    assert typed(G.graph) == typed(H.graph)
+    assert typed(G._node) == typed(H._node)
+    rows = [(G._adj, H._adj)] + ([(G._pred, H._pred)] if G.is_directed() else [])
+    for A, B in rows:
+        assert list(A) == list(B)
+        for u in A:
+            assert typed(A[u]) == typed(B[u]), u
+    for u, row in G._adj.items():
+        for v, data in row.items():
+            other = G._pred[v][u] if G.is_directed() else G._adj[v][u]
+            assert other is data
+
+
+def _b22_outcome(func, args, kwargs, seed, backend):
+    """``func(*args, **kwargs)`` (with ``seed=random.Random(seed)`` unless
+    ``seed`` is None): ``("ok", result, state)`` or the exception's type
+    and message, plus the generator's state afterwards."""
+    rng = None if seed is None else random.Random(seed)
+    extra = {} if rng is None else {"seed": rng}
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            result = func(*args, backend=backend, **extra, **kwargs)
+        out = ("ok", result)
+    except NotImplementedError:
+        raise
+    except Exception as exc:
+        out = (type(exc), str(exc))
+    return out + (None if rng is None else rng.getstate(),)
+
+
+def _b22_check(name, args, kwargs=None, seeds=range(3), fallback=False):
+    """Compare rustnx with NetworkX. Runs with ``backend="rustnx"`` (so a
+    fallback fails the test), or with ``fallback=True`` through
+    ``backend_priority.generators``, where rustnx may decline."""
+    func = _b22_func(name)
+    kwargs = kwargs or {}
+    for seed in seeds:
+        if fallback:
+            with nx.config.backend_priority(generators=["rustnx"]):
+                ours = _b22_outcome(func, args, kwargs, seed, None)
+        else:
+            ours = _b22_outcome(func, args, kwargs, seed, "rustnx")
+        ref = _b22_outcome(func, args, kwargs, seed, "networkx")
+        if ours[0] == "ok" and ref[0] == "ok":
+            if isinstance(ref[1], nx.Graph):
+                _b22_same_graph(ours[1], ref[1])
+            else:
+                assert type(ours[1]) is type(ref[1])
+                assert ours[1] == ref[1]
+                if isinstance(ref[1], list):
+                    assert [type(x) for x in ours[1]] == [type(x) for x in ref[1]]
+            assert ours[2] == ref[2]
+        else:
+            assert ours == ref
+
+
+def _b22_sequences(seed, n):
+    """Degree sequences of random graphs (graphical), plus random lists."""
+    rng = random.Random(seed)
+    G = nx.gnm_random_graph(n, rng.randint(0, 3 * n), seed=seed)
+    graphical = [d for _, d in G.degree()]
+    rough = [rng.randint(0, max(n - 1, 0)) for _ in range(n)]
+    return graphical, rough
+
+
+def _b22_directed_sequences(seed, n):
+    D = nx.gnm_random_graph(n, random.Random(seed).randint(0, 3 * n), seed=seed, directed=True)
+    return [d for _, d in D.in_degree()], [d for _, d in D.out_degree()]
+
+
+_B22_CLASSES = [None, nx.Graph, nx.MultiGraph, nx.DiGraph, nx.MultiDiGraph]
+
+
+@pytest.mark.parametrize("n", [0, 1, 2, 5, 13, 40])
+def test_batch22_configuration_models(n):
+    graphical, rough = _b22_sequences(n, n)
+    for seq in [graphical, rough, rough + [1], [-1, 3] + rough, tuple(graphical)]:
+        for cls in _B22_CLASSES:
+            _b22_check("configuration_model", (seq,), {"create_using": cls})
+    rng = random.Random(n)
+    for _ in range(4):
+        ins = [rng.randint(0, 4) for _ in range(rng.randint(0, n))]
+        outs = [rng.randint(0, 4) for _ in range(rng.randint(0, n))]
+        _b22_check("directed_configuration_model", (ins, outs))
+        gap = sum(ins) - sum(outs)
+        if gap > 0:
+            outs.append(gap)
+        else:
+            ins.append(-gap)
+        for cls in _B22_CLASSES:
+            _b22_check("directed_configuration_model", (ins, outs), {"create_using": cls})
+        # Trailing zeros: nodes past len(out) that no edge reaches.
+        _b22_check("directed_configuration_model", (ins + [0, 0], outs))
+        _b22_check("directed_configuration_model", ([], [0, 0]))
+        _b22_check("directed_configuration_model", ([0, 0], []))
+        pairs = [(rng.randint(-1, 3), rng.randint(0, 3)) for _ in range(n)]
+        for cls in [None, nx.Graph, nx.DiGraph]:
+            _b22_check("random_clustered_graph", (pairs,), {"create_using": cls})
+        if n:
+            single = sum(max(a, 0) for a, _ in pairs)
+            tri = sum(b for _, b in pairs)
+            pairs[0] = (pairs[0][0] + single % 2, pairs[0][1] + (-tri) % 3)
+        for cls in [None, nx.Graph, nx.MultiGraph]:
+            _b22_check("random_clustered_graph", (pairs,), {"create_using": cls})
+            _b22_check("random_clustered_graph", ([list(p) for p in pairs],), {"create_using": cls})
+
+
+@pytest.mark.parametrize("n", [0, 1, 2, 5, 13, 40])
+def test_batch22_bipartite_models(n):
+    rng = random.Random(n)
+    names = [
+        "bipartite_havel_hakimi_graph",
+        "reverse_havel_hakimi_graph",
+        "alternating_havel_hakimi_graph",
+    ]
+    for _ in range(6):
+        a = [rng.randint(0, 5) for _ in range(rng.randint(0, n))]
+        b = [rng.randint(0, 5) for _ in range(rng.randint(0, n))]
+        for cls in [None, nx.Graph]:
+            _b22_check("bipartite_configuration_model", (a, b), {"create_using": cls})
+            for name in names:
+                _b22_check(name, (a, b), {"create_using": cls}, seeds=[None])
+        gap = sum(a) - sum(b)
+        if gap > 0:
+            b.append(gap)
+        else:
+            a.append(-gap)
+        for cls in [None, nx.Graph, nx.MultiGraph, nx.DiGraph]:
+            _b22_check("bipartite_configuration_model", (a, b), {"create_using": cls})
+            for name in names:
+                _b22_check(name, (a, b), {"create_using": cls}, seeds=[None])
+        # Degrees above the other side's size, and zeros on both sides.
+        for name in names:
+            _b22_check(name, ([0, 7, 1], [2, 0, 3, 3]), seeds=[None])
+            _b22_check(name, ([0, 0], [0]), seeds=[None])
+
+
+@pytest.mark.parametrize("n", [0, 1, 2, 5, 13, 40])
+def test_batch22_havel_hakimi(n):
+    graphical, rough = _b22_sequences(n, n)
+    for seq in [graphical, rough, [0] * n + graphical, graphical[::-1]]:
+        for cls in _B22_CLASSES:
+            _b22_check("havel_hakimi_graph", (seq,), {"create_using": cls}, seeds=[None])
+    for seed in range(4):
+        ins, outs = _b22_directed_sequences(seed + 10 * n, n)
+        for args in [
+            (ins, outs),
+            (ins[::-1], outs),
+            (ins + [0], outs),
+            (ins, outs + [0, 0]),
+            ([2.0 * d for d in ins], outs),
+            (ins, [-1] + outs[1:]),
+            ([n] + ins[1:], outs),
+        ]:
+            for cls in [None, nx.MultiDiGraph, nx.Graph]:
+                _b22_check("directed_havel_hakimi_graph", args, {"create_using": cls}, seeds=[None])
+
+
+@pytest.mark.parametrize("n", [0, 1, 2, 5, 13, 60])
+def test_batch22_expected_degree(n):
+    rng = random.Random(n)
+    for w in [
+        [rng.random() * 4 for _ in range(n)],
+        [rng.randint(0, 6) for _ in range(n)],
+        [rng.choice([0, 1, 2.5, 7]) for _ in range(n)],
+        [0] * n,
+        [10**6] * n,
+    ]:
+        for selfloops in [True, False]:
+            _b22_check("expected_degree_graph", (w,), {"selfloops": selfloops})
+    # Probabilities so small that `1 - p == 1`: NetworkX divides by log(1).
+    _b22_check("expected_degree_graph", ([1e-300] * n,), fallback=True)
+
+
+@pytest.mark.parametrize("n", [0, 1, 2, 3, 5, 13, 40])
+def test_batch22_trees(n):
+    rng = random.Random(n)
+    for _ in range(5):
+        seq = [d for _, d in nx.random_labeled_tree(n, seed=rng.randint(0, 99), backend="networkx").degree()] if n else []
+        for s in [seq, [rng.randint(0, 4) for _ in range(n)], [0], [2, 0], [1, 1, 0, 0, 2], [3, -1, 1, 1, 1]]:
+            for cls in [None, nx.Graph, nx.MultiGraph, nx.DiGraph]:
+                _b22_check("degree_sequence_tree", (s,), {"create_using": cls}, seeds=[None])
+    for gamma in [3, 2, 2.5, 1.5, 0.5, -1, 1]:
+        for tries in [100, 3, 0, -2]:
+            kw = {"gamma": gamma, "tries": tries}
+            fallback = n == 0 or gamma == 1
+            _b22_check("random_powerlaw_tree_sequence", (n,), kw, seeds=range(4), fallback=fallback)
+            _b22_check("random_powerlaw_tree", (n,), kw, seeds=range(4), fallback=fallback)
+    for cls in [nx.Graph, nx.MultiGraph, nx.DiGraph]:
+        _b22_check("random_powerlaw_tree", (n,), {"create_using": cls, "tries": 1000}, fallback=n == 0)
+    _b22_check("random_labeled_tree", (n,), seeds=range(4))
+    _b22_check("random_labeled_rooted_tree", (n,), seeds=range(4))
+    _b22_check("random_labeled_rooted_forest", (n,), seeds=range(8))
+
+
+def test_batch22_larger_trees():
+    _b22_check("random_labeled_rooted_forest", (1000,), seeds=range(3))
+    _b22_check("random_labeled_tree", (3000,), seeds=range(2))
+    _b22_check("random_powerlaw_tree", (500,), {"tries": 10000}, seeds=range(3))
+
+
+@pytest.mark.parametrize("n", [-1, 0, 1, 2, 5, 8])
+def test_batch22_cograph(n):
+    _b22_check("random_cograph", (n,), seeds=range(6))
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_batch22_random_degree_sequence_graph(seed):
+    rng = random.Random(seed)
+    graphs = [
+        # NetworkX's own rejection loops get slow on larger hubs.
+        nx.gnm_random_graph(rng.randint(1, 60), rng.randint(0, 120), seed=seed),
+        nx.barabasi_albert_graph(30, 2, seed=seed),
+        nx.star_graph(10),
+        nx.complete_graph(6),
+    ]
+    for G in graphs:
+        seq = [d for _, d in G.degree()]
+        for tries in [10, 1, 0]:
+            _b22_check("random_degree_sequence_graph", (seq,), {"tries": tries}, seeds=range(2))
+    for seq in [[], [0, 0], [3, 3, 3, 1], [1, 1], [2, 2, 2], [5, 1, 1]]:
+        _b22_check("random_degree_sequence_graph", (seq,), seeds=range(3))
+
+
+def _b22_joint_degrees(G):
+    jd = {}
+    for u, v in G.edges():
+        du, dv = G.degree(u), G.degree(v)
+        jd.setdefault(du, {}).setdefault(dv, 0)
+        jd.setdefault(dv, {}).setdefault(du, 0)
+        jd[du][dv] += 1
+        jd[dv][du] += 1
+    return jd
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_batch22_joint_degree(seed):
+    rng = random.Random(seed)
+    for G in [
+        nx.gnm_random_graph(rng.randint(2, 60), rng.randint(1, 200), seed=seed),
+        nx.barabasi_albert_graph(100, 2, seed=seed),
+        nx.complete_graph(5),
+    ]:
+        jd = _b22_joint_degrees(G)
+        _b22_check("joint_degree_graph", (jd,))
+        # Unrealizable: one more edge between two classes.
+        k = next(iter(jd))
+        bad = {a: dict(row) for a, row in jd.items()}
+        bad[k][k] = bad[k].get(k, 0) + 2
+        _b22_check("joint_degree_graph", (bad,))
+    _b22_check("joint_degree_graph", ({1: {1: 2}},))
+    _b22_check("joint_degree_graph", ({},))
+
+
+def _b22_directed_joint_degrees(D):
+    nkk = {}
+    for u, v in D.edges():
+        row = nkk.setdefault(D.out_degree(u), {})
+        row[D.in_degree(v)] = row.get(D.in_degree(v), 0) + 1
+    return [d for _, d in D.in_degree()], [d for _, d in D.out_degree()], nkk
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_batch22_directed_joint_degree(seed):
+    rng = random.Random(seed)
+    for n, m in [(rng.randint(1, 60), rng.randint(0, 200)), (rng.choice([4, 8, 15]), None)]:
+        if m is None:
+            m = rng.randint(n, n * (n - 1))  # dense: many neighbor switches
+        D = nx.gnm_random_graph(n, m, seed=seed, directed=True)
+        ins, outs, nkk = _b22_directed_joint_degrees(D)
+        _b22_check("directed_joint_degree_graph", (ins, outs, nkk))
+        plus = {k: {l: c + 1 for l, c in row.items()} for k, row in nkk.items()}
+        _b22_check("directed_joint_degree_graph", (ins, outs, plus))
+    _b22_check("directed_joint_degree_graph", ([], [], {}))
+    _b22_check("directed_joint_degree_graph", ([1, 0], [0, 1], {1: {1: 1}}))
+
+
+def test_batch22_set_pops_replayable():
+    from rustnx import algorithms
+
+    assert algorithms._dg_set_pops_replayable()
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_batch22_is_valid_directed_joint_degree(seed):
+    rng = random.Random(seed)
+    D = nx.gnm_random_graph(rng.randint(1, 60), rng.randint(0, 200), seed=seed, directed=True)
+    ins = [d for _, d in D.in_degree()]
+    outs = [d for _, d in D.out_degree()]
+    nkk = {}
+    for u, v in D.edges():
+        row = nkk.setdefault(D.out_degree(u), {})
+        row[D.in_degree(v)] = row.get(D.in_degree(v), 0) + 1
+    plus = {k: {l: c + 1 for l, c in row.items()} for k, row in nkk.items()}
+    for args in [
+        (ins, outs, nkk),
+        (ins, outs[:-1], nkk),
+        (ins[::-1], outs, nkk),
+        (ins, outs, plus),
+        (ins, outs, {**nkk, 0: {1: 1}}),
+        (ins, outs, {**nkk, 99: {1: 1}}),
+        (ins, outs, {}),
+    ]:
+        _b22_check("is_valid_directed_joint_degree", args, seeds=[None], fallback=True)
+    _b22_check("is_valid_directed_joint_degree", (ins, outs, nkk), seeds=[None])
+    _b22_check("is_valid_directed_joint_degree", (ins, outs, plus), seeds=[None])
+
+
+def test_batch22_fall_backs():
+    class Sub(nx.Graph):
+        pass
+
+    seq = [3, 2, 2, 1, 1, 1, 0, 2]
+    # Instances, subclasses, iterators and floats fall back or run as NetworkX.
+    for cls in [Sub, nx.Graph(), nx.MultiGraph([(5, 6)]), nx.DiGraph()]:
+        _b22_check("configuration_model", (seq,), {"create_using": cls}, fallback=True)
+        _b22_check("havel_hakimi_graph", (seq,), {"create_using": cls}, seeds=[None], fallback=True)
+        _b22_check("degree_sequence_tree", ([2, 1, 1],), {"create_using": cls}, seeds=[None], fallback=True)
+        _b22_check("bipartite_havel_hakimi_graph", ([2, 1], [1, 1, 1]), {"create_using": cls}, seeds=[None], fallback=True)
+        _b22_check("random_clustered_graph", ([(1, 0), (1, 0)],), {"create_using": cls}, fallback=True)
+    for args in [([2.0, 1, 1],), ([True, 1],)]:
+        _b22_check("degree_sequence_tree", args, seeds=[None], fallback=True)
+        _b22_check("havel_hakimi_graph", args, seeds=[None], fallback=True)
+    for name in ["degree_sequence_tree", "havel_hakimi_graph"]:
+        with nx.config.backend_priority(generators=["rustnx"]):
+            ours = _b22_outcome(_b22_func(name), (iter([2, 1, 1]),), {}, None, None)
+        ref = _b22_outcome(_b22_func(name), (iter([2, 1, 1]),), {}, None, "networkx")
+        if ref[0] == "ok":
+            _b22_same_graph(ours[1], ref[1])
+        else:
+            assert ours == ref
+    _b22_check("expected_degree_graph", ([1, float("inf")],), fallback=True)
+    _b22_check("expected_degree_graph", ([1, -1, 2],), fallback=True)
+    _b22_check("random_labeled_tree", (2.0,), fallback=True)
+    _b22_check("joint_degree_graph", ({1.0: {1.0: 2}},), fallback=True)
+    # An iterator of pairs: read once, then NetworkX's code if rustnx declines.
+    func = _b22_func("random_clustered_graph")
+    for pairs in [[(1, 0), (1, 0)], [(1, 0), (1.0, 0)], [(1, 0), (0, 0)], [(2, 3), (1, 0), (1, 0)]]:
+        for seed in range(3):
+            with nx.config.backend_priority(generators=["rustnx"]):
+                ours = _b22_outcome(func, (iter(pairs),), {}, seed, None)
+            ref = _b22_outcome(func, (iter(pairs),), {}, seed, "networkx")
+            if ref[0] == "ok":
+                _b22_same_graph(ours[1], ref[1])
+                assert ours[2] == ref[2]
+            else:
+                assert ours == ref
+    # Other generators fall back.
+    import numpy as np
+
+    with pytest.raises(NotImplementedError):
+        nx.configuration_model(seq, seed=np.random.RandomState(3), backend="rustnx")
+    with nx.config.backend_priority(generators=["rustnx"]):
+        G = nx.configuration_model(seq * 20, seed=np.random.RandomState(3))
+    _b22_same_graph(G, nx.configuration_model(seq * 20, seed=np.random.RandomState(3), backend="networkx"))
+
+
+def test_batch22_instances():
+    # A create_using instance is cleared and filled, as in NetworkX.
+    for name, args, seeded in [
+        ("configuration_model", ([2, 2, 1, 1],), True),
+        ("havel_hakimi_graph", ([2, 2, 1, 1],), False),
+        ("degree_sequence_tree", ([2, 2, 1, 1],), False),
+        ("bipartite_configuration_model", ([2, 1], [1, 1, 1]), True),
+        ("alternating_havel_hakimi_graph", ([2, 1], [1, 1, 1]), False),
+    ]:
+        func = _b22_func(name)
+        results = []
+        for backend in ["rustnx", "networkx"]:
+            G = nx.MultiGraph([(7, 8)], name="old")
+            extra = {"seed": random.Random(1)} if seeded else {}
+            R = func(*args, create_using=G, backend=backend, **extra)
+            assert R is G
+            results.append(R)
+        _b22_same_graph(*results)
+
+
+def test_batch22_seed_none():
+    # seed=None draws from the global generator and leaves it where NetworkX would.
+    results = []
+    for backend in ["rustnx", "networkx"]:
+        random.seed(11)
+        G = nx.configuration_model([3, 3, 2, 2, 1, 1], backend=backend)
+        results.append((G, random.random()))
+    _b22_same_graph(results[0][0], results[1][0])
+    assert results[0][1] == results[1][1]
+
+
+def test_batch22_replays_paretovariate():
+    """``pyrandom.rs``'s ``paretovariate`` against ``random.Random`` itself."""
+    from rustnx._core import CoreGraph
+
+    for seed in range(40):
+        rng = random.Random(seed)
+        ops = [(9, rng.choice([1, 2, 3, 5, 200, -3, -1]), rng.choice([1, 2, 4, 1000])) for _ in range(300)]
+        ops += [(7, rng.choice([5, 21, 22, 100, 5000]), 2) for _ in range(50)]
+        mt = random.Random(seed + 1000)
+        version, internal, gauss = mt.getstate()
+        found, internal = CoreGraph.pyrandom_replay(list(internal), ops)
+        for (op, a, b), got in zip(ops, found):
+            if op == 9:
+                try:
+                    want = mt.paretovariate(a / b)
+                except OverflowError:
+                    want = float("inf")
+            else:
+                want = mt.sample(range(a), b)
+            assert type(got) is type(want) and got == want, (seed, op, a, b)
+        assert mt.getstate() == (version, tuple(internal), gauss)
+
+
+def test_batch22_dispatch(monkeypatch):
+    from rustnx import algorithms
+
+    runs = []
+    original = algorithms._rg_run
+    monkeypatch.setattr(algorithms, "_rg_run", lambda seed, run: runs.append(1) or original(seed, run))
+    seq = [2] * 200
+    jd = _b22_joint_degrees(nx.barabasi_albert_graph(100, 2, seed=1))
+    with nx.config.backend_priority(generators=["rustnx"]):
+        G = nx.configuration_model(seq, seed=1)
+        assert runs
+        _b22_same_graph(G, nx.configuration_model(seq, seed=1, backend="networkx"))
+        # Small inputs stay in NetworkX.
+        runs.clear()
+        nx.configuration_model([2, 2, 2], seed=1)
+        nx.random_powerlaw_tree(10, seed=1, tries=1000)
+        nx.random_cograph(5, seed=1)
+        nx.joint_degree_graph({1: {1: 2}}, seed=1)
+        assert not runs
+        # Sizes that grow faster than the arguments.
+        nx.random_cograph(8, seed=1)
+        nx.random_powerlaw_tree(150, seed=1, tries=10000)
+        nx.joint_degree_graph(jd, seed=1)
+        assert len(runs) == 3
+
+
+# --- Batch 23: growth and geometric generators ---
+
+
+def _b23_rng(seed, numpy_seed):
+    if numpy_seed:
+        import numpy as np
+
+        return np.random.RandomState(seed)
+    return random.Random(seed)
+
+
+def _b23_state(rng):
+    if isinstance(rng, random.Random):
+        return rng.getstate()
+    state = rng.get_state(legacy=False)
+    return (state["state"]["key"].tolist(), state["state"]["pos"])
+
+
+def _b23_check(name, args, kwargs=None, seeds=range(3), numpy_seed=False, falls_back=False):
+    """rustnx's ``name`` (called directly, so a fall back can't hide)
+    against NetworkX's, each with a fresh generator per seed: the same graph
+    (``_b18_same_graph``) or error, and the generator left in the same
+    state. ``falls_back``: rustnx must decline, leaving the state alone."""
+    from rustnx import algorithms
+
+    func = _b18_func(name)
+    ours_func = getattr(algorithms, name)
+    kwargs = kwargs or {}
+    for seed in seeds:
+        rng = _b23_rng(seed, numpy_seed)
+        start = _b23_state(rng)
+        try:
+            ours = ("ok", ours_func(*args, seed=rng, **kwargs))
+        except NotImplementedError:
+            assert falls_back, (name, args, kwargs, seed)
+            assert _b23_state(rng) == start
+            continue
+        except Exception as exc:
+            ours = (type(exc), str(exc))
+        assert not falls_back, (name, args, kwargs)
+        ref_rng = _b23_rng(seed, numpy_seed)
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                ref = ("ok", func(*args, seed=ref_rng, backend="networkx", **kwargs))
+        except Exception as exc:
+            ref = (type(exc), str(exc))
+        if ours[0] == "ok" and ref[0] == "ok":
+            _b18_same_graph(ours[1], ref[1])
+        else:
+            assert ours == ref, (name, args, kwargs, seed)
+        assert _b23_state(rng) == _b23_state(ref_rng)
+
+
+@pytest.mark.parametrize("n", [0, 1, 2, 3, 10, 60])
+def test_batch23_duplication(n):
+    for p in [0.3, 1, 0.9, 0.05, -1, 2, float("nan") if n < 3 else 2]:
+        _b23_check("duplication_divergence_graph", (n, p))
+    if n < 3:
+        _b23_check("duplication_divergence_graph", (n, 0.0))
+    else:
+        # NetworkX never returns: no replica keeps an edge.
+        _b23_check("duplication_divergence_graph", (n, 0.0), falls_back=True)
+    for small in [0, 1, 3, 5]:
+        for p, q in [(0.5, 0.5), (1, 0), (0, 1), (0.2, 0.9), (2, 0), (0.5, -1)]:
+            if small == 0 and n > 0 and 0 <= p <= 1 and 0 <= q <= 1:
+                # randint(0, -1) raises in NetworkX.
+                _b23_check("partial_duplication_graph", (n, small, p, q), falls_back=True)
+            else:
+                _b23_check("partial_duplication_graph", (n, small, p, q))
+    _b23_check("duplication_divergence_graph", (n, 0.4), {"create_using": nx.Graph})
+    _b23_check("duplication_divergence_graph", (n, 0.4), {"create_using": nx.DiGraph})
+    _b23_check("partial_duplication_graph", (n, 1, 0.4, 0.4), {"create_using": nx.MultiGraph})
+
+
+@pytest.mark.parametrize("n", [0, 3, 4, 10, 200])
+def test_batch23_scale_free(n):
+    _b23_check("scale_free_graph", (n,))
+    _b23_check("scale_free_graph", (n, 0.3, 0.4, 0.3, 0.5, 1.2))
+    _b23_check("scale_free_graph", (n, 0.3, 0.4, 0.3, 0, 2))
+    _b23_check("scale_free_graph", (n, 0.2, 0.2, 0.6, 3, 0.0))
+    for bad in [(0, 0.5, 0.5), (0.5, 0, 0.5), (0.5, 0.5, 0), (0.3, 0.3, 0.3)]:
+        _b23_check("scale_free_graph", (n, *bad))
+    _b23_check("scale_free_graph", (n, 0.41, 0.54, 0.05, -1))
+    _b23_check("scale_free_graph", (n, 0.41, 0.54, 0.05, 0.2, -1))
+    _b23_check("scale_free_graph", (n,), {"initial_graph": nx.MultiDiGraph([(0, 1)])}, falls_back=True)
+
+
+@pytest.mark.parametrize("p", [0, 0.1, 0.5, 1])
+def test_batch23_relaxed_caveman(p):
+    for l, k in [(0, 3), (1, 1), (2, 2), (1, 5), (3, 4), (10, 8), (4, 12)]:
+        _b23_check("relaxed_caveman_graph", (l, k, p), seeds=range(5))
+
+
+def test_batch23_shells_and_partitions():
+    shells = [
+        [(10, 20, 0.8), (20, 40, 0.8), (50, 200, 0.5)],
+        [(1, 2, 0.5), (3, 10, 0.2)],
+        [(5, 30, 0.9), (5, 3, 0.1)],
+        [(4, 2, 1.5), (6, 4, -1), (2, 0, 0.5)],
+        [(30, 100, 1)],
+        [],
+    ]
+    for constructor in shells:
+        _b23_check("random_shell_graph", (constructor,))
+    # NetworkX raises (an empty choice) or can't place the edges.
+    _b23_check("random_shell_graph", ([(1, 2, 0.5), (3, 10, 0.2), (0, 0, 0.5)],), falls_back=True)
+    _b23_check("random_shell_graph", ([(2, 30, 0.0), (2, 1, 0.5)],), falls_back=True)
+    for directed in [False, True]:
+        _b23_check("gaussian_random_partition_graph", (100, 10, 10, 0.25, 0.1, directed))
+        _b23_check("gaussian_random_partition_graph", (60, 5, 2, 0.5, 0.01, directed))
+    _b23_check("gaussian_random_partition_graph", (10, 20, 10, 0.25, 0.1))
+    _b23_check("gaussian_random_partition_graph", (40, 10, 10, 2, 0.1))
+
+
+@pytest.mark.parametrize("n", [0, 1, 2, 5])
+def test_batch23_navigable_small_world(n):
+    for p, q, r, dim in [(1, 1, 2, 2), (2, 3, 1.5, 2), (1, 0, 0, 1), (1, 2, 2, 3), (3, 1, 0.0, 2),
+                         (1, 1, 2, 0), (1.5, 2, 3, 1), (0, 1, 2, 2), (1, -1, 2, 2), (1, 1, -1, 2)]:
+        _b23_check("navigable_small_world_graph", (n, p, q, r, dim))
+
+
+@pytest.mark.parametrize("n", [0, 1, 5, 60])
+def test_batch23_geometric(n):
+    _b23_check("geographical_threshold_graph", (n, 30))
+    _b23_check("geographical_threshold_graph", (n, 100, 3))
+    _b23_check("geographical_threshold_graph", (n, 10, 1), {"pos_name": "p", "weight_name": "w"})
+    _b23_check("geographical_threshold_graph", (n, 10), {"pos_name": "x", "weight_name": "x"})
+    for radius, dim, p in [(0.2, 2, 2), (0.3, 3, 1), (0.5, 1, 3.5), (0, 2, 2), (1.5, 2, 2)]:
+        _b23_check("soft_random_geometric_graph", (n, radius, dim, None, p), falls_back=n == 0)
+        for theta in [0.5, 1, 3]:
+            _b23_check(
+                "thresholded_random_geometric_graph",
+                (n, radius, theta, dim, None, None, p),
+                falls_back=n == 0,
+            )
+    if n > 0:
+        for beta, gamma, mean_degree in [(1.5, 2.7, 5), (1, 2.7, 5), (0.5, 3, 4), (2, 2.5, 10)]:
+            _b23_check(
+                "geometric_soft_configuration_graph",
+                (),
+                {"beta": beta, "n": n, "gamma": gamma, "mean_degree": mean_degree},
+                falls_back=n == 1,
+            )
+
+
+def test_batch23_geometric_fall_backs():
+    falls = [
+        ("geographical_threshold_graph", (10, 30), {"metric": lambda a, b: 1.0}),
+        ("geographical_threshold_graph", (10, 30), {"p_dist": lambda r: r}),
+        ("geographical_threshold_graph", (3, 30), {"pos": {0: (0, 0), 1: (1, 0), 2: (0, 1)}}),
+        ("soft_random_geometric_graph", (10, 0.3), {"p_dist": lambda r: 0.5}),
+        ("soft_random_geometric_graph", (10, 0.3), {"p": float("inf")}),
+        ("thresholded_random_geometric_graph", (3, 0.3, 0.1), {"weight": {0: 1, 1: 1, 2: 1}}),
+        ("geometric_soft_configuration_graph", (), {"beta": 1.5, "kappas": {0: 1.0, 1: 2.0}}),
+        ("geometric_soft_configuration_graph", (), {"beta": 0, "n": 5, "gamma": 3, "mean_degree": 2}),
+    ]
+    for name, args, kwargs in falls:
+        _b23_check(name, args, kwargs, seeds=[0], falls_back=True)
+
+
+def test_batch23_geometric_edges():
+    rng = random.Random(23)
+    for n in [1, 2, 10, 200]:
+        for dim in [1, 2, 3]:
+            for labels in [range(n), [f"n{i}" for i in range(n)]]:
+                G = nx.Graph()
+                G.add_nodes_from((v, {"pos": tuple(rng.random() for _ in range(dim))}) for v in labels)
+                for radius in [0, 0.05, 0.3, 2]:
+                    for p in [1, 2, 3.5]:
+                        exact_outcome(nx.geometric_edges, G, radius, p)
+                exact_outcome(nx.geometric_edges, G, 0.3, pos_name="nope")
+    G = nx.Graph()
+    G.add_nodes_from([(0, {"pos": (0.0, 0.0)}), (1, {"pos": [0.3, 0.1]}), (2, {"pos": (0.9, 0.2)})])
+    exact_outcome(nx.geometric_edges, G, 0.7)
+    M = nx.MultiDiGraph(G)
+    M.add_edge(0, 1)
+    M.add_edge(0, 1)
+    exact_outcome(nx.geometric_edges, M, 0.7)
+    from rustnx import algorithms
+    from rustnx.graph import from_networkx
+
+    # Exact distances on the radius: NetworkX (SciPy's KD-tree decides).
+    T = nx.Graph()
+    T.add_nodes_from([(0, {"pos": (0, 0)}), (1, {"pos": (3, 0)}), (2, {"pos": (8, 0)})])
+    exact_outcome(nx.geometric_edges, T, 5)
+    with pytest.raises(NotImplementedError):
+        algorithms.geometric_edges(from_networkx(T, {}), 5)
+    # Positions SciPy reads its own way: NetworkX.
+    for bad in [[(0, 0), (1,)], ["ab", "cd"], [(0, float("nan")), (1, 1)]]:
+        B = nx.Graph()
+        B.add_nodes_from((i, {"pos": pos}) for i, pos in enumerate(bad))
+        exact_outcome(nx.geometric_edges, B, 0.5)
+        with pytest.raises(NotImplementedError):
+            algorithms.geometric_edges(from_networkx(B, {}), 0.5)
+    # Native graphs carry no positions.
+    import rustnx
+
+    native = rustnx.Graph([(0, 1)])
+    with pytest.raises(NotImplementedError):
+        algorithms.geometric_edges(native, 5)
+    exact_outcome(nx.geometric_edges, nx.Graph(), 1)
+
+
+@pytest.mark.parametrize("n", [0, 5, 30, 100])
+def test_batch23_intersection(n):
+    for m in [0, 3, 20]:
+        for p in [0, 0.1, 0.5]:
+            _b23_check("uniform_random_intersection_graph", (n, m, p))
+        _b23_check("uniform_random_intersection_graph", (n, m, 1), falls_back=True)
+        for k in [0, 1, 3, 30]:
+            _b23_check("k_random_intersection_graph", (n, m, k), falls_back=n > 0 and k > m)
+        _b23_check("general_random_intersection_graph", (n, m, [0.1 * (i % 7) for i in range(m)]))
+        _b23_check("general_random_intersection_graph", (n, m, [1] * m))
+    _b23_check("general_random_intersection_graph", (n, 2, [0.5]))
+
+
+@pytest.mark.parametrize("directed", [False, True])
+@pytest.mark.parametrize("seed", range(6))
+def test_batch23_k_lift(seed, directed):
+    graphs = [graph_for(seed, directed), random_multigraph(seed, directed, "none")]
+    G = graphs[0]
+    if len(G):
+        u = next(iter(G))
+        G.add_edge(u, u)  # a self-loop
+    for G in graphs:
+        for k in [-1, 0, 1, 2, 5]:
+            _b23_check("random_k_lift", (G, k))
+
+    class MyGraph(nx.Graph):
+        pass
+
+    _b23_check("random_k_lift", (MyGraph(nx.path_graph(4)), 2), falls_back=True)
+
+
+def test_batch23_bipartite_preferential():
+    for aseq in [[], [1], [3, 2, 1], [5] * 20, [0, -1, 4], [2] * 60]:
+        for p in [0, 0.3, 1, 2, -0.5]:
+            for create_using in [None, nx.Graph, nx.MultiGraph, nx.DiGraph]:
+                _b23_check("preferential_attachment_graph", (aseq, p), {"create_using": create_using})
+    _b23_check("preferential_attachment_graph", ([1.5], 0.5), falls_back=True)
+    _b23_check("preferential_attachment_graph", ([1, 2], 0.5), {"create_using": nx.Graph()}, falls_back=True)
+
+
+@pytest.mark.parametrize("name", ["maybe_regular_expander_graph", "maybe_regular_expander"])
+def test_batch23_expanders(name):
+    pytest.importorskip("numpy")
+    for n, d in [(3, 2), (10, 4), (50, 6), (5, 4), (4, 4), (30, 3), (0, 2), (9, 1)]:
+        _b23_check(name, (n, d), seeds=range(4), numpy_seed=True)
+        _b23_check(name, (n, d), {"create_using": nx.MultiDiGraph}, seeds=[1], numpy_seed=True)
+    # Out of tries: NetworkX raises.
+    _b23_check(name, (5, 4), {"max_tries": 2}, seeds=[0], numpy_seed=True, falls_back=True)
+    from rustnx import algorithms
+
+    with pytest.raises(NotImplementedError):
+        getattr(algorithms, name)(10, 4, seed=random.Random(0))
+
+
+def test_batch23_numpy_permutation():
+    """``pyrandom.rs``'s replica of NumPy's legacy ``RandomState.permutation``,
+    and ``expovariate``, against the real ones."""
+    np = pytest.importorskip("numpy")
+    from rustnx import algorithms
+
+    for seed in range(20):
+        rs = np.random.RandomState(seed)
+        for n in [3, 4, 10, 17, 1000]:
+            ref = np.random.RandomState()
+            ref.set_state(rs.get_state())
+            want = ref.permutation(n - 1).tolist() + [n - 1]
+            # A 2-regular expander is the one cycle drawn first.
+            G = nx.Graph()
+            algorithms._b23_np_run(
+                rs, lambda state: algorithms._CoreGraph.b23_maybe_regular_expander(n, 2, 100, state, G)
+            )
+            assert _b23_state(rs) == _b23_state(ref)
+            cycle = {frozenset(e) for e in zip(want, want[1:] + want[:1])}
+            assert {frozenset(e) for e in G.edges()} == cycle
+    for seed in range(5):
+        rng = random.Random(seed)
+        G = algorithms.thresholded_random_geometric_graph(50, 0.1, 0.5, seed=rng)
+        ref = random.Random(seed)
+        assert [d["weight"] for d in G._node.values()] == [ref.expovariate(1) for _ in range(50)]
+
+
+@pytest.mark.parametrize("version", ["3.4", "3.6"])
+def test_batch23_names(version):
+    # Each NetworkX registers one of the expander names.
+    registry = nx.utils.backends._registered_algorithms
+    assert ("maybe_regular_expander_graph" in registry) or ("maybe_regular_expander" in registry)
+
+
+def test_batch23_dispatch(_b18_priority):
+    """Large enough calls dispatch to rustnx through backend_priority."""
+    from rustnx import algorithms
+
+    calls = [
+        ("duplication_divergence_graph", (150, 0.5), {}),
+        ("partial_duplication_graph", (150, 5, 0.5, 0.5), {}),
+        ("scale_free_graph", (150,), {}),
+        ("random_shell_graph", ([(60, 100, 0.8), (60, 100, 0.8)],), {}),
+        ("navigable_small_world_graph", (11,), {}),
+        ("geographical_threshold_graph", (150, 30), {}),
+        ("soft_random_geometric_graph", (150, 0.1), {}),
+        ("thresholded_random_geometric_graph", (150, 0.1, 0.5), {}),
+        ("geometric_soft_configuration_graph", (), {"beta": 1.5, "n": 150, "gamma": 2.7, "mean_degree": 5}),
+        ("uniform_random_intersection_graph", (150, 20, 0.1), {}),
+        ("k_random_intersection_graph", (150, 20, 2), {}),
+        ("general_random_intersection_graph", (150, 20, [0.1] * 20), {}),
+        ("random_k_lift", (nx.path_graph(150), 2), {}),
+        ("random_k_lift", (nx.MultiDiGraph(nx.path_graph(150)), 2), {}),
+        ("preferential_attachment_graph", ([2] * 150, 0.5), {}),
+        ("relaxed_caveman_graph", (10, 12, 0.2), {}),
+        ("random_internet_as_graph", (150,), {}),
+    ]
+    runs = []
+    original = algorithms._rg_run
+    algorithms._rg_run = lambda seed, run: runs.append(1) or original(seed, run)
+    try:
+        for name, args, kwargs in calls:
+            if name not in nx.utils.backends._registered_algorithms:
+                continue
+            before = len(runs)
+            G = _b18_func(name)(*args, seed=random.Random(1), **kwargs)
+            assert len(runs) == before + 1, name
+            H = _b18_func(name)(*args, seed=random.Random(1), backend="networkx", **kwargs)
+            _b18_same_graph(G, H)
+    finally:
+        algorithms._rg_run = original
+
+
+@pytest.mark.parametrize("n", [0, 1, 3, 5, 6, 7, 10, 30, 150, 600])
+def test_batch23_internet_as(n):
+    from rustnx import algorithms
+
+    assert algorithms._b23_set_algebra_replayable()
+    _b23_check("random_internet_as_graph", (n,), seeds=range(4))
+    _b23_check("random_internet_as_graph", (-1,), seeds=[0], falls_back=True)

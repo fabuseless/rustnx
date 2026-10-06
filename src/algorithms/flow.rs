@@ -2051,7 +2051,7 @@ pub enum Weights<'a> {
 
 impl Weights<'_> {
     #[inline]
-    fn at(&self, e: usize) -> Val {
+    pub(crate) fn at(&self, e: usize) -> Val {
         match self {
             Weights::Unit => I(1),
             Weights::Stored(w, true) => I(w[e] as i64),
