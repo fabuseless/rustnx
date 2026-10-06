@@ -6087,8 +6087,14 @@ impl CoreGraph {
         let Some(mut rng) = pyrandom::Mt19937::from_state(&state) else {
             return Ok(None);
         };
-        let found =
-            py.detach(|| degree_generators::random_degree_sequence(&degree, tries, &mut rng));
+        let mut interrupted = None;
+        let found = py.detach(|| {
+            let mut stop = || signalled(&mut interrupted);
+            degree_generators::random_degree_sequence(&degree, tries, &mut rng, &mut stop)
+        });
+        if let Some(err) = interrupted {
+            return Err(err);
+        }
         let Some(found) = found else {
             return Ok(None);
         };
@@ -6118,9 +6124,15 @@ impl CoreGraph {
         {
             return Err(PyValueError::new_err("bad joint degree classes"));
         }
-        rg_run(py, &state, g, None, |rng| {
-            degree_generators::joint_degree(&classes, &entries, rng)
-        })
+        let mut interrupted = None;
+        let found = rg_run(py, &state, g, None, |rng| {
+            let mut stop = || signalled(&mut interrupted);
+            degree_generators::joint_degree(&classes, &entries, rng, &mut stop)
+        });
+        match interrupted {
+            Some(err) => Err(err),
+            None => found,
+        }
     }
 
     /// `is_valid_directed_joint_degree` for int sequences of one length and
@@ -7646,6 +7658,18 @@ fn _set_sum_ints_compensated(on: bool) {
 #[pyfunction]
 fn _py_sum(values: Vec<f64>, compensated: bool) -> f64 {
     spectral::py_sum(values.into_iter(), compensated)
+}
+
+// --- Batch 22: degree-sequence generators (helpers) ---
+
+/// For long loops running without the GIL: takes it to check for signals
+/// (Ctrl-C), keeping the error; true if the loop should stop.
+fn signalled(error: &mut Option<PyErr>) -> bool {
+    if let Err(err) = Python::attach(|py| py.check_signals()) {
+        *error = Some(err);
+        return true;
+    }
+    false
 }
 
 // --- Batch 18: random generators (helpers) ---

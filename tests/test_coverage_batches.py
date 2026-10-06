@@ -7594,8 +7594,9 @@ def test_batch22_cograph(n):
 def test_batch22_random_degree_sequence_graph(seed):
     rng = random.Random(seed)
     graphs = [
-        nx.gnm_random_graph(rng.randint(1, 60), rng.randint(0, 200), seed=seed),
-        nx.barabasi_albert_graph(80, 3, seed=seed),
+        # NetworkX's own rejection loops get slow on larger hubs.
+        nx.gnm_random_graph(rng.randint(1, 60), rng.randint(0, 120), seed=seed),
+        nx.barabasi_albert_graph(30, 2, seed=seed),
         nx.star_graph(10),
         nx.complete_graph(6),
     ]
@@ -7674,27 +7675,33 @@ def test_batch22_fall_backs():
         _b22_check("degree_sequence_tree", ([2, 1, 1],), {"create_using": cls}, seeds=[None], fallback=True)
         _b22_check("bipartite_havel_hakimi_graph", ([2, 1], [1, 1, 1]), {"create_using": cls}, seeds=[None], fallback=True)
         _b22_check("random_clustered_graph", ([(1, 0), (1, 0)],), {"create_using": cls}, fallback=True)
-    for args in [([2.0, 1, 1],), (iter([2, 1, 1]),), ([True, 1],)]:
+    for args in [([2.0, 1, 1],), ([True, 1],)]:
         _b22_check("degree_sequence_tree", args, seeds=[None], fallback=True)
         _b22_check("havel_hakimi_graph", args, seeds=[None], fallback=True)
+    for name in ["degree_sequence_tree", "havel_hakimi_graph"]:
+        with nx.config.backend_priority(generators=["rustnx"]):
+            ours = _b22_outcome(_b22_func(name), (iter([2, 1, 1]),), {}, None, None)
+        ref = _b22_outcome(_b22_func(name), (iter([2, 1, 1]),), {}, None, "networkx")
+        if ref[0] == "ok":
+            _b22_same_graph(ours[1], ref[1])
+        else:
+            assert ours == ref
     _b22_check("expected_degree_graph", ([1, float("inf")],), fallback=True)
     _b22_check("expected_degree_graph", ([1, -1, 2],), fallback=True)
     _b22_check("random_labeled_tree", (2.0,), fallback=True)
     _b22_check("joint_degree_graph", ({1.0: {1.0: 2}},), fallback=True)
     # An iterator of pairs: read once, then NetworkX's code if rustnx declines.
-    for pairs in [[(1, 0), (1, 0)], [(1, 0), (1.0, 0)], [(1, 0), (0, 0)]]:
+    func = _b22_func("random_clustered_graph")
+    for pairs in [[(1, 0), (1, 0)], [(1, 0), (1.0, 0)], [(1, 0), (0, 0)], [(2, 3), (1, 0), (1, 0)]]:
         for seed in range(3):
-            ours = nx.random_clustered_graph(iter(pairs), seed=random.Random(seed), backend="rustnx") if all(type(x) is int for p in pairs for x in p) else None
-            ref = nx.random_clustered_graph(iter(pairs), seed=random.Random(seed), backend="networkx")
-            if ours is not None:
-                _b22_same_graph(ours, ref)
             with nx.config.backend_priority(generators=["rustnx"]):
-                try:
-                    got = nx.random_clustered_graph(iter(pairs), seed=random.Random(seed))
-                except nx.NetworkXError:
-                    got = None
-            if got is not None:
-                _b22_same_graph(got, ref)
+                ours = _b22_outcome(func, (iter(pairs),), {}, seed, None)
+            ref = _b22_outcome(func, (iter(pairs),), {}, seed, "networkx")
+            if ref[0] == "ok":
+                _b22_same_graph(ours[1], ref[1])
+                assert ours[2] == ref[2]
+            else:
+                assert ours == ref
     # Other generators fall back.
     import numpy as np
 
@@ -7766,6 +7773,7 @@ def test_batch22_dispatch(monkeypatch):
     original = algorithms._rg_run
     monkeypatch.setattr(algorithms, "_rg_run", lambda seed, run: runs.append(1) or original(seed, run))
     seq = [2] * 200
+    jd = _b22_joint_degrees(nx.barabasi_albert_graph(100, 2, seed=1))
     with nx.config.backend_priority(generators=["rustnx"]):
         G = nx.configuration_model(seq, seed=1)
         assert runs
@@ -7780,6 +7788,5 @@ def test_batch22_dispatch(monkeypatch):
         # Sizes that grow faster than the arguments.
         nx.random_cograph(8, seed=1)
         nx.random_powerlaw_tree(150, seed=1, tries=10000)
-        jd = _b22_joint_degrees(nx.barabasi_albert_graph(100, 2, seed=1))
         nx.joint_degree_graph(jd, seed=1)
         assert len(runs) == 3

@@ -598,6 +598,29 @@ impl Fenwick {
     }
 }
 
+/// Calls `stop` every 2^20 ticks of a loop that NetworkX may run for a
+/// very long time (rejection sampling), so the caller can check for
+/// Ctrl-C; `None` once it says stop.
+struct Ticker<'a> {
+    count: u32,
+    stop: &'a mut dyn FnMut() -> bool,
+}
+
+impl<'a> Ticker<'a> {
+    fn new(stop: &'a mut dyn FnMut() -> bool) -> Self {
+        Ticker { count: 0, stop }
+    }
+
+    #[inline]
+    fn tick(&mut self) -> Option<()> {
+        self.count = self.count.wrapping_add(1);
+        if self.count & ((1 << 20) - 1) == 0 && (self.stop)() {
+            return None;
+        }
+        Some(())
+    }
+}
+
 #[inline]
 fn pair_key(u: u32, v: u32) -> u64 {
     let (a, b) = if u <= v { (u, v) } else { (v, u) };
@@ -661,14 +684,16 @@ impl DegreeSequenceRun<'_> {
 /// `random_degree_sequence_graph(sequence, tries)` for a graphical
 /// sequence whose sum and squared maximum are below 2^53: `Some(Some(g))`,
 /// `Some(None)` when every try fails, `None` where NetworkX would raise
-/// something else (an exhausted roulette wheel).
+/// something else (an exhausted roulette wheel), or when `stop` says so.
 pub fn random_degree_sequence(
     degree: &[u32],
     tries: usize,
     rng: &mut Mt19937,
+    stop: &mut dyn FnMut() -> bool,
 ) -> Option<Option<Built>> {
+    let mut ticks = Ticker::new(stop);
     for _ in 0..tries {
-        if let Some(b) = degree_sequence_try(degree, rng)? {
+        if let Some(b) = degree_sequence_try(degree, rng, &mut ticks)? {
             return Some(Some(b));
         }
     }
@@ -676,7 +701,11 @@ pub fn random_degree_sequence(
 }
 
 /// One `generate()`: `Some(None)` for `NetworkXUnfeasible`.
-fn degree_sequence_try(degree: &[u32], rng: &mut Mt19937) -> Option<Option<Built>> {
+fn degree_sequence_try(
+    degree: &[u32],
+    rng: &mut Mt19937,
+    ticks: &mut Ticker<'_>,
+) -> Option<Option<Built>> {
     let n = degree.len();
     let total: u64 = degree.iter().map(|&d| d as u64).sum();
     let dmax = degree.iter().copied().max().unwrap_or(0) as u64;
@@ -705,6 +734,7 @@ fn degree_sequence_try(degree: &[u32], rng: &mut Mt19937) -> Option<Option<Built
     let mut weights = Fenwick::new(&run.remaining.iter().map(|&d| d as u64).collect::<Vec<_>>());
     let mut rem_sum = total;
     while rem_sum >= 2 * run.dmax * run.dmax {
+        ticks.tick()?;
         let mut pick = || -> Option<u32> {
             let rnd = rng.random() * rem_sum as f64;
             let target = rnd.floor() as u64 + 1;
@@ -738,6 +768,7 @@ fn degree_sequence_try(degree: &[u32], rng: &mut Mt19937) -> Option<Option<Built
     );
     while run.alive as u64 >= 2 * run.dmax {
         let (u, v) = loop {
+            ticks.tick()?;
             let picks = rng.sample_range(run.alive, 2);
             let a = present.lower_bound(picks[0] as u64 + 1) as u32;
             let b = present.lower_bound(picks[1] as u64 + 1) as u32;
@@ -817,6 +848,7 @@ fn degree_sequence_try(degree: &[u32], rng: &mut Mt19937) -> Option<Option<Built
             return Some(None);
         }
         let (u, v) = loop {
+            ticks.tick()?;
             if live_count == 0 {
                 return None; // choice() of an empty list raises
             }
@@ -857,7 +889,9 @@ pub fn joint_degree(
     classes: &[(u32, u32)],
     entries: &[(u32, u32, u64)],
     rng: &mut Mt19937,
+    stop: &mut dyn FnMut() -> bool,
 ) -> Option<Built> {
+    let mut ticks = Ticker::new(stop);
     use super::pyset::PySet;
     let n: usize = classes.iter().map(|&(_, c)| c as usize).sum();
     let hashes: Vec<i64> = (0..n as i64).collect();
@@ -923,6 +957,7 @@ pub fn joint_degree(
         };
         let mut n_edges_add = if same { count / 2 } else { count };
         while n_edges_add > 0 {
+            ticks.tick()?;
             let v = k_start + rng.below(k_size as usize) as u32;
             let w = l_start + rng.below(l_size as usize) as u32;
             if v == w || edges.contains(&pair_key(v, w)) {
