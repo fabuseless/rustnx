@@ -274,6 +274,17 @@ LINKS = "Scores pairs in batches as the generator is consumed, so `ebunch` (defa
 COMMUNITIES = "Community values must be ints, floats, strings, bools or `None`; others fall back."
 LENGTHS = "Falls back when weights mix ints and floats (NetworkX's length types then depend on the path)."
 NOTES = {
+    "k_factor": "NetworkX's own code, with its expensive inner call run in rustnx (`max_weight_matching` on the gadget graph). Bit-for-bit identical; 12x to 29x faster.",
+    "junction_tree": "NetworkX's own code, with its expensive inner call run in rustnxs (`complete_to_chordal_graph`, `chordal_graph_cliques`, `maximum_spanning_tree`). Bit-for-bit identical; about 35x faster.",
+    "find_induced_nodes": "NetworkX's own code, with its expensive inner call run in rustnx (`is_chordal`); the rest is NetworkX's set-order search, unchanged. Bit-for-bit identical; about 1.6x faster.",
+    "normalized_laplacian_matrix": "NetworkX's own SciPy code, with the sparse matrix it builds supplied by rustnx. Bit-for-bit identical; 3x to 8x faster.",
+    "bethe_hessian_matrix": "NetworkX's own SciPy code, with the sparse matrix it builds supplied by rustnx. Bit-for-bit identical; 3x to 8x faster.",
+    "eigenvector_centrality_numpy": "NetworkX's own SciPy code, with the sparse matrix it builds supplied by rustnx. SciPy's ARPACK starts from a random vector, so NetworkX's own results vary in the last bits from run to run; rustnx's are as close to NetworkX as NetworkX is to itself. 2x to 4x faster.",
+    "hits": "NetworkX's own SciPy code, with the sparse matrix it builds supplied by rustnx. Before NetworkX 3.7 this uses SciPy's ARPACK, which starts from a random vector, so results vary in the last bits from run to run, in NetworkX too. 2x to 5x faster.",
+    "tournament_matrix": "NetworkX's own SciPy code, with the sparse matrix it builds supplied by rustnx. Bit-for-bit identical; 20x to 35x faster.",
+    "attr_matrix": "Without `node_attr`, with `edge_attr` an attribute name or `None`, and the default `dtype`: the matrix is built in Rust, bit-for-bit identical, about 12x faster. Other inputs fall back.",
+    "attr_sparse_matrix": "As `attr_matrix` (a `lil_array` holding NumPy scalars, as NetworkX's does); about 14x faster.",
+    "magnetic_laplacian_matrix": "NetworkX 3.7+. The Hermitian adjacency is built from rustnx's sparse adjacency, then NetworkX's own SciPy steps run on it. Bit-for-bit identical (including signed zeros); 9x to 19x faster. Multigraphs and nodelists with repeats or nodes outside the graph fall back.",
     "triadic_census": "A `nodelist` that is one node or an iterator falls back.",
     "is_d_separator": "Arguments other than nodes and sets of nodes (lists, for example) fall back.",
     "is_minimal_d_separator": "Arguments other than nodes and sets of nodes (lists, for example) fall back.",
@@ -407,8 +418,8 @@ NOTES = {
     "topological_sort": "Raises NetworkX's errors if the graph changes during iteration.",
     "topological_generations": "Raises NetworkX's errors if the graph changes during iteration.",
     "triangles": "Bit-for-bit identical.",
-    "clustering": "Unweighted; `weight` falls back. Bit-for-bit identical.",
-    "average_clustering": "Unweighted; `weight` falls back. Bit-for-bit identical.",
+    "clustering": "Unweighted: bit-for-bit identical. Weighted: fast floats in Rust, in parallel (cube roots summed in a different order, about 1e-15 relative); with exact floats, weighted runs in NetworkX.",
+    "average_clustering": "As `clustering`.",
     "transitivity": "Bit-for-bit identical.",
     "k_core": "Builds the subgraph in NetworkX, so only the core numbers get faster.",
     "greedy_color": "Strategies `largest_first`, `saturation_largest_first` (`DSATUR`), `random_sequential` (draws from the global `random` state, as NetworkX does) and `connected_sequential` (`_bfs`, `_dfs`). `smallest_last`, `independent_set`, callables and `interchange` fall back.",
@@ -921,6 +932,11 @@ SUBMODULE["preferential_attachment_graph"] = "nx.bipartite"
 
 # Batch 26: multigraphs and bipartite measures.
 B26_SETS = " Replays NetworkX's sets of second neighbors (CPython's set table, checked once against the running Python)."
+SECTIONS.append(("Linear algebra, NumPy/SciPy and other hybrids", [
+    "normalized_laplacian_matrix", "bethe_hessian_matrix", "magnetic_laplacian_matrix",
+    "attr_matrix", "attr_sparse_matrix", "tournament_matrix", "eigenvector_centrality_numpy", "hits",
+    "k_factor", "junction_tree", "find_induced_nodes",
+]))
 SECTIONS.append(("Bipartite measures", [
     "latapy_clustering", "bipartite_average_clustering", "robins_alexander_clustering",
     "bipartite_betweenness_centrality", "overlap_weighted_projected_graph",

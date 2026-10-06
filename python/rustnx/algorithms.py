@@ -1616,6 +1616,16 @@ def _triangle_counts(G, nodes):
     return False, positions, G._core.triangle_counts(positions)
 
 
+def _triangle_positions(G, nodes):
+    """``(single, positions, None)`` as ``_triangle_counts`` gives them,
+    without counting."""
+    if nodes is None:
+        return False, None, None
+    if nodes in G:
+        return True, [G._index[nodes]], None
+    return False, _node_subset(G, nodes), None
+
+
 def _per_node(G, positions, values, single):
     if single:
         return values[0]
@@ -1630,15 +1640,38 @@ def triangles(G, nodes=None):
     return _per_node(G, positions, [t // 2 for t, _, _ in counts], single)
 
 
-def _clustering_values(G, nodes, weight):
+def _clustering_values(G, nodes, weight, name="clustering"):
     if weight is not None:
-        # Weighted clustering sums cube roots in set-iteration order.
-        raise NotImplementedError("rustnx supports unweighted clustering only")
+        return _weighted_clustering_values(G, nodes, weight, name)
     single, positions, counts = _triangle_counts(G, nodes)
     if G.is_directed():
         values = [0 if t == 0 else t / ((d * (d - 1) - 2 * db) * 2) for t, d, db in counts]
     else:
         values = [0 if t == 0 else t / (d * (d - 1)) for t, d, _ in counts]
+    return single, positions, values
+
+
+def _weighted_clustering_values(G, nodes, weight, name):
+    """Weighted clustering with fast floats: NetworkX sums each node's cube
+    roots in Python's set order with NumPy's pairwise sums, which rustnx
+    doesn't reproduce, so with exact floats it runs in NetworkX."""
+    if _note_floats(name):
+        raise NotImplementedError(inexact_message(name, "weighted clustering"))
+    weight, _, has_hidden = _check_weight(G, weight)
+    if weight is not None and has_hidden:
+        raise NotImplementedError("rustnx does not support None edge weights here")
+    single, positions, _ = _triangle_positions(G, nodes)
+    if G._core.number_of_edges() == 0 or weight is None:
+        max_weight = 1.0
+    else:
+        max_weight = G._core.max_weight(weight)
+        if not max_weight > 0 or max_weight == float("inf"):
+            raise NotImplementedError("NetworkX's weights divide by a non-positive maximum here")
+    sums = G._core.weighted_triangles(weight or "", max_weight, positions)
+    if G.is_directed():
+        values = [0 if t == 0 else t / ((d * (d - 1) - 2 * db) * 2) for t, d, db in sums]
+    else:
+        values = [0 if t == 0 else t / (d * (d - 1)) for t, d, _ in sums]
     return single, positions, values
 
 
@@ -1650,7 +1683,7 @@ def clustering(G, nodes=None, weight=None):
 def average_clustering(G, nodes=None, weight=None, count_zeros=True):
     if nodes is not None and nodes in G:
         raise NotImplementedError("NetworkX raises on a single node here")
-    _, _, c = _clustering_values(G, nodes, weight)
+    _, _, c = _clustering_values(G, nodes, weight, "average_clustering")
     if not count_zeros:
         c = [v for v in c if abs(v) > 0]
     return sum(c) / len(c)
@@ -15238,3 +15271,178 @@ def random_internet_as_graph(n, seed=None):
     G = nx.Graph()
     _rg_run(seed, lambda state: _CoreGraph.b23_internet_as(counts, rates, state, G))
     return G
+
+
+# --- Attribute matrices --------------------------------------------------------
+
+
+def _attr_matrix_parts(G, edge_attr, node_attr, rc_order, dtype):
+    """``(ordering, weight)`` for ``attr_matrix``/``attr_sparse_matrix`` with
+    one row per node: NetworkX's ordering (``list`` of a set of the nodes,
+    built in node order, unless ``rc_order`` is given) and the weight to read
+    (``None``: one per edge). Raises ``NotImplementedError`` for the inputs
+    rustnx leaves to NetworkX."""
+    if node_attr is not None or callable(edge_attr) or G._multigraph:
+        raise NotImplementedError("rustnx builds attribute matrices without node attributes")
+    if dtype is not None:
+        raise NotImplementedError("rustnx builds float64 attribute matrices")
+    if rc_order is None:
+        ordering = list({n for n in G._nodes})
+    else:
+        ordering = rc_order
+        try:
+            if len(ordering) != len(G) or set(ordering) != set(G._nodes):
+                raise NotImplementedError("NetworkX raises or pads for this rc_order")
+        except TypeError:
+            raise NotImplementedError("NetworkX raises for this rc_order") from None
+    if edge_attr is not None and edge_attr != "weight":
+        # NetworkX reads G[u][v][edge_attr] (no default) for other names.
+        base = _networkx_graph(G)
+        if not _CoreGraph.all_edges_have(base._adj, edge_attr):
+            raise NotImplementedError("NetworkX raises KeyError for a missing attribute")
+    return ordering, edge_attr
+
+
+def attr_matrix(G, edge_attr=None, node_attr=None, normalized=False, rc_order=None, dtype=None, order=None):
+    import numpy as np
+
+    ordering, weight = _attr_matrix_parts(G, edge_attr, node_attr, rc_order, dtype)
+    N = len(ordering)
+    M = to_numpy_array(G, nodelist=list(ordering), dtype=float, order=order, weight=weight)
+    M += 0.0  # NetworkX's `0.0 + w` turns a -0.0 weight into 0.0
+    if normalized:
+        M /= M.sum(axis=1).reshape((N, 1))
+    return (M, ordering) if rc_order is None else M
+
+
+def attr_sparse_matrix(G, edge_attr=None, node_attr=None, normalized=False, rc_order=None, dtype=None):
+    import numpy as np
+
+    ordering, weight = _attr_matrix_parts(G, edge_attr, node_attr, rc_order, dtype)
+    import scipy as sp
+
+    A = to_scipy_sparse_array(G, nodelist=list(ordering), dtype=float, weight=weight, format="csr")
+    A.data += 0.0
+    A.eliminate_zeros()  # a lil_array doesn't store assigned zeros
+    A.sort_indices()
+    N = len(ordering)
+    M = sp.sparse.lil_array((N, N), dtype=float)
+    # NetworkX fills M with `+=`, which stores NumPy float64 scalars (and
+    # Python int column indices); `tolil()` would store Python floats.
+    indptr, indices, data = A.indptr, A.indices.tolist(), A.data
+    for i in range(N):
+        lo, hi = indptr[i], indptr[i + 1]
+        if lo != hi:
+            M.rows[i] = indices[lo:hi]
+            M.data[i] = list(data[lo:hi])
+    if normalized:
+        M *= 1 / M.sum(axis=1)[:, np.newaxis]  # in-place mult preserves sparse
+    return (M, ordering) if rc_order is None else M
+
+
+def magnetic_laplacian_matrix(G, *, nodelist=None, normalized=False, q=0.25, weight="weight"):
+    """NetworkX 3.7+. NetworkX walks the edges in Python to build the
+    Hermitian adjacency H; rustnx derives the same entries from its sparse
+    adjacency, then runs NetworkX's own SciPy steps on H."""
+    import numpy as np
+    import scipy as sp
+
+    if G._multigraph:
+        raise NotImplementedError("rustnx builds magnetic Laplacians of simple graphs")
+    if nodelist is None:
+        nodelist = list(G)
+    n = len(nodelist)
+    if not (0 <= q <= 0.5):
+        raise ValueError("Parameter q must be a value between 0 and 0.5")
+    try:
+        if len(set(nodelist)) != n or not all(v in G._index for v in nodelist):
+            raise NotImplementedError("NetworkX pads or overwrites rows for this nodelist")
+    except TypeError:
+        raise NotImplementedError("NetworkX raises for this nodelist") from None
+    phase = 2 * np.pi * q
+    plus, minus = np.exp(1j * phase), np.exp(-1j * phase)
+
+    A = to_scipy_sparse_array(G, nodelist=list(nodelist), weight=weight, dtype=float, format="coo")
+    r, c, w = A.row, A.col, A.data
+    off = r != c
+    r, c, w = r[off], c[off], w[off]
+    # mw(u, v) = 0.5 * w(u, v) + 0.5 * w(v, u): two terms, so the order
+    # NetworkX adds them in doesn't matter.
+    W = sp.sparse.csr_array((w, (r, c)), shape=(n, n))
+    present = sp.sparse.csr_array((np.ones(len(r)), (r, c)), shape=(n, n))
+    back_w = np.asarray(W[c, r]).ravel()
+    back = np.asarray(present[c, r]).ravel() != 0
+    mw = 0.5 * w + 0.5 * back_w
+    if G.is_directed():
+        # A one-way arc u->v gives H[u, v] = mw * e^{i phase} and H[v, u] =
+        # mw * e^{-i phase}; a reciprocated pair gives H[u, v] = mw for each
+        # arc.
+        one_way = ~back
+        rows = np.concatenate([r[back], r[one_way], c[one_way]])
+        cols = np.concatenate([c[back], c[one_way], r[one_way]])
+        data = np.concatenate(
+            [mw[back].astype(complex), mw[one_way] * plus, mw[one_way] * minus]
+        )
+    else:
+        # Each edge once, from the endpoint NetworkX's G.edges lists first:
+        # that direction gets e^{i phase}.
+        pos = np.array([G._index[v] for v in nodelist], dtype=np.int64)
+        first = pos[r] <= pos[c]
+        mw = 0.5 * w  # 0.0 + 0.5 * w, the edge listed once
+        rows = np.concatenate([r[first], c[first]])
+        cols = np.concatenate([c[first], r[first]])
+        data = np.concatenate([mw[first] * plus, mw[first] * minus])
+    H = sp.sparse.csr_array((data, (rows, cols)), shape=(n, n), dtype=complex)
+
+    # NetworkX's own steps from here.
+    diags = np.abs(H).sum(axis=1).ravel()
+    if normalized:
+        with np.errstate(divide="ignore"):
+            diags_sqrt = 1.0 / np.sqrt(diags)
+        diags_sqrt[np.isinf(diags_sqrt)] = 0
+        DH = sp.sparse.dia_array((diags_sqrt, 0), shape=(n, n)).tocsr()
+        H = DH @ (H @ DH)
+        diags = np.ones(n)
+    D = sp.sparse.dia_array((diags, 0), shape=(n, n), dtype=complex).tocsr()
+    return D - H
+
+
+__all__ += ["magnetic_laplacian_matrix"]
+
+
+# --- NumPy/SciPy functions run as hybrids --------------------------------------
+#
+# NetworkX's own code, with the matrices it builds supplied by rustnx (see
+# _hybrid.py): identical arrays, so identical NumPy/SciPy results, and much
+# less time building matrices in Python.
+
+from . import _hybrid  # noqa: E402
+
+__all__ += ["attr_matrix", "attr_sparse_matrix"]
+
+HYBRID_FUNCTIONS = [
+    "normalized_laplacian_matrix",
+    "bethe_hessian_matrix",
+    "eigenvector_centrality_numpy",
+    "hits",
+    "tournament_matrix",
+    "k_factor",
+    "junction_tree",
+    "find_induced_nodes",
+]
+
+
+def _hybrid_function(name):
+    def run(**arguments):
+        return _hybrid.run(name, arguments, _networkx_graph)
+
+    run.__name__ = run.__qualname__ = name
+    run.__signature__ = _hybrid.signature(name)
+    run.__doc__ = f"NetworkX's ``{name}``, with its matrices built by rustnx."
+    return run
+
+
+for _name in HYBRID_FUNCTIONS:
+    globals()[_name] = _hybrid_function(_name)
+_hybrid.HYBRIDS.update(HYBRID_FUNCTIONS)
+__all__ += HYBRID_FUNCTIONS

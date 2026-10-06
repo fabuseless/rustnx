@@ -35,6 +35,16 @@ FLOAT_FUNCTIONS = {
         "exact": "parallel, but each source's share added in NetworkX's order",
         "differs_by": "about 1e-15 relative",
     },
+    "clustering": {
+        "fast": "weighted: cube roots summed in Rust, in parallel",
+        "exact": "weighted runs in NetworkX (unweighted is exact in Rust either way)",
+        "differs_by": "about 1e-15 relative, weighted only",
+    },
+    "average_clustering": {
+        "fast": "weighted: cube roots summed in Rust, in parallel",
+        "exact": "weighted runs in NetworkX (unweighted is exact in Rust either way)",
+        "differs_by": "about 1e-15 relative, weighted only",
+    },
     "pagerank": {
         "fast": "power iteration in Rust; multigraphs run in Rust too",
         "exact": (

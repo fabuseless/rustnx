@@ -22,6 +22,17 @@ _WEIGHT_PARAMS = ("weight", "distance")
 # Linear-time algorithms where, on small graphs, converting to rustnx and
 # dispatching costs more than NetworkX spends running the algorithm.
 _LINEAR_TIME = {
+    # NumPy/SciPy functions: building the matrix in Rust only pays off once
+    # the graph is a few hundred nodes.
+    "attr_matrix",
+    "attr_sparse_matrix",
+    "bethe_hessian_matrix",
+    "find_induced_nodes",
+    "eigenvector_centrality_numpy",
+    "hits",
+    "magnetic_laplacian_matrix",
+    "normalized_laplacian_matrix",
+    "tournament_matrix",
     "adjacency_matrix",
     "all_shortest_paths",
     "ancestors",
@@ -485,9 +496,10 @@ def convert_from_nx(
     if G.is_multigraph() and not multigraph_ok:
         raise NotImplementedError(f"rustnx does not support multigraphs in {name}")
     if preserve_edge_attrs is True:
-        if name in _BUILDS_FROM_SOURCE:
-            # These build their result from the original NetworkX graph, so
-            # its attributes don't need to be copied into Rust.
+        if name in _BUILDS_FROM_SOURCE or name in algorithms._hybrid.HYBRIDS:
+            # These build their result from the original NetworkX graph (a
+            # hybrid runs NetworkX's own code on it), so its attributes don't
+            # need to be copied into Rust.
             return from_networkx(G, edge_attrs or {}, multigraph_ok=multigraph_ok)
         # Arbitrary edge data (e.g. for callable weights) isn't stored in Rust.
         raise NotImplementedError("rustnx only stores numeric edge attributes")
@@ -604,20 +616,28 @@ globals().update({name: _make_entry(name) for name in algorithms.__all__})
 # inputs, as a test on the graph; what to call them in messages).
 INEXACT_ONLY = {
     "pagerank": (
-        lambda G: G.is_multigraph(),
+        lambda G, arguments: G.is_multigraph(),
         "pagerank on a multigraph",
+    ),
+    "clustering": (
+        lambda G, arguments: arguments.get("weight") is not None,
+        "weighted clustering",
+    ),
+    "average_clustering": (
+        lambda G, arguments: arguments.get("weight") is not None,
+        "weighted clustering",
     ),
 }
 
 
-def _inexact_reason(name, G):
+def _inexact_reason(name, G, arguments):
     """Why rustnx declines this call under exact floats, or None.
 
     An explicit ``backend="rustnx"`` is let through, so that the function
     itself raises with this reason (NetworkX's own error wouldn't give it).
     """
     entry = INEXACT_ONLY.get(name)
-    if entry is None or G is None or not entry[0](G) or not exact_floats(name):
+    if entry is None or G is None or not entry[0](G, arguments) or not exact_floats(name):
         return None
     if _backend_requested():
         return None
@@ -649,7 +669,7 @@ def can_run(name, args, kwargs):
         return "the graph argument is not a graph"
     if G is not None and G.is_multigraph() and name not in MULTIGRAPH_FUNCTIONS:
         return "multigraphs are not supported by this function"
-    reason = _inexact_reason(name, G)
+    reason = _inexact_reason(name, G, arguments)
     if reason is not None:
         return reason
     for param in _WEIGHT_PARAMS:

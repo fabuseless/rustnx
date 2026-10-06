@@ -60,6 +60,8 @@ def cases():
         ("katz_centrality", gnm_d, lambda G, b: nx.katz_centrality(G, alpha=0.05, backend=b), 20),
         ("eigenvector_centrality", ba_big, lambda G, b: nx.eigenvector_centrality(G, max_iter=1000, backend=b), 10),
         ("clustering", ba_big, lambda G, b: nx.clustering(G, backend=b), 10),
+        ("clustering (weighted)", gnm, lambda G, b: nx.clustering(G, weight="weight", backend=b), 20),
+        ("normalized_laplacian_matrix", gnm, lambda G, b: nx.normalized_laplacian_matrix(G, backend=b), 2),
         ("core_number", ba_big, lambda G, b: nx.core_number(G, backend=b), 10),
         ("diameter", grid, lambda G, b: nx.diameter(G, backend=b), 40),
         ("single_source_dijkstra_path_length", gnm, lambda G, b: nx.single_source_dijkstra_path_length(G, 0, backend=b), 2),

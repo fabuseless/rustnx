@@ -463,7 +463,10 @@ def test_pagerank_errors(exact):
 
 def test_float_settings_default_fast():
     settings = rustnx.float_settings()
-    assert set(settings) == {"betweenness_centrality", "edge_betweenness_centrality", "pagerank"}
+    assert set(settings) == {
+        "betweenness_centrality", "edge_betweenness_centrality", "pagerank",
+        "clustering", "average_clustering",
+    }
     for s in settings.values():
         assert s["exact"] is False
         assert s["set_by"] == "the global exact_floats setting"
@@ -878,6 +881,7 @@ def test_backend_function_list_matches_implementations():
         "is_connected_dominating_set",
         "is_cover",
         "is_perfect_graph",
+        "magnetic_laplacian_matrix",
         "maybe_regular_expander_graph",
         "overlapping_modularity",
         "random_k_lift",

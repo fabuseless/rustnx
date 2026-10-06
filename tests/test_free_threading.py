@@ -48,6 +48,10 @@ def test_concurrent_algorithms_match_sequential():
         lambda: list(nx.bfs_edges(U, 0, backend="rustnx")),
         lambda: list(nx.all_shortest_paths(G, 0, 9, weight="weight", backend="rustnx")),
         lambda: nx.pagerank(N, backend="rustnx"),
+        # Hybrids: NetworkX's code with rustnx's matrices / inner calls.
+        lambda: nx.normalized_laplacian_matrix(U, backend="rustnx").toarray().tolist(),
+        lambda: sorted(map(sorted, nx.junction_tree(nx.path_graph(30), backend="rustnx").edges)),
+        lambda: nx.clustering(G, weight="weight", backend="rustnx"),
     ]
     expected = [f() for f in calls]
     failures = []
