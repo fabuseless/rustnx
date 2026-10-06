@@ -18,8 +18,9 @@ nx.betweenness_centrality(G)              # runs in Rust: 0.4s instead of 41s
 ```
 
 Nothing else changes, with one caveat: `betweenness_centrality`,
-`edge_betweenness_centrality` and `pagerank` use fast float arithmetic by
-default, so their floats can differ from NetworkX's in the last bits (about
+`edge_betweenness_centrality`, `pagerank` and weighted `clustering` /
+`average_clustering` use fast float arithmetic by default, so their floats
+can differ from NetworkX's in the last bits (about
 1e-16 to 1e-15 relative). Set `nx.config.backends.rustnx.exact_floats = True`
 for NetworkX's exact numbers; see [Fast and exact
 floats](#fast-and-exact-floats). Anything rustnx doesn't support, such as other
@@ -158,7 +159,10 @@ NetworkX, is in [docs/API.md](docs/API.md).
 | `dijkstra_path`, `dijkstra_path_length`, `single_source_dijkstra`, `single_source_dijkstra_path` | The same paths as NetworkX, ties included. The paths dict follows the installed NetworkX's order, which changed in 3.6. If weights mix ints and floats, functions that return lengths run in NetworkX (whether a length is an int depends on the path). |
 | `all_pairs_shortest_path`, `all_pairs_dijkstra_path`, `all_pairs_dijkstra` | Parallel, in batches. |
 | `descendants`, `ancestors` | Same sets and errors as NetworkX. |
-| `triangles`, `clustering`, `average_clustering`, `transitivity` | Unweighted, directed and undirected, with `nodes=`. Parallel. Results are **bit-for-bit identical** to NetworkX. Weighted clustering runs in NetworkX. |
+| `triangles`, `clustering`, `average_clustering`, `transitivity` | Directed and undirected, with `nodes=`. Parallel. Unweighted results are **bit-for-bit identical** to NetworkX. Weighted clustering uses [fast floats](#fast-and-exact-floats) (about 90x faster); with exact floats it runs in NetworkX. |
+| `normalized_laplacian_matrix`, `bethe_hessian_matrix`, `tournament_matrix`, `eigenvector_centrality_numpy`, `hits` | NetworkX's own SciPy code, with the sparse matrix it builds supplied by rustnx: identical inputs, so identical results, 2x to 35x faster. `eigenvector_centrality_numpy` and `hits` (before NetworkX 3.7) use ARPACK, which starts from a random vector, so their last bits vary from run to run in NetworkX itself; rustnx's are as close to NetworkX as NetworkX is to itself. |
+| `k_factor`, `junction_tree`, `find_induced_nodes` | NetworkX's own code with its expensive inner call (`max_weight_matching`, chordal completion and cliques, `is_chordal`) run in Rust. **Bit-for-bit identical**; 1.6x to 35x faster. |
+| `attr_matrix`, `attr_sparse_matrix`, `magnetic_laplacian_matrix` | Built in Rust, **bit-for-bit identical**, 9x to 19x faster. Attribute matrices with `node_attr` fall back. |
 | `bidirectional_dijkstra` | Same path and distance as NetworkX, ties included. Also used by weighted `shortest_path(G, source, target)`. |
 | `harmonic_centrality` | Unweighted and `distance=`, `sources=`. Parallel. **Bit-for-bit identical** to NetworkX. A small `nbunch` with many `sources` runs in NetworkX. |
 | `eigenvector_centrality`, `katz_centrality` | All options except Katz's `nstart` and per-node `beta`. **Bit-for-bit identical** to NetworkX, including when they stop. |
@@ -281,9 +285,10 @@ default), and in NetworkX with exact floats (next section).
 
 ### Fast and exact floats
 
-> **Read this if you compare rustnx's numbers with NetworkX's.** Three
-> functions, `betweenness_centrality`, `edge_betweenness_centrality` and
-> `pagerank`, use **fast floats** by default. Their results can differ from
+> **Read this if you compare rustnx's numbers with NetworkX's.** Five
+> functions, `betweenness_centrality`, `edge_betweenness_centrality`,
+> `pagerank`, and `clustering` and `average_clustering` with weights, use
+> **fast floats** by default. Their results can differ from
 > NetworkX's in the last bits of each float, around 1e-16 to 1e-15
 > relative. Everything else about them is identical: the same keys in the
 > same order, the same errors. Every other rustnx function always returns
@@ -314,6 +319,7 @@ result on any machine and any thread count.
 | `betweenness_centrality` | Parallel blocks of sources, block sums added at the end | Parallel, each source's share added in NetworkX's order | 0.76 s vs 0.80 s (5,000 nodes) |
 | `edge_betweenness_centrality` | As above | As above | 0.78 s vs 0.85 s (5,000 nodes) |
 | `pagerank` | Power iteration in Rust; multigraphs too | Rust builds the sparse matrix, NetworkX's own SciPy code does the arithmetic; multigraphs run in NetworkX | 0.030 s vs 0.169 s (200,000 nodes; NetworkX takes 5.9 s) |
+| `clustering`, `average_clustering` (weighted) | Cube roots summed in Rust, in parallel | Runs in NetworkX (unweighted is exact in Rust either way) | 0.038 s vs NetworkX's 3.4 s (20,000 nodes, 200,000 edges) |
 
 #### Settings
 
@@ -355,6 +361,8 @@ without a float setting, so typos don't go unnoticed.
 rustnx float settings (every other function is always exact):
   betweenness_centrality: exact; set by exact_floats_overrides['betweenness_centrality']
   edge_betweenness_centrality: fast (may differ by about 1e-15 relative); set by the global exact_floats setting
+  clustering: fast (may differ by about 1e-15 relative, weighted only); set by the global exact_floats setting
+  average_clustering: fast (may differ by about 1e-15 relative, weighted only); set by the global exact_floats setting
   pagerank: fast (may differ by about 1e-16 relative); set by the global exact_floats setting
 ```
 
@@ -481,7 +489,7 @@ If a newer NetworkX adds a parameter, rustnx ignores it while it is left at
 its default. If the caller actually uses it, rustnx hands the call back to
 NetworkX.
 
-Floats match bit for bit too, except in the three functions that use fast
+Floats match bit for bit too, except in the five functions that use fast
 floats by default (see [Fast and exact floats](#fast-and-exact-floats));
 turn on exact floats and they match too. Both modes give the same result on
 any machine and thread count.
@@ -554,3 +562,9 @@ algorithm, and [SECURITY.md](SECURITY.md) for reporting security problems.
 
 BSD 3-Clause, the same license as NetworkX. See [LICENSE](LICENSE). Release
 notes are in [CHANGELOG.md](CHANGELOG.md).
+
+rustnx depends on NetworkX (it is a NetworkX backend) and doesn't bundle it.
+Many of its algorithms are ported step by step from NetworkX, so that it
+returns exactly what NetworkX returns, and a few short expressions are taken
+from NetworkX's source. `LICENSE` includes NetworkX's copyright notice and
+license for those portions.

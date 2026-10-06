@@ -537,6 +537,48 @@ impl CoreGraph {
         Ok(py.detach(|| cluster::triangle_counts(&self.succ, pred, self.n, &nodes)))
     }
 
+    /// The largest value of edge attribute `weight` (missing counts as 1),
+    /// NaN if any value is NaN.
+    fn max_weight(&self, weight: &str) -> PyResult<f64> {
+        let w = self
+            .weight_slice(Some(weight), false)?
+            .ok_or_else(|| PyNotImplementedError::new_err("weights were not converted"))?;
+        Ok(w.iter().fold(f64::NEG_INFINITY, |m, &x| {
+            if m.is_nan() || x.is_nan() {
+                f64::NAN
+            } else {
+                m.max(x)
+            }
+        }))
+    }
+
+    /// Weighted triangle sums per node for weighted `clustering` (see
+    /// `cluster::weighted_triangles`), for `nodes` or every node.
+    #[pyo3(signature = (weight, max_weight, nodes=None))]
+    fn weighted_triangles(
+        &self,
+        py: Python<'_>,
+        weight: &str,
+        max_weight: f64,
+        nodes: Option<Vec<u32>>,
+    ) -> PyResult<Vec<(f64, u64, u64)>> {
+        let nodes = self.sources_or_all(nodes)?;
+        let succ_w = self
+            .weight_slice(Some(weight), false)?
+            .ok_or_else(|| PyNotImplementedError::new_err("weights were not converted"))?;
+        let pred = if self.directed {
+            let pred_w = self
+                .weight_slice(Some(weight), true)?
+                .ok_or_else(|| PyNotImplementedError::new_err("weights were not converted"))?;
+            Some((self.adj(true), pred_w))
+        } else {
+            None
+        };
+        Ok(py.detach(|| {
+            cluster::weighted_triangles(&self.succ, succ_w, pred, self.n, &nodes, max_weight)
+        }))
+    }
+
     /// Core numbers in node order, or `None` if the graph has self-loops.
     fn core_number(&self, py: Python<'_>) -> Option<Vec<u32>> {
         let pred = self.directed.then(|| self.adj(true));

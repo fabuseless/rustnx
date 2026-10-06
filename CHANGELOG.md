@@ -8,6 +8,25 @@ versions may change behavior.
 ## [Unreleased]
 
 ### Added
+- NumPy/SciPy round. Hybrids run NetworkX's own SciPy code with the sparse
+  matrix it builds supplied by rustnx (identical inputs, so identical
+  results): `normalized_laplacian_matrix` and `bethe_hessian_matrix` (3x to
+  8x faster), `tournament_matrix` (20x to 35x), `eigenvector_centrality_numpy`
+  (2x to 4x) and `hits` (2x to 5x). The last two use ARPACK, which starts
+  from a random vector, so their last bits vary between runs in NetworkX
+  itself.
+- Hybrids whose expensive inner call runs in rustnx: `k_factor` (its
+  `max_weight_matching`, 12x to 29x), `junction_tree` (chordal completion,
+  cliques and spanning tree, about 35x) and `find_induced_nodes`
+  (`is_chordal`, about 1.6x). Bit for bit identical.
+- `attr_matrix` and `attr_sparse_matrix` (without `node_attr`, 12x to 14x)
+  and `magnetic_laplacian_matrix` (NetworkX 3.7+, 9x to 19x), built in Rust,
+  bit for bit identical.
+- Weighted `clustering` and `average_clustering` in Rust with fast floats
+  (about 90x faster); with exact floats they run in NetworkX.
+- `docs/COVERAGE.md` lists functions that stay in NetworkX on purpose, each
+  with its measured reason (for example, LAPACK-bound spectra, where building
+  the matrix in Rust measured about 1x).
 - Float settings. `betweenness_centrality`, `edge_betweenness_centrality`
   and `pagerank` have a fast mode (the default, whose floats can differ from
   NetworkX's in the last bits) and an exact mode (bit for bit NetworkX's).
@@ -189,6 +208,8 @@ versions may change behavior.
   early exit that fills the set in a different order).
 
 ### Changed
+- `LICENSE` now includes NetworkX's copyright notice and license, which
+  covers the parts of rustnx ported from or taken from NetworkX.
 - `betweenness_centrality` and `edge_betweenness_centrality` with exact
   floats add per-source contributions in NetworkX's order, matching it bit
   for bit (a few percent slower than fast floats).

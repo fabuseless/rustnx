@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 608 NetworkX functions. Call them as usual (for
+rustnx implements 619 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly, except that
 the functions marked "fast by default" in the Floats column can differ
@@ -241,8 +241,8 @@ in the last bits of their floats until you turn on exact floats.
 | Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Floats | Notes |
 |---|---|---|---|---|---|
 | `nx.triangles` | `nodes` | no | rustnx | exact | Bit-for-bit identical. |
-| `nx.clustering` | `nodes`, `weight` | no | rustnx | exact | Unweighted; `weight` falls back. Bit-for-bit identical. |
-| `nx.average_clustering` | `nodes`, `weight`, `count_zeros` | no | rustnx | exact | Unweighted; `weight` falls back. Bit-for-bit identical. |
+| `nx.clustering` | `nodes`, `weight` | no | rustnx | fast by default | Unweighted: bit-for-bit identical. Weighted: fast floats in Rust, in parallel (cube roots summed in a different order, about 1e-15 relative); with exact floats, weighted runs in NetworkX. |
+| `nx.average_clustering` | `nodes`, `weight`, `count_zeros` | no | rustnx | fast by default | As `clustering`. |
 | `nx.transitivity` | none | no | rustnx | exact | Bit-for-bit identical. |
 | `nx.square_clustering` | `nodes` | yes | rustnx | exact | Bit-for-bit identical. Follows the installed NetworkX's formula (3.4 differs from 3.5+ on self-loops and directed graphs). |
 | `nx.generalized_degree` | `nodes` | no | rustnx | exact | Builds each neighbor set in Python, as NetworkX does, so the `Counter` keys come in the same order. |
@@ -809,6 +809,22 @@ in the last bits of their floats until you turn on exact floats.
 | `nx.maybe_regular_expander_graph` | `n`, `d`, `create_using`, `max_tries`, `seed` | no | rustnx | exact | Replays NumPy's legacy `RandomState` (MT19937; `seed=None` is NumPy's global one) and NetworkX's set of edges; `numpy.random.Generator` seeds fall back. NetworkX 3.6+. Running out of `max_tries` falls back. |
 | `nx.maybe_regular_expander` | `n`, `d`, `create_using`, `max_tries`, `seed` | no | rustnx | exact | As `maybe_regular_expander_graph`, under its NetworkX 3.4 and 3.5 name. |
 | `nx.random_internet_as_graph` | `n`, `seed` | no | rustnx | exact | Replays NetworkX's draws on CPython's `random.Random` (any `seed` NetworkX turns into one, including `None`: the global generator, left where NetworkX would leave it); NumPy generators fall back. `create_using` takes `None` or a NetworkX graph class; instances and subclasses fall back. Replays every set the generator builds (CPython's set table and its union, intersection and difference, checked once against the running Python), which decide its candidate order. |
+
+### Linear algebra, NumPy/SciPy and other hybrids
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Floats | Notes |
+|---|---|---|---|---|---|
+| `nx.normalized_laplacian_matrix` | all (NetworkX's own code runs) | no | NetworkX | exact | NetworkX's own SciPy code, with the sparse matrix it builds supplied by rustnx. Bit-for-bit identical; 3x to 8x faster. |
+| `nx.bethe_hessian_matrix` | all (NetworkX's own code runs) | no | NetworkX | exact | NetworkX's own SciPy code, with the sparse matrix it builds supplied by rustnx. Bit-for-bit identical; 3x to 8x faster. |
+| `nx.magnetic_laplacian_matrix` | `nodelist`, `normalized`, `q`, `weight` | no | NetworkX | exact | NetworkX 3.7+. The Hermitian adjacency is built from rustnx's sparse adjacency, then NetworkX's own SciPy steps run on it. Bit-for-bit identical (including signed zeros); 9x to 19x faster. Multigraphs and nodelists with repeats or nodes outside the graph fall back. |
+| `nx.attr_matrix` | `edge_attr`, `node_attr`, `normalized`, `rc_order`, `dtype`, `order` | no | NetworkX | exact | Without `node_attr`, with `edge_attr` an attribute name or `None`, and the default `dtype`: the matrix is built in Rust, bit-for-bit identical, about 12x faster. Other inputs fall back. |
+| `nx.attr_sparse_matrix` | `edge_attr`, `node_attr`, `normalized`, `rc_order`, `dtype` | no | NetworkX | exact | As `attr_matrix` (a `lil_array` holding NumPy scalars, as NetworkX's does); about 14x faster. |
+| `nx.tournament_matrix` | all (NetworkX's own code runs) | no | NetworkX | exact | NetworkX's own SciPy code, with the sparse matrix it builds supplied by rustnx. Bit-for-bit identical; 20x to 35x faster. |
+| `nx.eigenvector_centrality_numpy` | all (NetworkX's own code runs) | no | NetworkX | exact | NetworkX's own SciPy code, with the sparse matrix it builds supplied by rustnx. SciPy's ARPACK starts from a random vector, so NetworkX's own results vary in the last bits from run to run; rustnx's are as close to NetworkX as NetworkX is to itself. 2x to 4x faster. |
+| `nx.hits` | all (NetworkX's own code runs) | no | NetworkX | exact | NetworkX's own SciPy code, with the sparse matrix it builds supplied by rustnx. Before NetworkX 3.7 this uses SciPy's ARPACK, which starts from a random vector, so results vary in the last bits from run to run, in NetworkX too. 2x to 5x faster. |
+| `nx.k_factor` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with its expensive inner call run in rustnx (`max_weight_matching` on the gadget graph). Bit-for-bit identical; 12x to 29x faster. |
+| `nx.junction_tree` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with its expensive inner call run in rustnxs (`complete_to_chordal_graph`, `chordal_graph_cliques`, `maximum_spanning_tree`). Bit-for-bit identical; about 35x faster. |
+| `nx.find_induced_nodes` | all (NetworkX's own code runs) | no | NetworkX | exact | NetworkX's own code, with its expensive inner call run in rustnx (`is_chordal`); the rest is NetworkX's set-order search, unchanged. Bit-for-bit identical; about 1.6x faster. |
 
 ### Bipartite measures
 

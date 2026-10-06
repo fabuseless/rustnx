@@ -522,10 +522,11 @@ def algorithm_calls(H, directed):
 
 @pytest.fixture
 def enabled():
-    old = nx.config.backend_priority.algos, nx.config.fallback_to_nx
-    rustnx.enable()
+    priority = nx.config.backend_priority
+    old = priority.algos, priority.generators, nx.config.fallback_to_nx
+    rustnx.enable()  # sets both priority lists
     yield
-    nx.config.backend_priority.algos, nx.config.fallback_to_nx = old
+    priority.algos, priority.generators, nx.config.fallback_to_nx = old
 
 
 def check_all(G, H, directed):
@@ -599,7 +600,8 @@ def test_invalid_input():
 
 def test_unimplemented_functions_fall_back_with_enable():
     G = rustnx.DiGraph([(0, 1), (1, 2)])
-    old = nx.config.backend_priority.algos, nx.config.fallback_to_nx
+    priority = nx.config.backend_priority
+    old = priority.algos, priority.generators, nx.config.fallback_to_nx
     try:
         nx.config.backend_priority.algos = []
         nx.config.fallback_to_nx = False
@@ -609,7 +611,7 @@ def test_unimplemented_functions_fall_back_with_enable():
         assert nx.config.backend_priority.algos[0] == "rustnx"
         assert nx.trophic_levels(G) == {0: 1.0, 1: 2.0, 2: 3.0}
     finally:
-        nx.config.backend_priority.algos, nx.config.fallback_to_nx = old
+        priority.algos, priority.generators, nx.config.fallback_to_nx = old
 
 
 def test_pickle_native():

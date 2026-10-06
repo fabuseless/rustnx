@@ -84,9 +84,71 @@ AREAS = [
 
 # Missing functions with a recorded reason (todo item numbers).
 BLOCKED = {
-    "hits": 8,
     "simple_cycles": 14,
     "louvain_communities": 15,
+}
+
+
+# Functions that stay in NetworkX on purpose, with the reason: rustnx can't
+# make them faster (their time is in LAPACK, SciPy or random sampling, not
+# in anything rustnx could do in Rust), or they are O(1) per call, so
+# dispatch would only add overhead. An area is complete when every function
+# is done or listed here.
+STAYS = {
+    'adjacency_spectrum': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
+    'laplacian_spectrum': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
+    'normalized_laplacian_spectrum': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
+    'modularity_spectrum': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
+    'bethe_hessian_spectrum': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
+    'magnetic_spectrum': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
+    'modularity_matrix': 'dense NumPy arithmetic on an n x n matrix dominates; measured no faster with the matrix built in Rust',
+    'directed_modularity_matrix': 'dense NumPy arithmetic on an n x n matrix dominates; measured no faster with the matrix built in Rust',
+    'directed_laplacian_matrix': 'dense NumPy arithmetic on an n x n matrix dominates; measured no faster with the matrix built in Rust',
+    'directed_combinatorial_laplacian_matrix': 'dense NumPy arithmetic on an n x n matrix dominates; measured no faster with the matrix built in Rust',
+    'algebraic_connectivity': "its time is in SciPy's sparse eigensolvers (TraceMIN, LOBPCG, ARPACK); measured no faster with the matrix built in Rust",
+    'fiedler_vector': "its time is in SciPy's sparse eigensolvers (TraceMIN, LOBPCG, ARPACK); measured no faster with the matrix built in Rust",
+    'spectral_ordering': "its time is in SciPy's sparse eigensolvers (TraceMIN, LOBPCG, ARPACK); measured no faster with the matrix built in Rust",
+    'spectral_bisection': "its time is in SciPy's sparse eigensolvers (TraceMIN, LOBPCG, ARPACK); measured no faster with the matrix built in Rust",
+    'katz_centrality_numpy': 'dense NumPy arithmetic on an n x n matrix dominates; measured no faster with the matrix built in Rust',
+    'laplacian_centrality': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
+    'subgraph_centrality': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
+    'subgraph_centrality_exp': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
+    'estrada_index': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
+    'communicability_betweenness_centrality': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
+    'second_order_centrality': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
+    'current_flow_closeness_centrality': "its time is in SciPy's sparse LU solves; measured no faster with the matrix built in Rust",
+    'current_flow_betweenness_centrality': "its time is in SciPy's sparse LU solves; measured no faster with the matrix built in Rust",
+    'edge_current_flow_betweenness_centrality': "its time is in SciPy's sparse LU solves; measured no faster with the matrix built in Rust",
+    'current_flow_betweenness_centrality_subset': "its time is in SciPy's sparse LU solves; measured no faster with the matrix built in Rust",
+    'edge_current_flow_betweenness_centrality_subset': "its time is in SciPy's sparse LU solves; measured no faster with the matrix built in Rust",
+    'approximate_current_flow_betweenness_centrality': "its time is in SciPy's sparse LU solves; measured no faster with the matrix built in Rust",
+    'flow_matrix_row': "its time is in SciPy's sparse LU solves; measured no faster with the matrix built in Rust",
+    'trophic_levels': 'dense NumPy arithmetic on an n x n matrix dominates; measured no faster with the matrix built in Rust',
+    'trophic_differences': 'dense NumPy arithmetic on an n x n matrix dominates; measured no faster with the matrix built in Rust',
+    'trophic_incoherence_parameter': 'dense NumPy arithmetic on an n x n matrix dominates; measured no faster with the matrix built in Rust',
+    'incremental_closeness_centrality': "updates closeness while the caller edits the graph; converting the changed graph on every call costs more than NetworkX's incremental update",
+    'resistance_distance': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
+    'effective_graph_resistance': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
+    'kemeny_constant': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
+    'number_of_spanning_trees': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
+    'google_matrix': 'dense NumPy arithmetic on an n x n matrix dominates; measured no faster with the matrix built in Rust',
+    'birank': 'a few sparse matrix-vector products; measured no faster with the matrix built in Rust',
+    'minimum_weight_full_matching': "its time is in SciPy's min_weight_full_bipartite_matching; measured no faster with the matrix built in Rust",
+    'spectral_bipartivity': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
+    'degrees': "returns NetworkX's own degree views; there is nothing to compute",
+    'colliders': "NetworkX's C-level loop over predecessor pairs beats building the tuples from Rust (measured 3x slower in rustnx)",
+    'reconstruct_path': 'walks a predecessor dict for the length of one path; dispatch would only add time',
+    'bfs_beam_edges': "calls the caller's Python `value` function for every neighbor; those calls are the cost",
+    'is_edge_cover': 'O(1) or one C-level set operation per call; dispatch would only add time',
+    'is_isolate': 'O(1) or one C-level set operation per call; dispatch would only add time',
+    'is_triad': 'O(1) or one C-level set operation per call; dispatch would only add time',
+    'triad_type': 'O(1) or one C-level set operation per call; dispatch would only add time',
+    'all_triads': 'builds a NetworkX subgraph copy for every node triple; those copies are the cost',
+    'triads_by_type': 'builds a NetworkX subgraph copy for every node triple; those copies are the cost',
+    'communicability': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
+    'communicability_exp': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
+    'mutual_weight': 'O(degree) per call; dispatch would only add time',
+    'normalized_mutual_weight': 'O(degree) per call; dispatch would only add time',
 }
 
 
@@ -121,13 +183,21 @@ def main():
         "",
         f"rustnx implements {done} of {total} functions.",
         "",
-        "| Item | Area | Functions | rustnx |",
-        "|------|------|-----------|--------|",
+        f"{sum(n in STAYS and n not in implemented for v in by_area.values() for n in v)} more"
+        " stay in NetworkX on purpose, each with its reason below: rustnx",
+        "can't make them faster.",
+        "",
+        "| Item | Area | Functions | rustnx | Stays in NetworkX | Left |",
+        "|------|------|-----------|--------|-------------------|------|",
     ]
     for item, name, _ in AREAS:
         names = by_area.get((item, name), [])
         count = sum(n in implemented for n in names)
-        lines.append(f"| {item} | [{name}](#{_anchor(item, name)}) | {len(names)} | {count} |")
+        stays = sum(n in STAYS and n not in implemented for n in names)
+        left = len(names) - count - stays
+        lines.append(
+            f"| {item} | [{name}](#{_anchor(item, name)}) | {len(names)} | {count} | {stays} | {left} |"
+        )
     for item, name, _ in AREAS:
         names = sorted(by_area.get((item, name), []))
         lines += ["", f"## {item}. {name}", ""]
@@ -138,6 +208,8 @@ def main():
         for n in names:
             if n in implemented:
                 status = "Done"
+            elif n in STAYS:
+                status = f"Stays in NetworkX: {STAYS[n]}"
             elif n in BLOCKED:
                 status = f"Blocked (item {BLOCKED[n]})"
             else:

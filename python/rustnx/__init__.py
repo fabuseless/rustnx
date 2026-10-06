@@ -12,8 +12,9 @@ or::
 Functions rustnx doesn't implement (or inputs it can't handle) keep running
 in NetworkX, so enabling it never breaks working code.
 
-A few functions (``betweenness_centrality``, ``edge_betweenness_centrality``
-and ``pagerank``) use fast float arithmetic by default, so their floats can
+A few functions (``betweenness_centrality``, ``edge_betweenness_centrality``,
+``pagerank``, and weighted ``clustering`` and ``average_clustering``) use
+fast float arithmetic by default, so their floats can
 differ from NetworkX's in the last bits (around 1e-16 to 1e-15 relative).
 Turn on exact floats for every function or just some::
 
