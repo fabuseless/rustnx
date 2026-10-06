@@ -12677,6 +12677,14 @@ def _b25_lazy(G, compute, fallback):
     return generate()
 
 
+def _b25_not_a_view(G):
+    """Decline graph views: NetworkX's subgraphs of a view filter the
+    underlying graph (so their node order depends on its size), which the
+    replays here don't model."""
+    if not G._core.is_native() and getattr(G._source, "_graph", None) is not None:
+        raise NotImplementedError("rustnx doesn't replay subgraphs of graph views")
+
+
 def _b25_index(G, node):
     """The position of ``node`` in G, or ``None`` (``node in G`` is False
     for unhashable objects too)."""
@@ -12857,6 +12865,7 @@ def _b25_set(G, order):
 
 def ramsey_R2(G):
     _undirected_only(G)
+    _b25_not_a_view(G)
     clique, iset = G._core.ramsey_r2(_b25_hashes(G))
     return _b25_set(G, clique), _b25_set(G, iset)
 
@@ -12868,26 +12877,31 @@ def _b25_clique_removal(G, complement):
 
 def clique_removal(G):
     _undirected_only(G)
+    _b25_not_a_view(G)
     return _b25_clique_removal(G, False)
 
 
 def maximum_independent_set(G):
     _undirected_only(G)
+    _b25_not_a_view(G)
     return _b25_clique_removal(G, False)[0]
 
 
 def max_clique(G):
     _undirected_only(G)
+    _b25_not_a_view(G)
     return _b25_clique_removal(G, True)[0]
 
 
 def hamiltonian_path(G):
     _directed_only(G)
+    _b25_not_a_view(G)
     nodes = G._nodes
     return [nodes[i] for i in G._core.hamiltonian_path(_b25_hashes(G))]
 
 
 def chordal_graph_cliques(G):
+    _b25_not_a_view(G)
     hashes = None if G.is_directed() else _b25_hashes(G)
 
     def compute():

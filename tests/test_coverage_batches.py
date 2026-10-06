@@ -7606,6 +7606,14 @@ def test_batch25_structure_edge_cases():
     assert results[0] == results[1]
     exact_outcome(nx.find_asteroidal_triple, nx.cycle_graph(6))
     exact_outcome(nx.find_asteroidal_triple, nx.cycle_graph(5))
+    # Subgraphs of views filter the underlying graph: these fall back.
+    T = nx.tournament.random_tournament(30, seed=1)
+    exact_outcome(nx.tournament.hamiltonian_path, T.subgraph(list(T)[:20]))
+    G = nx.gnp_random_graph(30, 0.3, seed=2)
+    V = G.subgraph(list(G)[:20])
+    for func in [_b25_approx.ramsey_R2, _b25_approx.maximum_independent_set, _b25_approx.max_clique]:
+        exact_outcome(with_set_order(func), V)
+    exact_outcome(listed(nx.chordal_graph_cliques), _b25_chordal(G).subgraph(list(G)[:20]))
 
 
 @pytest.mark.parametrize("directed", [False, True])
