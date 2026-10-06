@@ -6111,7 +6111,7 @@ impl CoreGraph {
         state: Vec<u32>,
         g: &Bound<'py, PyAny>,
     ) -> PyResult<Option<Vec<u32>>> {
-        if (kind == 0 && p.len() != 1) || (kind == 1 && k > m) {
+        if (kind == 0 && p.len() != 1) || (kind == 1 && n > 0 && k > m) {
             return Err(PyValueError::new_err("bad intersection graph arguments"));
         }
         if kind == 0 {
@@ -6239,7 +6239,7 @@ impl CoreGraph {
             return Ok(None);
         }
         rg_run(py, &state, g, None, |rng| {
-            more_random::relaxed_caveman(l, k, p, rng)
+            Some(more_random::relaxed_caveman(l, k, p, rng))
         })
     }
 

@@ -593,141 +593,48 @@ pub fn bipartite_preferential(aseq: &[i64], p: f64, multigraph: bool, rng: &mut 
     sim
 }
 
-/// One adjacency row as a CPython dict (Objects/dictobject.c, 3.11 to
-/// 3.14, non-string keys): entries in insertion order with deleted ones
-/// left as holes, a table that grows to `used * 3` (rounded up to a power
-/// of two) when its usable entries run out, and compaction on growth.
-/// Iterating a dict walks the entries by position, so inserting while
-/// iterating can shift or skip keys; `relaxed_caveman_graph` does that.
-#[derive(Clone, Default)]
-struct DictRow {
-    entries: Vec<u32>,
-    usable: usize,
-    used: usize,
-}
-
-const HOLE: u32 = u32::MAX;
-
-impl DictRow {
-    /// `calculate_log2_keysize(minsize)` as a size.
-    fn keysize(minsize: usize) -> usize {
-        let m = (minsize | 8) - 1;
-        let bits = usize::BITS - (m | 7).leading_zeros();
-        1usize << bits
-    }
-
-    /// Inserts a key known to be absent.
-    fn insert(&mut self, key: u32) {
-        if self.entries.is_empty() && self.used == 0 && self.usable == 0 {
-            // The first key of an empty dict: a table of 8 slots.
-            self.usable = (8 << 1) / 3;
-        } else if self.usable == 0 {
-            let size = Self::keysize(self.used * 3);
-            self.entries.retain(|&k| k != HOLE);
-            self.usable = (size << 1) / 3 - self.used;
-        }
-        self.entries.push(key);
-        self.used += 1;
-        self.usable -= 1;
-    }
-
-    fn position(&self, key: u32) -> Option<usize> {
-        self.entries.iter().position(|&k| k == key)
-    }
-
-    fn delete(&mut self, key: u32) {
-        if let Some(i) = self.position(key) {
-            self.entries[i] = HOLE;
-            self.used -= 1;
-        }
-    }
-
-    fn live(&self) -> Vec<u32> {
-        self.entries
-            .iter()
-            .copied()
-            .filter(|&k| k != HOLE)
-            .collect()
-    }
-}
-
 /// `relaxed_caveman_graph`: `caveman_graph(l, k)`, then a draw per edge of
-/// `G.edges()` while it rewires the graph under the iteration. The rows are
-/// replayed as CPython dicts, so the iteration sees what NetworkX's does.
-/// `None` if the iteration raises ("dictionary keys changed during
-/// iteration").
-pub fn relaxed_caveman(l: usize, k: usize, p: f64, rng: &mut Mt19937) -> Option<Built> {
+/// `G.edges()` while it rewires the graph. `EdgeView` iterates a copy of
+/// each row (`list(nbrs)`) taken when it reaches the row, and skips rows
+/// it has finished.
+pub fn relaxed_caveman(l: usize, k: usize, p: f64, rng: &mut Mt19937) -> Built {
     let n = l * k;
-    let mut rows: Vec<DictRow> = vec![DictRow::default(); n];
+    let mut b = Built::new(n, false);
     let mut member: HashSet<(u32, u32)> = HashSet::new();
     if k > 1 {
         for start in (0..n).step_by(k) {
-            for a in start..start + k {
-                for b in a + 1..start + k {
-                    rows[a].insert(b as u32);
-                    rows[b].insert(a as u32);
-                    member.insert((a as u32, b as u32));
-                    member.insert((b as u32, a as u32));
+            for u in start..start + k {
+                for v in u + 1..start + k {
+                    b.push_edge(u as u32, v as u32);
+                    member.insert((u as u32, v as u32));
+                    member.insert((v as u32, u as u32));
                 }
             }
         }
     }
     let mut seen = vec![false; n];
     for u in 0..n {
-        let used_at_start = rows[u].used;
-        let mut left = used_at_start;
-        let mut pos = 0usize;
-        loop {
-            if rows[u].used != used_at_start {
-                return None; // "dictionary changed size during iteration"
-            }
-            let entries = &rows[u].entries;
-            while pos < entries.len() && entries[pos] == HOLE {
-                pos += 1;
-            }
-            if pos >= entries.len() {
-                break;
-            }
-            if left == 0 {
-                return None; // "dictionary keys changed during iteration"
-            }
-            let v = entries[pos];
-            pos += 1;
-            left -= 1;
+        let uu = u as u32;
+        for v in b.succ[u].clone() {
             if seen[v as usize] {
                 continue;
             }
             if rng.random() < p {
                 let x = rng.below(n) as u32;
-                let uu = u as u32;
                 if member.contains(&(uu, x)) {
                     continue;
                 }
-                // G.remove_edge(u, v)
-                rows[u].delete(v);
+                b.remove_edge(uu, v);
                 member.remove(&(uu, v));
-                if uu != v {
-                    rows[v as usize].delete(uu);
-                    member.remove(&(v, uu));
-                }
-                // G.add_edge(u, x). If row u grows, its entries are
-                // compacted but the iterator keeps its raw position, as in
-                // CPython, so it may skip entries.
-                rows[u].insert(x);
+                member.remove(&(v, uu));
+                b.push_edge(uu, x);
                 member.insert((uu, x));
-                if uu != x {
-                    rows[x as usize].insert(uu);
-                    member.insert((x, uu));
-                }
+                member.insert((x, uu));
             }
         }
         seen[u] = true;
     }
-    Some(Built {
-        succ: rows.iter().map(DictRow::live).collect(),
-        pred: None,
-        order: None,
-    })
+    b
 }
 
 /// `maybe_regular_expander_graph` (`maybe_regular_expander` before 3.6):
