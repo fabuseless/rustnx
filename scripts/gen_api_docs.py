@@ -1115,6 +1115,10 @@ def location(name):
 
 
 def parameters(name):
+    if name in algorithms.HYBRID_FUNCTIONS:
+        # NetworkX's own code runs, so every parameter of the installed
+        # release is supported (and the list differs between releases).
+        return "all (NetworkX's own code runs)"
     params = list(inspect.signature(getattr(algorithms, name)).parameters)
     if params and params[0] in ("G", "T", "flowG"):
         params = params[1:]  # drop the graph
