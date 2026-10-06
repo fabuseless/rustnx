@@ -265,6 +265,8 @@ def algorithm_calls(H, directed):
     calls["vf2pp_is_isomorphic"] = lambda G, b: nx.vf2pp_is_isomorphic(G, G, node_label="x", backend=b)
     calls["faster_could_be"] = lambda G, b: nx.faster_could_be_isomorphic(G, G, backend=b)
     calls["could_be"] = lambda G, b: nx.could_be_isomorphic(G, G, backend=b)
+    # Batch 23: native graphs carry no positions, so NetworkX's error.
+    calls["geometric_edges"] = lambda G, b: nx.geometric_edges(G, 0.5, backend=b)
 
     def quiet(func):  # Weisfeiler-Lehman hashes warn about changes in 3.5
         def run(*args, **kwargs):
