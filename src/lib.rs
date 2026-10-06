@@ -5966,7 +5966,8 @@ impl CoreGraph {
         if hashes.len() != self.n {
             return Err(PyValueError::new_err("one hash per node is needed"));
         }
-        Ok(py.detach(|| bipartite_more::latapy(&self.succ, self.n, &sources, mode, &hashes)))
+        py.detach(|| bipartite_more::latapy(&self.succ, self.n, &sources, mode, &hashes))
+            .ok_or_else(|| pyo3::exceptions::PyZeroDivisionError::new_err("division by zero"))
     }
 
     /// `(4 x 4-cycles, 2 x 3-paths)` for `robins_alexander_clustering`.

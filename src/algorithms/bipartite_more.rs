@@ -297,8 +297,10 @@ pub fn minus_one(s: PySet, v: u32, hashes: &[i64]) -> PySet {
 
 /// Bipartite `latapy_clustering` for the nodes `sources`: per node, the
 /// sum over its second neighbors (in set order) of `cc(N(u), N(v))`,
-/// divided by their number. `mode` 0 dot, 1 min, 2 max.
-pub fn latapy(succ: &Csr, n: usize, sources: &[u32], mode: u8, hashes: &[i64]) -> Vec<f64> {
+/// divided by their number. `mode` 0 dot, 1 min, 2 max. `None` where
+/// NetworkX divides by zero (directed graphs: a second neighbor without
+/// successors, in min mode).
+pub fn latapy(succ: &Csr, n: usize, sources: &[u32], mode: u8, hashes: &[i64]) -> Option<Vec<f64>> {
     let mut mark = vec![false; n];
     let mut out = Vec::with_capacity(sources.len());
     for &v in sources {
@@ -320,6 +322,9 @@ pub fn latapy(succ: &Csr, n: usize, sources: &[u32], mode: u8, hashes: &[i64]) -
                 1 => lu.min(lv),
                 _ => lu.max(lv),
             };
+            if denom == 0 {
+                return None;
+            }
             cc += common as f64 / denom as f64;
         }
         for &w in nv {
@@ -330,7 +335,7 @@ pub fn latapy(succ: &Csr, n: usize, sources: &[u32], mode: u8, hashes: &[i64]) -
         }
         out.push(cc);
     }
-    out
+    Some(out)
 }
 
 /// `(4 times the number of 4-cycles, twice the number of 3-paths)` for

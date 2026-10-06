@@ -4382,11 +4382,6 @@ def number_of_isolates(G):
 def is_regular(G):
     if len(G) == 0:
         raise nx.NetworkXPointlessConcept("Graph has no nodes.")
-    if G._multigraph:
-        deg, ins, outs = _b26_multi_degrees(G)
-        if G.is_directed():
-            return len(set(ins)) == 1 and len(set(outs)) == 1
-        return len(set(deg)) == 1
     return G._core.is_regular()
 
 
@@ -4394,8 +4389,6 @@ def is_k_regular(G, k):
     _undirected_only(G)
     if type(k) not in (int, bool):
         raise NotImplementedError("rustnx needs an integer k")
-    if G._multigraph:
-        return all(d == k for d in _b26_multi_degrees(G)[0])
     return G._core.all_degrees_equal(int(k))
 
 
