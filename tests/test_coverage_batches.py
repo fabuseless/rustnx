@@ -7677,7 +7677,6 @@ def test_batch26_runs_in_rust():
         lambda: nx.maximum_spanning_tree(M, backend="rustnx"),
         lambda: list(mst.kruskal_mst_edges(M, True, backend="rustnx")),
         lambda: list(mst.prim_mst_edges(M, False, backend="rustnx")),
-        lambda: nx.number_of_selfloops(M, backend="rustnx"),
         lambda: nx.s_metric(M, backend="rustnx"),
         lambda: nx.has_eulerian_path(M, backend="rustnx"),
         lambda: nx.is_semieulerian(D, backend="rustnx"),
@@ -7698,6 +7697,8 @@ def test_batch26_runs_in_rust():
     ]
     if hasattr(nx.bipartite, "modularity"):
         calls.append(lambda: nx.bipartite.modularity(B, [set(B)], top, backend="rustnx"))
+    if "number_of_selfloops" in nx.utils.backends._registered_algorithms:  # 3.5+
+        calls.append(lambda: nx.number_of_selfloops(M, backend="rustnx"))
     for call in calls:
         call()
 
