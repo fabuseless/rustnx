@@ -208,6 +208,8 @@ versions may change behavior.
   early exit that fills the set in a different order).
 
 ### Changed
+- `LICENSE` now includes NetworkX's copyright notice and license, which
+  covers the parts of rustnx ported from or taken from NetworkX.
 - `betweenness_centrality` and `edge_betweenness_centrality` with exact
   floats add per-source contributions in NetworkX's order, matching it bit
   for bit (a few percent slower than fast floats).

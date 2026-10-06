@@ -562,3 +562,9 @@ algorithm, and [SECURITY.md](SECURITY.md) for reporting security problems.
 
 BSD 3-Clause, the same license as NetworkX. See [LICENSE](LICENSE). Release
 notes are in [CHANGELOG.md](CHANGELOG.md).
+
+rustnx depends on NetworkX (it is a NetworkX backend) and doesn't bundle it.
+Many of its algorithms are ported step by step from NetworkX, so that it
+returns exactly what NetworkX returns, and a few short expressions are taken
+from NetworkX's source. `LICENSE` includes NetworkX's copyright notice and
+license for those portions.
