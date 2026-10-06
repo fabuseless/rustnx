@@ -17,7 +17,12 @@ G = nx.barabasi_albert_graph(4000, 4, seed=1)
 nx.betweenness_centrality(G)              # runs in Rust: 0.4s instead of 41s
 ```
 
-Nothing else changes. Anything rustnx doesn't support, such as other
+Nothing else changes, with one caveat: `betweenness_centrality`,
+`edge_betweenness_centrality` and `pagerank` use fast float arithmetic by
+default, so their floats can differ from NetworkX's in the last bits (about
+1e-16 to 1e-15 relative). Set `nx.config.backends.rustnx.exact_floats = True`
+for NetworkX's exact numbers; see [Fast and exact
+floats](#fast-and-exact-floats). Anything rustnx doesn't support, such as other
 functions, multigraphs in functions that treat parallel edges specially, or callable weights, keeps running in NetworkX, so
 turning it on never breaks working code.
 
@@ -271,51 +276,106 @@ minimum over parallel edges: components, traversals, the shortest path
 family, betweenness, closeness and harmonic centrality, the distance measures,
 biconnected and attracting components, `is_bipartite`, and most of the
 functions added in the coverage batches (`docs/API.md` lists which). Other functions run in
-NetworkX. `pagerank` on a multigraph runs in Rust only with `exact_floats`
-off (next section).
+NetworkX. `pagerank` runs multigraphs in Rust with fast floats (the
+default), and in NetworkX with exact floats (next section).
 
-### Exact floats
+### Fast and exact floats
 
-By default every result rustnx returns is bit for bit what NetworkX
-returns, floats included. Where NetworkX does its float arithmetic in NumPy
-or SciPy, rustnx builds the same arrays and passes them to the same NumPy or
-SciPy calls rather than redoing the arithmetic in Rust.
+> **Read this if you compare rustnx's numbers with NetworkX's.** Three
+> functions, `betweenness_centrality`, `edge_betweenness_centrality` and
+> `pagerank`, use **fast floats** by default. Their results can differ from
+> NetworkX's in the last bits of each float, around 1e-16 to 1e-15
+> relative. Everything else about them is identical: the same keys in the
+> same order, the same errors. Every other rustnx function always returns
+> exactly what NetworkX returns, floats included. For NetworkX's exact
+> numbers, turn on **exact floats** (below).
 
-A Rust version of that arithmetic can be faster, but it adds the same
-numbers up in a different order, so the last bit or two of a float can
-differ (around 1e-16). The `exact_floats` setting controls whether rustnx
-may do that:
+Why they differ: these functions add many floats together. Float addition
+is not associative: `(a + b) + c` can differ from `a + (b + c)` in the last
+bit. Fast floats add things up in whatever order is fastest (parallel
+blocks, or Rust instead of SciPy), while exact floats add them up in
+NetworkX's order, or hand identical arrays to NetworkX's own SciPy code.
+Neither result is more accurate than the other.
 
-| `exact_floats` | What you get |
-|---|---|
-| `True` (default) | Bit-for-bit NetworkX results. Inputs rustnx can't match exactly run in NetworkX. |
-| `False` | rustnx also runs those inputs, and uses its faster Rust arithmetic. Floats may differ from NetworkX's in the last bits; everything else (keys, order, ints, errors) is unchanged. |
+When to turn exact floats on:
 
-Turn it off in any of these ways:
+- you compare results with `==`, hash them, or test them against stored
+  NetworkX output;
+- you sort or rank by score and need ties broken exactly as NetworkX would
+  (two scores that tie in NetworkX might not tie in fast mode, and vice
+  versa);
+- you need results reproducible against a pure-NetworkX run.
+
+Fast floats are themselves deterministic: the same input gives the same
+result on any machine and any thread count.
+
+| Function | Fast floats (default) | Exact floats | Fast vs exact (4 cores) |
+|---|---|---|---|
+| `betweenness_centrality` | Parallel blocks of sources, block sums added at the end | Parallel, each source's share added in NetworkX's order | 0.76 s vs 0.80 s (5,000 nodes) |
+| `edge_betweenness_centrality` | As above | As above | 0.78 s vs 0.85 s (5,000 nodes) |
+| `pagerank` | Power iteration in Rust; multigraphs too | Rust builds the sparse matrix, NetworkX's own SciPy code does the arithmetic; multigraphs run in NetworkX | 0.030 s vs 0.169 s (200,000 nodes; NetworkX takes 5.9 s) |
+
+#### Settings
+
+There is one global setting and one per function. **A per-function
+setting always wins over the global one.**
 
 ```python
 import networkx as nx
 import rustnx
 
-rustnx.enable(exact_floats=False)                 # with enable()
-nx.config.backends.rustnx.exact_floats = False    # at any time
+cfg = nx.config.backends.rustnx
 
-with nx.config.backends.rustnx(exact_floats=False):   # just for a block
+cfg.exact_floats = True                              # every function: exact
+cfg.exact_floats_overrides["pagerank"] = False       # ...except pagerank: fast
+
+cfg.exact_floats = False                             # every function: fast (default)
+cfg.exact_floats_overrides = {"betweenness_centrality": True}   # ...except this one
+
+with nx.config.backends.rustnx(exact_floats=True):  # just for a block
     nx.pagerank(G)
+
+rustnx.enable(exact_floats=True, exact_floats_overrides={"pagerank": False})
 ```
 
-or `RUSTNX_EXACT_FLOATS=0` in the environment.
+From the environment, before Python starts:
 
-What changes today:
+```
+RUSTNX_EXACT_FLOATS=1                                         # global: exact
+RUSTNX_EXACT_FLOATS_OVERRIDES=pagerank=0,betweenness_centrality=1   # per function
+```
 
-| Function | `exact_floats=True` | `exact_floats=False` |
-|---|---|---|
-| `pagerank` | Rust builds the sparse matrix; NetworkX's own SciPy code does the arithmetic. About 30x faster than NetworkX on a 200,000-node graph. | Power iteration in Rust, about 5x faster again. |
-| `pagerank` on a multigraph | Runs in NetworkX. | Runs in Rust. |
+`rustnx.enable(exact_floats_overrides=...)` raises `ValueError` for a name
+without a float setting, so typos don't go unnoticed.
 
-If you call such an input with `backend="rustnx"` while `exact_floats` is
-on, NetworkX raises `NotImplementedError`, and its cause says to set
-`exact_floats = False`.
+#### Checking which setting applies
+
+```python
+>>> print(rustnx.explain_floats())
+rustnx float settings (every other function is always exact):
+  betweenness_centrality: exact; set by exact_floats_overrides['betweenness_centrality']
+  edge_betweenness_centrality: fast (may differ by about 1e-15 relative); set by the global exact_floats setting
+  pagerank: fast (may differ by about 1e-16 relative); set by the global exact_floats setting
+```
+
+`rustnx.float_settings()` returns the same as a dict, plus any override
+names it doesn't recognize (`"unknown_overrides"`).
+
+To see it as your code runs, set `cfg.verbose = True` (or
+`RUSTNX_VERBOSE=1`). The first call of each of these functions under each
+setting then logs, at INFO on the `rustnx` logger (printed to stderr if you
+haven't configured logging):
+
+```
+rustnx pagerank: fast floats (set by the global exact_floats setting): power iteration in Rust; multigraphs run in Rust too. Floats may differ from NetworkX's in the last bits (about 1e-16 relative). For NetworkX's exact numbers set nx.config.backends.rustnx.exact_floats_overrides['pagerank'] = True, or nx.config.backends.rustnx.exact_floats = True for every function.
+```
+
+Every call is also logged at DEBUG, so `logging.getLogger("rustnx").setLevel
+(logging.DEBUG)` shows all of them.
+
+With exact floats on, `pagerank` on a multigraph runs in NetworkX. Called
+with `backend="rustnx"`, it raises `NotImplementedError`, and the error's
+cause says which setting to change.
 
 ## Benchmarks
 
@@ -421,10 +481,10 @@ If a newer NetworkX adds a parameter, rustnx ignores it while it is left at
 its default. If the caller actually uses it, rustnx hands the call back to
 NetworkX.
 
-Floats match bit for bit too, unless you turn that off (see
-[Exact floats](#exact-floats)). Parallel algorithms such as betweenness
-compute per-source contributions in parallel but add them up in NetworkX's
-order, so results are also the same on any machine and thread count.
+Floats match bit for bit too, except in the three functions that use fast
+floats by default (see [Fast and exact floats](#fast-and-exact-floats));
+turn on exact floats and they match too. Both modes give the same result on
+any machine and thread count.
 
 ## How it works
 

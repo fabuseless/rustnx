@@ -2,8 +2,10 @@
 //!
 //! Each per-source pass is a literal port of the NetworkX helpers in
 //! `networkx/algorithms/centrality/betweenness.py`, including how path counts
-//! and ties are handled, and contributions are summed in NetworkX's source
-//! order, so results match NetworkX bit for bit.
+//! and ties are handled. With `ordered`, contributions are summed in
+//! NetworkX's source order, so results match NetworkX bit for bit; without,
+//! sources are split into blocks summed separately (faster, but the last
+//! bits of a float can differ).
 
 use std::cmp::Reverse;
 
@@ -15,8 +17,10 @@ use crate::graph::Csr;
 
 const UNSET: u32 = u32::MAX;
 
-/// Cap on memory for per-source contributions held at once (bytes).
+/// Cap on memory for per-source contributions or per-block partial sums
+/// held at once (bytes).
 const BLOCK_MEMORY: usize = 512 << 20;
+const MAX_BLOCKS: usize = 64;
 
 struct BcState {
     sigma: Vec<f64>,
@@ -235,7 +239,7 @@ fn sum_in_source_order(
     n: usize,
     weighted: bool,
     sources: &[u32],
-    add: impl Fn(&mut BcState, usize, &mut [f64]) + Sync,
+    add: &(dyn Fn(&mut BcState, usize, &mut [f64]) + Sync),
 ) -> Vec<f64> {
     let mut total = vec![0.0; len];
     if len == 0 || sources.is_empty() {
@@ -279,9 +283,47 @@ fn sum_in_source_order(
     total
 }
 
+/// Sums each source's contribution in a fixed number of contiguous blocks of
+/// sources (one partial sum per block, run in parallel), then adds the
+/// partials. The blocks depend only on the input size, not on the thread
+/// count, so results are the same on any machine, but floats can differ
+/// from NetworkX's source-order sums in the last bits.
+fn sum_in_blocks(
+    len: usize,
+    n: usize,
+    weighted: bool,
+    sources: &[u32],
+    add: &(dyn Fn(&mut BcState, usize, &mut [f64]) + Sync),
+) -> Vec<f64> {
+    let mut total = vec![0.0; len];
+    if len == 0 || sources.is_empty() {
+        return total;
+    }
+    let max_by_memory = (BLOCK_MEMORY / (8 * len.max(n))).max(1);
+    let nblocks = MAX_BLOCKS.min(max_by_memory).min(sources.len());
+    let block_len = sources.len().div_ceil(nblocks);
+    let partials: Vec<Vec<f64>> = sources
+        .par_chunks(block_len)
+        .map(|block| {
+            let mut state = BcState::new(n, weighted);
+            let mut part = vec![0.0; len];
+            for &s in block {
+                add(&mut state, s as usize, &mut part);
+            }
+            part
+        })
+        .collect();
+    for part in &partials {
+        for (t, p) in total.iter_mut().zip(part) {
+            *t += p;
+        }
+    }
+    total
+}
+
 /// Unscaled edge betweenness summed over `sources`, indexed by edge id
 /// (`edge_id` and `in_edge_id` map each arc of `adj` and `in_adj` to its
-/// edge; `num_edges` ids). Matches NetworkX bit for bit.
+/// edge; `num_edges` ids). Matches NetworkX bit for bit if `ordered`.
 #[allow(clippy::too_many_arguments)]
 pub fn edge_betweenness(
     adj: &Csr,
@@ -292,20 +334,33 @@ pub fn edge_betweenness(
     in_edge_id: &[u32],
     num_edges: usize,
     sources: &[u32],
+    ordered: bool,
 ) -> Vec<f64> {
     if n == 0 {
         return vec![0.0; num_edges];
     }
-    sum_in_source_order(num_edges, n, weights.is_some(), sources, |state, s, out| {
-        match weights {
-            Some(w) => state.dijkstra(adj, w, s),
-            None => state.bfs(adj, s),
-        }
-        state.accumulate_edges(in_adj, weights.is_some(), edge_id, in_edge_id, out);
-    })
+    let sum = if ordered {
+        sum_in_source_order
+    } else {
+        sum_in_blocks
+    };
+    sum(
+        num_edges,
+        n,
+        weights.is_some(),
+        sources,
+        &|state: &mut BcState, s: usize, out: &mut [f64]| {
+            match weights {
+                Some(w) => state.dijkstra(adj, w, s),
+                None => state.bfs(adj, s),
+            }
+            state.accumulate_edges(in_adj, weights.is_some(), edge_id, in_edge_id, out);
+        },
+    )
 }
 
-/// Unscaled betweenness summed over `sources`. Matches NetworkX bit for bit.
+/// Unscaled betweenness summed over `sources`. Matches NetworkX bit for bit
+/// if `ordered`.
 pub fn betweenness(
     adj: &Csr,
     in_adj: &Csr,
@@ -313,14 +368,26 @@ pub fn betweenness(
     weights: Option<&[f64]>,
     endpoints: bool,
     sources: &[u32],
+    ordered: bool,
 ) -> Vec<f64> {
-    sum_in_source_order(n, n, weights.is_some(), sources, |state, s, out| {
-        match weights {
-            Some(w) => state.dijkstra(adj, w, s),
-            None => state.bfs(adj, s),
-        }
-        state.accumulate(in_adj, weights.is_some(), s, endpoints, out);
-    })
+    let sum = if ordered {
+        sum_in_source_order
+    } else {
+        sum_in_blocks
+    };
+    sum(
+        n,
+        n,
+        weights.is_some(),
+        sources,
+        &|state: &mut BcState, s: usize, out: &mut [f64]| {
+            match weights {
+                Some(w) => state.dijkstra(adj, w, s),
+                None => state.bfs(adj, s),
+            }
+            state.accumulate(in_adj, weights.is_some(), s, endpoints, out);
+        },
+    )
 }
 
 /// `nx.closeness_centrality` for each node in `sources`, on `adj` (which the

@@ -251,13 +251,16 @@ impl CoreGraph {
         py.detach(|| traversal::connected_components(&self.succ, self.n))
     }
 
-    #[pyo3(signature = (weight=None, endpoints=false, sources=None))]
+    /// Unscaled betweenness; `ordered` sums in NetworkX's source order (bit
+    /// for bit), otherwise in faster parallel blocks.
+    #[pyo3(signature = (weight=None, endpoints=false, sources=None, ordered=true))]
     fn betweenness(
         &self,
         py: Python<'_>,
         weight: Option<&str>,
         endpoints: bool,
         sources: Option<Vec<u32>>,
+        ordered: bool,
     ) -> PyResult<Vec<f64>> {
         let w = self.weight_slice(weight, false)?;
         let sources = sources.unwrap_or_else(|| all_nodes(self.n));
@@ -265,17 +268,27 @@ impl CoreGraph {
             self.check_index(s as usize)?;
         }
         Ok(py.detach(|| {
-            centrality::betweenness(&self.succ, self.adj(true), self.n, w, endpoints, &sources)
+            centrality::betweenness(
+                &self.succ,
+                self.adj(true),
+                self.n,
+                w,
+                endpoints,
+                &sources,
+                ordered,
+            )
         }))
     }
 
-    /// Unscaled edge betweenness, one value per edge in `edges_in_order`.
-    #[pyo3(signature = (weight=None, sources=None))]
+    /// Unscaled edge betweenness, one value per edge in `edges_in_order`
+    /// (`ordered` as for `betweenness`).
+    #[pyo3(signature = (weight=None, sources=None, ordered=true))]
     fn edge_betweenness(
         &self,
         py: Python<'_>,
         weight: Option<&str>,
         sources: Option<Vec<u32>>,
+        ordered: bool,
     ) -> PyResult<Vec<f64>> {
         let w = self.weight_slice(weight, false)?;
         let sources = self.sources_or_all(sources)?;
@@ -298,6 +311,7 @@ impl CoreGraph {
                 &in_edge_id,
                 m,
                 &sources,
+                ordered,
             )
         }))
     }

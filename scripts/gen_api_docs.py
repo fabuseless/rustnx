@@ -13,6 +13,7 @@ import pathlib
 import sys
 
 from rustnx import algorithms, interface, rx  # the installed (or develop-mode) package
+from rustnx._config import FLOAT_FUNCTIONS
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -317,13 +318,13 @@ NOTES = {
     "reciprocity": "Undirected graphs with `nodes` fall back (NetworkX raises `AttributeError`).",
     "rich_club_coefficient": "`normalized=False` only: normalizing uses random edge swaps, so the default falls back.",
     "number_of_walks": "Exact int64 arithmetic (wrapping on overflow as NumPy and SciPy do). Graphs without edges (NetworkX returns floats) and walks longer than 100 fall back.",
-    "betweenness_centrality": "Parallel. Bit-for-bit identical (per-source contributions are added in NetworkX's source order). `k` picks the same nodes as NetworkX for a given `seed`. `None` weights fall back.",
-    "edge_betweenness_centrality": "Parallel. Bit-for-bit identical (per-source contributions are added in NetworkX's source order). `None` weights fall back.",
+    "betweenness_centrality": "Parallel. Fast floats: blocks of sources summed separately. Exact floats: each source's share added in NetworkX's order (a few percent slower). `k` picks the same nodes as NetworkX for a given `seed`. `None` weights fall back.",
+    "edge_betweenness_centrality": "Parallel. Fast and exact floats as for `betweenness_centrality`. `None` weights fall back.",
     "closeness_centrality": "Bit-for-bit identical.",
     "harmonic_centrality": "Bit-for-bit identical. A small `nbunch` with many `sources` falls back.",
     "eigenvector_centrality": "Bit-for-bit identical. `nstart` must give a value for every node.",
     "katz_centrality": "Bit-for-bit identical. `nstart` and a per-node `beta` fall back.",
-    "pagerank": "Bit-for-bit identical: rustnx builds the sparse matrix, then the installed NetworkX's own SciPy code does the arithmetic on it. With `exact_floats` off, a parallel power iteration in Rust instead (faster; floats within about 1e-16 of NetworkX's), and multigraphs too (parallel edges' weights added up, as NetworkX's sparse matrix does). `None` weights fall back.",
+    "pagerank": "Fast floats: power iteration in Rust, multigraphs included (parallel edges' weights added up, as NetworkX's sparse matrix does). Exact floats: rustnx builds the sparse matrix and the installed NetworkX's own SciPy code does the arithmetic (about 5x slower than fast floats, still far faster than NetworkX); multigraphs run in NetworkX. `None` weights fall back.",
     "betweenness_centrality_subset": "Parallel. Bit-for-bit identical (per-source sums are added in source order). Missing sources and `None` weights fall back.",
     "edge_betweenness_centrality_subset": "Parallel. Bit-for-bit identical. Missing sources, tuple node labels and `None` weights fall back.",
     "newman_betweenness_centrality": "Also reachable as `nx.load_centrality`. Parallel. Bit-for-bit identical. Only int or str node labels (NetworkX sorts nodes on ties); others fall back.",
@@ -1121,17 +1122,20 @@ def render():
         "",
         f"rustnx implements {len(listed)} NetworkX functions. Call them as usual (for",
         "example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend=\"rustnx\"`.",
-        "Results match the installed NetworkX (3.4 or newer) exactly.",
+        "Results match the installed NetworkX (3.4 or newer) exactly, except that",
+        "the functions marked \"fast by default\" in the Floats column can differ",
+        "in the last bits of their floats until you turn on exact floats.",
         "",
         "- **Parameters handled in Rust** are the ones rustnx implements. Any other",
         "  parameter of the installed NetworkX is fine at its default; set to anything",
         "  else, the call runs in NetworkX.",
         "- **Multigraphs**: whether `MultiGraph`/`MultiDiGraph` inputs run in Rust.",
-        "- **Exact floats**: results are bit for bit NetworkX's, floats included.",
-        "  The few inputs where rustnx's floats could differ in the last bits (the",
-        "  Multigraphs column says \"`exact_floats` off\"; the notes give details)",
-        "  run in NetworkX unless you set `nx.config.backends.rustnx.exact_floats =",
-        "  False`. See the README's \"Exact floats\" section.",
+        "- **Floats**: \"exact\" means always bit for bit NetworkX's. \"Fast by",
+        "  default\" means fast float arithmetic whose last bits can differ from",
+        "  NetworkX's (about 1e-16 to 1e-15 relative) unless exact floats are on:",
+        "  `nx.config.backends.rustnx.exact_floats = True`, or per function",
+        "  `nx.config.backends.rustnx.exact_floats_overrides[\"pagerank\"] = True`",
+        "  (per function wins). See the README's \"Fast and exact floats\" section.",
         "- **Under 500 nodes**: \"NetworkX\" means small NetworkX graphs stay in",
         "  NetworkX automatically (converting would cost more than it saves); pass",
         "  `backend=\"rustnx\"` to force rustnx.",
@@ -1140,17 +1144,18 @@ def render():
     ]
     for title, names in SECTIONS:
         out += [f"### {title}", "",
-                "| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Notes |",
-                "|---|---|---|---|---|"]
+                "| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Floats | Notes |",
+                "|---|---|---|---|---|---|"]
         for name in names:
             multi = "yes" if name in interface.MULTIGRAPH_FUNCTIONS else "no"
-            if name in interface.INEXACT_FLOATS and interface.INEXACT_FLOATS[name][1].endswith(
+            if name in interface.INEXACT_ONLY and interface.INEXACT_ONLY[name][1].endswith(
                 "on a multigraph"
             ):
-                multi = "`exact_floats` off"
+                multi = "fast floats only"
+            floats = "fast by default" if name in FLOAT_FUNCTIONS else "exact"
             small = "NetworkX" if name in interface._LINEAR_TIME else "rustnx"
             qualified = QUALIFIED.get(name, f"{location(name)}.{name}")
-            out.append(f"| `{qualified}` | {parameters(name)} | {multi} | {small} | {NOTES.get(name, '')} |")
+            out.append(f"| `{qualified}` | {parameters(name)} | {multi} | {small} | {floats} | {NOTES.get(name, '')} |")
         out.append("")
 
     classes = [n for n in rx.__all__ if n in ("PyGraph", "PyDiGraph")]

@@ -26,7 +26,7 @@ from networkx.algorithms.centrality import betweenness as _nx_betweenness
 from networkx.algorithms import matching as _nx_matching
 
 from . import _core
-from ._config import exact_floats, inexact_message
+from ._config import exact_floats, inexact_message, note as _note_floats
 
 __all__ = [
     "LCF_graph",
@@ -818,7 +818,8 @@ def betweenness_centrality(
         # runs before dispatch), so this samples exactly what NetworkX would.
         sampled = seed.sample(list(G._nodes), k)
         sources = [G._index[v] for v in sampled]
-    raw = G._core.betweenness(weight, bool(endpoints), sources)
+    ordered = _note_floats("betweenness_centrality")
+    raw = G._core.betweenness(weight, bool(endpoints), sources, ordered)
     rescale, names = rescale_params
     available = {
         "normalized": normalized,
@@ -864,7 +865,8 @@ def edge_betweenness_centrality(G, k=None, normalized=True, weight=None, seed=No
         # As in betweenness_centrality, `seed` is already a `random.Random`.
         sampled = seed.sample(list(G._nodes), k)
         sources = [G._index[v] for v in sampled]
-    raw = G._core.edge_betweenness(weight, sources)
+    ordered = _note_floats("edge_betweenness_centrality")
+    raw = G._core.edge_betweenness(weight, sources, ordered)
     us, vs, _ = G._core.edges_in_order()
     nodes = G._nodes
     betweenness = dict(zip([(nodes[u], nodes[v]) for u, v in zip(us, vs)], raw))
@@ -1077,11 +1079,12 @@ def pagerank(
 ):
     if len(G) == 0:
         return {}
+    exact = _note_floats("pagerank")
     if G._multigraph:
-        if exact_floats():
-            raise NotImplementedError(inexact_message("pagerank on a multigraph"))
+        if exact:
+            raise NotImplementedError(inexact_message("pagerank", "pagerank on a multigraph"))
         return _b26_multi_pagerank(G, alpha, personalization, max_iter, tol, nstart, weight, dangling)
-    if exact_floats():
+    if exact:
         scipy_pagerank = _pagerank_scipy_with_rustnx_matrix()
         if scipy_pagerank is None:
             raise NotImplementedError("unrecognized NetworkX pagerank")

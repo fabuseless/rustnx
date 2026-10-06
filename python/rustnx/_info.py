@@ -618,11 +618,26 @@ FUNCTIONS = {
 }
 
 
-def _exact_floats_default():
-    """``RUSTNX_EXACT_FLOATS=0`` (or ``false``/``no``/``off``) turns
-    ``exact_floats`` off; it is on otherwise."""
-    value = os.environ.get("RUSTNX_EXACT_FLOATS", "").strip().lower()
-    return value not in ("0", "false", "no", "off")
+_FALSE = ("0", "false", "no", "off")
+
+
+def _env_flag(name):
+    """An on/off environment variable: off if unset, empty or ``0``,
+    ``false``, ``no`` or ``off`` (any case), on otherwise."""
+    value = os.environ.get(name, "").strip().lower()
+    return value not in ("", *_FALSE)
+
+
+def _env_overrides():
+    """``RUSTNX_EXACT_FLOATS_OVERRIDES``, e.g. ``pagerank=1,betweenness_centrality=0``
+    (a bare name means on), as a dict."""
+    out = {}
+    for item in os.environ.get("RUSTNX_EXACT_FLOATS_OVERRIDES", "").split(","):
+        name, _, value = item.partition("=")
+        name = name.strip()
+        if name:
+            out[name] = value.strip().lower() not in _FALSE
+    return out
 
 
 def get_info():
@@ -632,5 +647,11 @@ def get_info():
         "package": "rustnx",
         "short_summary": "Rust-accelerated algorithms, no code changes needed.",
         "functions": FUNCTIONS,
-        "default_config": {"exact_floats": _exact_floats_default()},
+        # See _config.py. Fast floats by default; RUSTNX_EXACT_FLOATS=1,
+        # RUSTNX_EXACT_FLOATS_OVERRIDES and RUSTNX_VERBOSE=1 set them.
+        "default_config": {
+            "exact_floats": _env_flag("RUSTNX_EXACT_FLOATS"),
+            "exact_floats_overrides": _env_overrides(),
+            "verbose": _env_flag("RUSTNX_VERBOSE"),
+        },
     }

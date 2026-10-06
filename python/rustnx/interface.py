@@ -13,6 +13,7 @@ import networkx as nx
 
 from . import algorithms
 from ._config import exact_floats, inexact_message
+from ._config import logger as _float_logger
 from .graph import RustnxGraph, from_networkx, to_networkx
 
 # Parameters that may hold an edge attribute name (or a callable).
@@ -598,11 +599,10 @@ _OUR_PARAMS = {
 globals().update({name: _make_entry(name) for name in algorithms.__all__})
 
 
-# Inputs where rustnx's result can differ from NetworkX's in the last bits of
-# a float (the calculation is the same, but sums are added up in a different
-# order). rustnx declines these unless `exact_floats` is turned off: name ->
-# (which inputs, as a test on the graph; what to tell the caller).
-INEXACT_FLOATS = {
+# Inputs rustnx can only compute with fast floats (see _config.py): with
+# exact floats set for the function, they run in NetworkX. name -> (which
+# inputs, as a test on the graph; what to call them in messages).
+INEXACT_ONLY = {
     "pagerank": (
         lambda G: G.is_multigraph(),
         "pagerank on a multigraph",
@@ -611,17 +611,19 @@ INEXACT_FLOATS = {
 
 
 def _inexact_reason(name, G):
-    """Why rustnx declines this call while ``exact_floats`` is on, or None.
+    """Why rustnx declines this call under exact floats, or None.
 
     An explicit ``backend="rustnx"`` is let through, so that the function
     itself raises with this reason (NetworkX's own error wouldn't give it).
     """
-    entry = INEXACT_FLOATS.get(name)
-    if entry is None or G is None or not entry[0](G) or not exact_floats():
+    entry = INEXACT_ONLY.get(name)
+    if entry is None or G is None or not entry[0](G) or not exact_floats(name):
         return None
     if _backend_requested():
         return None
-    return inexact_message(entry[1])
+    reason = inexact_message(name, entry[1])
+    _float_logger.debug("%s; running NetworkX's own code instead", reason)
+    return reason
 
 
 def can_run(name, args, kwargs):
