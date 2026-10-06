@@ -439,3 +439,31 @@ impl PySet {
         Some(key)
     }
 }
+
+impl PySet {
+    /// The raw table (`live` tells elements from empty and dummy slots),
+    /// for picking the `k`-th element without listing the set.
+    pub fn table(&self) -> &[u32] {
+        &self.keys
+    }
+
+    pub fn live(slot: u32) -> bool {
+        slot != EMPTY && slot != DUMMY
+    }
+
+    /// `discard`, returning the slot it emptied.
+    pub fn discard_at(&mut self, key: u32, hashes: &[i64]) -> Option<usize> {
+        let idx = self.find(key, hashes)?;
+        self.keys[idx] = DUMMY;
+        self.used -= 1;
+        Some(idx)
+    }
+
+    /// The end of `difference_update` after `discard_at`s; whether the
+    /// table was rebuilt (only a rebuild clears the dummies).
+    pub fn after_discards(&mut self, hashes: &[i64]) -> bool {
+        let fill = self.fill;
+        self.after_difference_update(hashes);
+        self.fill != fill
+    }
+}

@@ -9584,9 +9584,14 @@ def _treewidth_decomposition(G, order, parents=None):
     for i in order:
         elim_node = nodes[i]
         nbrs = graph_dict[elim_node]
-        for u, v in permutations(nbrs, 2):
-            if v not in graph_dict[u]:
-                graph_dict[u].add(v)
+        # NetworkX adds each `v` of `permutations(nbrs, 2)` missing from
+        # `graph_dict[u]`, u by u: the same adds as updating with the other
+        # neighbors in order (adding a member does nothing).
+        pool = list(nbrs)
+        for k, u in enumerate(pool):
+            neighbors = graph_dict[u]
+            neighbors.update(pool[:k])
+            neighbors.update(pool[k + 1 :])
         node_stack.append((elim_node, nbrs))
         for u in graph_dict[elim_node]:
             graph_dict[u].remove(elim_node)
@@ -12775,6 +12780,9 @@ def make_clique_bipartite(G, fpos=None, create_using=None, name=None):
     B = nx.empty_graph(0, create_using)
     B.clear()
     nodes = _node_list(G)
+    if type(B) is nx.Graph and hashes is not None:
+        G._core.clique_bipartite_fill(hashes, nodes, B._node, B._adj)
+        return B
     B.add_nodes_from(nodes, bipartite=1)
     _undirected_only(G)  # find_cliques raises on its first step
     for i, cl in enumerate(G._core.maximal_cliques(hashes)):

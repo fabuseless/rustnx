@@ -884,6 +884,59 @@ QUALIFIED.update({
 })
 
 
+# Batch 25: cliques, structure and approximation.
+SETORDER = " Replays NetworkX's set operations (CPython's set table, checked once against the running Python), so results come in the same order."
+SECTIONS.append(("Cliques, structure and approximation", [
+    "find_cliques", "find_cliques_recursive", "make_max_clique_graph", "make_clique_bipartite",
+    "k_clique_communities", "dominating_set", "maximal_independent_set", "chordal_graph_cliques",
+    "find_asteroidal_triple", "hamiltonian_path", "large_clique_size", "ramsey_R2",
+    "clique_removal", "maximum_independent_set", "max_clique", "treewidth_min_degree",
+    "approximate_local_node_connectivity", "approximate_node_connectivity",
+    "approximate_all_pairs_node_connectivity", "build_auxiliary_node_connectivity",
+    "build_auxiliary_edge_connectivity",
+]))
+NOTES.update({
+    "find_cliques": "Bron-Kerbosch with NetworkX's pivots in Rust; cliques come in batches once iteration starts, as NetworkX copies the graph then." + SETORDER + " `nodes` other than a list falls back.",
+    "find_cliques_recursive": "As `find_cliques`, with the setup (and its errors) at call time. Directed graphs use successors before 3.6, as NetworkX does.",
+    "make_max_clique_graph": "Overlapping cliques found from each node's cliques instead of comparing every pair." + SETORDER,
+    "make_clique_bipartite": "Fills a plain `nx.Graph` result in Rust; other `create_using` graphs are filled by NetworkX's calls." + SETORDER,
+    "k_clique_communities": "`cliques` falls back. Percolation in Rust; the communities are unions of NetworkX's own frozensets, taken in the set order NetworkX uses." + SETORDER,
+    "dominating_set": "Replays `pop()` and set differences." + SETORDER,
+    "maximal_independent_set": "Replays the `seed.choice` draws on CPython's Mersenne Twister (a `random.Random` only) and the set of available nodes. Returns a list before 3.7, a set from 3.7, as the installed NetworkX does.",
+    "chordal_graph_cliques": "Each component's subgraph copy and the maximum-cardinality search are replayed in Rust; the frozensets iterate as NetworkX's do. Errors arrive after the cliques yielded before them.",
+    "find_asteroidal_triple": "Visits non-edges in NetworkX's order (3.4 iterates a set of edge tuples; rustnx replays the tuple hashes too).",
+    "hamiltonian_path": "Replays the nested subgraph views (their node order follows set order below half the graph). No recursion, so tournaments too deep for NetworkX's recursion limit still get a path.",
+    "large_clique_size": SETORDER.strip(),
+    "ramsey_R2": "Replays the recursion's subgraph copies (node and row order) on an explicit stack, so graphs too deep for NetworkX's recursion limit still get an answer." + SETORDER,
+    "clique_removal": "As `ramsey_R2`.",
+    "maximum_independent_set": "As `ramsey_R2`.",
+    "max_clique": "As `ramsey_R2`, on the complement.",
+    "treewidth_min_degree": "The heuristic (its ties follow set order) and the choice of each bag's neighbor run in Rust; the bags are then built with NetworkX's set operations, so the frozensets iterate the same way.",
+    "approximate_local_node_connectivity": "Integer `cutoff` only. Nodes not in G fall back.",
+    "approximate_node_connectivity": "Searches run in parallel; each is capped at the current minimum, which leaves the result unchanged.",
+    "approximate_all_pairs_node_connectivity": "Pairs run in parallel. Integer `cutoff` only; `nbunch` with nodes not in G falls back.",
+    "build_auxiliary_node_connectivity": "Builds the digraph's dicts in Rust in NetworkX's order.",
+    "build_auxiliary_edge_connectivity": "Builds the digraph's dicts in Rust in NetworkX's order.",
+})
+QUALIFIED.update({
+    "approximate_local_node_connectivity": "nx.approximation.local_node_connectivity",
+    "approximate_node_connectivity": "nx.approximation.node_connectivity",
+    "approximate_all_pairs_node_connectivity": "nx.approximation.all_pairs_node_connectivity",
+    "hamiltonian_path": "nx.tournament.hamiltonian_path",
+})
+SUBMODULE.update({
+    "k_clique_communities": "nx.community",
+    "large_clique_size": "nx.approximation",
+    "ramsey_R2": "nx.approximation",
+    "clique_removal": "nx.approximation",
+    "maximum_independent_set": "nx.approximation",
+    "max_clique": "nx.approximation",
+    "treewidth_min_degree": "nx.approximation",
+    "build_auxiliary_node_connectivity": "nx.algorithms.connectivity",
+    "build_auxiliary_edge_connectivity": "nx.algorithms.connectivity",
+})
+
+
 def location(name):
     if name in DAG_ONLY:
         return "nx.dag"

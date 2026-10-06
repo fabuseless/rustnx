@@ -237,17 +237,74 @@ pub fn maximal_independent_set(
     }
     let excluded_set = PySet::from_iter((0..n as u32).filter(|&v| excluded[v as usize]), hashes);
     let mut available = PySet::from_iter(0..n as u32, hashes).difference(&excluded_set, hashes);
+    // seed.choice(list(available)): the k-th element in table order, found
+    // with a Fenwick tree over the table's slots.
+    let mut slots = SlotCounts::of(&available);
     let mut added = Vec::new();
-    let mut listed = Vec::new();
     while !available.is_empty() {
-        listed.clear();
-        listed.extend(available.iter());
-        let node = rng.choice(&listed);
+        let k = rng.below(available.len());
+        let node = available.table()[slots.kth(k)];
         added.push(node);
         let row = adj.neighbors(node as usize).iter().copied();
-        available.discard_all(row.chain([node]), hashes);
+        for v in row.chain([node]) {
+            if let Some(slot) = available.discard_at(v, hashes) {
+                slots.remove(slot);
+            }
+        }
+        if available.after_discards(hashes) {
+            slots = SlotCounts::of(&available);
+        }
     }
     added
+}
+
+/// A Fenwick tree counting a set's live slots.
+struct SlotCounts {
+    tree: Vec<usize>,
+}
+
+impl SlotCounts {
+    fn of(set: &PySet) -> Self {
+        let table = set.table();
+        let size = table.len();
+        let mut tree = vec![0usize; size + 1];
+        for (i, &k) in table.iter().enumerate() {
+            if PySet::live(k) {
+                tree[i + 1] += 1;
+            }
+        }
+        for i in 1..=size {
+            let j = i + (i & i.wrapping_neg());
+            if j <= size {
+                tree[j] += tree[i];
+            }
+        }
+        SlotCounts { tree }
+    }
+
+    fn remove(&mut self, slot: usize) {
+        let mut i = slot + 1;
+        while i < self.tree.len() {
+            self.tree[i] -= 1;
+            i += i & i.wrapping_neg();
+        }
+    }
+
+    /// The slot of the `k`-th live element (from 0).
+    fn kth(&self, mut k: usize) -> usize {
+        let size = self.tree.len() - 1;
+        let mut pos = 0;
+        let mut step = size.next_power_of_two();
+        while step > 0 {
+            let next = pos + step;
+            if next <= size && self.tree[next] <= k {
+                pos = next;
+                k -= self.tree[next];
+            }
+            step >>= 1;
+        }
+        pos
+    }
 }
 
 /// `nx.approximation.large_clique_size`. `degree[v]` is `G.degree[v]`.

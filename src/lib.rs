@@ -5867,6 +5867,41 @@ impl CoreGraph {
         })
     }
 
+    /// `make_clique_bipartite` into the empty `nx.Graph` dicts `b_node`,
+    /// `b_adj`: G's nodes with `bipartite=1`, then per clique `i` the node
+    /// `-i - 1` with `bipartite=0` and its edges.
+    fn clique_bipartite_fill<'py>(
+        &self,
+        py: Python<'py>,
+        hashes: Vec<i64>,
+        nodes: &Bound<'py, PyList>,
+        b_node: Bound<'py, PyDict>,
+        b_adj: Bound<'py, PyDict>,
+    ) -> PyResult<()> {
+        self.b25_check_hashes(&hashes)?;
+        if nodes.len() != self.n {
+            return Err(PyValueError::new_err("node list does not match this graph"));
+        }
+        let found = py.detach(|| cliques::all_cliques(&self.succ, self.n, hashes));
+        let dicts = nxdicts::NxDicts::new(b_node, b_adj, None);
+        let bipartite = pyo3::intern!(py, "bipartite");
+        let keys: Vec<Bound<'py, PyAny>> = nodes.iter().collect();
+        for key in &keys {
+            let (rows, _) = dicts.node(key)?;
+            rows.attrs.set_item(bipartite, 1)?;
+        }
+        for (i, clique) in found.iter().enumerate() {
+            let name = (-(i as i64) - 1).into_pyobject(py)?.into_any();
+            let (top, _) = dicts.node(&name)?;
+            top.attrs.set_item(bipartite, 0)?;
+            for &v in clique {
+                let (rows, _) = dicts.node(&keys[v as usize])?;
+                nxdicts::simple_edge(&rows.succ, &top.succ, &keys[v as usize], &name)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Every maximal clique in `find_cliques`' order (positions).
     fn maximal_cliques(&self, py: Python<'_>, hashes: Vec<i64>) -> PyResult<Vec<Vec<u32>>> {
         self.b25_check_hashes(&hashes)?;
@@ -6763,18 +6798,14 @@ impl CliqueSearchIter {
         limit: usize,
     ) -> PyResult<Bound<'py, PyList>> {
         let batch = py.detach(|| self.0.next_batch(limit));
-        let objects: Vec<Bound<'py, PyAny>> = nodes.iter().collect();
-        if batch.iter().flatten().any(|&v| v as usize >= objects.len()) {
-            return Err(PyIndexError::new_err("node index out of range"));
-        }
         let head: Vec<Bound<'py, PyAny>> = prefix.iter().collect();
         let out = PyList::empty(py);
         for clique in batch {
-            out.append(PyList::new(
-                py,
-                head.iter()
-                    .chain(clique.iter().map(|&v| &objects[v as usize])),
-            )?)?;
+            let mut items = head.clone();
+            for &v in &clique {
+                items.push(nodes.get_item(v as usize)?);
+            }
+            out.append(PyList::new(py, items)?)?;
         }
         Ok(out)
     }
