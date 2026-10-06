@@ -138,7 +138,7 @@ pub fn build(
             );
             circulant(&mut g, n, offset, two_pass);
             let half = n / 2;
-            if k % 2 == 0 || n % 2 == 0 {
+            if k.is_multiple_of(2) || n.is_multiple_of(2) {
                 if k % 2 == 1 {
                     for i in 0..half {
                         g.add_edge(i, i + half);
@@ -161,7 +161,7 @@ pub fn build(
             let mut g = Sim::new(directed, multigraph, n as usize, (m as usize).min(1 << 26));
             circulant(&mut g, n, offset, two_pass);
             let half = n / 2;
-            if n % 2 == 0 || d % 2 == 0 {
+            if n.is_multiple_of(2) || d.is_multiple_of(2) {
                 if d % 2 == 1 {
                     for i in 0..half {
                         g.add_edge(i, i + half);
@@ -238,9 +238,9 @@ fn next_tree(candidate: Vec<i64>) -> Option<Vec<i64>> {
     let rest_height = rest.iter().copied().max()?;
     let mut valid = rest_height >= left_height;
     if valid && rest_height == left_height {
-        if left.len() > rest.len() {
-            valid = false;
-        } else if left.len() == rest.len() && left > rest {
+        // Left must not have more nodes, nor come after rest
+        // lexicographically when they have as many.
+        if left.len() > rest.len() || (left.len() == rest.len() && left > rest) {
             valid = false;
         }
     }
@@ -271,7 +271,7 @@ impl NonisoTrees {
     pub fn new(order: usize) -> Self {
         // The path graph rooted at its center.
         let mut layout: Vec<i64> = (0..(order / 2 + 1) as i64).collect();
-        layout.extend(1..((order + 1) / 2) as i64);
+        layout.extend(1..order.div_ceil(2) as i64);
         NonisoTrees {
             layout: Some(layout),
         }
@@ -345,7 +345,7 @@ pub fn unlabeled_trees(n: usize) -> Option<u128> {
     for k in 0..=n {
         value = value.checked_add(r[k].checked_mul(r[n - k])?)?;
     }
-    if n % 2 == 0 {
+    if n.is_multiple_of(2) {
         value -= r[n / 2];
     }
     r[n].checked_sub(value / 2)
@@ -938,8 +938,8 @@ fn complement_edges(view: &OpView) -> Vec<(u32, u32)> {
         for e in view.range(u) {
             mark[view.targets[e] as usize] = u as u32;
         }
-        for v in 0..n {
-            if v != u && mark[v] != u as u32 {
+        for (v, &m) in mark.iter().enumerate() {
+            if v != u && m != u as u32 {
                 g.add_edge(u as u32, v as u32);
             }
         }
@@ -1010,6 +1010,10 @@ pub fn _b24_modular_product<'py>(
 
 // --- quotient_graph -----------------------------------------------------------------
 
+/// `quotient`'s result: edges inside each block, joined block pairs and
+/// their weight sums.
+pub type Quotient = (Vec<i64>, Vec<(u32, u32)>, Vec<i64>);
+
 /// What `quotient_graph`'s default node and edge data need, for blocks
 /// given as each node's block index: the edges inside each block
 /// (`S.number_of_edges()`), and the block pairs its default edge relation
@@ -1022,7 +1026,7 @@ pub fn quotient(
     block: &[u32],
     nblocks: usize,
     weights: Option<&[f64]>,
-) -> Option<(Vec<i64>, Vec<(u32, u32)>, Vec<i64>)> {
+) -> Option<Quotient> {
     let mut inside = vec![0i64; nblocks];
     let mut joined: HashSet<(u32, u32)> = HashSet::new();
     let mut sums: HashMap<(u32, u32), i64> = HashMap::new();
