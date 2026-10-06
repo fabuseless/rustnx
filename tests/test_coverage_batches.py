@@ -7433,6 +7433,13 @@ def test_batch26_multigraph_degrees(seed, directed, weights):
 @pytest.mark.parametrize("directed", [False, True])
 @pytest.mark.parametrize("seed", range(30))
 def test_batch26_multigraph_pagerank(seed, directed, weights):
+    # Multigraph PageRank isn't bit for bit, so it only runs with
+    # `exact_floats` off (see test_exact_floats_declines_inexact_inputs).
+    with nx.config.backends.rustnx(exact_floats=False):
+        _b26_multigraph_pagerank(seed, directed, weights)
+
+
+def _b26_multigraph_pagerank(seed, directed, weights):
     M = _b26_multigraph(seed, directed, weights)
     rng = random.Random(seed)
     nodes = list(M)

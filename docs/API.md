@@ -12,6 +12,11 @@ Results match the installed NetworkX (3.4 or newer) exactly.
   parameter of the installed NetworkX is fine at its default; set to anything
   else, the call runs in NetworkX.
 - **Multigraphs**: whether `MultiGraph`/`MultiDiGraph` inputs run in Rust.
+- **Exact floats**: results are bit for bit NetworkX's, floats included.
+  The few inputs where rustnx's floats could differ in the last bits (the
+  Multigraphs column says "`exact_floats` off"; the notes give details)
+  run in NetworkX unless you set `nx.config.backends.rustnx.exact_floats =
+  False`. See the README's "Exact floats" section.
 - **Under 500 nodes**: "NetworkX" means small NetworkX graphs stay in
   NetworkX automatically (converting would cost more than it saves); pass
   `backend="rustnx"` to force rustnx.
@@ -65,13 +70,13 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.degree_centrality` | none | yes | NetworkX |  |
 | `nx.in_degree_centrality` | none | yes | NetworkX |  |
 | `nx.out_degree_centrality` | none | yes | NetworkX |  |
-| `nx.betweenness_centrality` | `k`, `normalized`, `weight`, `endpoints`, `seed` | yes | rustnx | Parallel. Matches NetworkX to about 1e-15 (sums in a different order). `k` picks the same nodes as NetworkX for a given `seed`. `None` weights fall back. |
-| `nx.edge_betweenness_centrality` | `k`, `normalized`, `weight`, `seed` | no | rustnx | Parallel. Matches NetworkX to about 1e-15. `None` weights fall back. |
+| `nx.betweenness_centrality` | `k`, `normalized`, `weight`, `endpoints`, `seed` | yes | rustnx | Parallel. Bit-for-bit identical (per-source contributions are added in NetworkX's source order). `k` picks the same nodes as NetworkX for a given `seed`. `None` weights fall back. |
+| `nx.edge_betweenness_centrality` | `k`, `normalized`, `weight`, `seed` | no | rustnx | Parallel. Bit-for-bit identical (per-source contributions are added in NetworkX's source order). `None` weights fall back. |
 | `nx.closeness_centrality` | `u`, `distance`, `wf_improved` | yes | rustnx | Bit-for-bit identical. |
 | `nx.harmonic_centrality` | `nbunch`, `distance`, `sources` | yes | rustnx | Bit-for-bit identical. A small `nbunch` with many `sources` falls back. |
 | `nx.eigenvector_centrality` | `max_iter`, `tol`, `nstart`, `weight` | no | rustnx | Bit-for-bit identical. `nstart` must give a value for every node. |
 | `nx.katz_centrality` | `alpha`, `beta`, `max_iter`, `tol`, `nstart`, `normalized`, `weight` | no | rustnx | Bit-for-bit identical. `nstart` and a per-node `beta` fall back. |
-| `nx.pagerank` | `alpha`, `personalization`, `max_iter`, `tol`, `nstart`, `weight`, `dangling` | yes | rustnx | Parallel on large graphs. Matches NetworkX to about 1e-16 (NetworkX computes it with SciPy sparse arithmetic). `None` weights fall back. Multigraphs add up parallel edges' weights, as NetworkX's sparse matrix does. |
+| `nx.pagerank` | `alpha`, `personalization`, `max_iter`, `tol`, `nstart`, `weight`, `dangling` | `exact_floats` off | rustnx | Bit-for-bit identical: rustnx builds the sparse matrix, then the installed NetworkX's own SciPy code does the arithmetic on it. With `exact_floats` off, a parallel power iteration in Rust instead (faster; floats within about 1e-16 of NetworkX's), and multigraphs too (parallel edges' weights added up, as NetworkX's sparse matrix does). `None` weights fall back. |
 
 ### Centrality: subsets, groups and more
 

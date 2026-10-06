@@ -9,6 +9,11 @@ rustworkx-compatible API (`rustnx.rx`). Every function must return exactly
 what the installed NetworkX returns (same values, dict order, ties and
 errors) on NetworkX 3.4, 3.5 and 3.7; anything rustnx can't match raises
 `NotImplementedError` so NetworkX falls back to its own code.
+Floats too: where NetworkX uses NumPy or SciPy, pass identical arrays to the
+same calls. A faster path whose floats may differ in the last bits is only
+allowed behind `exact_floats` (default True): list the inputs in
+`interface.INEXACT_FLOATS`, check `_config.exact_floats()` in the function,
+and update the README's "Exact floats" table.
 
 - Build: `maturin develop --release`
 - Tests: `pytest tests` (compare against NetworkX), plus NetworkX's own suite

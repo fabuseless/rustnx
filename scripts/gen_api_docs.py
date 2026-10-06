@@ -317,13 +317,13 @@ NOTES = {
     "reciprocity": "Undirected graphs with `nodes` fall back (NetworkX raises `AttributeError`).",
     "rich_club_coefficient": "`normalized=False` only: normalizing uses random edge swaps, so the default falls back.",
     "number_of_walks": "Exact int64 arithmetic (wrapping on overflow as NumPy and SciPy do). Graphs without edges (NetworkX returns floats) and walks longer than 100 fall back.",
-    "betweenness_centrality": "Parallel. Matches NetworkX to about 1e-15 (sums in a different order). `k` picks the same nodes as NetworkX for a given `seed`. `None` weights fall back.",
-    "edge_betweenness_centrality": "Parallel. Matches NetworkX to about 1e-15. `None` weights fall back.",
+    "betweenness_centrality": "Parallel. Bit-for-bit identical (per-source contributions are added in NetworkX's source order). `k` picks the same nodes as NetworkX for a given `seed`. `None` weights fall back.",
+    "edge_betweenness_centrality": "Parallel. Bit-for-bit identical (per-source contributions are added in NetworkX's source order). `None` weights fall back.",
     "closeness_centrality": "Bit-for-bit identical.",
     "harmonic_centrality": "Bit-for-bit identical. A small `nbunch` with many `sources` falls back.",
     "eigenvector_centrality": "Bit-for-bit identical. `nstart` must give a value for every node.",
     "katz_centrality": "Bit-for-bit identical. `nstart` and a per-node `beta` fall back.",
-    "pagerank": "Parallel on large graphs. Matches NetworkX to about 1e-16 (NetworkX computes it with SciPy sparse arithmetic). `None` weights fall back. Multigraphs add up parallel edges' weights, as NetworkX's sparse matrix does.",
+    "pagerank": "Bit-for-bit identical: rustnx builds the sparse matrix, then the installed NetworkX's own SciPy code does the arithmetic on it. With `exact_floats` off, a parallel power iteration in Rust instead (faster; floats within about 1e-16 of NetworkX's), and multigraphs too (parallel edges' weights added up, as NetworkX's sparse matrix does). `None` weights fall back.",
     "betweenness_centrality_subset": "Parallel. Bit-for-bit identical (per-source sums are added in source order). Missing sources and `None` weights fall back.",
     "edge_betweenness_centrality_subset": "Parallel. Bit-for-bit identical. Missing sources, tuple node labels and `None` weights fall back.",
     "newman_betweenness_centrality": "Also reachable as `nx.load_centrality`. Parallel. Bit-for-bit identical. Only int or str node labels (NetworkX sorts nodes on ties); others fall back.",
@@ -1127,6 +1127,11 @@ def render():
         "  parameter of the installed NetworkX is fine at its default; set to anything",
         "  else, the call runs in NetworkX.",
         "- **Multigraphs**: whether `MultiGraph`/`MultiDiGraph` inputs run in Rust.",
+        "- **Exact floats**: results are bit for bit NetworkX's, floats included.",
+        "  The few inputs where rustnx's floats could differ in the last bits (the",
+        "  Multigraphs column says \"`exact_floats` off\"; the notes give details)",
+        "  run in NetworkX unless you set `nx.config.backends.rustnx.exact_floats =",
+        "  False`. See the README's \"Exact floats\" section.",
         "- **Under 500 nodes**: \"NetworkX\" means small NetworkX graphs stay in",
         "  NetworkX automatically (converting would cost more than it saves); pass",
         "  `backend=\"rustnx\"` to force rustnx.",
@@ -1139,6 +1144,10 @@ def render():
                 "|---|---|---|---|---|"]
         for name in names:
             multi = "yes" if name in interface.MULTIGRAPH_FUNCTIONS else "no"
+            if name in interface.INEXACT_FLOATS and interface.INEXACT_FLOATS[name][1].endswith(
+                "on a multigraph"
+            ):
+                multi = "`exact_floats` off"
             small = "NetworkX" if name in interface._LINEAR_TIME else "rustnx"
             qualified = QUALIFIED.get(name, f"{location(name)}.{name}")
             out.append(f"| `{qualified}` | {parameters(name)} | {multi} | {small} | {NOTES.get(name, '')} |")

@@ -11,6 +11,12 @@ or::
 
 Functions rustnx doesn't implement (or inputs it can't handle) keep running
 in NetworkX, so enabling it never breaks working code.
+
+Results are bit for bit identical to NetworkX's, floats included. A few
+inputs where rustnx's floats can differ in the last bits (sums added up in a
+different order) are left to NetworkX unless you allow them with
+``nx.config.backends.rustnx.exact_floats = False``, ``enable(exact_floats=
+False)`` or ``RUSTNX_EXACT_FLOATS=0``.
 """
 
 from ._info import FUNCTIONS
@@ -27,7 +33,7 @@ __all__ = [
 ]
 
 
-def enable(fallback=True):
+def enable(fallback=True, exact_floats=None):
     """Make NetworkX use rustnx for every function rustnx supports.
 
     Puts rustnx first in ``nx.config.backend_priority.algos`` (functions that
@@ -49,6 +55,12 @@ def enable(fallback=True):
     Equivalent to ``NETWORKX_BACKEND_PRIORITY_ALGOS=rustnx`` and
     ``NETWORKX_BACKEND_PRIORITY_GENERATORS=rustnx`` plus
     ``NETWORKX_FALLBACK_TO_NX=1``.
+
+    ``exact_floats``, if given, sets ``nx.config.backends.rustnx.exact_floats``
+    (default True: every result matches NetworkX bit for bit). False also
+    lets rustnx run the few inputs where its floats can differ from
+    NetworkX's in the last bits; see the README's "Exact floats" section.
+    Same as ``RUSTNX_EXACT_FLOATS=0``.
     """
     import networkx as nx
 
@@ -58,6 +70,8 @@ def enable(fallback=True):
         setattr(priority, key, ["rustnx", *others])
     if fallback:
         nx.config.fallback_to_nx = True
+    if exact_floats is not None:
+        nx.config.backends.rustnx.exact_floats = bool(exact_floats)
 
 
 __version__ = "0.1.0a3"

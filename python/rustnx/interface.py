@@ -12,6 +12,7 @@ import sys
 import networkx as nx
 
 from . import algorithms
+from ._config import exact_floats, inexact_message
 from .graph import RustnxGraph, from_networkx, to_networkx
 
 # Parameters that may hold an edge attribute name (or a callable).
@@ -597,6 +598,32 @@ _OUR_PARAMS = {
 globals().update({name: _make_entry(name) for name in algorithms.__all__})
 
 
+# Inputs where rustnx's result can differ from NetworkX's in the last bits of
+# a float (the calculation is the same, but sums are added up in a different
+# order). rustnx declines these unless `exact_floats` is turned off: name ->
+# (which inputs, as a test on the graph; what to tell the caller).
+INEXACT_FLOATS = {
+    "pagerank": (
+        lambda G: G.is_multigraph(),
+        "pagerank on a multigraph",
+    ),
+}
+
+
+def _inexact_reason(name, G):
+    """Why rustnx declines this call while ``exact_floats`` is on, or None.
+
+    An explicit ``backend="rustnx"`` is let through, so that the function
+    itself raises with this reason (NetworkX's own error wouldn't give it).
+    """
+    entry = INEXACT_FLOATS.get(name)
+    if entry is None or G is None or not entry[0](G) or not exact_floats():
+        return None
+    if _backend_requested():
+        return None
+    return inexact_message(entry[1])
+
+
 def can_run(name, args, kwargs):
     if name not in _OUR_PARAMS:
         return False
@@ -620,6 +647,9 @@ def can_run(name, args, kwargs):
         return "the graph argument is not a graph"
     if G is not None and G.is_multigraph() and name not in MULTIGRAPH_FUNCTIONS:
         return "multigraphs are not supported by this function"
+    reason = _inexact_reason(name, G)
+    if reason is not None:
+        return reason
     for param in _WEIGHT_PARAMS:
         if callable(arguments.get(param)):
             return "callable weights are not supported"

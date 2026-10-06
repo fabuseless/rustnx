@@ -4,6 +4,8 @@ This module must stay importable without importing NetworkX, since NetworkX
 reads it while it is still being imported.
 """
 
+import os
+
 FUNCTIONS = {
     "LCF_graph": {},
     "adamic_adar_index": {},
@@ -616,6 +618,13 @@ FUNCTIONS = {
 }
 
 
+def _exact_floats_default():
+    """``RUSTNX_EXACT_FLOATS=0`` (or ``false``/``no``/``off``) turns
+    ``exact_floats`` off; it is on otherwise."""
+    value = os.environ.get("RUSTNX_EXACT_FLOATS", "").strip().lower()
+    return value not in ("0", "false", "no", "off")
+
+
 def get_info():
     return {
         "backend_name": "rustnx",
@@ -623,5 +632,5 @@ def get_info():
         "package": "rustnx",
         "short_summary": "Rust-accelerated algorithms, no code changes needed.",
         "functions": FUNCTIONS,
-        "default_config": {},
+        "default_config": {"exact_floats": _exact_floats_default()},
     }

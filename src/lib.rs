@@ -281,7 +281,24 @@ impl CoreGraph {
         let sources = self.sources_or_all(sources)?;
         Ok(py.detach(|| {
             let (edge_id, m) = self.edge_ids();
-            centrality::edge_betweenness(&self.succ, self.n, w, &edge_id, m, &sources)
+            let in_adj = self.adj(true);
+            // Directed: edge ids are arc ids, so number the in-arcs by the
+            // arcs they mirror. Undirected: `in_adj` is `succ`.
+            let in_edge_id = if self.directed {
+                dag::pred_arc_ids(&self.succ, in_adj, self.n)
+            } else {
+                edge_id.clone()
+            };
+            centrality::edge_betweenness(
+                &self.succ,
+                in_adj,
+                self.n,
+                w,
+                &edge_id,
+                &in_edge_id,
+                m,
+                &sources,
+            )
         }))
     }
 

@@ -8,6 +8,12 @@ versions may change behavior.
 ## [Unreleased]
 
 ### Added
+- `exact_floats` setting (`nx.config.backends.rustnx.exact_floats`,
+  `rustnx.enable(exact_floats=...)` or `RUSTNX_EXACT_FLOATS=0`). On by
+  default: every result, floats included, is bit for bit NetworkX's, and
+  inputs rustnx can't match exactly run in NetworkX. Off: rustnx also runs
+  those, with faster Rust arithmetic whose floats may differ in the last
+  bits. See the README's "Exact floats" section.
 - 20 more functions: `degree_centrality`, `in_degree_centrality`,
   `out_degree_centrality`, `node_connected_component`,
   `articulation_points`, `biconnected_components`,
@@ -179,6 +185,13 @@ versions may change behavior.
   early exit that fills the set in a different order).
 
 ### Changed
+- `betweenness_centrality` and `edge_betweenness_centrality` now match
+  NetworkX bit for bit (they add per-source contributions in NetworkX's
+  order; before, they matched to about 1e-15).
+- `pagerank` now matches NetworkX bit for bit: rustnx builds the sparse
+  matrix and NetworkX's own SciPy code does the arithmetic. The Rust power
+  iteration (about 5x faster, floats within about 1e-16) and multigraph
+  PageRank run only with `exact_floats` off.
 - `rustnx.enable()` also puts rustnx first in
   `nx.config.backend_priority.generators`, which NetworkX uses for every
   function that returns a graph (generators, readers, graph builders, and

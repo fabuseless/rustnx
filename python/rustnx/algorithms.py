@@ -17,6 +17,7 @@ import math
 import operator
 import random
 import sys
+import types
 import warnings
 import weakref
 
@@ -25,6 +26,7 @@ from networkx.algorithms.centrality import betweenness as _nx_betweenness
 from networkx.algorithms import matching as _nx_matching
 
 from . import _core
+from ._config import exact_floats, inexact_message
 
 __all__ = [
     "LCF_graph",
@@ -1038,6 +1040,31 @@ def _node_vector(G, mapping):
         raise NotImplementedError("unsupported vector values") from None
 
 
+@functools.cache
+def _pagerank_scipy_with_rustnx_matrix():
+    """The installed NetworkX's own ``_pagerank_scipy``, with its
+    ``nx.to_scipy_sparse_array`` call answered by rustnx's (which builds the
+    identical matrix, much faster). Every float operation is then NetworkX's
+    own SciPy and NumPy arithmetic on identical inputs, so the scores match
+    bit for bit. ``None`` if ``pagerank`` doesn't just call it."""
+    from networkx.algorithms.link_analysis import pagerank_alg
+
+    func = getattr(pagerank_alg, "_pagerank_scipy", None)
+    if not isinstance(func, types.FunctionType):
+        return None
+    if "return _pagerank_scipy(" not in _source_text(_registered("pagerank")):
+        return None
+    nx_with_rustnx_matrix = types.ModuleType("networkx")
+    nx_with_rustnx_matrix.__dict__.update(nx.__dict__)
+    nx_with_rustnx_matrix.to_scipy_sparse_array = to_scipy_sparse_array
+    scope = dict(func.__globals__, nx=nx_with_rustnx_matrix)
+    copy_ = types.FunctionType(
+        func.__code__, scope, func.__name__, func.__defaults__, func.__closure__
+    )
+    copy_.__kwdefaults__ = func.__kwdefaults__
+    return copy_
+
+
 def pagerank(
     G,
     alpha=0.85,
@@ -1051,7 +1078,14 @@ def pagerank(
     if len(G) == 0:
         return {}
     if G._multigraph:
+        if exact_floats():
+            raise NotImplementedError(inexact_message("pagerank on a multigraph"))
         return _b26_multi_pagerank(G, alpha, personalization, max_iter, tol, nstart, weight, dangling)
+    if exact_floats():
+        scipy_pagerank = _pagerank_scipy_with_rustnx_matrix()
+        if scipy_pagerank is None:
+            raise NotImplementedError("unrecognized NetworkX pagerank")
+        return scipy_pagerank(G, alpha, personalization, max_iter, tol, nstart, weight, dangling)
     weight, _, has_hidden = _check_weight(G, weight)
     if weight is not None and has_hidden:
         raise NotImplementedError("rustnx does not support None edge weights here")

@@ -270,8 +270,52 @@ code sees a multigraph only through its neighbors and, for weights, the
 minimum over parallel edges: components, traversals, the shortest path
 family, betweenness, closeness and harmonic centrality, the distance measures,
 biconnected and attracting components, `is_bipartite`, and most of the
-functions added in the coverage batches (`docs/API.md` lists which). Other functions (for example `pagerank`, which sums
-parallel weights, or degree-based ones) run in NetworkX.
+functions added in the coverage batches (`docs/API.md` lists which). Other functions run in
+NetworkX. `pagerank` on a multigraph runs in Rust only with `exact_floats`
+off (next section).
+
+### Exact floats
+
+By default every result rustnx returns is bit for bit what NetworkX
+returns, floats included. Where NetworkX does its float arithmetic in NumPy
+or SciPy, rustnx builds the same arrays and passes them to the same NumPy or
+SciPy calls rather than redoing the arithmetic in Rust.
+
+A Rust version of that arithmetic can be faster, but it adds the same
+numbers up in a different order, so the last bit or two of a float can
+differ (around 1e-16). The `exact_floats` setting controls whether rustnx
+may do that:
+
+| `exact_floats` | What you get |
+|---|---|
+| `True` (default) | Bit-for-bit NetworkX results. Inputs rustnx can't match exactly run in NetworkX. |
+| `False` | rustnx also runs those inputs, and uses its faster Rust arithmetic. Floats may differ from NetworkX's in the last bits; everything else (keys, order, ints, errors) is unchanged. |
+
+Turn it off in any of these ways:
+
+```python
+import networkx as nx
+import rustnx
+
+rustnx.enable(exact_floats=False)                 # with enable()
+nx.config.backends.rustnx.exact_floats = False    # at any time
+
+with nx.config.backends.rustnx(exact_floats=False):   # just for a block
+    nx.pagerank(G)
+```
+
+or `RUSTNX_EXACT_FLOATS=0` in the environment.
+
+What changes today:
+
+| Function | `exact_floats=True` | `exact_floats=False` |
+|---|---|---|
+| `pagerank` | Rust builds the sparse matrix; NetworkX's own SciPy code does the arithmetic. About 30x faster than NetworkX on a 200,000-node graph. | Power iteration in Rust, about 5x faster again. |
+| `pagerank` on a multigraph | Runs in NetworkX. | Runs in Rust. |
+
+If you call such an input with `backend="rustnx"` while `exact_floats` is
+on, NetworkX raises `NotImplementedError`, and its cause says to set
+`exact_floats = False`.
 
 ## Benchmarks
 
@@ -377,9 +421,10 @@ If a newer NetworkX adds a parameter, rustnx ignores it while it is left at
 its default. If the caller actually uses it, rustnx hands the call back to
 NetworkX.
 
-Betweenness sums per-source contributions in parallel. It matches NetworkX
-to about 1e-15 relative error rather than bit-for-bit, and it gives the same
-result on any machine regardless of thread count.
+Floats match bit for bit too, unless you turn that off (see
+[Exact floats](#exact-floats)). Parallel algorithms such as betweenness
+compute per-source contributions in parallel but add them up in NetworkX's
+order, so results are also the same on any machine and thread count.
 
 ## How it works
 

@@ -2,8 +2,8 @@
 //!
 //! Each per-source pass is a literal port of the NetworkX helpers in
 //! `networkx/algorithms/centrality/betweenness.py`, including how path counts
-//! and ties are handled, so results agree with NetworkX up to floating-point
-//! summation order across sources.
+//! and ties are handled, and contributions are summed in NetworkX's source
+//! order, so results match NetworkX bit for bit.
 
 use std::cmp::Reverse;
 
@@ -15,9 +15,8 @@ use crate::graph::Csr;
 
 const UNSET: u32 = u32::MAX;
 
-/// Cap on memory for per-block accumulators (bytes).
+/// Cap on memory for per-source contributions held at once (bytes).
 const BLOCK_MEMORY: usize = 512 << 20;
-const MAX_BLOCKS: usize = 64;
 
 struct BcState {
     sigma: Vec<f64>,
@@ -183,12 +182,13 @@ impl BcState {
         }
     }
     /// `_accumulate_edges`: adds each shortest-path DAG arc's share to
-    /// `edge_bc[edge_id[arc]]`.
+    /// `edge_bc[edge_id[arc]]` (`in_edge_id` numbers the arcs of `in_adj`).
     fn accumulate_edges(
         &mut self,
-        adj: &Csr,
+        in_adj: &Csr,
         weighted: bool,
         edge_id: &[u32],
+        in_edge_id: &[u32],
         edge_bc: &mut [f64],
     ) {
         for &v in &self.order {
@@ -205,16 +205,17 @@ impl BcState {
                 }
             }
         } else {
-            // Every node one level further out is finished before `v`, so
-            // `v` can pull its share from its successors on the DAG.
-            for &v in self.order.iter().rev() {
-                let v = v as usize;
-                let next = self.level[v] + 1;
-                for e in adj.range(v) {
-                    let w = adj.targets[e] as usize;
-                    if self.level[w] == next {
-                        let c = self.sigma[v] * ((1.0 + self.delta[w]) / self.sigma[w]);
-                        edge_bc[edge_id[e] as usize] += c;
+            // Push from each `w` in pop order, as NetworkX does, so that
+            // `delta[v]` takes its shares in the same order.
+            for &w in self.order.iter().rev() {
+                let w = w as usize;
+                let coeff = (1.0 + self.delta[w]) / self.sigma[w];
+                let lw = self.level[w];
+                for e in in_adj.range(w) {
+                    let v = in_adj.targets[e] as usize;
+                    if self.level[v] != UNSET && self.level[v] + 1 == lw {
+                        let c = self.sigma[v] * coeff;
+                        edge_bc[in_edge_id[e] as usize] += c;
                         self.delta[v] += c;
                     }
                 }
@@ -223,52 +224,88 @@ impl BcState {
     }
 }
 
-/// Unscaled edge betweenness summed over `sources`, indexed by edge id
-/// (`edge_id` maps each arc of `adj` to its edge; `num_edges` ids).
-pub fn edge_betweenness(
-    adj: &Csr,
+/// Sums each source's contribution (`len` values that `add(state, s, out)`
+/// adds into a zeroed `out`) in source order, as NetworkX's loop over
+/// sources does, so the float sums match it exactly. Sources run in
+/// parallel in chunks; within a chunk each index's total takes the chunk's
+/// contributions in source order. Indices a source does not reach get
+/// `+ 0.0`, which leaves a non-negative total unchanged.
+fn sum_in_source_order(
+    len: usize,
     n: usize,
-    weights: Option<&[f64]>,
-    edge_id: &[u32],
-    num_edges: usize,
+    weighted: bool,
     sources: &[u32],
+    add: impl Fn(&mut BcState, usize, &mut [f64]) + Sync,
 ) -> Vec<f64> {
-    if n == 0 || sources.is_empty() || num_edges == 0 {
-        return vec![0.0; num_edges];
+    let mut total = vec![0.0; len];
+    if len == 0 || sources.is_empty() {
+        return total;
     }
-    let max_by_memory = (BLOCK_MEMORY / (8 * num_edges.max(n))).max(1);
-    let nblocks = MAX_BLOCKS.min(max_by_memory).min(sources.len());
-    let block_len = sources.len().div_ceil(nblocks);
-    let partials: Vec<Vec<f64>> = sources
-        .par_chunks(block_len)
-        .map(|block| {
-            let mut state = BcState::new(n, weights.is_some());
-            let mut bc = vec![0.0; num_edges];
-            for &s in block {
-                let s = s as usize;
-                match weights {
-                    Some(w) => state.dijkstra(adj, w, s),
-                    None => state.bfs(adj, s),
+    let by_memory = (BLOCK_MEMORY / (8 * len)).max(1);
+    let chunk_len = (rayon::current_num_threads() * 16)
+        .min(by_memory)
+        .min(sources.len())
+        .max(1);
+    let mut parts: Vec<Vec<f64>> = vec![vec![0.0; len]; chunk_len];
+    for chunk in sources.chunks(chunk_len) {
+        parts[..chunk.len()]
+            .par_iter_mut()
+            .zip(chunk)
+            .for_each_init(
+                || BcState::new(n, weighted),
+                |state, (out, &s)| add(state, s as usize, out),
+            );
+        // Adding also clears each contribution for the next chunk.
+        let mut columns: Vec<std::slice::ChunksMut<'_, f64>> = parts[..chunk.len()]
+            .iter_mut()
+            .map(|part| part.chunks_mut(4096))
+            .collect();
+        let blocks: Vec<(&mut [f64], Vec<&mut [f64]>)> = total
+            .chunks_mut(4096)
+            .map(|block| {
+                let row = columns.iter_mut().map(|c| c.next().unwrap()).collect();
+                (block, row)
+            })
+            .collect();
+        blocks.into_par_iter().for_each(|(block, row)| {
+            for part in row {
+                for (t, p) in block.iter_mut().zip(part.iter_mut()) {
+                    *t += *p;
+                    *p = 0.0;
                 }
-                state.accumulate_edges(adj, weights.is_some(), edge_id, &mut bc);
             }
-            bc
-        })
-        .collect();
-    let mut total = vec![0.0; num_edges];
-    for part in &partials {
-        for (t, p) in total.iter_mut().zip(part) {
-            *t += p;
-        }
+        });
     }
     total
 }
 
-/// Unscaled betweenness summed over `sources`.
-///
-/// Sources are split into a fixed number of contiguous blocks that depends
-/// only on the input size (not on the thread count), so results are
-/// reproducible on any machine.
+/// Unscaled edge betweenness summed over `sources`, indexed by edge id
+/// (`edge_id` and `in_edge_id` map each arc of `adj` and `in_adj` to its
+/// edge; `num_edges` ids). Matches NetworkX bit for bit.
+#[allow(clippy::too_many_arguments)]
+pub fn edge_betweenness(
+    adj: &Csr,
+    in_adj: &Csr,
+    n: usize,
+    weights: Option<&[f64]>,
+    edge_id: &[u32],
+    in_edge_id: &[u32],
+    num_edges: usize,
+    sources: &[u32],
+) -> Vec<f64> {
+    if n == 0 {
+        return vec![0.0; num_edges];
+    }
+    sum_in_source_order(num_edges, n, weights.is_some(), sources, |state, s, out| {
+        match weights {
+            Some(w) => state.dijkstra(adj, w, s),
+            None => state.bfs(adj, s),
+        }
+        state.accumulate_edges(in_adj, weights.is_some(), edge_id, in_edge_id, out);
+    })
+}
+
+/// Unscaled betweenness summed over `sources`. Matches NetworkX bit for bit.
 pub fn betweenness(
     adj: &Csr,
     in_adj: &Csr,
@@ -277,37 +314,13 @@ pub fn betweenness(
     endpoints: bool,
     sources: &[u32],
 ) -> Vec<f64> {
-    if n == 0 || sources.is_empty() {
-        return vec![0.0; n];
-    }
-    let max_by_memory = (BLOCK_MEMORY / (8 * n)).max(1);
-    let nblocks = MAX_BLOCKS.min(max_by_memory).min(sources.len());
-    let block_len = sources.len().div_ceil(nblocks);
-
-    let partials: Vec<Vec<f64>> = sources
-        .par_chunks(block_len)
-        .map(|block| {
-            let mut state = BcState::new(n, weights.is_some());
-            let mut bc = vec![0.0; n];
-            for &s in block {
-                let s = s as usize;
-                match weights {
-                    Some(w) => state.dijkstra(adj, w, s),
-                    None => state.bfs(adj, s),
-                }
-                state.accumulate(in_adj, weights.is_some(), s, endpoints, &mut bc);
-            }
-            bc
-        })
-        .collect();
-
-    let mut total = vec![0.0; n];
-    for part in &partials {
-        for (t, p) in total.iter_mut().zip(part) {
-            *t += p;
+    sum_in_source_order(n, n, weights.is_some(), sources, |state, s, out| {
+        match weights {
+            Some(w) => state.dijkstra(adj, w, s),
+            None => state.bfs(adj, s),
         }
-    }
-    total
+        state.accumulate(in_adj, weights.is_some(), s, endpoints, out);
+    })
 }
 
 /// `nx.closeness_centrality` for each node in `sources`, on `adj` (which the

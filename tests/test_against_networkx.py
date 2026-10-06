@@ -6,7 +6,9 @@ reference implementation.
 
 import logging
 import math
+import os
 import random
+import sys
 
 import networkx as nx
 import pytest
@@ -58,6 +60,17 @@ def assert_close_dicts(ours, ref):
     assert list(ours) == list(ref)  # same keys in the same order
     for key in ref:
         assert ours[key] == pytest.approx(ref[key], rel=1e-12, abs=1e-12), key
+
+
+def assert_exact_dicts(ours, ref):
+    """Same keys in the same order, and floats bit for bit equal (NaN where
+    NetworkX has NaN)."""
+    assert list(ours) == list(ref)
+    for key in ref:
+        if isinstance(ref[key], float) and math.isnan(ref[key]):
+            assert math.isnan(ours[key]), key
+        else:
+            assert ours[key].hex() == ref[key].hex(), key
 
 
 @pytest.mark.parametrize("seed", SEEDS)
@@ -117,7 +130,7 @@ def test_betweenness(seed, directed, weights):
                 weight=weight,
                 endpoints=endpoints,
             )
-            assert_close_dicts(ours, ref)
+            assert_exact_dicts(ours, ref)
 
 
 @pytest.mark.parametrize("seed", range(20))
@@ -128,12 +141,7 @@ def test_betweenness_sampled(seed):
         ours, ref = both(
             nx.betweenness_centrality, G, k=k, endpoints=endpoints, seed=seed
         )
-        assert list(ours) == list(ref)
-        for key in ref:
-            if math.isnan(ref[key]):
-                assert math.isnan(ours[key])
-            else:
-                assert ours[key] == pytest.approx(ref[key], rel=1e-12, abs=1e-12)
+        assert_exact_dicts(ours, ref)
 
 
 @pytest.mark.parametrize("weights", ["none", "int", "float"])
@@ -398,7 +406,10 @@ def test_pagerank(seed, directed, weights):
     G = random_graph(seed, directed, weights)
     weight = None if weights == "none" else "weight"
     ours, ref = both(nx.pagerank, G, weight=weight)
-    assert_pagerank_close(ours, ref)
+    assert_exact_dicts(ours, ref)
+    with nx.config.backends.rustnx(exact_floats=False):
+        # rustnx's own power iteration: close, not bit for bit.
+        assert_pagerank_close(nx.pagerank(G, weight=weight, backend="rustnx"), ref)
 
 
 @pytest.mark.parametrize("seed", range(20))
@@ -419,16 +430,59 @@ def test_pagerank_options(seed):
     ]
     for kwargs in options:
         ours, ref = both(nx.pagerank, G, **kwargs)
-        assert_pagerank_close(ours, ref)
+        assert_exact_dicts(ours, ref)
+        with nx.config.backends.rustnx(exact_floats=False):
+            assert_pagerank_close(nx.pagerank(G, backend="rustnx", **kwargs), ref)
 
 
-def test_pagerank_errors():
+@pytest.mark.parametrize("exact", [True, False])
+def test_pagerank_errors(exact):
     G = nx.DiGraph(nx.path_graph(10))
-    with pytest.raises(nx.PowerIterationFailedConvergence):
-        nx.pagerank(G, max_iter=1, backend="rustnx")
-    with pytest.raises(ZeroDivisionError):
-        nx.pagerank(G, personalization={0: 0}, backend="rustnx")
-    assert nx.pagerank(nx.DiGraph(), backend="rustnx") == {}
+    with nx.config.backends.rustnx(exact_floats=exact):
+        with pytest.raises(nx.PowerIterationFailedConvergence):
+            nx.pagerank(G, max_iter=1, backend="rustnx")
+        with pytest.raises(ZeroDivisionError):
+            nx.pagerank(G, personalization={0: 0}, backend="rustnx")
+        assert nx.pagerank(nx.DiGraph(), backend="rustnx") == {}
+
+
+# --- exact_floats ------------------------------------------------------------------
+
+
+def test_exact_floats_default_and_enable(restore_config):
+    assert nx.config.backends.rustnx.exact_floats is True
+    rustnx.enable(exact_floats=False)
+    assert nx.config.backends.rustnx.exact_floats is False
+    rustnx.enable()  # leaves the setting alone
+    assert nx.config.backends.rustnx.exact_floats is False
+    rustnx.enable(exact_floats=True)
+    assert nx.config.backends.rustnx.exact_floats is True
+
+
+@pytest.mark.parametrize("value, expected", [("0", False), ("false", False), ("Off", False),
+                                             ("1", True), ("", True), ("yes", True)])
+def test_exact_floats_environment_variable(value, expected):
+    import subprocess
+
+    code = "import networkx as nx; print(nx.config.backends.rustnx.exact_floats)"
+    env = {**os.environ, "RUSTNX_EXACT_FLOATS": value}
+    out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True,
+                         text=True, check=True).stdout
+    assert out.strip() == str(expected)
+
+
+def test_exact_floats_declines_inexact_inputs(restore_config):
+    M = nx.MultiDiGraph([(0, 1), (0, 1), (1, 2), (2, 0), (2, 3)])
+    ref = nx.pagerank(M, backend="networkx")
+    # Explicitly asked for: raises, saying why and what to change.
+    with pytest.raises(NotImplementedError) as info:
+        nx.pagerank(M, backend="rustnx")
+    assert "exact_floats = False" in str(info.value.__cause__)
+    # Automatic dispatch: NetworkX runs it instead.
+    rustnx.enable()
+    assert nx.pagerank(M) == ref
+    with nx.config.backends.rustnx(exact_floats=False):
+        assert_pagerank_close(nx.pagerank(M, backend="rustnx"), ref)
 
 
 # --- Changing the graph during iteration ---------------------------------------
@@ -956,7 +1010,7 @@ def test_edge_betweenness(seed, directed, weights):
         ours, ref = both(
             nx.edge_betweenness_centrality, G, normalized=normalized, weight=weight
         )
-        assert_close_dicts(ours, ref)
+        assert_exact_dicts(ours, ref)
 
 
 @pytest.mark.parametrize("seed", range(20))
@@ -965,13 +1019,13 @@ def test_edge_betweenness_sampled(seed):
     k = max(1, len(G) // 3)
     for weight in [None, "weight"]:
         ours, ref = both(nx.edge_betweenness_centrality, G, k=k, weight=weight, seed=seed)
-        assert_close_dicts(ours, ref)
+        assert_exact_dicts(ours, ref)
 
 
 def test_edge_betweenness_small_graphs():
     for G in [nx.Graph(), nx.Graph([(0, 0)]), nx.path_graph(2), nx.DiGraph([(1, 0)])]:
         ours, ref = both(nx.edge_betweenness_centrality, G)
-        assert_close_dicts(ours, ref)
+        assert_exact_dicts(ours, ref)
 
 
 # --- rustnx.enable() ---------------------------------------------------------------
@@ -981,8 +1035,10 @@ def test_edge_betweenness_small_graphs():
 def restore_config():
     priority = nx.config.backend_priority
     old = priority.algos, priority.generators, nx.config.fallback_to_nx
+    exact = nx.config.backends.rustnx.exact_floats
     yield
     priority.algos, priority.generators, nx.config.fallback_to_nx = old
+    nx.config.backends.rustnx.exact_floats = exact
 
 
 @pytest.mark.parametrize("before", [[], ["networkx"], ["rustnx", "networkx"], ["networkx", "rustnx"]])
