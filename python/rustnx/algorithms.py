@@ -13644,6 +13644,9 @@ def _b25_clique_nodes(nodes):
         raise NotImplementedError("rustnx supports nodes given as a list")
 
 
+_NO_NODES = frozenset()
+
+
 def _b25_clique_start(G, hashes, Q, nodes):
     """``find_cliques``' setup for ``Q = nodes[:]``: the search, or None
     when ``Q`` is the only clique. Raises what NetworkX's loop over ``Q``
@@ -13653,8 +13656,13 @@ def _b25_clique_start(G, hashes, Q, nodes):
     for v in Q:
         try:
             i = G._index.get(v)
-        except TypeError as err:
-            error = err
+        except TypeError:
+            # Raise it as NetworkX's set membership test does (Python 3.14
+            # words it differently from a dict lookup).
+            try:
+                v in _NO_NODES
+            except TypeError as err:
+                error = err
             break
         prefix.append(i)
         if i is None:
