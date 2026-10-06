@@ -275,7 +275,7 @@ impl SlotCounts {
             }
         }
         for i in 1..=size {
-            let j = i + (i & i.wrapping_neg());
+            let j = i + (1 << i.trailing_zeros());
             if j <= size {
                 tree[j] += tree[i];
             }
@@ -287,7 +287,7 @@ impl SlotCounts {
         let mut i = slot + 1;
         while i < self.tree.len() {
             self.tree[i] -= 1;
-            i += i & i.wrapping_neg();
+            i += 1 << i.trailing_zeros();
         }
     }
 
@@ -970,7 +970,7 @@ impl ApproxPaths {
         let mut meet = None;
         'search: while !forward.is_empty() && !reverse.is_empty() {
             level += 1;
-            if level % 2 != 0 {
+            if !level.is_multiple_of(2) {
                 let this = std::mem::take(&mut forward);
                 for v in this {
                     for &w in out.neighbors(v as usize) {
@@ -1164,8 +1164,8 @@ pub fn asteroidal_triple(
             for &v in adj.neighbors(u) {
                 mark[v as usize] = u;
             }
-            for v in u + 1..n {
-                if mark[v] != u {
+            for (v, &seen) in mark.iter().enumerate().skip(u + 1) {
+                if seen != u {
                     edges.push((u as u32, v as u32));
                 }
             }

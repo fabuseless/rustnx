@@ -6170,6 +6170,7 @@ impl CoreGraph {
     /// per community, the indices of its cliques in the order
     /// `frozenset.union` takes them. `clique_hashes(cliques)` gives each
     /// clique's `frozenset` hash.
+    #[allow(clippy::type_complexity)]
     fn k_clique_communities<'py>(
         &self,
         py: Python<'py>,
