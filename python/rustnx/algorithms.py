@@ -12866,8 +12866,15 @@ def geometric_soft_configuration_graph(
     return G
 
 
+def _b23_projection_check():
+    """The intersection graphs project with NetworkX's set order."""
+    if not _sets_replayable():
+        raise NotImplementedError("Python's set order can't be replayed here")
+
+
 def uniform_random_intersection_graph(n, m, p, seed=None):
     _rg_seed(seed)
+    _b23_projection_check()
     _rg_ints(n, m)
     if n + m >= _RG_MAX_NODES:
         raise NotImplementedError("too many nodes")
@@ -12889,6 +12896,7 @@ def uniform_random_intersection_graph(n, m, p, seed=None):
 
 def k_random_intersection_graph(n, m, k, seed=None):
     _rg_seed(seed)
+    _b23_projection_check()
     _rg_ints(n, m, k)
     if n + m >= _RG_MAX_NODES or (n > 0 and k > m):
         # `sample` raises.
@@ -12900,6 +12908,7 @@ def k_random_intersection_graph(n, m, k, seed=None):
 
 def general_random_intersection_graph(n, m, p, seed=None):
     _rg_seed(seed)
+    _b23_projection_check()
     if len(p) != m:
         raise ValueError("Probability list p must have m elements.")
     _rg_ints(n, m)

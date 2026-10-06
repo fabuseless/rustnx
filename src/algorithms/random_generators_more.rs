@@ -446,7 +446,7 @@ pub fn soft_configuration(
     }
     let kappa_min = kappas.iter().copied().fold(f64::INFINITY, f64::min);
     let low = c.mu * kappa_min;
-    if !(low > 0.0) || kappas.iter().any(|&k| !(k > 0.0)) {
+    if low.is_nan() || low <= 0.0 || kappas.iter().any(|&k| k.is_nan() || k <= 0.0) {
         return None;
     }
     let r_hat = c.r_hat_head - c.r_c * low.ln();
@@ -584,7 +584,7 @@ pub fn bipartite_preferential(aseq: &[i64], p: f64, multigraph: bool, rng: &mut 
                 let mut i = target as usize - na + 1;
                 while i <= cap {
                     tree[i] += 1;
-                    i += i & i.wrapping_neg();
+                    i += 1 << i.trailing_zeros();
                 }
                 total += 1;
             }
