@@ -483,6 +483,20 @@ def algorithm_calls(H, directed):
     )
     if not directed:
         calls["bipartite_min_edge_cover"] = lambda G, b: list(nx.bipartite.min_edge_cover(G, backend=b))
+    # Batch 24: generators and transforms.
+    if len(nodes) >= 2:
+        u, v = nodes[0], nodes[1]
+        calls["contracted_nodes"] = lambda G, b: state(nx.contracted_nodes(G, u, v, backend=b))
+    if directed:
+        calls["stochastic_graph"] = lambda G, b: state(nx.stochastic_graph(G, backend=b))
+    else:
+        calls["mycielskian"] = lambda G, b: state(nx.mycielskian(G, backend=b))
+        calls["modular_product"] = lambda G, b: state(nx.modular_product(G, other, backend=b))
+        calls["inverse_line_graph"] = lambda G, b: state(nx.inverse_line_graph(G, backend=b))
+    blocks = [nodes[i : i + 3] for i in range(0, len(nodes), 3)]
+    calls["quotient_graph"] = lambda G, b: [
+        (sorted(map(str, n)), sorted(d)) for n, d in nx.quotient_graph(G, blocks, backend=b).nodes(data=True)
+    ]
     return calls
 
 

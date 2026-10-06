@@ -24,12 +24,12 @@ fn changed() -> PyErr {
 #[pyclass(frozen, module = "rustnx._core")]
 pub struct OpView {
     directed: bool,
-    nodes: Vec<Py<PyAny>>,
-    ndata: Vec<Py<PyAny>>,
+    pub(crate) nodes: Vec<Py<PyAny>>,
+    pub(crate) ndata: Vec<Py<PyAny>>,
     offsets: Vec<usize>,
-    targets: Vec<u32>,
+    pub(crate) targets: Vec<u32>,
     keys: Vec<Py<PyAny>>,
-    data: Vec<Py<PyAny>>,
+    pub(crate) data: Vec<Py<PyAny>>,
 }
 
 /// `target.update(src)`, or `target.update(deepcopy(src))`. An empty dict
@@ -128,17 +128,17 @@ impl OpView {
         })
     }
 
-    fn n(&self) -> usize {
+    pub(crate) fn n(&self) -> usize {
         self.nodes.len()
     }
 
-    fn range(&self, u: usize) -> std::ops::Range<usize> {
+    pub(crate) fn range(&self, u: usize) -> std::ops::Range<usize> {
         self.offsets[u]..self.offsets[u + 1]
     }
 
     /// Entries `(u, e)` in `G.edges()` order: undirected graphs give each
     /// edge once, from the endpoint NetworkX reaches first.
-    fn edge_entries(&self) -> Vec<(usize, usize)> {
+    pub(crate) fn edge_entries(&self) -> Vec<(usize, usize)> {
         let mut out = Vec::new();
         for u in 0..self.n() {
             for e in self.range(u) {
@@ -421,19 +421,19 @@ fn same_key(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>) -> PyResult<bool> {
 
 /// The result graph's dicts, for builders that track its nodes by
 /// position (every node new, so no lookups).
-struct Out<'py> {
-    py: Python<'py>,
-    node: Bound<'py, PyDict>,
-    succ: Bound<'py, PyDict>,
-    pred: Option<Bound<'py, PyDict>>,
+pub(crate) struct Out<'py> {
+    pub(crate) py: Python<'py>,
+    pub(crate) node: Bound<'py, PyDict>,
+    pub(crate) succ: Bound<'py, PyDict>,
+    pub(crate) pred: Option<Bound<'py, PyDict>>,
 }
 
-type RowPair<'py> = (Bound<'py, PyDict>, Option<Bound<'py, PyDict>>);
+pub(crate) type RowPair<'py> = (Bound<'py, PyDict>, Option<Bound<'py, PyDict>>);
 
 impl<'py> Out<'py> {
     /// `add_node` of a node known to be new: its rows (and attribute dict
     /// `data`, or a new empty one).
-    fn create(
+    pub(crate) fn create(
         &self,
         key: &Bound<'py, PyAny>,
         data: Option<Bound<'py, PyDict>>,
@@ -470,7 +470,7 @@ impl<'py> Out<'py> {
     /// their rows. A fresh `dd` nobody else holds can serve as the new
     /// edge's dict itself (NetworkX copies it into a new dict).
     #[allow(clippy::too_many_arguments)]
-    fn edge(
+    pub(crate) fn edge(
         &self,
         a: (&Bound<'py, PyAny>, &RowPair<'py>),
         b: (&Bound<'py, PyAny>, &RowPair<'py>),
@@ -510,7 +510,7 @@ impl<'py> Out<'py> {
 /// NetworkX's `_dict_product(d1, d2)`: `{k: (d1.get(k), d2.get(k)) for k
 /// in set(d1) | set(d2)}`, built with Python's own sets (the key order is
 /// their iteration order). Two empty dicts give a new empty dict.
-fn dict_product<'py>(
+pub(crate) fn dict_product<'py>(
     py: Python<'py>,
     d1: &Bound<'py, PyDict>,
     d2: &Bound<'py, PyDict>,
@@ -530,7 +530,7 @@ fn dict_product<'py>(
     Ok(out)
 }
 
-fn as_dict<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyDict>> {
+pub(crate) fn as_dict<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyDict>> {
     obj.cast::<PyDict>().cloned().map_err(|_| changed())
 }
 

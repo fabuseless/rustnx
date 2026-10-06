@@ -63,6 +63,8 @@ _LINEAR_TIME = {
     "conductance",
     "connected_components",
     "connected_dominating_set",
+    "contracted_edge",
+    "contracted_nodes",
     "convert_node_labels_to_integers",
     "core_number",
     "cost_of_flow",
@@ -122,6 +124,7 @@ _LINEAR_TIME = {
     "intersection",
     "intersection_array",
     "intra_community_edges",
+    "inverse_line_graph",
     "is_aperiodic",
     "is_arborescence",
     "is_attracting_component",
@@ -190,6 +193,7 @@ _LINEAR_TIME = {
     "multi_source_dijkstra",
     "multi_source_dijkstra_path",
     "multi_source_dijkstra_path_length",
+    "mycielskian",
     "node_attribute_xy",
     "node_boundary",
     "node_connected_component",
@@ -227,6 +231,7 @@ _LINEAR_TIME = {
     "single_source_shortest_path_length",
     "single_target_shortest_path",
     "single_target_shortest_path_length",
+    "stochastic_graph",
     "strongly_connected_components",
     "symmetric_difference",
     "to_dict_of_lists",
@@ -401,6 +406,8 @@ _BUILDS_FROM_SOURCE = {
     "build_residual_network",
     "compose",
     "compose_all",
+    "contracted_edge",
+    "contracted_nodes",
     "convert_node_labels_to_integers",
     "dinitz",
     "disjoint_union",
@@ -430,6 +437,7 @@ _BUILDS_FROM_SOURCE = {
     "minimum_spanning_arborescence",
     "minimum_spanning_edges",
     "minimum_spanning_tree",
+    "modular_product",
     "partition_spanning_tree",
     "preflow_push",
     "prim_mst_edges",
@@ -445,7 +453,7 @@ _BUILDS_FROM_SOURCE = {
 
 # Functions that read edge attributes of any type from the original NetworkX
 # graph's dicts, so they don't convert their `edge_attrs` to numbers.
-_EDGE_DATA_FROM_SOURCE = {"get_edge_attributes"}
+_EDGE_DATA_FROM_SOURCE = {"get_edge_attributes", "stochastic_graph"}
 
 
 def convert_from_nx(
@@ -705,7 +713,21 @@ _SIZE_ESTIMATES = {
     "windmill_graph": lambda a: _product(a.get("n"), a.get("k"), a.get("k")),
     "kneser_graph": lambda a: _product(a.get("n"), a.get("n"), a.get("k")),
     "circulant_graph": lambda a: _product(a.get("n"), a.get("offsets")),
+    "margulis_gabber_galil_graph": lambda a: _product(a.get("n"), a.get("n")),
+    "nonisomorphic_trees": lambda a: _power(3, a.get("order")),
+    "number_of_nonisomorphic_trees": lambda a: _tree_count_size(a.get("order")),
+    "join_trees": lambda a: sum(len(pair[0]) for pair in a["rooted_trees"])
+    if isinstance(a.get("rooted_trees"), (list, tuple))
+    else _LARGE,
 }
+
+
+def _tree_count_size(order):
+    """NetworkX 3.4 counts the trees by enumerating them (exponential work);
+    later versions use a formula as fast as rustnx's."""
+    if "sum(1 for" in algorithms._gen_source("number_of_nonisomorphic_trees"):
+        return _power(3, order)
+    return _size_of(order)
 
 
 def _size_of(value):
