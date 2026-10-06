@@ -7666,6 +7666,16 @@ def test_batch26_bipartite_modularity(seed, weights):
     exact_outcome(nx.bipartite.modularity, nx.Graph(), [], [])
 
 
+def _b26_inexact(call):
+    """``call`` with ``exact_floats`` off, which multigraph PageRank needs."""
+
+    def run():
+        with nx.config.backends.rustnx(exact_floats=False):
+            return call()
+
+    return run
+
+
 def test_batch26_runs_in_rust():
     from networkx.algorithms.tree import mst
 
@@ -7674,8 +7684,8 @@ def test_batch26_runs_in_rust():
     B, top = _b26_bipartite(5)
     H, tops = _b26_matchable(7)
     calls = [
-        lambda: nx.pagerank(M, backend="rustnx"),
-        lambda: nx.pagerank(D, weight=None, backend="rustnx"),
+        _b26_inexact(lambda: nx.pagerank(M, backend="rustnx")),
+        _b26_inexact(lambda: nx.pagerank(D, weight=None, backend="rustnx")),
         lambda: nx.degree_centrality(M, backend="rustnx"),
         lambda: nx.in_degree_centrality(D, backend="rustnx"),
         lambda: nx.out_degree_centrality(D, backend="rustnx"),
@@ -7752,11 +7762,12 @@ def test_batch26_multigraph_snapshot_pickles():
     import pickle
 
     M = _b26_multigraph(2, False, "int")
-    nx.pagerank(M, backend="rustnx")  # caches the snapshot and its parallel-edge data
-    nx.degree_centrality(M, backend="rustnx")
-    M2 = pickle.loads(pickle.dumps(M))
-    _b26_pagerank_close(lambda b: nx.pagerank(M2, backend=b))
-    exact_outcome(nx.degree_centrality, M2)
+    with nx.config.backends.rustnx(exact_floats=False):  # multigraph PageRank
+        nx.pagerank(M, backend="rustnx")  # caches the snapshot and its parallel-edge data
+        nx.degree_centrality(M, backend="rustnx")
+        M2 = pickle.loads(pickle.dumps(M))
+        _b26_pagerank_close(lambda b: nx.pagerank(M2, backend=b))
+        exact_outcome(nx.degree_centrality, M2)
 
 
 # --- Batch 24: generators and transforms ---

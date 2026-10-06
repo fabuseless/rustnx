@@ -192,6 +192,9 @@ versions may change behavior.
   matrix and NetworkX's own SciPy code does the arithmetic. The Rust power
   iteration (about 5x faster, floats within about 1e-16) and multigraph
   PageRank run only with `exact_floats` off.
+- Pickled rustnx graphs also store whether each weight attribute holds only
+  plain ints and floats (format `RNX4`), so an unpickled graph builds SciPy
+  matrices in Rust as the original does. Older pickles still load.
 - `rustnx.enable()` also puts rustnx first in
   `nx.config.backend_priority.generators`, which NetworkX uses for every
   function that returns a graph (generators, readers, graph builders, and
