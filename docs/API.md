@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 609 NetworkX functions. Call them as usual (for
+rustnx implements 608 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly.
 
@@ -832,7 +832,6 @@ Results match the installed NetworkX (3.4 or newer) exactly.
 | `nx.interval_graph` | `intervals` | no | rustnx | Generators take no graph: they run in rustnx with `backend="rustnx"` or `nx.config.backend_priority.generators` (set by `rustnx.enable()`). Returns a plain NetworkX graph built in Rust, identical to NetworkX's (node and row order, attributes, keys). Intervals in a list or tuple, each a list or tuple of ints (below 2**52 in size) or floats; other values fall back. |
 | `nx.visibility_graph` | `series` | no | rustnx | Generators take no graph: they run in rustnx with `backend="rustnx"` or `nx.config.backend_priority.generators` (set by `rustnx.enable()`). Returns a plain NetworkX graph built in Rust, identical to NetworkX's (node and row order, attributes, keys). A list or tuple of ints (below 2**52 in size) or floats, with NetworkX's float arithmetic; other values fall back. |
 | `nx.nonisomorphic_trees` | `order`, `create` | no | rustnx | Generators take no graph: they run in rustnx with `backend="rustnx"` or `nx.config.backend_priority.generators` (set by `rustnx.enable()`). Returns a plain NetworkX graph built in Rust, identical to NetworkX's (node and row order, attributes, keys). A generator, as in NetworkX (errors come at the first `next()`); 3.4's `create="matrix"` falls back. |
-| `nx.number_of_nonisomorphic_trees` | `order` | no | rustnx | Generators take no graph: they run in rustnx with `backend="rustnx"` or `nx.config.backend_priority.generators` (set by `rustnx.enable()`). Returns a plain NetworkX graph built in Rust, identical to NetworkX's (node and row order, attributes, keys). NetworkX 3.4 enumerates the trees, rustnx uses the counting formula of 3.5+ (same values); counts beyond 128 bits fall back. |
 | `nx.join_trees` | `rooted_trees`, `label_attribute`, `first_label` | no | rustnx | Generators take no graph: they run in rustnx with `backend="rustnx"` or `nx.config.backend_priority.generators` (set by `rustnx.enable()`). Returns a plain NetworkX graph built in Rust, identical to NetworkX's (node and row order, attributes, keys). Builds the result's dicts in Rust with the exact sequence of NetworkX's `add_nodes_from` / `add_edges_from` calls: same node and adjacency order, attribute dicts copied (or shared) as NetworkX does. Plain `Graph` and `DiGraph` trees in a list or tuple, an int `first_label`; mixed directedness falls back. |
 | `nx.mycielskian` | `iterations` | no | NetworkX | Relabels with rustnx's `convert_node_labels_to_integers`, then adds the new nodes and edges in Rust in NetworkX's order. An int `iterations` only. |
 | `nx.stochastic_graph` | `copy`, `weight` | no | NetworkX | Copies the graph as `DiGraph(G)` does and sets each weight from Python's `sum()` of the out-weights; weights must be ints (below 2**53 in size) or floats. `copy=False` (mutates the input) and multigraphs fall back. |

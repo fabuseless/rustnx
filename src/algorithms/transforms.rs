@@ -308,49 +308,6 @@ pub fn layout_to_sim(layout: &[i64]) -> Sim {
     g
 }
 
-/// `_rooted_trees(k)` (OEIS A000081) for every `k` whose value fits.
-fn rooted_trees_table() -> &'static [u128] {
-    static TABLE: std::sync::OnceLock<Vec<u128>> = std::sync::OnceLock::new();
-    TABLE.get_or_init(|| {
-        let mut t: Vec<u128> = vec![0, 1];
-        'grow: loop {
-            let n = t.len();
-            let mut value: u128 = 0;
-            for j in 1..n {
-                for d in 1..n {
-                    if j % d == 0 {
-                        let term = (d as u128)
-                            .checked_mul(t[d])
-                            .and_then(|x| x.checked_mul(t[n - j]));
-                        match term.and_then(|x| value.checked_add(x)) {
-                            Some(v) => value = v,
-                            None => break 'grow,
-                        }
-                    }
-                }
-            }
-            t.push(value / (n as u128 - 1));
-        }
-        t
-    })
-}
-
-/// `_unlabeled_trees(n)` (OEIS A000055), or `None` past `u128`.
-pub fn unlabeled_trees(n: usize) -> Option<u128> {
-    let r = rooted_trees_table();
-    if n >= r.len() {
-        return None;
-    }
-    let mut value: u128 = 0;
-    for k in 0..=n {
-        value = value.checked_add(r[k].checked_mul(r[n - k])?)?;
-    }
-    if n.is_multiple_of(2) {
-        value -= r[n / 2];
-    }
-    r[n].checked_sub(value / 2)
-}
-
 // --- interval_graph and visibility_graph -------------------------------------------
 
 /// The edges `interval_graph` adds, as positions: it pops the last

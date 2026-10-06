@@ -7940,16 +7940,6 @@ def test_batch24_nonisomorphic_trees():
     _b17_check("nonisomorphic_trees", 2.0)
 
 
-def test_batch24_number_of_nonisomorphic_trees():
-    func = _b17_func("number_of_nonisomorphic_trees")
-    enumerates = "sum(1 for" in inspect.getsource(func.orig_func)
-    orders = range(-2, 15) if enumerates else list(range(-2, 60)) + [200]
-    for order in orders:
-        exact_outcome(func, order)
-    for order in range(2, 15):
-        assert func(order, backend="rustnx") == len(list(nx.nonisomorphic_trees(order)))
-
-
 def _b24_undirected(seed):
     G = _b21_decorate(graph_for(seed, False), seed)
     return G

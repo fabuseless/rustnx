@@ -962,7 +962,7 @@ B24_CREATE = " `create_using` may be a NetworkX graph class or instance (instanc
 SECTIONS.append(("Generators and transforms (batch 24)", [
     "margulis_gabber_galil_graph", "chordal_cycle_graph", "hkn_harary_graph", "hnm_harary_graph",
     "prefix_tree", "prefix_tree_recursive", "interval_graph", "visibility_graph",
-    "nonisomorphic_trees", "number_of_nonisomorphic_trees", "join_trees", "mycielskian",
+    "nonisomorphic_trees", "join_trees", "mycielskian",
     "stochastic_graph", "contracted_nodes", "contracted_edge", "quotient_graph",
     "modular_product", "inverse_line_graph",
 ]))
@@ -976,7 +976,6 @@ NOTES.update({
     "interval_graph": B24_GEN + " Intervals in a list or tuple, each a list or tuple of ints (below 2**52 in size) or floats; other values fall back.",
     "visibility_graph": B24_GEN + " A list or tuple of ints (below 2**52 in size) or floats, with NetworkX's float arithmetic; other values fall back.",
     "nonisomorphic_trees": B24_GEN + " A generator, as in NetworkX (errors come at the first `next()`); 3.4's `create=\"matrix\"` falls back.",
-    "number_of_nonisomorphic_trees": B24_GEN + " NetworkX 3.4 enumerates the trees, rustnx uses the counting formula of 3.5+ (same values); counts beyond 128 bits fall back.",
     "join_trees": B24_GEN + " " + OPERATOR + " Plain `Graph` and `DiGraph` trees in a list or tuple, an int `first_label`; mixed directedness falls back.",
     "mycielskian": "Relabels with rustnx's `convert_node_labels_to_integers`, then adds the new nodes and edges in Rust in NetworkX's order. An int `iterations` only.",
     "stochastic_graph": "Copies the graph as `DiGraph(G)` does and sets each weight from Python's `sum()` of the out-weights; weights must be ints (below 2**53 in size) or floats. `copy=False` (mutates the input) and multigraphs fall back.",

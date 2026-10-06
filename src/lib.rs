@@ -6179,12 +6179,6 @@ impl CoreGraph {
         py.detach(|| transforms::visibility_edges(&values))
     }
 
-    /// `_unlabeled_trees(order)`, or `None` if it doesn't fit in 128 bits.
-    #[staticmethod]
-    fn b24_count_trees(order: usize) -> Option<u128> {
-        transforms::unlabeled_trees(order)
-    }
-
     /// `mycielskian`'s loop on the integer-labelled graph given by its dicts.
     #[staticmethod]
     fn b24_mycielskian<'py>(

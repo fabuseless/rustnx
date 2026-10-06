@@ -466,7 +466,6 @@ __all__ = [
     "number_attracting_components",
     "number_connected_components",
     "number_of_isolates",
-    "number_of_nonisomorphic_trees",
     "number_of_selfloops",
     "number_of_walks",
     "number_strongly_connected_components",
@@ -13245,36 +13244,6 @@ def nonisomorphic_trees(order, create="graph"):
     if old is None or create != "graph":
         raise NotImplementedError("rustnx builds graphs for known versions only")
     return _b24_noniso(order, old)
-
-
-@functools.cache
-def _b24_tree_count_kind():
-    """How the installed ``number_of_nonisomorphic_trees`` counts: by
-    enumerating the trees (3.4), or with the OEIS formula after rejecting
-    ``order < 2`` (3.5) or ``order < 0`` (3.6+)."""
-    text = _gen_source("number_of_nonisomorphic_trees")
-    if "order must be non-negative" in text and "_unlabeled_trees(order)" in text:
-        return "nonnegative"
-    if "if order < 2: raise ValueError" in text and "_unlabeled_trees(order)" in text:
-        return "at_least_two"
-    if "sum(1 for _ in nonisomorphic_trees(order))" in text and _b24_noniso_old():
-        return "at_least_two"  # the enumeration gives the formula's count
-    return None
-
-
-def number_of_nonisomorphic_trees(order):
-    order = _gen_int(order)
-    kind = _b24_tree_count_kind()
-    if kind is None:
-        raise NotImplementedError("unknown number_of_nonisomorphic_trees version")
-    if kind == "nonnegative" and order < 0:
-        raise ValueError("order must be non-negative")
-    if kind == "at_least_two" and order < 2:
-        raise ValueError
-    count = _CoreGraph.b24_count_trees(order)
-    if count is None:
-        raise NotImplementedError("the count does not fit in 128 bits")
-    return count
 
 
 def mycielskian(G, iterations=1):

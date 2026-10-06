@@ -444,7 +444,6 @@ FUNCTIONS = {
     "number_attracting_components": {},
     "number_connected_components": {},
     "number_of_isolates": {},
-    "number_of_nonisomorphic_trees": {},
     "number_of_selfloops": {},
     "number_of_walks": {},
     "number_strongly_connected_components": {},
