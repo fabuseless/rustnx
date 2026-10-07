@@ -44,6 +44,13 @@ NESTED = (
     "is_chordal",
 )
 
+# NetworkX functions that hybrids must run in NetworkX itself: they return
+# sets whose iteration order NetworkX's code then depends on.
+NETWORKX_ONLY = (
+    "strongly_connected_components",
+    "biconnected_components",
+)
+
 # id(networkx graph) -> (networkx graph, rustnx graph) for the current call.
 _graphs = contextvars.ContextVar("rustnx_hybrid_graphs", default={})
 
@@ -109,6 +116,9 @@ def _proxy():
     for name in NESTED:
         if hasattr(nx, name):
             setattr(proxy, name, _nested(getattr(nx, name)))
+    for name in NETWORKX_ONLY:
+        if hasattr(nx, name):
+            setattr(proxy, name, functools.partial(getattr(nx, name), backend="networkx"))
     for name in BUILDERS:
         builder = _builder(name)
         if hasattr(nx, name):
@@ -163,6 +173,11 @@ def _copy_locked(func):
                 scope[name] = _wrapper_for(value.name, value)
         elif (
             isinstance(value, types.FunctionType)
+            and (getattr(value, "__module__", None), getattr(value, "__name__", None)) in HELPERS
+        ):
+            scope[name] = HELPERS[(value.__module__, value.__name__)]
+        elif (
+            isinstance(value, types.FunctionType)
             and (getattr(value, "__module__", "") or "").startswith("networkx")
             # Decorated helpers (`np_random_state`, ...) are compiled
             # wrappers that convert their arguments; copying one would skip
@@ -187,6 +202,12 @@ def _wrapper_for(name, dispatchable):
 
 # Filled in by algorithms.py: every NetworkX function run as a hybrid.
 HYBRIDS = set()
+
+# NetworkX helper functions replaced inside hybrids: (module, name) ->
+# replacement. Filled in by algorithms.py; each replacement returns exactly
+# what the helper returns (for example the same integers from a faster
+# formula and a cache), so NetworkX's code around it is unchanged.
+HELPERS = {}
 
 
 @functools.cache

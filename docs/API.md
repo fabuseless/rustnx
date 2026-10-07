@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 619 NetworkX functions. Call them as usual (for
+rustnx implements 636 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly, except that
 the functions marked "fast by default" in the Floats column can differ
@@ -825,6 +825,38 @@ in the last bits of their floats until you turn on exact floats.
 | `nx.k_factor` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with its expensive inner call run in rustnx (`max_weight_matching` on the gadget graph). Bit-for-bit identical; 12x to 29x faster. |
 | `nx.junction_tree` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with its expensive inner call run in rustnxs (`complete_to_chordal_graph`, `chordal_graph_cliques`, `maximum_spanning_tree`). Bit-for-bit identical; about 35x faster. |
 | `nx.find_induced_nodes` | all (NetworkX's own code runs) | no | NetworkX | exact | NetworkX's own code, with its expensive inner call run in rustnx (`is_chordal`); the rest is NetworkX's set-order search, unchanged. Bit-for-bit identical; about 1.6x faster. |
+
+### Generators (generators and I/O round)
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Floats | Notes |
+|---|---|---|---|---|---|
+| `nx.random_k_out_graph` | `n`, `k`, `alpha`, `self_loops`, `seed` | no | rustnx | exact | Replays the installed NetworkX's draws: 3.4's pure-Python version on `random.Random`, and from 3.5 its NumPy version on a legacy `RandomState` (an int or `None` seed included; NumPy `Generator` seeds fall back), with 3.5 and 3.6's NumPy-int adjacency keys. 3x to 5x faster from 3.5, 70x to 150x on 3.4. |
+| `nx.graph_atlas` | `i` | no | rustnx | exact | NetworkX's atlas file parsed once per process (NetworkX re-reads it on every call): the same graphs, about 600x faster. |
+| `nx.graph_atlas_g` | none | no | rustnx | exact | As `graph_atlas`: all 1,253 graphs, about 2x faster. |
+| `nx.random_unlabeled_tree` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own sampling code, with the numbers of rooted trees and forests (big integers it recomputes on every call) from a per-process cache filled with the same recurrence in O(n^2). Identical draws and graphs; 5x to 40x faster on a first call, about 150x on later ones. |
+| `nx.random_unlabeled_rooted_tree` | all (NetworkX's own code runs) | no | rustnx | exact | As `random_unlabeled_tree`. |
+| `nx.random_unlabeled_rooted_forest` | all (NetworkX's own code runs) | no | rustnx | exact | As `random_unlabeled_tree`. |
+
+### Reading and conversion (generators and I/O round)
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Floats | Notes |
+|---|---|---|---|---|---|
+| `nx.read_graphml` | `path`, `node_type`, `edge_key_type`, `force_multigraph` | no | rustnx | exact | Rust parses the XML and builds NetworkX's graph (node and row order, typed keys and defaults, edge ids, `Graph`/`MultiGraph` choice) without building NetworkX's multigraph first; expat checks the document is well formed at the same time, so malformed files raise NetworkX's error. yFiles data, ports, hyperedges, nested graphs, several graphs, a DOCTYPE and non-UTF-8 encodings go to NetworkX. About 8x faster. |
+| `nx.parse_graphml` | `graphml_string`, `node_type`, `edge_key_type`, `force_multigraph` | no | rustnx | exact | As `read_graphml`, on a `str` or `bytes`. |
+| `nx.read_gexf` | `path`, `node_type`, `relabel`, `version` | no | rustnx | exact | Rust parses the XML and follows NetworkX's GEXF reader step by step: every version the installed NetworkX knows (1.1draft, 1.2draft and 1.3), attribute types and defaults, dynamic attributes, spells and slices, `viz`, parents and nested nodes, mutual edges, `networkx_key`, `<meta>` where NetworkX reads it, and `relabel`. `node_type` None or `int`; others go to NetworkX. About 5x faster. |
+| `nx.from_pandas_edgelist` | `df`, `source`, `target`, `edge_attr`, `create_using`, `edge_key` | no | rustnx | exact | `Graph` and `DiGraph` results: the columns read as NetworkX's `zip` reads them, the graph built in Rust. 1.4x to 2.6x faster; multigraphs go to NetworkX. |
+| `nx.to_pandas_edgelist` | `source`, `target`, `nodelist`, `dtype`, `edge_key` | no | rustnx | exact | `Graph` and `DiGraph` without `nodelist`: the edge and attribute columns gathered in Rust from the graph's own dicts (the attribute columns in NetworkX's set order), then the same `pd.DataFrame` call. 2.4x to 5x faster. |
+| `nx.from_pandas_adjacency` | `df`, `create_using`, `nonedge` | no | rustnx | exact | rustnx's `from_numpy_array` on the frame's values, as NetworkX does. 2x to 3x faster. |
+
+### Set-order round: hybrids with Rust inner work
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Floats | Notes |
+|---|---|---|---|---|---|
+| `nx.simple_cycles` | all (NetworkX's own code runs) | yes | rustnx | exact | NetworkX's own code picks components and start nodes (by set order); Johnson's search and the length-bounded search inside it run in Rust on the same neighbor lists and yield the same lists of the same node objects, lazily. 4x to 6x faster when there are many cycles; about even when NetworkX's component loop dominates. |
+| `nx.chordless_cycles` | all (NetworkX's own code runs) | yes | rustnx | exact | As `simple_cycles`: NetworkX picks components and stems, the chordless search runs in Rust. Up to 10x faster. |
+| `nx.eulerize` | all (NetworkX's own code runs) | yes | rustnx | exact | NetworkX's own code, with its maximum weight matching in rustnx. 2x to 3x faster. |
+| `nx.harmonic_function` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code on the adjacency matrix rustnx builds. About 1.2x faster (its time is in SciPy's LIL assignment). |
+| `nx.local_and_global_consistency` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code on the adjacency matrix rustnx builds. 3x to 5x faster. |
 
 ### Bipartite measures
 

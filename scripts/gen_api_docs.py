@@ -274,6 +274,12 @@ LINKS = "Scores pairs in batches as the generator is consumed, so `ebunch` (defa
 COMMUNITIES = "Community values must be ints, floats, strings, bools or `None`; others fall back."
 LENGTHS = "Falls back when weights mix ints and floats (NetworkX's length types then depend on the path)."
 NOTES = {
+    "random_k_out_graph": "Replays the installed NetworkX's draws: 3.4's pure-Python version on `random.Random`, and from 3.5 its NumPy version on a legacy `RandomState` (an int or `None` seed included; NumPy `Generator` seeds fall back), with 3.5 and 3.6's NumPy-int adjacency keys. 3x to 5x faster from 3.5, 70x to 150x on 3.4.",
+    "graph_atlas": "NetworkX's atlas file parsed once per process (NetworkX re-reads it on every call): the same graphs, about 600x faster.",
+    "graph_atlas_g": "As `graph_atlas`: all 1,253 graphs, about 2x faster.",
+    "random_unlabeled_tree": "NetworkX's own sampling code, with the numbers of rooted trees and forests (big integers it recomputes on every call) from a per-process cache filled with the same recurrence in O(n^2). Identical draws and graphs; 5x to 40x faster on a first call, about 150x on later ones.",
+    "random_unlabeled_rooted_tree": "As `random_unlabeled_tree`.",
+    "random_unlabeled_rooted_forest": "As `random_unlabeled_tree`.",
     "k_factor": "NetworkX's own code, with its expensive inner call run in rustnx (`max_weight_matching` on the gadget graph). Bit-for-bit identical; 12x to 29x faster.",
     "junction_tree": "NetworkX's own code, with its expensive inner call run in rustnxs (`complete_to_chordal_graph`, `chordal_graph_cliques`, `maximum_spanning_tree`). Bit-for-bit identical; about 35x faster.",
     "find_induced_nodes": "NetworkX's own code, with its expensive inner call run in rustnx (`is_chordal`); the rest is NetworkX's set-order search, unchanged. Bit-for-bit identical; about 1.6x faster.",
@@ -937,6 +943,33 @@ SECTIONS.append(("Linear algebra, NumPy/SciPy and other hybrids", [
     "attr_matrix", "attr_sparse_matrix", "tournament_matrix", "eigenvector_centrality_numpy", "hits",
     "k_factor", "junction_tree", "find_induced_nodes",
 ]))
+SECTIONS.append(("Generators (generators and I/O round)", [
+    "random_k_out_graph", "graph_atlas", "graph_atlas_g", "random_unlabeled_tree",
+    "random_unlabeled_rooted_tree", "random_unlabeled_rooted_forest",
+]))
+SECTIONS.append(("Reading and conversion (generators and I/O round)", [
+    "read_graphml", "parse_graphml", "read_gexf", "from_pandas_edgelist", "to_pandas_edgelist",
+    "from_pandas_adjacency",
+]))
+NOTES.update({
+    "read_graphml": "Rust parses the XML and builds NetworkX's graph (node and row order, typed keys and defaults, edge ids, `Graph`/`MultiGraph` choice) without building NetworkX's multigraph first; expat checks the document is well formed at the same time, so malformed files raise NetworkX's error. yFiles data, ports, hyperedges, nested graphs, several graphs, a DOCTYPE and non-UTF-8 encodings go to NetworkX. About 8x faster.",
+    "parse_graphml": "As `read_graphml`, on a `str` or `bytes`.",
+    "read_gexf": "Rust parses the XML and follows NetworkX's GEXF reader step by step: every version the installed NetworkX knows (1.1draft, 1.2draft and 1.3), attribute types and defaults, dynamic attributes, spells and slices, `viz`, parents and nested nodes, mutual edges, `networkx_key`, `<meta>` where NetworkX reads it, and `relabel`. `node_type` None or `int`; others go to NetworkX. About 5x faster.",
+    "from_pandas_edgelist": "`Graph` and `DiGraph` results: the columns read as NetworkX's `zip` reads them, the graph built in Rust. 1.4x to 2.6x faster; multigraphs go to NetworkX.",
+    "to_pandas_edgelist": "`Graph` and `DiGraph` without `nodelist`: the edge and attribute columns gathered in Rust from the graph's own dicts (the attribute columns in NetworkX's set order), then the same `pd.DataFrame` call. 2.4x to 5x faster.",
+    "from_pandas_adjacency": "rustnx's `from_numpy_array` on the frame's values, as NetworkX does. 2x to 3x faster.",
+})
+SECTIONS.append(("Set-order round: hybrids with Rust inner work", [
+    "simple_cycles", "chordless_cycles", "eulerize", "harmonic_function",
+    "local_and_global_consistency",
+]))
+NOTES.update({
+    "simple_cycles": "NetworkX's own code picks components and start nodes (by set order); Johnson's search and the length-bounded search inside it run in Rust on the same neighbor lists and yield the same lists of the same node objects, lazily. 4x to 6x faster when there are many cycles; about even when NetworkX's component loop dominates.",
+    "chordless_cycles": "As `simple_cycles`: NetworkX picks components and stems, the chordless search runs in Rust. Up to 10x faster.",
+    "eulerize": "NetworkX's own code, with its maximum weight matching in rustnx. 2x to 3x faster.",
+    "harmonic_function": "NetworkX's own code on the adjacency matrix rustnx builds. About 1.2x faster (its time is in SciPy's LIL assignment).",
+    "local_and_global_consistency": "NetworkX's own code on the adjacency matrix rustnx builds. 3x to 5x faster.",
+})
 SECTIONS.append(("Bipartite measures", [
     "latapy_clustering", "bipartite_average_clustering", "robins_alexander_clustering",
     "bipartite_betweenness_centrality", "overlap_weighted_projected_graph",

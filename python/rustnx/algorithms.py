@@ -17,6 +17,7 @@ import math
 import operator
 import random
 import sys
+import threading
 import types
 import warnings
 import weakref
@@ -15185,6 +15186,142 @@ def _b23_expander(n, d, create_using, max_tries, seed):
     return G
 
 
+@functools.cache
+def _atlas_entries():
+    """NetworkX's graph atlas, parsed once per process exactly as its
+    ``_generate_graphs`` reads it: ``(index, number of nodes, edges)``.
+    NetworkX re-reads the gzipped file on every call."""
+    import gzip
+    from networkx.generators import atlas
+
+    entries = []
+    with gzip.open(atlas.ATLAS_FILE, "rb") as f:
+        line = f.readline()
+        while line and line.startswith(b"GRAPH"):
+            index = int(line[6:].rstrip())
+            line = f.readline()
+            num_nodes = int(line[6:].rstrip())
+            edgelist = []
+            line = f.readline()
+            while line and not line.startswith(b"GRAPH"):
+                edgelist.append(line.rstrip())
+                line = f.readline()
+            entries.append((index, num_nodes, tuple(tuple(map(int, e.split())) for e in edgelist)))
+    return tuple(entries)
+
+
+@functools.cache
+def _atlas_recognized():
+    """Whether the installed NetworkX builds atlas graphs as rustnx does."""
+    from networkx.generators import atlas
+
+    try:
+        text = " ".join(inspect.getsource(atlas._generate_graphs).split())
+    except (OSError, TypeError, AttributeError):
+        return False
+    return (
+        'G.name = f"G{graph_index}"' in text
+        and "G.add_nodes_from(range(num_nodes))" in text
+        and "G.add_edges_from(tuple(map(int, e.split())) for e in edgelist)" in text
+        and "return next(islice(_generate_graphs(), i, None))" in _source_text(_registered("graph_atlas"))
+        and "return list(_generate_graphs())" in _source_text(_registered("graph_atlas_g"))
+    )
+
+
+def _atlas_graph(entry):
+    index, num_nodes, edges = entry
+    G = nx.Graph()
+    G.name = f"G{index}"
+    G.add_nodes_from(range(num_nodes))
+    G.add_edges_from(edges)
+    return G
+
+
+def graph_atlas(i):
+    if not _atlas_recognized():
+        raise NotImplementedError("unrecognized NetworkX atlas")
+    if type(i) is not int:
+        raise NotImplementedError("NetworkX's islice handles other index types")
+    entries = _atlas_entries()
+    if not (0 <= i < len(entries)):
+        raise ValueError(f"index must be between 0 and {len(entries)}")
+    return _atlas_graph(entries[i])
+
+
+def graph_atlas_g():
+    if not _atlas_recognized():
+        raise NotImplementedError("unrecognized NetworkX atlas")
+    return [_atlas_graph(entry) for entry in _atlas_entries()]
+
+
+@functools.cache
+def _k_out_version():
+    """How the installed NetworkX's ``random_k_out_graph`` draws: ``"py34"``
+    (3.4's pure Python), ``"np_int"`` (3.7+: NumPy, Python-int node keys),
+    ``"np_numpy_int"`` (3.5, 3.6: NumPy, NumPy-int keys in the adjacency),
+    or ``None`` if unrecognized."""
+    text = _source_text(_registered("random_k_out_graph"))
+    if "weighted_choice(weights - adjustment, seed=seed)" in text:
+        return "py34"
+    from networkx.generators import directed
+
+    helper = getattr(directed, "_random_k_out_graph_numpy", None)
+    if helper is None or "_random_k_out_graph_numpy(n, k, alpha, self_loops, seed)" not in text:
+        return None
+    try:
+        source = " ".join(inspect.getsource(helper).split())
+    except (OSError, TypeError):
+        return None
+    if "seed.choice(nodes, p=weights / total_weight)" not in source:
+        return None
+    return "np_int" if "G.add_edge(u.item(), v.item())" in source else "np_numpy_int"
+
+
+def random_k_out_graph(n, k, alpha, self_loops=True, seed=None):
+    version = _k_out_version()
+    if version is None:
+        raise NotImplementedError("unrecognized NetworkX random_k_out_graph")
+    if alpha < 0:
+        raise ValueError("alpha must be positive")
+    _rg_ints(n, k)
+    (af,) = _rg_floats(alpha)
+    if n * k >= _RG_MAX_NODES:
+        raise NotImplementedError("too many edges")
+    G = nx.empty_graph(n, create_using=nx.MultiDiGraph)
+    if version == "py34":
+        _rg_seed(seed)  # 3.4's @py_random_state has made it a random.Random
+        run = _rg_run
+    else:
+        try:
+            import numpy as np
+        except ImportError:
+            raise NotImplementedError("NetworkX uses its pure-Python version") from None
+        # NetworkX's @np_random_state, on the helper: None is NumPy's global
+        # RandomState, an int seeds a new one.
+        seed = nx.utils.create_random_state(seed)
+        run = _b23_np_run
+    out = {}
+
+    def draw(state):
+        found = _CoreGraph.k_out_edges(n, k, af, bool(self_loops), version != "py34", state)
+        if found is None:
+            return None
+        us, vs, new_state = found
+        out["edges"] = (us, vs)
+        return new_state
+
+    run(seed, draw)
+    us, vs = out["edges"]
+    if version == "np_numpy_int":
+        import numpy as np
+
+        us, vs = map(np.int64, us), map(np.int64, vs)
+    add = G.add_edge
+    for u, v in zip(us, vs):
+        add(u, v)
+    return G
+
+
 def maybe_regular_expander_graph(n, d, *, create_using=None, max_tries=100, seed=None):
     return _b23_expander(n, d, create_using, max_tries, seed)
 
@@ -15418,7 +15555,7 @@ __all__ += ["magnetic_laplacian_matrix"]
 
 from . import _hybrid  # noqa: E402
 
-__all__ += ["attr_matrix", "attr_sparse_matrix"]
+__all__ += ["attr_matrix", "attr_sparse_matrix", "random_k_out_graph", "graph_atlas", "graph_atlas_g"]
 
 HYBRID_FUNCTIONS = [
     "normalized_laplacian_matrix",
@@ -15429,6 +15566,14 @@ HYBRID_FUNCTIONS = [
     "k_factor",
     "junction_tree",
     "find_induced_nodes",
+    "random_unlabeled_tree",
+    "random_unlabeled_rooted_tree",
+    "random_unlabeled_rooted_forest",
+    "simple_cycles",
+    "chordless_cycles",
+    "eulerize",
+    "harmonic_function",
+    "local_and_global_consistency",
 ]
 
 
@@ -15446,3 +15591,548 @@ for _name in HYBRID_FUNCTIONS:
     globals()[_name] = _hybrid_function(_name)
 _hybrid.HYBRIDS.update(HYBRID_FUNCTIONS)
 __all__ += HYBRID_FUNCTIONS
+
+
+# --- Unlabeled random trees: NetworkX's sampling, cached tree counts ---------
+#
+# NetworkX recomputes the numbers of unlabeled rooted trees and forests (big
+# integers) on every call, with an O(n^2 log n) double sum; that is nearly
+# all of its time. The counts are fixed integers, so rustnx fills the
+# caches NetworkX passes around from per-process caches computed with the
+# same recurrence grouped by k = j*d (O(n^2)). The values, and so every
+# random draw NetworkX's own sampling code then makes, are identical.
+
+_count_lock = threading.Lock()
+_tree_counts = [0, 1]  # unlabeled rooted trees with i nodes (OEIS A000081)
+_tree_coeffs = [0]  # sum of d * T(d) over divisors d of k
+_forest_counts = {}  # q -> ([forest counts], [coefficients])
+
+
+def _divisor_sum(k, values, offset):
+    """sum(d * values[d - offset] for d dividing k)."""
+    total = 0
+    d = 1
+    while d * d <= k:
+        if k % d == 0:
+            total += d * values[d - offset]
+            e = k // d
+            if e != d:
+                total += e * values[e - offset]
+        d += 1
+    return total
+
+
+def _extend_tree_counts(n):
+    T, c = _tree_counts, _tree_coeffs
+    while len(T) <= n:
+        m = len(T) - 1  # T[m + 1] = sum_{k=1..m} c(k) T(m + 1 - k) // m
+        while len(c) <= m:
+            c.append(_divisor_sum(len(c), T, 0))
+        T.append(sum(c[k] * T[m + 1 - k] for k in range(1, m + 1)) // m)
+
+
+def _extend_forest_counts(n, q):
+    F, c = _forest_counts.setdefault(q, ([1], [0]))
+    while len(F) <= n:
+        n_i = len(F)
+        while len(c) <= n_i:
+            k = len(c)
+            # sum(d * F[d - 1] for d dividing k with d <= q)
+            total, d = 0, 1
+            while d * d <= k:
+                if k % d == 0:
+                    if d <= q:
+                        total += d * F[d - 1]
+                    e = k // d
+                    if e != d and e <= q:
+                        total += e * F[e - 1]
+                d += 1
+            c.append(total)
+        F.append(sum(c[k] * F[n_i - k] for k in range(1, n_i + 1)) // n_i)
+    return F
+
+
+def _num_rooted_trees_cached(n, cache_trees):
+    with _count_lock:
+        _extend_tree_counts(n)
+        if len(cache_trees) <= n:
+            cache_trees.extend(_tree_counts[len(cache_trees) : n + 1])
+    return cache_trees[n]
+
+
+def _num_rooted_forests_cached(n, q, cache_forests):
+    with _count_lock:
+        F = _extend_forest_counts(n, q)
+        if len(cache_forests) <= n:
+            cache_forests.extend(F[len(cache_forests) : n + 1])
+    return cache_forests[n]
+
+
+def _register_count_helpers():
+    """Use the cached counts only where the installed NetworkX computes
+    them with the formulas rustnx groups (3.4 to 3.7 do)."""
+    from networkx.generators import trees
+
+    def text(name):
+        try:
+            return " ".join(inspect.getsource(getattr(trees, name)).split())
+        except (AttributeError, OSError, TypeError):
+            return ""
+
+    if (
+        "d * cache_trees[n_i - j * d] * cache_trees[d] for d in range(1, n_i) "
+        "for j in range(1, (n_i - 1) // d + 1) ] ) // (n_i - 1)" in text("_num_rooted_trees")
+    ):
+        _hybrid.HELPERS[(trees.__name__, "_num_rooted_trees")] = _num_rooted_trees_cached
+    if (
+        "d * cache_forests[n_i - j * d] * cache_forests[d - 1] for d in range(1, q_i + 1) "
+        "for j in range(1, n_i // d + 1) ] ) // n_i" in text("_num_rooted_forests")
+        and "q_i = min(n_i, q)" in text("_num_rooted_forests")
+    ):
+        _hybrid.HELPERS[(trees.__name__, "_num_rooted_forests")] = _num_rooted_forests_cached
+
+
+_register_count_helpers()
+
+
+# --- GraphML: read_graphml / parse_graphml --------------------------------------
+#
+# Rust parses the document and builds NetworkX's graph. Documents rustnx
+# doesn't read exactly as NetworkX's GraphMLReader does (yFiles data,
+# ports, hyperedges, nested graphs, several graphs, a DOCTYPE, non-UTF-8
+# encodings) go to NetworkX.
+
+
+@functools.cache
+def _graphml_recognized():
+    """Whether the installed NetworkX's GraphML reader is the one rustnx
+    reproduces (3.4 to 3.7 differ only in how they test for bools)."""
+    from networkx.readwrite import graphml
+
+    reader = getattr(graphml, "GraphMLReader", None)
+    if reader is None:
+        return False
+    try:
+        texts = {
+            name: " ".join(inspect.getsource(getattr(reader, name)).split())
+            for name in ("make_graph", "add_node", "add_edge", "decode_data_elements",
+                         "find_graphml_keys", "__call__")
+        }
+        probe = reader()
+        types = dict(probe.python_type)
+        bools = dict(probe.convert_bool)
+    except Exception:
+        return False
+    return (
+        "G = nx.DiGraph(G) if G.is_directed() else nx.Graph(G)" in texts["make_graph"]
+        and 'nx.set_edge_attributes(G, values=self.edge_ids, name="id")' in texts["make_graph"]
+        and "G.graph.update(data)" in texts["make_graph"]
+        and "G.add_node(node_id, **data)" in texts["add_node"]
+        and "self.edge_ids[source, target] = edge_id" in texts["add_edge"]
+        and "edge_id = self.edge_key_type(edge_id) except ValueError:" in texts["add_edge"]
+        and 'edge_id = data.get("key")' in texts["add_edge"]
+        and "G.add_edges_from([(source, target, edge_id, data)])" in texts["add_edge"]
+        and 'data[data_name] = ""' in texts["decode_data_elements"]
+        and "self.convert_bool[text.lower()]" in texts["decode_data_elements"]
+        and 'attr_type = "string"' in texts["find_graphml_keys"]
+        and "graphml_key_defaults[attr_id] = python_type(default.text)" in texts["find_graphml_keys"]
+        and types == {
+            "integer": int, "int": int, "long": int, "float": float, "double": float,
+            "boolean": bool, "string": str, "yfiles": str,
+        }
+        and {k: v for k, v in bools.items() if type(k) is str}
+        == {"true": True, "false": False, "0": False, "1": True}
+    )
+
+
+def _graphml_well_formed(data):
+    """Whether expat (ElementTree's parser) accepts ``data``: rustnx's XML
+    parser is more lenient, and NetworkX raises expat's error otherwise.
+    Runs while Rust parses ``data``."""
+    from xml.parsers import expat
+
+    parser = expat.ParserCreate(None, "}")
+    try:
+        parser.Parse(data, True)
+    except expat.ExpatError:
+        return False
+    return True
+
+
+def _graphml_build(data, node_type, edge_key_type, force_multigraph):
+    if not _graphml_recognized():
+        return None
+    return _CoreGraph.graphml_read(
+        data, _graphml_well_formed, node_type, edge_key_type, bool(force_multigraph),
+        (nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph),
+    )
+
+
+def read_graphml(path, node_type=str, edge_key_type=int, force_multigraph=False):
+    data, rewind = _rw_read_bytes(path)
+    G = _graphml_build(data, node_type, edge_key_type, force_multigraph)
+    if G is None:
+        rewind()
+        raise NotImplementedError("NetworkX reads this GraphML")
+    return G
+
+
+def parse_graphml(graphml_string, node_type=str, edge_key_type=int, force_multigraph=False):
+    if type(graphml_string) is str:
+        try:
+            # ElementTree ignores a str's encoding declaration; so does
+            # rustnx's parser only for UTF-8 ones, so others go to NetworkX.
+            data = graphml_string.encode("utf-8")
+        except UnicodeEncodeError:
+            raise NotImplementedError("NetworkX parses this GraphML") from None
+    elif type(graphml_string) is bytes:
+        data = graphml_string
+    else:
+        raise NotImplementedError("rustnx parses str and bytes")
+    G = _graphml_build(data, node_type, edge_key_type, force_multigraph)
+    if G is None:
+        raise NotImplementedError("NetworkX parses this GraphML")
+    return G
+
+
+__all__ += ["read_graphml", "parse_graphml"]
+
+
+# --- GEXF: read_gexf ------------------------------------------------------------
+#
+# Rust parses the document and follows NetworkX's GEXFReader step by step.
+# node_type other than None or int, and documents NetworkX would raise on,
+# go to NetworkX.
+
+
+@functools.cache
+def _gexf_reader_info():
+    """``(reads_meta,)`` for the installed NetworkX's GEXF reader, or None
+    if it isn't the one rustnx reproduces (3.4 to 3.7 differ only in
+    reading ``<meta>`` and in the versions they know)."""
+    from networkx.readwrite import gexf
+
+    reader = getattr(gexf, "GEXFReader", None)
+    if reader is None:
+        return None
+    try:
+        text = " ".join(inspect.getsource(reader).split())
+        read = " ".join(inspect.getsource(_registered("read_gexf").orig_func).split())
+    except (OSError, TypeError, AttributeError):
+        return None
+    statements = (
+        'G = nx.DiGraph(G) else: G = nx.Graph(G) return G',
+        'data["label"] = node_label',
+        'node_pid = node_xml.get("pid", node_pid)',
+        "self.add_node(G, node_xml, node_attr, node_pid=node_id) G.add_node(node_id, **data)",
+        'ea = {"weight": {"type": "double", "mode": "static", "title": "weight"}}',
+        'multigraph_key = data.pop("networkx_key", None)',
+        "G.add_edge(source, target, key=edge_id, **data)",
+        'if edge_direction == "mutual": G.add_edge(target, source, key=edge_id, **data)',
+        "value = self.convert_bool[value] else: value = self.python_type[atype](value)",
+        'attrs[attr_id] = {"title": title, "type": atype, "mode": mode}',
+        '"a": float(color.get("a", 1)),',
+        '"x": float(position.get("x", 0)),',
+        'viz["shape"] = shape.get("uri")',
+        'if self.timeformat == "date": self.timeformat = "string"',
+    )
+    if not all(s in text for s in statements):
+        return None
+    if "G = relabel_gexf_graph(reader(path)) else: G = reader(path) return G" not in read:
+        return None
+    reads_meta = 'G.graph["description"] = description.text' in text
+    if reads_meta and "self.make_graph(g, meta_xml=meta)" not in text:
+        return None
+    return (reads_meta,)
+
+
+def read_gexf(path, node_type=None, relabel=False, version="1.2draft"):
+    from networkx.readwrite import gexf
+
+    info = _gexf_reader_info()
+    if info is None:
+        raise NotImplementedError("unrecognized NetworkX GEXF reader")
+    if node_type is None:
+        int_nodes = False
+    elif node_type is int:
+        int_nodes = True
+    else:
+        raise NotImplementedError("rustnx reads node_type None and int")
+    try:
+        reader = gexf.GEXFReader(node_type=node_type, version=version)
+    except Exception:
+        raise NotImplementedError("NetworkX raises for this version") from None
+    versions = [(reader.NS_GEXF, reader.NS_VIZ, reader.VERSION)] + [
+        (d["NS_GEXF"], d["NS_VIZ"], d["VERSION"]) for d in reader.versions.values()
+    ]
+    data, rewind = _rw_read_bytes(path)
+    G = _CoreGraph.gexf_read(
+        data, _graphml_well_formed, versions, info[0], dict(reader.python_type),
+        dict(reader.convert_bool), int_nodes,
+        (nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph),
+    )
+    if G is None:
+        rewind()
+        raise NotImplementedError("NetworkX reads this GEXF")
+    return gexf.relabel_gexf_graph(G) if relabel else G
+
+
+__all__ += ["read_gexf"]
+
+
+# --- pandas edge lists ----------------------------------------------------------
+
+
+@functools.cache
+def _pandas_edgelist_recognized():
+    """Whether the installed NetworkX's from/to_pandas_edgelist are the
+    ones rustnx reproduces (3.4 to 3.7 are)."""
+    try:
+        frm = " ".join(_source_text(_registered("from_pandas_edgelist")).split())
+        to = " ".join(_source_text(_registered("to_pandas_edgelist")).split())
+    except Exception:
+        return False
+    return all(s in frm for s in (
+        "g.add_edges_from(zip(df[source], df[target]))",
+        "attr_col_headings = [c for c in df.columns if c not in reserved_columns]",
+        "attribute_data = zip(*[df[col] for col in attr_col_headings])",
+        "for s, t, attrs in zip(df[source], df[target], attribute_data): g.add_edge(s, t) "
+        "g[s][t].update(zip(attr_col_headings, attrs))",
+    )) and all(s in to for s in (
+        "all_attrs = set().union(*(d.keys() for _, _, d in edgelist))",
+        'nan = float("nan")',
+        "edge_attr = {k: [d.get(k, nan) for _, _, d in edgelist] for k in all_attrs}",
+        "edgelistdict = {source: source_nodes, target: target_nodes} edgelistdict.update(edge_attr) "
+        "return pd.DataFrame(edgelistdict, dtype=dtype)",
+    ))
+
+
+def from_pandas_edgelist(df, source="source", target="target", edge_attr=None,
+                         create_using=None, edge_key=None):
+    if not _pandas_edgelist_recognized():
+        raise NotImplementedError("unrecognized NetworkX from_pandas_edgelist")
+    G = _b19_new_graph(create_using)
+    if edge_attr is None:
+        names = []
+    elif edge_attr is True:
+        names = [c for c in df.columns if c not in [source, target]]
+    elif isinstance(edge_attr, list | tuple):
+        names = edge_attr
+    else:
+        names = [edge_attr]
+    if edge_attr is not None and len(names) == 0:
+        raise NotImplementedError("NetworkX raises for this edge_attr")
+    try:
+        # The columns as NetworkX's zip() iterates them.
+        us, vs = list(df[source]), list(df[target])
+        columns = [list(df[col]) for col in names]
+    except Exception:
+        raise NotImplementedError("NetworkX reads these columns") from None
+    if len(vs) != len(us) or any(len(c) != len(us) for c in columns):
+        raise NotImplementedError("NetworkX zips columns of different lengths")
+    pred = G._pred if G.is_directed() else None
+    try:
+        _core.CoreGraph.build_columns_into(G._node, G._adj, pred, us, vs, list(names), columns)
+    except Exception:
+        raise NotImplementedError("NetworkX builds this graph") from None
+    return G
+
+
+def to_pandas_edgelist(G, source="source", target="target", nodelist=None, dtype=None,
+                       edge_key=None):
+    import pandas as pd
+
+    if not _pandas_edgelist_recognized():
+        raise NotImplementedError("unrecognized NetworkX to_pandas_edgelist")
+    base = _networkx_graph(G)
+    if nodelist is not None or base.is_multigraph():
+        raise NotImplementedError("rustnx lists all edges of a Graph or DiGraph")
+    try:
+        sources, targets, datas, names = _core.CoreGraph.edgelist_columns(
+            base._adj, base.is_directed()
+        )
+    except Exception:
+        raise NotImplementedError("NetworkX lists these edges") from None
+    # set().union(...) over every edge's keys, built from the distinct keys
+    # in the order they appear: the same insertions, so the same set order.
+    all_attrs = set(names)
+    if source in all_attrs:
+        raise nx.NetworkXError(f"Source name {source!r} is an edge attr name")
+    if target in all_attrs:
+        raise nx.NetworkXError(f"Target name {target!r} is an edge attr name")
+    nan = float("nan")
+    edge_attr = {k: _core.CoreGraph.edgelist_column(datas, k, nan) for k in all_attrs}
+    edgelistdict = {source: sources, target: targets}
+    edgelistdict.update(edge_attr)
+    return pd.DataFrame(edgelistdict, dtype=dtype)
+
+
+__all__ += ["from_pandas_edgelist", "to_pandas_edgelist"]
+
+
+@functools.cache
+def _pandas_adjacency_recognized():
+    try:
+        text = " ".join(_source_text(_registered("from_pandas_adjacency")).split())
+    except Exception:
+        return False
+    return (
+        "df = df[df.index]" in text
+        and "A = df.values" in text
+        and "G = from_numpy_array( A, create_using=create_using, nodelist=df.columns".replace("( ", "(")
+        in text.replace("( ", "(")
+    )
+
+
+def from_pandas_adjacency(df, create_using=None, nonedge=0):
+    if not _pandas_adjacency_recognized():
+        raise NotImplementedError("unrecognized NetworkX from_pandas_adjacency")
+    try:
+        df = df[df.index]
+        A = df.values
+        # NetworkX's from_numpy_array iterates nodelist; so does list().
+        nodelist = list(df.columns)
+    except Exception:
+        raise NotImplementedError("NetworkX raises for this frame") from None
+    return from_numpy_array(A, create_using=create_using, nodelist=nodelist, nonedge=nonedge)
+
+
+__all__ += ["from_pandas_adjacency"]
+
+
+# --- Cycle searches: NetworkX's own simple_cycles and chordless_cycles --------
+#
+# NetworkX picks components, start nodes and stems by set order; that code
+# runs as it is (hybrids). The inner searches it then runs depend only on the
+# order of the neighbor lists they are handed, so they run in Rust on the
+# same lists and yield the same node objects in the same order.
+
+_CYCLE_BATCH = 256
+
+
+def _cycle_lists(G, B=None):
+    """Neighbor lists of every node of the graph (view) ``G`` as
+    ``_NeighborhoodCache`` holds them (and of ``B`` over the same nodes)."""
+    nodes = list(G)
+    index = {n: i for i, n in enumerate(nodes)}
+    rows = [list(G[v]) for v in nodes]
+    b_rows = None if B is None else [list(B[v]) for v in nodes]
+    return index, _core.CycleLists(index, rows, b_rows)
+
+
+def _cycle_iter(search):
+    while True:
+        batch = search.next_batch(_CYCLE_BATCH)
+        if not batch:
+            return
+        yield from batch
+
+
+def _cycle_bound(length_bound):
+    if type(length_bound) is not int or not 0 < length_bound < 2**62:
+        return None
+    return length_bound
+
+
+def _johnson_cycle_search_rust(G, path):
+    index, lists = _cycle_lists(G)
+    search = _core.CycleSearch(lists, "johnson", [index[p] for p in path], list(path))
+    return _cycle_iter(search)
+
+
+def _bounded_cycle_search_rust(G, path, length_bound):
+    from networkx.algorithms import cycles
+
+    if _cycle_bound(length_bound) is None:
+        return cycles._bounded_cycle_search(G, path, length_bound)
+    index, lists = _cycle_lists(G)
+    search = _core.CycleSearch(
+        lists, "bounded", [index[p] for p in path], list(path), length_bound
+    )
+    return _cycle_iter(search)
+
+
+def _chordless_cycle_search_rust(F, B, path, length_bound):
+    from networkx.algorithms import cycles
+
+    if length_bound is not None and _cycle_bound(length_bound) is None:
+        return cycles._chordless_cycle_search(F, B, path, length_bound)
+    # F and B are _NeighborhoodCache objects over one component, shared by
+    # all its stems: index them once.
+    cached = getattr(F, "_rustnx_lists", None)
+    if cached is None or cached[0] is not B:
+        # Their graphs (subgraph views over the component): the caches
+        # hold `list(view[v])`, the same lists.
+        index, lists = _cycle_lists(F.G, None if B is F else B.G)
+        cached = (B, index, lists)
+        F._rustnx_lists = cached
+    _, index, lists = cached
+    search = _core.CycleSearch(
+        lists, "chordless", [index[p] for p in path], list(path), length_bound
+    )
+    return _cycle_iter(search)
+
+
+_CYCLE_HELPERS = {
+    "_johnson_cycle_search": (
+        _johnson_cycle_search_rust,
+        "G = _NeighborhoodCache(G) blocked = set(path) B = defaultdict(set) start = path[0] "
+        "stack = [iter(G[path[-1]])] closed = [False] while stack: nbrs = stack[-1] for w in nbrs: "
+        "if w == start: yield path[:] closed[-1] = True elif w not in blocked: path.append(w) "
+        "closed.append(False) stack.append(iter(G[w])) blocked.add(w) break else: stack.pop() "
+        "v = path.pop() if closed.pop(): if closed: closed[-1] = True unblock_stack = {v} "
+        "while unblock_stack: u = unblock_stack.pop() if u in blocked: blocked.remove(u) "
+        "unblock_stack.update(B[u]) B[u].clear() else: for w in G[v]: B[w].add(v)",
+    ),
+    "_bounded_cycle_search": (
+        _bounded_cycle_search_rust,
+        "B = defaultdict(set) start = path[0] stack = [iter(G[path[-1]])] blen = [length_bound] "
+        "while stack: nbrs = stack[-1] for w in nbrs: if w == start: yield path[:] blen[-1] = 1 "
+        "elif len(path) < lock.get(w, length_bound): path.append(w) blen.append(length_bound) "
+        "lock[w] = len(path) stack.append(iter(G[w])) break else: stack.pop() v = path.pop() "
+        "bl = blen.pop() if blen: blen[-1] = min(blen[-1], bl) if bl < length_bound: "
+        "relax_stack = [(bl, v)] while relax_stack: bl, u = relax_stack.pop() "
+        "if lock.get(u, length_bound) < length_bound - bl + 1: lock[u] = length_bound - bl + 1 "
+        "relax_stack.extend((bl + 1, w) for w in B[u].difference(path)) else: for w in G[v]: B[w].add(v)",
+    ),
+    "_chordless_cycle_search": (
+        _chordless_cycle_search_rust,
+        "blocked = defaultdict(int) target = path[0] blocked[path[1]] = 1 for w in path[1:]: "
+        "for v in B[w]: blocked[v] += 1 stack = [iter(F[path[2]])] while stack: nbrs = stack[-1] "
+        "for w in nbrs: if blocked[w] == 1 and (length_bound is None or len(path) < length_bound): "
+        "Fw = F[w] if target in Fw: yield path + [w] else: Bw = B[w] if target in Bw: continue "
+        "for v in Bw: blocked[v] += 1 path.append(w) stack.append(iter(Fw)) break else: "
+        "stack.pop() for v in B[path.pop()]: blocked[v] -= 1",
+    ),
+}
+
+
+def _register_cycle_helpers():
+    """Use the Rust searches only where the installed NetworkX's are the
+    ones they reproduce (3.4 to 3.7), and its cache is a plain list cache."""
+    from networkx.algorithms import cycles
+
+    def text(obj):
+        try:
+            source = inspect.getsource(obj)
+        except (OSError, TypeError):
+            return ""
+        parts = source.split('"""')
+        if len(parts) >= 3:
+            source = parts[0] + parts[-1]
+        # Comments aside (these functions have no "#" in strings).
+        source = "\n".join(line.split("#", 1)[0] for line in source.splitlines())
+        return " ".join(source.split())
+
+    cache = text(getattr(cycles, "_NeighborhoodCache", None))
+    if "Gv = self[v] = list(self.G[v]) return Gv" not in cache:
+        return set()
+    registered = set()
+    for name, (replacement, body) in _CYCLE_HELPERS.items():
+        if body in text(getattr(cycles, name, None)):
+            _hybrid.HELPERS[(cycles.__name__, name)] = replacement
+            registered.add(name)
+    return registered
+
+
+_CYCLE_HELPERS_REGISTERED = _register_cycle_helpers()

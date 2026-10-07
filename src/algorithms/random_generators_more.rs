@@ -1009,3 +1009,140 @@ pub fn internet_as(c: &AsParams, rng: &mut Mt19937) -> AsGraph {
     st.add_peering_links(2, 2, c.p_cp_cp);
     st.out
 }
+
+/// NumPy's `kahan_sum` (used by `RandomState.choice` to check `p`).
+fn np_kahan_sum(values: &[f64]) -> f64 {
+    let mut sum = values[0];
+    let mut c = 0.0;
+    for &x in &values[1..] {
+        let y = x - c;
+        let t = sum + y;
+        c = (t - sum) - y;
+        sum = t;
+    }
+    sum
+}
+
+/// Legacy `RandomState.choice(len(p), p=p)`: NumPy's checks (`None` where
+/// it would raise or see NaN), then `cdf = p.cumsum(); cdf /= cdf[-1]` and
+/// the first index whose `cdf` exceeds one `random_sample()`.
+fn np_choice_p(rng: &mut Mt19937, p: &[f64], cdf: &mut Vec<f64>) -> Option<usize> {
+    if p.iter().any(|x| !x.is_finite() || *x < 0.0) {
+        return None;
+    }
+    let atol = f64::EPSILON.sqrt();
+    if (np_kahan_sum(p) - 1.0).abs() > atol {
+        return None;
+    }
+    cdf.clear();
+    let mut acc = 0.0;
+    for &x in p {
+        acc += x;
+        cdf.push(acc);
+    }
+    let last = *cdf.last()?;
+    for c in cdf.iter_mut() {
+        *c /= last;
+    }
+    let u = rng.random();
+    // searchsorted(side="right"): the number of entries <= u.
+    let idx = cdf.partition_point(|&c| c <= u);
+    (idx < p.len()).then_some(idx)
+}
+
+/// `random_k_out_graph` from NetworkX 3.5 on (`_random_k_out_graph_numpy`,
+/// on a legacy `RandomState`): the `(u, v)` edges in the order NetworkX
+/// adds them. `alpha` and the running weights are exact as `f64`.
+pub fn k_out_numpy(
+    rng: &mut Mt19937,
+    n: usize,
+    k: usize,
+    alpha: f64,
+    self_loops: bool,
+) -> Option<Vec<(u32, u32)>> {
+    let mut weights = vec![alpha; n];
+    let mut total = n as f64 * alpha;
+    let mut out = vec![0usize; n];
+    let mut remaining: Vec<u32> = (0..n as u32).collect();
+    let mut edges = Vec::with_capacity(n * k);
+    let mut p = vec![0.0; n];
+    let mut cdf = Vec::with_capacity(n);
+    for _ in 0..n * k {
+        if remaining.is_empty() {
+            return None; // NumPy raises on an empty choice
+        }
+        let u = remaining[rng.np_interval((remaining.len() - 1) as u32) as usize] as usize;
+        let v = if self_loops {
+            for (pi, w) in p.iter_mut().zip(&weights) {
+                *pi = w / total;
+            }
+            np_choice_p(rng, &p, &mut cdf)?
+        } else {
+            let u_weight = weights[u];
+            let denom = total - u_weight;
+            for (i, (pi, w)) in p.iter_mut().zip(&weights).enumerate() {
+                *pi = if i == u { 0.0 / denom } else { w / denom };
+            }
+            np_choice_p(rng, &p, &mut cdf)?
+        };
+        edges.push((u as u32, v as u32));
+        weights[v] += 1.0;
+        total += 1.0;
+        out[u] += 1;
+        if out[u] == k {
+            remaining.retain(|&x| x as usize != u);
+        }
+    }
+    Some(edges)
+}
+
+/// `random_k_out_graph` in NetworkX 3.4 (pure Python): `u` is a uniform
+/// choice among nodes with out-degree below `k`, `v` a roulette choice over
+/// `weights - adjustment` (a `Counter` difference, which drops entries that
+/// aren't positive).
+pub fn k_out_py34(
+    rng: &mut Mt19937,
+    n: usize,
+    k: usize,
+    alpha: f64,
+    self_loops: bool,
+) -> Option<Vec<(u32, u32)>> {
+    let mut weights = vec![alpha; n];
+    let mut out = vec![0usize; n];
+    let mut edges = Vec::with_capacity(n * k);
+    let mut candidates: Vec<usize> = Vec::with_capacity(n);
+    for _ in 0..n * k {
+        candidates.clear();
+        candidates.extend((0..n).filter(|&v| out[v] < k));
+        if candidates.is_empty() {
+            return None;
+        }
+        let u = candidates[rng.below(candidates.len())];
+        // Counter subtraction keeps positive values only, in order.
+        let kept = |i: usize| {
+            let w = if !self_loops && i == u {
+                0.0
+            } else {
+                weights[i]
+            };
+            (w > 0.0).then_some(w)
+        };
+        let total = (0..n).filter_map(kept).fold(0.0, |s, w| s + w);
+        let mut rnd = rng.random() * total;
+        let mut chosen = None;
+        for i in 0..n {
+            if let Some(w) = kept(i) {
+                rnd -= w;
+                if rnd < 0.0 {
+                    chosen = Some(i);
+                    break;
+                }
+            }
+        }
+        let v = chosen?; // NetworkX would add an edge to None
+        edges.push((u as u32, v as u32));
+        out[u] += 1;
+        weights[v] += 1.0;
+    }
+    Some(edges)
+}

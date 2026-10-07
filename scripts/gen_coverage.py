@@ -84,7 +84,6 @@ AREAS = [
 
 # Missing functions with a recorded reason (todo item numbers).
 BLOCKED = {
-    "simple_cycles": 14,
     "louvain_communities": 15,
 }
 
@@ -94,7 +93,55 @@ BLOCKED = {
 # in anything rustnx could do in Rust), or they are O(1) per call, so
 # dispatch would only add overhead. An area is complete when every function
 # is done or listed here.
+SMALL_GRAPH = (
+    "a fixed graph of at most 77 nodes that NetworkX builds in under 0.35 ms (measured); rustnx's dispatch alone costs about 20 microseconds, and its small-input rule keeps such calls in NetworkX anyway"
+)
+
+MUTATES = (
+    "it changes the caller's NetworkX graph in place, and NetworkX never hands such calls to a backend that converts the graph; converting alone (0.11 s for 500,000 edges, measured) is half of set_edge_attributes' 0.21 s"
+)
+
+CONSTRUCTOR = (
+    "the hook behind every nx.Graph() / DiGraph() / MultiGraph() / MultiDiGraph(): creating a graph takes 3.4 microseconds and dispatching a call about 9 (measured), and rustnx's results are NetworkX graphs anyway"
+)
+
 STAYS = {
+    'bull_graph': SMALL_GRAPH,
+    'chvatal_graph': SMALL_GRAPH,
+    'cubical_graph': SMALL_GRAPH,
+    'davis_southern_women_graph': SMALL_GRAPH,
+    'desargues_graph': SMALL_GRAPH,
+    'diamond_graph': SMALL_GRAPH,
+    'dodecahedral_graph': SMALL_GRAPH,
+    'florentine_families_graph': SMALL_GRAPH,
+    'frucht_graph': SMALL_GRAPH,
+    'heawood_graph': SMALL_GRAPH,
+    'hoffman_singleton_graph': SMALL_GRAPH,
+    'house_graph': SMALL_GRAPH,
+    'house_x_graph': SMALL_GRAPH,
+    'icosahedral_graph': SMALL_GRAPH,
+    'karate_club_graph': SMALL_GRAPH,
+    'krackhardt_kite_graph': SMALL_GRAPH,
+    'les_miserables_graph': SMALL_GRAPH,
+    'moebius_kantor_graph': SMALL_GRAPH,
+    'octahedral_graph': SMALL_GRAPH,
+    'pappus_graph': SMALL_GRAPH,
+    'petersen_graph': SMALL_GRAPH,
+    'sedgewick_maze_graph': SMALL_GRAPH,
+    'shrikhande_graph': SMALL_GRAPH,
+    'tetrahedral_graph': SMALL_GRAPH,
+    'triad_graph': SMALL_GRAPH,
+    'trivial_graph': SMALL_GRAPH,
+    'null_graph': SMALL_GRAPH,
+    'truncated_cube_graph': SMALL_GRAPH,
+    'truncated_tetrahedron_graph': SMALL_GRAPH,
+    'tutte_graph': SMALL_GRAPH,
+    'number_of_nonisomorphic_trees': 'a count NetworkX computes in microseconds (2 microseconds for n=20, measured); dispatch would only add time',
+    'is_valid_joint_degree': 'a few checks over the given dict (4 microseconds for a small one, measured); converting and dispatching cost as much',
+    'random_kernel_graph': "calls the caller's Python kernel function and SciPy's root finder for every step; those calls are the cost",
+    'spectral_graph_forge': 'its time is in LAPACK (a dense eigendecomposition) and NumPy',
+    'random_regular_expander_graph': "its time is in SciPy's ARPACK eigensolver, whose random start also changes how many graphs it tries; with rustnx's generator inside it measured 0.5x to 1.5x",
+    'is_regular_expander': "its time is in SciPy's ARPACK eigensolver; with the matrix built in Rust it measured 1.0x to 1.4x",
     'adjacency_spectrum': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
     'laplacian_spectrum': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
     'normalized_laplacian_spectrum': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
@@ -149,6 +196,25 @@ STAYS = {
     'communicability_exp': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
     'mutual_weight': 'O(degree) per call; dispatch would only add time',
     'normalized_mutual_weight': 'O(degree) per call; dispatch would only add time',
+    'is_empty': 'stops at the first node with a neighbor (1.3 microseconds on a 500,000-edge graph, measured); converting the graph would cost far more',
+    'to_edgelist': 'returns a lazy edge view (1.8 microseconds, measured); nothing to compute',
+    'set_node_attributes': MUTATES,
+    'set_edge_attributes': MUTATES,
+    'remove_node_attributes': MUTATES,
+    'remove_edge_attributes': MUTATES,
+    'graph__new__': CONSTRUCTOR,
+    'digraph__new__': CONSTRUCTOR,
+    'multigraph__new__': CONSTRUCTOR,
+    'multidigraph__new__': CONSTRUCTOR,
+    'forceatlas2_layout': "its time is NumPy's dense O(n^2) force arithmetic in every iteration (the adjacency matrix rustnx could build is 0.1% of it, measured), and its floats follow NumPy's summation order",
+    'to_pandas_adjacency': 'its time is in pandas building the dense DataFrame; with the matrix built in Rust it measured 0.8x to 1.0x',
+    'recursive_simple_cycles': "it removes the caller's self-loops from the graph in place, and NetworkX never hands such calls to a backend that converts the graph; simple_cycles gives the same cycles and runs in rustnx",
+    'LFR_benchmark_graph': "half its time is SciPy's zeta function (70,000 calls in _generate_min_degree for n=2000, measured), whose floats Rust can't reproduce bit for bit; the rest is a few thousand random draws, so at most 2x is on offer",
+    'pad_graph': MUTATES,
+    'double_edge_swap': MUTATES,
+    'directed_edge_swap': MUTATES,
+    'connected_double_edge_swap': MUTATES,
+    'from_pydot': "it reads pydot's Python objects through pydot's own methods (0.055 s for 8,000 edges, measured), which rustnx would have to call the same way",
 }
 
 

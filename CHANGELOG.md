@@ -8,6 +8,32 @@ versions may change behavior.
 ## [Unreleased]
 
 ### Added
+- `simple_cycles` and `chordless_cycles` as hybrids: NetworkX's own code
+  makes every choice that depends on set order, and the cycle searches inside
+  it (Johnson's, the length-bounded one and the chordless one) run in Rust on
+  the same neighbor lists, yielding the same cycles in the same order, lazily.
+  4x to 10x faster when there are many cycles. Multigraphs too.
+- `eulerize` (2x to 3x, its matching in rustnx), `local_and_global_consistency`
+  (3x to 5x) and `harmonic_function` (1.2x) as hybrids.
+- GraphML and GEXF readers in Rust: `read_graphml` and `parse_graphml`
+  (about 8x faster) and `read_gexf` (about 5x), with an XML parser
+  (quick-xml) and NetworkX's readers followed step by step, so node, row and
+  attribute order, value types, edge ids and keys, and the choice of graph
+  class all match. Documents NetworkX reads specially (yFiles data, ports,
+  hyperedges, nested GraphML graphs, a DOCTYPE, non-UTF-8 encodings) go to
+  NetworkX, and expat checks every document, so malformed files raise
+  NetworkX's own error.
+- pandas: `from_pandas_edgelist` (1.4x to 2.6x faster), `to_pandas_edgelist`
+  (2.4x to 5x) and `from_pandas_adjacency` (2x to 3x).
+- Generators: `random_k_out_graph` (replays NetworkX 3.5+'s NumPy draws, 3x
+  to 5x faster, and 3.4's pure-Python draws, 70x to 150x), `graph_atlas`
+  (about 600x: the atlas is parsed once per process) and `graph_atlas_g`,
+  and `random_unlabeled_tree`, `random_unlabeled_rooted_tree` and
+  `random_unlabeled_rooted_forest` (NetworkX's own sampling with cached tree
+  counts, 5x to 160x).
+- `docs/COVERAGE.md` gives measured reasons for 55 more functions that stay
+  in NetworkX (small named graphs, in-place attribute setters, graph
+  constructors, eigensolver-bound expanders, ...).
 - NumPy/SciPy round. Hybrids run NetworkX's own SciPy code with the sparse
   matrix it builds supplied by rustnx (identical inputs, so identical
   results): `normalized_laplacian_matrix` and `bethe_hessian_matrix` (3x to
