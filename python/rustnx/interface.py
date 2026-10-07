@@ -469,6 +469,7 @@ _BUILDS_FROM_SOURCE = {
     "reverse",
     "shortest_augmenting_path",
     "steiner_tree",
+    "to_pandas_edgelist",
     "transitive_closure",
     "transitive_closure_dag",
     "union",

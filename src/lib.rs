@@ -5064,6 +5064,94 @@ impl CoreGraph {
         Ok(())
     }
 
+    /// `from_pandas_edgelist`'s loop on a new NetworkX graph's dicts:
+    /// `g.add_edge(us[i], vs[i])`, then the edge's dict updated with
+    /// `zip(names, (column[i] for column in columns))`.
+    #[staticmethod]
+    fn build_columns_into<'py>(
+        node: Bound<'py, PyDict>,
+        adj: Bound<'py, PyDict>,
+        pred: Option<Bound<'py, PyDict>>,
+        us: Bound<'py, PyList>,
+        vs: Bound<'py, PyList>,
+        names: Vec<Bound<'py, PyAny>>,
+        columns: Vec<Bound<'py, PyList>>,
+    ) -> PyResult<()> {
+        let n = us.len();
+        if vs.len() != n || names.len() != columns.len() || columns.iter().any(|c| c.len() != n) {
+            return Err(PyValueError::new_err("columns must agree"));
+        }
+        let b = conversion::NxBuilder(nxdicts::NxDicts::new(node, adj, pred));
+        for i in 0..n {
+            b.add_edge(&us.get_item(i)?, &vs.get_item(i)?, |d| {
+                for (name, column) in names.iter().zip(&columns) {
+                    d.set_item(name, column.get_item(i)?)?;
+                }
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
+
+    /// The columns of `to_pandas_edgelist` before the attribute ones:
+    /// `(sources, targets, data dicts, attribute names)` of `G.edges(data=True)`
+    /// for a Graph or DiGraph with adjacency `adj`, the names in the order
+    /// they first appear.
+    #[staticmethod]
+    fn edgelist_columns<'py>(
+        py: Python<'py>,
+        adj: &Bound<'py, PyDict>,
+        directed: bool,
+    ) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyList>, Bound<'py, PyList>, Bound<'py, PyList>)> {
+        let sources = PyList::empty(py);
+        let targets = PyList::empty(py);
+        let datas = PyList::empty(py);
+        let names = PyDict::new(py);
+        // EdgeDataView: undirected, an edge is listed from the first of its
+        // ends whose row is read (`seen` holds the rows read so far).
+        let seen = PyDict::new(py);
+        for (u, nbrs) in adj.iter() {
+            let nbrs = nbrs.cast_into::<PyDict>()?;
+            for (v, d) in nbrs.iter() {
+                if !directed && seen.contains(&v)? {
+                    continue;
+                }
+                let d = d.cast_into::<PyDict>()?;
+                for k in d.keys() {
+                    if !names.contains(&k)? {
+                        names.set_item(&k, py.None())?;
+                    }
+                }
+                sources.append(&u)?;
+                targets.append(&v)?;
+                datas.append(&d)?;
+            }
+            if !directed {
+                seen.set_item(&u, 1)?;
+            }
+        }
+        Ok((sources, targets, datas, names.keys()))
+    }
+
+    /// `[d.get(key, default) for d in datas]`.
+    #[staticmethod]
+    fn edgelist_column<'py>(
+        py: Python<'py>,
+        datas: &Bound<'py, PyList>,
+        key: &Bound<'py, PyAny>,
+        default: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyList>> {
+        let out = PyList::empty(py);
+        for d in datas.iter() {
+            let d = d.cast_into::<PyDict>()?;
+            match d.get_item(key)? {
+                Some(v) => out.append(v)?,
+                None => out.append(default)?,
+            }
+        }
+        Ok(out)
+    }
+
     // --- Batch 17: deterministic generators ---
 
     /// Builds generator `kind` (see `generators::build`) straight into a new
@@ -7561,6 +7649,70 @@ impl CoreGraph {
         rg_run(py, &state, g, None, |rng| {
             Some(more_random::relaxed_caveman(l, k, p, rng))
         })
+    }
+
+    /// `read_gexf` on the document `data` (before `relabel`): NetworkX's
+    /// graph, built into one of `classes` (Graph, DiGraph, MultiGraph,
+    /// MultiDiGraph); `None` lets NetworkX read it. `versions` are the
+    /// `(NS_GEXF, NS_VIZ, VERSION)` to try in order, `python_type` and
+    /// `convert_bool` NetworkX's reader's tables. `well_formed(data)` runs
+    /// while Rust parses, as for `graphml_read`.
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    fn gexf_read<'py>(
+        py: Python<'py>,
+        data: &Bound<'py, PyBytes>,
+        well_formed: &Bound<'py, PyAny>,
+        versions: Vec<(String, String, String)>,
+        read_meta: bool,
+        python_type: &Bound<'py, PyDict>,
+        convert_bool: &Bound<'py, PyDict>,
+        int_nodes: bool,
+        classes: &Bound<'py, PyTuple>,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        let bytes = data.as_bytes();
+        let (dom, ok) = std::thread::scope(|scope| {
+            let parsing = scope.spawn(|| algorithms::gexf::parse(bytes));
+            let ok = well_formed.call1((data,)).and_then(|r| r.is_truthy());
+            let dom = py.detach(|| parsing.join().ok().flatten());
+            (dom, ok)
+        });
+        let (Some(dom), true) = (dom, ok?) else {
+            return Ok(None);
+        };
+        let versions: Vec<algorithms::gexf::Version> = versions
+            .into_iter()
+            .map(|(ns_gexf, ns_viz, version)| algorithms::gexf::Version { ns_gexf, ns_viz, version })
+            .collect();
+        algorithms::gexf::build(py, &dom, &versions, read_meta, python_type, convert_bool, int_nodes, classes)
+    }
+
+    /// `read_graphml` / `parse_graphml` on the document `data`: NetworkX's
+    /// graph, built into one of `classes` (Graph, DiGraph, MultiGraph,
+    /// MultiDiGraph); `None` lets NetworkX read it. `well_formed(data)`
+    /// (expat's verdict, which NetworkX's parser follows) runs while Rust
+    /// parses, and a falsy result also means `None`.
+    #[staticmethod]
+    fn graphml_read<'py>(
+        py: Python<'py>,
+        data: &Bound<'py, PyBytes>,
+        well_formed: &Bound<'py, PyAny>,
+        node_type: &Bound<'py, PyAny>,
+        edge_key_type: &Bound<'py, PyAny>,
+        force_multigraph: bool,
+        classes: &Bound<'py, PyTuple>,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        let bytes = data.as_bytes();
+        let (doc, ok) = std::thread::scope(|scope| {
+            let parsing = scope.spawn(|| algorithms::graphml::parse(bytes));
+            let ok = well_formed.call1((data,)).and_then(|r| r.is_truthy());
+            let doc = py.detach(|| parsing.join().ok().flatten());
+            (doc, ok)
+        });
+        let (Some(doc), true) = (doc, ok?) else {
+            return Ok(None);
+        };
+        algorithms::graphml::build(py, &doc, node_type, edge_key_type, force_multigraph, classes)
     }
 
     /// `random_k_out_graph`'s edges, in the order NetworkX adds them, and

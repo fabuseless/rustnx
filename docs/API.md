@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 625 NetworkX functions. Call them as usual (for
+rustnx implements 631 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly, except that
 the functions marked "fast by default" in the Floats column can differ
@@ -836,6 +836,17 @@ in the last bits of their floats until you turn on exact floats.
 | `nx.random_unlabeled_tree` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own sampling code, with the numbers of rooted trees and forests (big integers it recomputes on every call) from a per-process cache filled with the same recurrence in O(n^2). Identical draws and graphs; 5x to 40x faster on a first call, about 150x on later ones. |
 | `nx.random_unlabeled_rooted_tree` | all (NetworkX's own code runs) | no | rustnx | exact | As `random_unlabeled_tree`. |
 | `nx.random_unlabeled_rooted_forest` | all (NetworkX's own code runs) | no | rustnx | exact | As `random_unlabeled_tree`. |
+
+### Reading and conversion (generators and I/O round)
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Floats | Notes |
+|---|---|---|---|---|---|
+| `nx.read_graphml` | `path`, `node_type`, `edge_key_type`, `force_multigraph` | no | rustnx | exact | Rust parses the XML and builds NetworkX's graph (node and row order, typed keys and defaults, edge ids, `Graph`/`MultiGraph` choice) without building NetworkX's multigraph first; expat checks the document is well formed at the same time, so malformed files raise NetworkX's error. yFiles data, ports, hyperedges, nested graphs, several graphs, a DOCTYPE and non-UTF-8 encodings go to NetworkX. About 8x faster. |
+| `nx.parse_graphml` | `graphml_string`, `node_type`, `edge_key_type`, `force_multigraph` | no | rustnx | exact | As `read_graphml`, on a `str` or `bytes`. |
+| `nx.read_gexf` | `path`, `node_type`, `relabel`, `version` | no | rustnx | exact | Rust parses the XML and follows NetworkX's GEXF reader step by step: every version the installed NetworkX knows (1.1draft, 1.2draft and 1.3), attribute types and defaults, dynamic attributes, spells and slices, `viz`, parents and nested nodes, mutual edges, `networkx_key`, `<meta>` where NetworkX reads it, and `relabel`. `node_type` None or `int`; others go to NetworkX. About 5x faster. |
+| `nx.from_pandas_edgelist` | `df`, `source`, `target`, `edge_attr`, `create_using`, `edge_key` | no | rustnx | exact | `Graph` and `DiGraph` results: the columns read as NetworkX's `zip` reads them, the graph built in Rust. 1.4x to 2.6x faster; multigraphs go to NetworkX. |
+| `nx.to_pandas_edgelist` | `source`, `target`, `nodelist`, `dtype`, `edge_key` | no | rustnx | exact | `Graph` and `DiGraph` without `nodelist`: the edge and attribute columns gathered in Rust from the graph's own dicts (the attribute columns in NetworkX's set order), then the same `pd.DataFrame` call. 2.4x to 5x faster. |
+| `nx.from_pandas_adjacency` | `df`, `create_using`, `nonedge` | no | rustnx | exact | rustnx's `from_numpy_array` on the frame's values, as NetworkX does. 2x to 3x faster. |
 
 ### Bipartite measures
 

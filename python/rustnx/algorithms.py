@@ -15688,3 +15688,308 @@ def _register_count_helpers():
 
 
 _register_count_helpers()
+
+
+# --- GraphML: read_graphml / parse_graphml --------------------------------------
+#
+# Rust parses the document and builds NetworkX's graph. Documents rustnx
+# doesn't read exactly as NetworkX's GraphMLReader does (yFiles data,
+# ports, hyperedges, nested graphs, several graphs, a DOCTYPE, non-UTF-8
+# encodings) go to NetworkX.
+
+
+@functools.cache
+def _graphml_recognized():
+    """Whether the installed NetworkX's GraphML reader is the one rustnx
+    reproduces (3.4 to 3.7 differ only in how they test for bools)."""
+    from networkx.readwrite import graphml
+
+    reader = getattr(graphml, "GraphMLReader", None)
+    if reader is None:
+        return False
+    try:
+        texts = {
+            name: " ".join(inspect.getsource(getattr(reader, name)).split())
+            for name in ("make_graph", "add_node", "add_edge", "decode_data_elements",
+                         "find_graphml_keys", "__call__")
+        }
+        probe = reader()
+        types = dict(probe.python_type)
+        bools = dict(probe.convert_bool)
+    except Exception:
+        return False
+    return (
+        "G = nx.DiGraph(G) if G.is_directed() else nx.Graph(G)" in texts["make_graph"]
+        and 'nx.set_edge_attributes(G, values=self.edge_ids, name="id")' in texts["make_graph"]
+        and "G.graph.update(data)" in texts["make_graph"]
+        and "G.add_node(node_id, **data)" in texts["add_node"]
+        and "self.edge_ids[source, target] = edge_id" in texts["add_edge"]
+        and "edge_id = self.edge_key_type(edge_id) except ValueError:" in texts["add_edge"]
+        and 'edge_id = data.get("key")' in texts["add_edge"]
+        and "G.add_edges_from([(source, target, edge_id, data)])" in texts["add_edge"]
+        and 'data[data_name] = ""' in texts["decode_data_elements"]
+        and "self.convert_bool[text.lower()]" in texts["decode_data_elements"]
+        and 'attr_type = "string"' in texts["find_graphml_keys"]
+        and "graphml_key_defaults[attr_id] = python_type(default.text)" in texts["find_graphml_keys"]
+        and types == {
+            "integer": int, "int": int, "long": int, "float": float, "double": float,
+            "boolean": bool, "string": str, "yfiles": str,
+        }
+        and {k: v for k, v in bools.items() if type(k) is str}
+        == {"true": True, "false": False, "0": False, "1": True}
+    )
+
+
+def _graphml_well_formed(data):
+    """Whether expat (ElementTree's parser) accepts ``data``: rustnx's XML
+    parser is more lenient, and NetworkX raises expat's error otherwise.
+    Runs while Rust parses ``data``."""
+    from xml.parsers import expat
+
+    parser = expat.ParserCreate(None, "}")
+    try:
+        parser.Parse(data, True)
+    except expat.ExpatError:
+        return False
+    return True
+
+
+def _graphml_build(data, node_type, edge_key_type, force_multigraph):
+    if not _graphml_recognized():
+        return None
+    return _CoreGraph.graphml_read(
+        data, _graphml_well_formed, node_type, edge_key_type, bool(force_multigraph),
+        (nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph),
+    )
+
+
+def read_graphml(path, node_type=str, edge_key_type=int, force_multigraph=False):
+    data, rewind = _rw_read_bytes(path)
+    G = _graphml_build(data, node_type, edge_key_type, force_multigraph)
+    if G is None:
+        rewind()
+        raise NotImplementedError("NetworkX reads this GraphML")
+    return G
+
+
+def parse_graphml(graphml_string, node_type=str, edge_key_type=int, force_multigraph=False):
+    if type(graphml_string) is str:
+        try:
+            # ElementTree ignores a str's encoding declaration; so does
+            # rustnx's parser only for UTF-8 ones, so others go to NetworkX.
+            data = graphml_string.encode("utf-8")
+        except UnicodeEncodeError:
+            raise NotImplementedError("NetworkX parses this GraphML") from None
+    elif type(graphml_string) is bytes:
+        data = graphml_string
+    else:
+        raise NotImplementedError("rustnx parses str and bytes")
+    G = _graphml_build(data, node_type, edge_key_type, force_multigraph)
+    if G is None:
+        raise NotImplementedError("NetworkX parses this GraphML")
+    return G
+
+
+__all__ += ["read_graphml", "parse_graphml"]
+
+
+# --- GEXF: read_gexf ------------------------------------------------------------
+#
+# Rust parses the document and follows NetworkX's GEXFReader step by step.
+# node_type other than None or int, and documents NetworkX would raise on,
+# go to NetworkX.
+
+
+@functools.cache
+def _gexf_reader_info():
+    """``(reads_meta,)`` for the installed NetworkX's GEXF reader, or None
+    if it isn't the one rustnx reproduces (3.4 to 3.7 differ only in
+    reading ``<meta>`` and in the versions they know)."""
+    from networkx.readwrite import gexf
+
+    reader = getattr(gexf, "GEXFReader", None)
+    if reader is None:
+        return None
+    try:
+        text = " ".join(inspect.getsource(reader).split())
+        read = " ".join(inspect.getsource(_registered("read_gexf").orig_func).split())
+    except (OSError, TypeError, AttributeError):
+        return None
+    statements = (
+        'G = nx.DiGraph(G) else: G = nx.Graph(G) return G',
+        'data["label"] = node_label',
+        'node_pid = node_xml.get("pid", node_pid)',
+        "self.add_node(G, node_xml, node_attr, node_pid=node_id) G.add_node(node_id, **data)",
+        'ea = {"weight": {"type": "double", "mode": "static", "title": "weight"}}',
+        'multigraph_key = data.pop("networkx_key", None)',
+        "G.add_edge(source, target, key=edge_id, **data)",
+        'if edge_direction == "mutual": G.add_edge(target, source, key=edge_id, **data)',
+        "value = self.convert_bool[value] else: value = self.python_type[atype](value)",
+        'attrs[attr_id] = {"title": title, "type": atype, "mode": mode}',
+        '"a": float(color.get("a", 1)),',
+        '"x": float(position.get("x", 0)),',
+        'viz["shape"] = shape.get("uri")',
+        'if self.timeformat == "date": self.timeformat = "string"',
+    )
+    if not all(s in text for s in statements):
+        return None
+    if "G = relabel_gexf_graph(reader(path)) else: G = reader(path) return G" not in read:
+        return None
+    reads_meta = 'G.graph["description"] = description.text' in text
+    if reads_meta and "self.make_graph(g, meta_xml=meta)" not in text:
+        return None
+    return (reads_meta,)
+
+
+def read_gexf(path, node_type=None, relabel=False, version="1.2draft"):
+    from networkx.readwrite import gexf
+
+    info = _gexf_reader_info()
+    if info is None:
+        raise NotImplementedError("unrecognized NetworkX GEXF reader")
+    if node_type is None:
+        int_nodes = False
+    elif node_type is int:
+        int_nodes = True
+    else:
+        raise NotImplementedError("rustnx reads node_type None and int")
+    try:
+        reader = gexf.GEXFReader(node_type=node_type, version=version)
+    except Exception:
+        raise NotImplementedError("NetworkX raises for this version") from None
+    versions = [(reader.NS_GEXF, reader.NS_VIZ, reader.VERSION)] + [
+        (d["NS_GEXF"], d["NS_VIZ"], d["VERSION"]) for d in reader.versions.values()
+    ]
+    data, rewind = _rw_read_bytes(path)
+    G = _CoreGraph.gexf_read(
+        data, _graphml_well_formed, versions, info[0], dict(reader.python_type),
+        dict(reader.convert_bool), int_nodes,
+        (nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph),
+    )
+    if G is None:
+        rewind()
+        raise NotImplementedError("NetworkX reads this GEXF")
+    return gexf.relabel_gexf_graph(G) if relabel else G
+
+
+__all__ += ["read_gexf"]
+
+
+# --- pandas edge lists ----------------------------------------------------------
+
+
+@functools.cache
+def _pandas_edgelist_recognized():
+    """Whether the installed NetworkX's from/to_pandas_edgelist are the
+    ones rustnx reproduces (3.4 to 3.7 are)."""
+    try:
+        frm = " ".join(_source_text(_registered("from_pandas_edgelist")).split())
+        to = " ".join(_source_text(_registered("to_pandas_edgelist")).split())
+    except Exception:
+        return False
+    return all(s in frm for s in (
+        "g.add_edges_from(zip(df[source], df[target]))",
+        "attr_col_headings = [c for c in df.columns if c not in reserved_columns]",
+        "attribute_data = zip(*[df[col] for col in attr_col_headings])",
+        "for s, t, attrs in zip(df[source], df[target], attribute_data): g.add_edge(s, t) "
+        "g[s][t].update(zip(attr_col_headings, attrs))",
+    )) and all(s in to for s in (
+        "all_attrs = set().union(*(d.keys() for _, _, d in edgelist))",
+        'nan = float("nan")',
+        "edge_attr = {k: [d.get(k, nan) for _, _, d in edgelist] for k in all_attrs}",
+        "edgelistdict = {source: source_nodes, target: target_nodes} edgelistdict.update(edge_attr) "
+        "return pd.DataFrame(edgelistdict, dtype=dtype)",
+    ))
+
+
+def from_pandas_edgelist(df, source="source", target="target", edge_attr=None,
+                         create_using=None, edge_key=None):
+    if not _pandas_edgelist_recognized():
+        raise NotImplementedError("unrecognized NetworkX from_pandas_edgelist")
+    G = _b19_new_graph(create_using)
+    if edge_attr is None:
+        names = []
+    elif edge_attr is True:
+        names = [c for c in df.columns if c not in [source, target]]
+    elif isinstance(edge_attr, list | tuple):
+        names = edge_attr
+    else:
+        names = [edge_attr]
+    if edge_attr is not None and len(names) == 0:
+        raise NotImplementedError("NetworkX raises for this edge_attr")
+    try:
+        # The columns as NetworkX's zip() iterates them.
+        us, vs = list(df[source]), list(df[target])
+        columns = [list(df[col]) for col in names]
+    except Exception:
+        raise NotImplementedError("NetworkX reads these columns") from None
+    if len(vs) != len(us) or any(len(c) != len(us) for c in columns):
+        raise NotImplementedError("NetworkX zips columns of different lengths")
+    pred = G._pred if G.is_directed() else None
+    try:
+        _core.CoreGraph.build_columns_into(G._node, G._adj, pred, us, vs, list(names), columns)
+    except Exception:
+        raise NotImplementedError("NetworkX builds this graph") from None
+    return G
+
+
+def to_pandas_edgelist(G, source="source", target="target", nodelist=None, dtype=None,
+                       edge_key=None):
+    import pandas as pd
+
+    if not _pandas_edgelist_recognized():
+        raise NotImplementedError("unrecognized NetworkX to_pandas_edgelist")
+    base = _networkx_graph(G)
+    if nodelist is not None or base.is_multigraph():
+        raise NotImplementedError("rustnx lists all edges of a Graph or DiGraph")
+    try:
+        sources, targets, datas, names = _core.CoreGraph.edgelist_columns(
+            base._adj, base.is_directed()
+        )
+    except Exception:
+        raise NotImplementedError("NetworkX lists these edges") from None
+    # set().union(...) over every edge's keys, built from the distinct keys
+    # in the order they appear: the same insertions, so the same set order.
+    all_attrs = set(names)
+    if source in all_attrs:
+        raise nx.NetworkXError(f"Source name {source!r} is an edge attr name")
+    if target in all_attrs:
+        raise nx.NetworkXError(f"Target name {target!r} is an edge attr name")
+    nan = float("nan")
+    edge_attr = {k: _core.CoreGraph.edgelist_column(datas, k, nan) for k in all_attrs}
+    edgelistdict = {source: sources, target: targets}
+    edgelistdict.update(edge_attr)
+    return pd.DataFrame(edgelistdict, dtype=dtype)
+
+
+__all__ += ["from_pandas_edgelist", "to_pandas_edgelist"]
+
+
+@functools.cache
+def _pandas_adjacency_recognized():
+    try:
+        text = " ".join(_source_text(_registered("from_pandas_adjacency")).split())
+    except Exception:
+        return False
+    return (
+        "df = df[df.index]" in text
+        and "A = df.values" in text
+        and "G = from_numpy_array( A, create_using=create_using, nodelist=df.columns".replace("( ", "(")
+        in text.replace("( ", "(")
+    )
+
+
+def from_pandas_adjacency(df, create_using=None, nonedge=0):
+    if not _pandas_adjacency_recognized():
+        raise NotImplementedError("unrecognized NetworkX from_pandas_adjacency")
+    try:
+        df = df[df.index]
+        A = df.values
+        # NetworkX's from_numpy_array iterates nodelist; so does list().
+        nodelist = list(df.columns)
+    except Exception:
+        raise NotImplementedError("NetworkX raises for this frame") from None
+    return from_numpy_array(A, create_using=create_using, nodelist=nodelist, nonedge=nonedge)
+
+
+__all__ += ["from_pandas_adjacency"]

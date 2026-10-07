@@ -98,6 +98,14 @@ SMALL_GRAPH = (
     "a fixed graph of at most 77 nodes that NetworkX builds in under 0.35 ms (measured); rustnx's dispatch alone costs about 20 microseconds, and its small-input rule keeps such calls in NetworkX anyway"
 )
 
+MUTATES = (
+    "it changes the caller's NetworkX graph in place, and NetworkX never hands such calls to a backend that converts the graph; converting alone (0.11 s for 500,000 edges, measured) is half of set_edge_attributes' 0.21 s"
+)
+
+CONSTRUCTOR = (
+    "the hook behind every nx.Graph() / DiGraph() / MultiGraph() / MultiDiGraph(): creating a graph takes 3.4 microseconds and dispatching a call about 9 (measured), and rustnx's results are NetworkX graphs anyway"
+)
+
 STAYS = {
     'bull_graph': SMALL_GRAPH,
     'chvatal_graph': SMALL_GRAPH,
@@ -189,6 +197,19 @@ STAYS = {
     'communicability_exp': 'its time is in LAPACK (dense eigenvalues, inverses or matrix exponentials); measured no faster with the matrix built in Rust',
     'mutual_weight': 'O(degree) per call; dispatch would only add time',
     'normalized_mutual_weight': 'O(degree) per call; dispatch would only add time',
+    'is_empty': 'stops at the first node with a neighbor (1.3 microseconds on a 500,000-edge graph, measured); converting the graph would cost far more',
+    'to_edgelist': 'returns a lazy edge view (1.8 microseconds, measured); nothing to compute',
+    'set_node_attributes': MUTATES,
+    'set_edge_attributes': MUTATES,
+    'remove_node_attributes': MUTATES,
+    'remove_edge_attributes': MUTATES,
+    'graph__new__': CONSTRUCTOR,
+    'digraph__new__': CONSTRUCTOR,
+    'multigraph__new__': CONSTRUCTOR,
+    'multidigraph__new__': CONSTRUCTOR,
+    'forceatlas2_layout': "its time is NumPy's dense O(n^2) force arithmetic in every iteration (the adjacency matrix rustnx could build is 0.1% of it, measured), and its floats follow NumPy's summation order",
+    'to_pandas_adjacency': 'its time is in pandas building the dense DataFrame; with the matrix built in Rust it measured 0.8x to 1.0x',
+    'from_pydot': "it reads pydot's Python objects through pydot's own methods (0.055 s for 8,000 edges, measured), which rustnx would have to call the same way",
 }
 
 

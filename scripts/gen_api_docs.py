@@ -947,6 +947,18 @@ SECTIONS.append(("Generators (generators and I/O round)", [
     "random_k_out_graph", "graph_atlas", "graph_atlas_g", "random_unlabeled_tree",
     "random_unlabeled_rooted_tree", "random_unlabeled_rooted_forest",
 ]))
+SECTIONS.append(("Reading and conversion (generators and I/O round)", [
+    "read_graphml", "parse_graphml", "read_gexf", "from_pandas_edgelist", "to_pandas_edgelist",
+    "from_pandas_adjacency",
+]))
+NOTES.update({
+    "read_graphml": "Rust parses the XML and builds NetworkX's graph (node and row order, typed keys and defaults, edge ids, `Graph`/`MultiGraph` choice) without building NetworkX's multigraph first; expat checks the document is well formed at the same time, so malformed files raise NetworkX's error. yFiles data, ports, hyperedges, nested graphs, several graphs, a DOCTYPE and non-UTF-8 encodings go to NetworkX. About 8x faster.",
+    "parse_graphml": "As `read_graphml`, on a `str` or `bytes`.",
+    "read_gexf": "Rust parses the XML and follows NetworkX's GEXF reader step by step: every version the installed NetworkX knows (1.1draft, 1.2draft and 1.3), attribute types and defaults, dynamic attributes, spells and slices, `viz`, parents and nested nodes, mutual edges, `networkx_key`, `<meta>` where NetworkX reads it, and `relabel`. `node_type` None or `int`; others go to NetworkX. About 5x faster.",
+    "from_pandas_edgelist": "`Graph` and `DiGraph` results: the columns read as NetworkX's `zip` reads them, the graph built in Rust. 1.4x to 2.6x faster; multigraphs go to NetworkX.",
+    "to_pandas_edgelist": "`Graph` and `DiGraph` without `nodelist`: the edge and attribute columns gathered in Rust from the graph's own dicts (the attribute columns in NetworkX's set order), then the same `pd.DataFrame` call. 2.4x to 5x faster.",
+    "from_pandas_adjacency": "rustnx's `from_numpy_array` on the frame's values, as NetworkX does. 2x to 3x faster.",
+})
 SECTIONS.append(("Bipartite measures", [
     "latapy_clustering", "bipartite_average_clustering", "robins_alexander_clustering",
     "bipartite_betweenness_centrality", "overlap_weighted_projected_graph",
