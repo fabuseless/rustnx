@@ -84,7 +84,6 @@ AREAS = [
 
 # Missing functions with a recorded reason (todo item numbers).
 BLOCKED = {
-    "simple_cycles": 14,
     "louvain_communities": 15,
 }
 
@@ -209,6 +208,12 @@ STAYS = {
     'multidigraph__new__': CONSTRUCTOR,
     'forceatlas2_layout': "its time is NumPy's dense O(n^2) force arithmetic in every iteration (the adjacency matrix rustnx could build is 0.1% of it, measured), and its floats follow NumPy's summation order",
     'to_pandas_adjacency': 'its time is in pandas building the dense DataFrame; with the matrix built in Rust it measured 0.8x to 1.0x',
+    'recursive_simple_cycles': "it removes the caller's self-loops from the graph in place, and NetworkX never hands such calls to a backend that converts the graph; simple_cycles gives the same cycles and runs in rustnx",
+    'LFR_benchmark_graph': "half its time is SciPy's zeta function (70,000 calls in _generate_min_degree for n=2000, measured), whose floats Rust can't reproduce bit for bit; the rest is a few thousand random draws, so at most 2x is on offer",
+    'pad_graph': MUTATES,
+    'double_edge_swap': MUTATES,
+    'directed_edge_swap': MUTATES,
+    'connected_double_edge_swap': MUTATES,
     'from_pydot': "it reads pydot's Python objects through pydot's own methods (0.055 s for 8,000 edges, measured), which rustnx would have to call the same way",
 }
 

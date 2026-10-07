@@ -1120,7 +1120,11 @@ pub fn k_out_py34(
         let u = candidates[rng.below(candidates.len())];
         // Counter subtraction keeps positive values only, in order.
         let kept = |i: usize| {
-            let w = if !self_loops && i == u { 0.0 } else { weights[i] };
+            let w = if !self_loops && i == u {
+                0.0
+            } else {
+                weights[i]
+            };
             (w > 0.0).then_some(w)
         };
         let total = (0..n).filter_map(kept).fold(0.0, |s, w| s + w);

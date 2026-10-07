@@ -44,6 +44,13 @@ NESTED = (
     "is_chordal",
 )
 
+# NetworkX functions that hybrids must run in NetworkX itself: they return
+# sets whose iteration order NetworkX's code then depends on.
+NETWORKX_ONLY = (
+    "strongly_connected_components",
+    "biconnected_components",
+)
+
 # id(networkx graph) -> (networkx graph, rustnx graph) for the current call.
 _graphs = contextvars.ContextVar("rustnx_hybrid_graphs", default={})
 
@@ -109,6 +116,9 @@ def _proxy():
     for name in NESTED:
         if hasattr(nx, name):
             setattr(proxy, name, _nested(getattr(nx, name)))
+    for name in NETWORKX_ONLY:
+        if hasattr(nx, name):
+            setattr(proxy, name, functools.partial(getattr(nx, name), backend="networkx"))
     for name in BUILDERS:
         builder = _builder(name)
         if hasattr(nx, name):

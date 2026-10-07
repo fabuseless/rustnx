@@ -8,6 +8,13 @@ versions may change behavior.
 ## [Unreleased]
 
 ### Added
+- `simple_cycles` and `chordless_cycles` as hybrids: NetworkX's own code
+  makes every choice that depends on set order, and the cycle searches inside
+  it (Johnson's, the length-bounded one and the chordless one) run in Rust on
+  the same neighbor lists, yielding the same cycles in the same order, lazily.
+  4x to 10x faster when there are many cycles. Multigraphs too.
+- `eulerize` (2x to 3x, its matching in rustnx), `local_and_global_consistency`
+  (3x to 5x) and `harmonic_function` (1.2x) as hybrids.
 - GraphML and GEXF readers in Rust: `read_graphml` and `parse_graphml`
   (about 8x faster) and `read_gexf` (about 5x), with an XML parser
   (quick-xml) and NetworkX's readers followed step by step, so node, row and
@@ -24,7 +31,7 @@ versions may change behavior.
   and `random_unlabeled_tree`, `random_unlabeled_rooted_tree` and
   `random_unlabeled_rooted_forest` (NetworkX's own sampling with cached tree
   counts, 5x to 160x).
-- `docs/COVERAGE.md` gives measured reasons for 49 more functions that stay
+- `docs/COVERAGE.md` gives measured reasons for 55 more functions that stay
   in NetworkX (small named graphs, in-place attribute setters, graph
   constructors, eigensolver-bound expanders, ...).
 - NumPy/SciPy round. Hybrids run NetworkX's own SciPy code with the sparse

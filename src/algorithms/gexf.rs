@@ -20,8 +20,8 @@ use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::ResolveResult;
 use quick_xml::reader::NsReader;
 
-use super::structure_more::PairHasher;
 use super::graphml::{normalize_eol, plain_float, plain_int, resolve_ref};
+use super::structure_more::PairHasher;
 
 /// No element (a missing child or sibling).
 const NONE: u32 = u32::MAX;
@@ -51,12 +51,55 @@ pub struct Dom<'i> {
 /// The element and attribute names NetworkX looks at, stored without
 /// allocating.
 const KNOWN: &[&str] = &[
-    "a", "attribute", "attributes", "attvalue", "attvalues", "b", "class", "color",
-    "default", "defaultedgetype", "description", "edge", "edges", "end", "for", "g",
-    "graph", "id", "keywords", "label", "meta", "mode", "name", "node", "nodes",
-    "parent", "parents", "pid", "position", "r", "shape", "size", "slice", "slices",
-    "source", "spell", "spells", "start", "target", "thickness", "timeformat", "title",
-    "type", "uri", "value", "weight", "x", "y", "z",
+    "a",
+    "attribute",
+    "attributes",
+    "attvalue",
+    "attvalues",
+    "b",
+    "class",
+    "color",
+    "default",
+    "defaultedgetype",
+    "description",
+    "edge",
+    "edges",
+    "end",
+    "for",
+    "g",
+    "graph",
+    "id",
+    "keywords",
+    "label",
+    "meta",
+    "mode",
+    "name",
+    "node",
+    "nodes",
+    "parent",
+    "parents",
+    "pid",
+    "position",
+    "r",
+    "shape",
+    "size",
+    "slice",
+    "slices",
+    "source",
+    "spell",
+    "spells",
+    "start",
+    "target",
+    "thickness",
+    "timeformat",
+    "title",
+    "type",
+    "uri",
+    "value",
+    "weight",
+    "x",
+    "y",
+    "z",
 ];
 
 fn name(bytes: &[u8]) -> Option<Cow<'static, str>> {
@@ -89,7 +132,10 @@ fn read_attrs<'i>(
             return None; // duplicate attribute: expat rejects it
         }
         let raw = std::str::from_utf8(&a.value).ok()?;
-        let value = if raw.bytes().any(|b| matches!(b, b'&' | b'\t' | b'\n' | b'\r')) {
+        let value = if raw
+            .bytes()
+            .any(|b| matches!(b, b'&' | b'\t' | b'\n' | b'\r'))
+        {
             let raw = raw.replace("\r\n", " ").replace(['\t', '\n', '\r'], " ");
             Cow::Owned(quick_xml::escape::unescape(&raw).ok()?.into_owned())
         } else {
@@ -207,7 +253,10 @@ pub fn parse(bytes: &[u8]) -> Option<Dom<'_>> {
             Event::GeneralRef(r) => {
                 let s = resolve_ref(&r)?;
                 if let Some(&(i, true)) = stack.last() {
-                    dom.elements[i].text.get_or_insert_with(String::new).push_str(&s);
+                    dom.elements[i]
+                        .text
+                        .get_or_insert_with(String::new)
+                        .push_str(&s);
                 }
             }
             Event::Comment(_) | Event::PI(_) => {}
@@ -305,7 +354,10 @@ impl<'a, 'py> Reader<'a, 'py> {
     fn get(&self, i: usize, name: &str) -> Option<&'a str> {
         let (a, b) = self.el(i).attrs;
         let dom: &'a Dom<'a> = self.dom;
-        dom.attrs[a as usize..b as usize].iter().find(|(k, _)| k == name).map(|(_, v)| v.as_ref())
+        dom.attrs[a as usize..b as usize]
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_ref())
     }
 
     /// `element.find("{ns}local")`: the first such child.
@@ -314,9 +366,18 @@ impl<'a, 'py> Reader<'a, 'py> {
     }
 
     /// `element.findall("{ns}local")`.
-    fn findall(&self, i: usize, ns: Option<usize>, local: &'a str) -> impl Iterator<Item = usize> + 'a {
+    fn findall(
+        &self,
+        i: usize,
+        ns: Option<usize>,
+        local: &'a str,
+    ) -> impl Iterator<Item = usize> + 'a {
         let dom = self.dom;
-        let mut c = if ns.is_some() { dom.elements[i].first_child } else { NONE };
+        let mut c = if ns.is_some() {
+            dom.elements[i].first_child
+        } else {
+            NONE
+        };
         std::iter::from_fn(move || {
             while c != NONE {
                 let e = &dom.elements[c as usize];
@@ -373,11 +434,18 @@ impl<'a, 'py> Reader<'a, 'py> {
 
     /// `self.convert_bool[value]`.
     fn boolean(&self, value: Option<&str>) -> PyResult<Bound<'py, PyAny>> {
-        self.convert_bool.get_item(self.opt_str(value))?.ok_or_else(decline)
+        self.convert_bool
+            .get_item(self.opt_str(value))?
+            .ok_or_else(decline)
     }
 
     /// `find_gexf_attributes`.
-    fn attributes(&self, a: usize, attrs: &mut Vec<(Option<&'a str>, AttrInfo)>, defaults: &Bound<'py, PyDict>) -> PyResult<()> {
+    fn attributes(
+        &self,
+        a: usize,
+        attrs: &mut Vec<(Option<&'a str>, AttrInfo)>,
+        defaults: &Bound<'py, PyDict>,
+    ) -> PyResult<()> {
         let dynamic = self.get(a, "mode") == Some("dynamic");
         for k in self.findall(a, self.ns, "attribute") {
             let id = self.get(k, "id");
@@ -391,7 +459,11 @@ impl<'a, 'py> Reader<'a, 'py> {
             set_attr(attrs, id, info);
             if let Some(d) = self.find(k, self.ns, "default") {
                 let text = self.el(d).text.as_deref();
-                let value = if ty == Some("boolean") { self.boolean(text)? } else { self.convert(ty, text)? };
+                let value = if ty == Some("boolean") {
+                    self.boolean(text)?
+                } else {
+                    self.convert(ty, text)?
+                };
                 defaults.set_item(self.opt_str(title), value)?;
             }
         }
@@ -400,10 +472,17 @@ impl<'a, 'py> Reader<'a, 'py> {
 
     /// `decode_attr_elements`; `reserved` are the titles `**data` can't
     /// pass on.
-    fn decode(&self, keys: &[(Option<&'a str>, AttrInfo)], obj: usize, reserved: &[&str]) -> PyResult<Bound<'py, PyDict>> {
+    fn decode(
+        &self,
+        keys: &[(Option<&'a str>, AttrInfo)],
+        obj: usize,
+        reserved: &[&str],
+    ) -> PyResult<Bound<'py, PyDict>> {
         let py = self.py;
         let out = PyDict::new(py);
-        let Some(values) = self.find(obj, self.ns, "attvalues") else { return Ok(out) };
+        let Some(values) = self.find(obj, self.ns, "attvalues") else {
+            return Ok(out);
+        };
         for a in self.findall(values, self.ns, "attvalue") {
             let key = self.get(a, "for");
             let Some(info) = keys.iter().rev().find(|(id, _)| *id == key).map(|(_, i)| i) else {
@@ -411,7 +490,11 @@ impl<'a, 'py> Reader<'a, 'py> {
             };
             let ty = info.ty.as_deref();
             let raw = self.get(a, "value");
-            let value = if ty == Some("boolean") { self.boolean(raw)? } else { self.convert(ty, raw)? };
+            let value = if ty == Some("boolean") {
+                self.boolean(raw)?
+            } else {
+                self.convert(ty, raw)?
+            };
             // `**data` needs string keys that aren't parameter names.
             let Some(title) = info.title.as_deref().filter(|t| !reserved.contains(t)) else {
                 return Err(decline());
@@ -446,7 +529,10 @@ impl<'a, 'py> Reader<'a, 'py> {
                 let list = PyList::empty(py);
                 data.set_item("slices", &list)?;
                 for s in self.findall(slices, self.ns, "slice") {
-                    let pair = [self.opt_str(self.get(s, "start")), self.opt_str(self.get(s, "end"))];
+                    let pair = [
+                        self.opt_str(self.get(s, "start")),
+                        self.opt_str(self.get(s, "end")),
+                    ];
                     list.append(PyTuple::new(py, pair)?)?;
                 }
             }
@@ -501,7 +587,11 @@ impl<'a, 'py> Reader<'a, 'py> {
         }
         if let Some(s) = self.find(xml, self.ns_viz, "shape") {
             let shape = self.get(s, "shape");
-            let shape = if shape == Some("image") { self.get(s, "uri") } else { shape };
+            let shape = if shape == Some("image") {
+                self.get(s, "uri")
+            } else {
+                shape
+            };
             viz.set_item("shape", self.opt_str(shape))?;
         }
         if let Some(p) = self.find(xml, self.ns_viz, "position") {
@@ -564,7 +654,12 @@ impl<'a, 'py> Reader<'a, 'py> {
     }
 
     /// `add_node`, recursively for subnodes.
-    fn add_node(&mut self, node_attr: &[(Option<&'a str>, AttrInfo)], xml: usize, pid: Option<usize>) -> PyResult<()> {
+    fn add_node(
+        &mut self,
+        node_attr: &[(Option<&'a str>, AttrInfo)],
+        xml: usize,
+        pid: Option<usize>,
+    ) -> PyResult<()> {
         let py = self.py;
         let data = self.decode(node_attr, xml, NODE_RESERVED)?;
         if let Some(parents) = self.find(xml, self.ns, "parents") {
@@ -603,7 +698,13 @@ impl<'a, 'py> Reader<'a, 'py> {
     /// `MultiGraph.add_edge(u, v, key=key, **data)`.
     /// `data` becomes the new edge's dict (the caller passes a dict of its
     /// own).
-    fn multi_add_edge(&mut self, u: usize, v: usize, key: Bound<'py, PyAny>, data: Bound<'py, PyDict>) -> PyResult<()> {
+    fn multi_add_edge(
+        &mut self,
+        u: usize,
+        v: usize,
+        key: Bound<'py, PyAny>,
+        data: Bound<'py, PyDict>,
+    ) -> PyResult<()> {
         let py = self.py;
         self.place(u);
         self.place(v);
@@ -612,7 +713,9 @@ impl<'a, 'py> Reader<'a, 'py> {
             Some(&p) => p,
             None => {
                 let p = self.pairs.len();
-                self.pairs.push(Pair { entries: Vec::new() });
+                self.pairs.push(Pair {
+                    entries: Vec::new(),
+                });
                 self.pair_index.insert(pair, p);
                 self.succ[u].push((v, p));
                 if self.directed {
@@ -723,7 +826,16 @@ pub fn build<'py>(
     int_nodes: bool,
     classes: &Bound<'py, PyTuple>,
 ) -> PyResult<Option<Bound<'py, PyAny>>> {
-    match build_inner(py, dom, versions, read_meta, python_type, convert_bool, int_nodes, classes) {
+    match build_inner(
+        py,
+        dom,
+        versions,
+        read_meta,
+        python_type,
+        convert_bool,
+        int_nodes,
+        classes,
+    ) {
         Ok(g) => Ok(g),
         Err(_) => Ok(None),
     }
@@ -776,7 +888,11 @@ fn build_inner<'py>(
         }
     }
     let Some(g) = found else { return Ok(None) };
-    let meta = if read_meta { r.find(0, r.ns, "meta") } else { None };
+    let meta = if read_meta {
+        r.find(0, r.ns, "meta")
+    } else {
+        None
+    };
 
     r.directed = r.get(g, "defaultedgetype") == Some("directed");
     let gattr = PyDict::new(py);
@@ -796,8 +912,17 @@ fn build_inner<'py>(
     if let Some(end) = r.get(g, "end") {
         gattr.set_item("end", end)?;
     }
-    gattr.set_item("mode", if r.get(g, "mode") == Some("dynamic") { "dynamic" } else { "static" })?;
-    r.timeformat = r.get(g, "timeformat").map(|t| if t == "date" { "string" } else { t }.to_owned());
+    gattr.set_item(
+        "mode",
+        if r.get(g, "mode") == Some("dynamic") {
+            "dynamic"
+        } else {
+            "static"
+        },
+    )?;
+    r.timeformat = r
+        .get(g, "timeformat")
+        .map(|t| if t == "date" { "string" } else { t }.to_owned());
 
     let mut node_attr: Vec<(Option<&str>, AttrInfo)> = Vec::new();
     let mut edge_attr: Vec<(Option<&str>, AttrInfo)> = Vec::new();
@@ -851,15 +976,21 @@ fn build_inner<'py>(
         (true, true) => 3,
     };
     let graph = classes.get_item(class_index)?.call0()?;
-    graph.getattr("graph")?.cast_into::<PyDict>()?.update(gattr.as_mapping())?;
+    graph
+        .getattr("graph")?
+        .cast_into::<PyDict>()?
+        .update(gattr.as_mapping())?;
     let n = r.values.len();
     let node_dict = PyDict::new(py);
     for &i in &r.order {
         node_dict.set_item(&r.values[i], &r.data[i])?;
     }
     let succ_rows: Vec<Bound<'py, PyDict>> = (0..n).map(|_| PyDict::new(py)).collect();
-    let pred_rows: Vec<Bound<'py, PyDict>> =
-        if directed { (0..n).map(|_| PyDict::new(py)).collect() } else { Vec::new() };
+    let pred_rows: Vec<Bound<'py, PyDict>> = if directed {
+        (0..n).map(|_| PyDict::new(py)).collect()
+    } else {
+        Vec::new()
+    };
     if multigraph {
         let mut keydicts = Vec::with_capacity(r.pairs.len());
         for pair in &r.pairs {

@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 631 NetworkX functions. Call them as usual (for
+rustnx implements 636 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly, except that
 the functions marked "fast by default" in the Floats column can differ
@@ -847,6 +847,16 @@ in the last bits of their floats until you turn on exact floats.
 | `nx.from_pandas_edgelist` | `df`, `source`, `target`, `edge_attr`, `create_using`, `edge_key` | no | rustnx | exact | `Graph` and `DiGraph` results: the columns read as NetworkX's `zip` reads them, the graph built in Rust. 1.4x to 2.6x faster; multigraphs go to NetworkX. |
 | `nx.to_pandas_edgelist` | `source`, `target`, `nodelist`, `dtype`, `edge_key` | no | rustnx | exact | `Graph` and `DiGraph` without `nodelist`: the edge and attribute columns gathered in Rust from the graph's own dicts (the attribute columns in NetworkX's set order), then the same `pd.DataFrame` call. 2.4x to 5x faster. |
 | `nx.from_pandas_adjacency` | `df`, `create_using`, `nonedge` | no | rustnx | exact | rustnx's `from_numpy_array` on the frame's values, as NetworkX does. 2x to 3x faster. |
+
+### Set-order round: hybrids with Rust inner work
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Floats | Notes |
+|---|---|---|---|---|---|
+| `nx.simple_cycles` | all (NetworkX's own code runs) | yes | rustnx | exact | NetworkX's own code picks components and start nodes (by set order); Johnson's search and the length-bounded search inside it run in Rust on the same neighbor lists and yield the same lists of the same node objects, lazily. 4x to 6x faster when there are many cycles; about even when NetworkX's component loop dominates. |
+| `nx.chordless_cycles` | all (NetworkX's own code runs) | yes | rustnx | exact | As `simple_cycles`: NetworkX picks components and stems, the chordless search runs in Rust. Up to 10x faster. |
+| `nx.eulerize` | all (NetworkX's own code runs) | yes | rustnx | exact | NetworkX's own code, with its maximum weight matching in rustnx. 2x to 3x faster. |
+| `nx.harmonic_function` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code on the adjacency matrix rustnx builds. About 1.2x faster (its time is in SciPy's LIL assignment). |
+| `nx.local_and_global_consistency` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code on the adjacency matrix rustnx builds. 3x to 5x faster. |
 
 ### Bipartite measures
 

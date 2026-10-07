@@ -422,6 +422,10 @@ MULTIGRAPH_FUNCTIONS = {
     "wiener_index",
 }
 
+# Hybrids that run NetworkX's own code on the original (multi)graph, so a
+# multigraph needs no special conversion.
+MULTIGRAPH_FUNCTIONS |= {"simple_cycles", "chordless_cycles", "eulerize"}
+
 # Functions that return subgraphs of the original NetworkX graph, or (the flow
 # functions) read its edge attributes there.
 _BUILDS_FROM_SOURCE = {

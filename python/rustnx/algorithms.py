@@ -15569,6 +15569,11 @@ HYBRID_FUNCTIONS = [
     "random_unlabeled_tree",
     "random_unlabeled_rooted_tree",
     "random_unlabeled_rooted_forest",
+    "simple_cycles",
+    "chordless_cycles",
+    "eulerize",
+    "harmonic_function",
+    "local_and_global_consistency",
 ]
 
 
@@ -15993,3 +15998,141 @@ def from_pandas_adjacency(df, create_using=None, nonedge=0):
 
 
 __all__ += ["from_pandas_adjacency"]
+
+
+# --- Cycle searches: NetworkX's own simple_cycles and chordless_cycles --------
+#
+# NetworkX picks components, start nodes and stems by set order; that code
+# runs as it is (hybrids). The inner searches it then runs depend only on the
+# order of the neighbor lists they are handed, so they run in Rust on the
+# same lists and yield the same node objects in the same order.
+
+_CYCLE_BATCH = 256
+
+
+def _cycle_lists(G, B=None):
+    """Neighbor lists of every node of the graph (view) ``G`` as
+    ``_NeighborhoodCache`` holds them (and of ``B`` over the same nodes)."""
+    nodes = list(G)
+    index = {n: i for i, n in enumerate(nodes)}
+    rows = [list(G[v]) for v in nodes]
+    b_rows = None if B is None else [list(B[v]) for v in nodes]
+    return index, _core.CycleLists(index, rows, b_rows)
+
+
+def _cycle_iter(search):
+    while True:
+        batch = search.next_batch(_CYCLE_BATCH)
+        if not batch:
+            return
+        yield from batch
+
+
+def _cycle_bound(length_bound):
+    if type(length_bound) is not int or not 0 < length_bound < 2**62:
+        return None
+    return length_bound
+
+
+def _johnson_cycle_search_rust(G, path):
+    index, lists = _cycle_lists(G)
+    search = _core.CycleSearch(lists, "johnson", [index[p] for p in path], list(path))
+    return _cycle_iter(search)
+
+
+def _bounded_cycle_search_rust(G, path, length_bound):
+    from networkx.algorithms import cycles
+
+    if _cycle_bound(length_bound) is None:
+        return cycles._bounded_cycle_search(G, path, length_bound)
+    index, lists = _cycle_lists(G)
+    search = _core.CycleSearch(
+        lists, "bounded", [index[p] for p in path], list(path), length_bound
+    )
+    return _cycle_iter(search)
+
+
+def _chordless_cycle_search_rust(F, B, path, length_bound):
+    from networkx.algorithms import cycles
+
+    if length_bound is not None and _cycle_bound(length_bound) is None:
+        return cycles._chordless_cycle_search(F, B, path, length_bound)
+    # F and B are _NeighborhoodCache objects over one component, shared by
+    # all its stems: index them once.
+    cached = getattr(F, "_rustnx_lists", None)
+    if cached is None or cached[0] is not B:
+        # Their graphs (subgraph views over the component): the caches
+        # hold `list(view[v])`, the same lists.
+        index, lists = _cycle_lists(F.G, None if B is F else B.G)
+        cached = (B, index, lists)
+        F._rustnx_lists = cached
+    _, index, lists = cached
+    search = _core.CycleSearch(
+        lists, "chordless", [index[p] for p in path], list(path), length_bound
+    )
+    return _cycle_iter(search)
+
+
+_CYCLE_HELPERS = {
+    "_johnson_cycle_search": (
+        _johnson_cycle_search_rust,
+        "G = _NeighborhoodCache(G) blocked = set(path) B = defaultdict(set) start = path[0] "
+        "stack = [iter(G[path[-1]])] closed = [False] while stack: nbrs = stack[-1] for w in nbrs: "
+        "if w == start: yield path[:] closed[-1] = True elif w not in blocked: path.append(w) "
+        "closed.append(False) stack.append(iter(G[w])) blocked.add(w) break else: stack.pop() "
+        "v = path.pop() if closed.pop(): if closed: closed[-1] = True unblock_stack = {v} "
+        "while unblock_stack: u = unblock_stack.pop() if u in blocked: blocked.remove(u) "
+        "unblock_stack.update(B[u]) B[u].clear() else: for w in G[v]: B[w].add(v)",
+    ),
+    "_bounded_cycle_search": (
+        _bounded_cycle_search_rust,
+        "B = defaultdict(set) start = path[0] stack = [iter(G[path[-1]])] blen = [length_bound] "
+        "while stack: nbrs = stack[-1] for w in nbrs: if w == start: yield path[:] blen[-1] = 1 "
+        "elif len(path) < lock.get(w, length_bound): path.append(w) blen.append(length_bound) "
+        "lock[w] = len(path) stack.append(iter(G[w])) break else: stack.pop() v = path.pop() "
+        "bl = blen.pop() if blen: blen[-1] = min(blen[-1], bl) if bl < length_bound: "
+        "relax_stack = [(bl, v)] while relax_stack: bl, u = relax_stack.pop() "
+        "if lock.get(u, length_bound) < length_bound - bl + 1: lock[u] = length_bound - bl + 1 "
+        "relax_stack.extend((bl + 1, w) for w in B[u].difference(path)) else: for w in G[v]: B[w].add(v)",
+    ),
+    "_chordless_cycle_search": (
+        _chordless_cycle_search_rust,
+        "blocked = defaultdict(int) target = path[0] blocked[path[1]] = 1 for w in path[1:]: "
+        "for v in B[w]: blocked[v] += 1 stack = [iter(F[path[2]])] while stack: nbrs = stack[-1] "
+        "for w in nbrs: if blocked[w] == 1 and (length_bound is None or len(path) < length_bound): "
+        "Fw = F[w] if target in Fw: yield path + [w] else: Bw = B[w] if target in Bw: continue "
+        "for v in Bw: blocked[v] += 1 path.append(w) stack.append(iter(Fw)) break else: "
+        "stack.pop() for v in B[path.pop()]: blocked[v] -= 1",
+    ),
+}
+
+
+def _register_cycle_helpers():
+    """Use the Rust searches only where the installed NetworkX's are the
+    ones they reproduce (3.4 to 3.7), and its cache is a plain list cache."""
+    from networkx.algorithms import cycles
+
+    def text(obj):
+        try:
+            source = inspect.getsource(obj)
+        except (OSError, TypeError):
+            return ""
+        parts = source.split('"""')
+        if len(parts) >= 3:
+            source = parts[0] + parts[-1]
+        # Comments aside (these functions have no "#" in strings).
+        source = "\n".join(line.split("#", 1)[0] for line in source.splitlines())
+        return " ".join(source.split())
+
+    cache = text(getattr(cycles, "_NeighborhoodCache", None))
+    if "Gv = self[v] = list(self.G[v]) return Gv" not in cache:
+        return set()
+    registered = set()
+    for name, (replacement, body) in _CYCLE_HELPERS.items():
+        if body in text(getattr(cycles, name, None)):
+            _hybrid.HELPERS[(cycles.__name__, name)] = replacement
+            registered.add(name)
+    return registered
+
+
+_CYCLE_HELPERS_REGISTERED = _register_cycle_helpers()

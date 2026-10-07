@@ -5102,7 +5102,7 @@ impl CoreGraph {
         py: Python<'py>,
         adj: &Bound<'py, PyDict>,
         directed: bool,
-    ) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyList>, Bound<'py, PyList>, Bound<'py, PyList>)> {
+    ) -> PyResult<EdgelistColumns<'py>> {
         let sources = PyList::empty(py);
         let targets = PyList::empty(py);
         let datas = PyList::empty(py);
@@ -7682,9 +7682,22 @@ impl CoreGraph {
         };
         let versions: Vec<algorithms::gexf::Version> = versions
             .into_iter()
-            .map(|(ns_gexf, ns_viz, version)| algorithms::gexf::Version { ns_gexf, ns_viz, version })
+            .map(|(ns_gexf, ns_viz, version)| algorithms::gexf::Version {
+                ns_gexf,
+                ns_viz,
+                version,
+            })
             .collect();
-        algorithms::gexf::build(py, &dom, &versions, read_meta, python_type, convert_bool, int_nodes, classes)
+        algorithms::gexf::build(
+            py,
+            &dom,
+            &versions,
+            read_meta,
+            python_type,
+            convert_bool,
+            int_nodes,
+            classes,
+        )
     }
 
     /// `read_graphml` / `parse_graphml` on the document `data`: NetworkX's
@@ -7712,7 +7725,14 @@ impl CoreGraph {
         let (Some(doc), true) = (doc, ok?) else {
             return Ok(None);
         };
-        algorithms::graphml::build(py, &doc, node_type, edge_key_type, force_multigraph, classes)
+        algorithms::graphml::build(
+            py,
+            &doc,
+            node_type,
+            edge_key_type,
+            force_multigraph,
+            classes,
+        )
     }
 
     /// `random_k_out_graph`'s edges, in the order NetworkX adds them, and
@@ -9676,6 +9696,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(operators::_op_projection, m)?)?;
     m.add_function(wrap_pyfunction!(operators::_op_intersection, m)?)?;
     m.add_class::<AllPaths>()?;
+    m.add_class::<algorithms::cycle_search::CycleLists>()?;
+    m.add_class::<algorithms::cycle_search::CycleSearch>()?;
     m.add_class::<PredPaths>()?;
     m.add_class::<LinkScorer>()?;
     m.add_class::<AllTopoSorts>()?;
@@ -9710,3 +9732,11 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(_add_plain_edges, m)?)?;
     Ok(())
 }
+
+/// `edgelist_columns`' result: sources, targets, data dicts, attribute names.
+type EdgelistColumns<'py> = (
+    Bound<'py, PyList>,
+    Bound<'py, PyList>,
+    Bound<'py, PyList>,
+    Bound<'py, PyList>,
+);

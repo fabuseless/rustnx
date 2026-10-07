@@ -99,7 +99,10 @@ impl<'a> Attrs<'a> {
                 return None; // duplicate attribute: expat rejects it
             }
             let raw = std::str::from_utf8(&a.value).ok()?;
-            let value = if raw.bytes().any(|b| matches!(b, b'&' | b'\t' | b'\n' | b'\r')) {
+            let value = if raw
+                .bytes()
+                .any(|b| matches!(b, b'&' | b'\t' | b'\n' | b'\r'))
+            {
                 let raw = raw.replace("\r\n", " ").replace(['\t', '\n', '\r'], " ");
                 quick_xml::escape::unescape(&raw).ok()?.into_owned()
             } else {
@@ -111,7 +114,10 @@ impl<'a> Attrs<'a> {
     }
 
     fn get(&self, name: &[u8]) -> Option<String> {
-        self.0.iter().find(|(k, _)| *k == name).map(|(_, v)| v.clone())
+        self.0
+            .iter()
+            .find(|(k, _)| *k == name)
+            .map(|(_, v)| v.clone())
     }
 
     fn take(&mut self, name: &[u8]) -> Option<String> {
@@ -238,7 +244,9 @@ pub fn parse(bytes: &[u8]) -> Option<Document> {
                     Some(Ctx::Node | Ctx::Edge) if in_graphml && local == b"port" => {
                         return None; // NetworkX warns
                     }
-                    Some(c @ (Ctx::Graph | Ctx::Node | Ctx::Edge)) if in_graphml && local == b"data" => {
+                    Some(c @ (Ctx::Graph | Ctx::Node | Ctx::Edge))
+                        if in_graphml && local == b"data" =>
+                    {
                         let key = Attrs::read(e)?.take(b"key");
                         let g = doc.graphs.last_mut()?;
                         let list = match c {
@@ -269,13 +277,15 @@ pub fn parse(bytes: &[u8]) -> Option<Document> {
             Event::Text(t) => {
                 if matches!(stack.last(), Some(Ctx::Data | Ctx::Default)) {
                     let s = t.decode().ok()?;
-                    text.get_or_insert_with(String::new).push_str(&normalize_eol(&s));
+                    text.get_or_insert_with(String::new)
+                        .push_str(&normalize_eol(&s));
                 }
             }
             Event::CData(t) => {
                 if matches!(stack.last(), Some(Ctx::Data | Ctx::Default)) {
                     let s = std::str::from_utf8(&t).ok()?;
-                    text.get_or_insert_with(String::new).push_str(&normalize_eol(s));
+                    text.get_or_insert_with(String::new)
+                        .push_str(&normalize_eol(s));
                 }
             }
             Event::GeneralRef(r) => {
@@ -554,19 +564,34 @@ fn build_inner<'py>(
     force_multigraph: bool,
     classes: &Bound<'py, PyTuple>,
 ) -> PyResult<Option<Bound<'py, PyAny>>> {
-    let Some((keys, defaults)) = read_keys(py, doc)? else { return Ok(None) };
+    let Some((keys, defaults)) = read_keys(py, doc)? else {
+        return Ok(None);
+    };
     let graph = &doc.graphs[0];
     let directed = graph.edgedefault.as_deref() == Some("directed");
     let is_str_type = node_type.is(py.get_type::<PyString>());
     let is_int_type = node_type.is(py.get_type::<pyo3::types::PyInt>());
     if is_str_type || is_int_type {
-        return build_fast(py, graph, &keys, &defaults, is_int_type, edge_key_type, force_multigraph, classes);
+        return build_fast(
+            py,
+            graph,
+            &keys,
+            &defaults,
+            is_int_type,
+            edge_key_type,
+            force_multigraph,
+            classes,
+        );
     }
 
     // make_graph on a fresh MultiGraph / MultiDiGraph, as plain dicts.
     let node = PyDict::new(py);
     let succ = PyDict::new(py);
-    let pred = if directed { Some(PyDict::new(py)) } else { None };
+    let pred = if directed {
+        Some(PyDict::new(py))
+    } else {
+        None
+    };
     let gattr = graph_attrs(py, &keys, &defaults)?;
 
     let make_node = |id: &Option<String>| -> PyResult<Option<Bound<'py, PyAny>>> {
@@ -586,10 +611,17 @@ fn build_inner<'py>(
     };
 
     for nx_node in &graph.nodes {
-        let Some(n) = make_node(&nx_node.id)? else { return Ok(None) };
-        let Some(data) = decode(py, &keys, &nx_node.data)? else { return Ok(None) };
+        let Some(n) = make_node(&nx_node.id)? else {
+            return Ok(None);
+        };
+        let Some(data) = decode(py, &keys, &nx_node.data)? else {
+            return Ok(None);
+        };
         add_node(&n)?;
-        node.get_item(&n)?.unwrap().cast_into::<PyDict>()?.update(data.as_mapping())?;
+        node.get_item(&n)?
+            .unwrap()
+            .cast_into::<PyDict>()?
+            .update(data.as_mapping())?;
     }
 
     let edge_ids = PyDict::new(py);
@@ -599,9 +631,15 @@ fn build_inner<'py>(
             (true, Some("false")) | (false, Some("true")) => return Ok(None),
             _ => {}
         }
-        let Some(u) = make_node(&e.source)? else { return Ok(None) };
-        let Some(v) = make_node(&e.target)? else { return Ok(None) };
-        let Some(data) = decode(py, &keys, &e.data)? else { return Ok(None) };
+        let Some(u) = make_node(&e.source)? else {
+            return Ok(None);
+        };
+        let Some(v) = make_node(&e.target)? else {
+            return Ok(None);
+        };
+        let Some(data) = decode(py, &keys, &e.data)? else {
+            return Ok(None);
+        };
         let key: Bound<'py, PyAny> = match e.id.as_deref().filter(|s| !s.is_empty()) {
             Some(id) => {
                 let raw = PyString::new(py, id);
@@ -665,7 +703,9 @@ fn build_inner<'py>(
         };
         datadict.update(data.as_mapping())?;
     }
-    let Some(gdata) = decode(py, &keys, &graph.data)? else { return Ok(None) };
+    let Some(gdata) = decode(py, &keys, &graph.data)? else {
+        return Ok(None);
+    };
     gattr.update(gdata.as_mapping())?;
 
     let class_index = match (multigraph, directed) {
@@ -677,7 +717,9 @@ fn build_inner<'py>(
     let g = classes.get_item(class_index)?.call0()?;
     let set = |name: &str, value: &Bound<'py, PyDict>| g.setattr(name, value);
     if multigraph {
-        g.getattr("graph")?.cast_into::<PyDict>()?.update(gattr.as_mapping())?;
+        g.getattr("graph")?
+            .cast_into::<PyDict>()?
+            .update(gattr.as_mapping())?;
         set("_node", &node)?;
         set("_adj", &succ)?;
         if let Some(p) = &pred {
@@ -691,7 +733,11 @@ fn build_inner<'py>(
     // multigraph_input=True), then the graph and node attributes.
     let hnode = PyDict::new(py);
     let hsucc = PyDict::new(py);
-    let hpred = if directed { Some(PyDict::new(py)) } else { None };
+    let hpred = if directed {
+        Some(PyDict::new(py))
+    } else {
+        None
+    };
     for n in node.keys() {
         hnode.set_item(&n, PyDict::new(py))?;
         hsucc.set_item(&n, PyDict::new(py))?;
@@ -728,9 +774,15 @@ fn build_inner<'py>(
             }
         }
     }
-    g.getattr("graph")?.cast_into::<PyDict>()?.update(gattr.as_mapping())?;
+    g.getattr("graph")?
+        .cast_into::<PyDict>()?
+        .update(gattr.as_mapping())?;
     for (n, dd) in node.iter() {
-        hnode.get_item(&n)?.unwrap().cast_into::<PyDict>()?.update(dd.cast_into::<PyDict>()?.as_mapping())?;
+        hnode
+            .get_item(&n)?
+            .unwrap()
+            .cast_into::<PyDict>()?
+            .update(dd.cast_into::<PyDict>()?.as_mapping())?;
     }
     // nx.set_edge_attributes(G, values=edge_ids, name="id")
     for (uv, value) in edge_ids.iter() {
@@ -839,8 +891,12 @@ fn build_fast<'a, 'py>(
         by_value: PyDict::new(py),
     };
     for n in &graph.nodes {
-        let Some(i) = nodes.intern(&n.id)? else { return Ok(None) };
-        let Some(data) = decode(py, keys, &n.data)? else { return Ok(None) };
+        let Some(i) = nodes.intern(&n.id)? else {
+            return Ok(None);
+        };
+        let Some(data) = decode(py, keys, &n.data)? else {
+            return Ok(None);
+        };
         nodes.data[i].update(data.as_mapping())?;
     }
 
@@ -857,9 +913,15 @@ fn build_fast<'a, 'py>(
             _ => {}
         }
         // Evaluated as NetworkX does: source, target, data, then the key.
-        let Some(u) = nodes.intern(&e.source)? else { return Ok(None) };
-        let Some(v) = nodes.intern(&e.target)? else { return Ok(None) };
-        let Some(data) = decode(py, keys, &e.data)? else { return Ok(None) };
+        let Some(u) = nodes.intern(&e.source)? else {
+            return Ok(None);
+        };
+        let Some(v) = nodes.intern(&e.target)? else {
+            return Ok(None);
+        };
+        let Some(data) = decode(py, keys, &e.data)? else {
+            return Ok(None);
+        };
         let id = e.id.as_deref().filter(|s| !s.is_empty());
         if let Some(id) = id {
             // A custom edge_key_type can raise or have side effects; int
@@ -878,10 +940,16 @@ fn build_fast<'a, 'py>(
         }
         edges.push(EdgeRec { u, v, data, id });
     }
-    let Some(gdata) = decode(py, keys, &graph.data)? else { return Ok(None) };
+    let Some(gdata) = decode(py, keys, &graph.data)? else {
+        return Ok(None);
+    };
     gattr.update(gdata.as_mapping())?;
 
-    let Interner { nodes, data: node_data, .. } = nodes;
+    let Interner {
+        nodes,
+        data: node_data,
+        ..
+    } = nodes;
     let n = nodes.len();
     let node_dict = PyDict::new(py);
     for (node, data) in nodes.iter().zip(&node_data) {
@@ -894,10 +962,15 @@ fn build_fast<'a, 'py>(
         (true, true) => 3,
     };
     let g = classes.get_item(class_index)?.call0()?;
-    g.getattr("graph")?.cast_into::<PyDict>()?.update(gattr.as_mapping())?;
+    g.getattr("graph")?
+        .cast_into::<PyDict>()?
+        .update(gattr.as_mapping())?;
     let succ_rows: Vec<Bound<'py, PyDict>> = (0..n).map(|_| PyDict::new(py)).collect();
-    let pred_rows: Vec<Bound<'py, PyDict>> =
-        if directed { (0..n).map(|_| PyDict::new(py)).collect() } else { Vec::new() };
+    let pred_rows: Vec<Bound<'py, PyDict>> = if directed {
+        (0..n).map(|_| PyDict::new(py)).collect()
+    } else {
+        Vec::new()
+    };
 
     if multigraph {
         // make_graph's add_edges_from([(u, v, key, data)]) for each edge.
@@ -925,7 +998,11 @@ fn build_fast<'a, 'py>(
                 None => {
                     let kd = PyDict::new(py);
                     row_u.set_item(v, &kd)?;
-                    let back = if directed { &pred_rows[e.v] } else { &succ_rows[e.v] };
+                    let back = if directed {
+                        &pred_rows[e.v]
+                    } else {
+                        &succ_rows[e.v]
+                    };
                     back.set_item(&nodes[e.u], &kd)?;
                     kd
                 }

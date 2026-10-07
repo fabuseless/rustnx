@@ -959,6 +959,17 @@ NOTES.update({
     "to_pandas_edgelist": "`Graph` and `DiGraph` without `nodelist`: the edge and attribute columns gathered in Rust from the graph's own dicts (the attribute columns in NetworkX's set order), then the same `pd.DataFrame` call. 2.4x to 5x faster.",
     "from_pandas_adjacency": "rustnx's `from_numpy_array` on the frame's values, as NetworkX does. 2x to 3x faster.",
 })
+SECTIONS.append(("Set-order round: hybrids with Rust inner work", [
+    "simple_cycles", "chordless_cycles", "eulerize", "harmonic_function",
+    "local_and_global_consistency",
+]))
+NOTES.update({
+    "simple_cycles": "NetworkX's own code picks components and start nodes (by set order); Johnson's search and the length-bounded search inside it run in Rust on the same neighbor lists and yield the same lists of the same node objects, lazily. 4x to 6x faster when there are many cycles; about even when NetworkX's component loop dominates.",
+    "chordless_cycles": "As `simple_cycles`: NetworkX picks components and stems, the chordless search runs in Rust. Up to 10x faster.",
+    "eulerize": "NetworkX's own code, with its maximum weight matching in rustnx. 2x to 3x faster.",
+    "harmonic_function": "NetworkX's own code on the adjacency matrix rustnx builds. About 1.2x faster (its time is in SciPy's LIL assignment).",
+    "local_and_global_consistency": "NetworkX's own code on the adjacency matrix rustnx builds. 3x to 5x faster.",
+})
 SECTIONS.append(("Bipartite measures", [
     "latapy_clustering", "bipartite_average_clustering", "robins_alexander_clustering",
     "bipartite_betweenness_centrality", "overlap_weighted_projected_graph",
