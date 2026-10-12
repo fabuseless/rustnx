@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 636 NetworkX functions. Call them as usual (for
+rustnx implements 647 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly, except that
 the functions marked "fast by default" in the Floats column can differ
@@ -857,6 +857,22 @@ in the last bits of their floats until you turn on exact floats.
 | `nx.eulerize` | all (NetworkX's own code runs) | yes | rustnx | exact | NetworkX's own code, with its maximum weight matching in rustnx. 2x to 3x faster. |
 | `nx.harmonic_function` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code on the adjacency matrix rustnx builds. About 1.2x faster (its time is in SciPy's LIL assignment). |
 | `nx.local_and_global_consistency` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code on the adjacency matrix rustnx builds. 3x to 5x faster. |
+
+### Ports round: DOT, randomized measures and tours
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Floats | Notes |
+|---|---|---|---|---|---|
+| `nx.pydot_read_dot` | `path` | no | rustnx | exact | `nx.nx_pydot.read_dot`. Rust parses the file with pydot 4.0.1's grammar (pyparsing's ordered choices, comments, case-insensitive keyword prefixes, `+` concatenation, ports) and NetworkX's own `from_pydot` builds the graph from it. Other pydot versions go to pydot. About 100x faster. |
+| `nx.approximate_average_clustering` | `trials`, `seed` | no | rustnx | exact | `nx.approximation.average_clustering`, replaying `random.Random`'s draws (`random()` and `sample`) in Rust. About 20x faster. |
+| `nx.random_reference` | `niter`, `connectivity`, `seed` | no | rustnx | exact | Replays `random.Random`'s draws in Rust and swaps edges on NetworkX's own copy of the graph, as `add_edge` / `remove_edge` do; the connectivity check (a max-flow in NetworkX before 3.7, `has_path` after) is a breadth-first search, with the same answer. 500x to 1,400x faster. |
+| `nx.lattice_reference` | `niter`, `D`, `connectivity`, `seed` | no | rustnx | exact | As `random_reference`, with NetworkX's default ring distance D (a given D goes to NetworkX). 150x to 850x faster. |
+| `nx.sigma` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with its reference graphs, transitivity and path lengths from rustnx. 400x to 1,200x faster. |
+| `nx.omega` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with its reference graphs, clustering and path lengths from rustnx. 400x to 1,200x faster. |
+| `nx.generate_random_paths` | `sample_size`, `path_length`, `index_map`, `weight`, `seed`, `source` | no | rustnx | exact | Replays a legacy NumPy `RandomState` (`randint`, and `choice` with NumPy's own probability checks) in Rust, one path at a time on the generator's own state, so it stays lazy and the generator is exactly where NetworkX leaves it after every path. `Generator` seeds and graphs with isolated nodes go to NetworkX. 15x to 25x faster. |
+| `nx.panther_similarity` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with its random paths from rustnx. About 20x faster. |
+| `nx.panther_vector_similarity` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with its random paths from rustnx. 1.5x to 5x faster (the rest is NumPy). |
+| `nx.christofides` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with its spanning tree, matching and Euler circuit from rustnx. About 5x faster. |
+| `nx.traveling_salesman_problem` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with its all-pairs shortest paths and the Christofides steps from rustnx. About 4x faster. |
 
 ### Bipartite measures
 

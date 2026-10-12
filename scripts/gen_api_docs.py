@@ -970,6 +970,24 @@ NOTES.update({
     "harmonic_function": "NetworkX's own code on the adjacency matrix rustnx builds. About 1.2x faster (its time is in SciPy's LIL assignment).",
     "local_and_global_consistency": "NetworkX's own code on the adjacency matrix rustnx builds. 3x to 5x faster.",
 })
+SECTIONS.append(("Ports round: DOT, randomized measures and tours", [
+    "pydot_read_dot", "approximate_average_clustering", "random_reference", "lattice_reference",
+    "sigma", "omega", "generate_random_paths", "panther_similarity", "panther_vector_similarity",
+    "christofides", "traveling_salesman_problem",
+]))
+NOTES.update({
+    "pydot_read_dot": "`nx.nx_pydot.read_dot`. Rust parses the file with pydot 4.0.1's grammar (pyparsing's ordered choices, comments, case-insensitive keyword prefixes, `+` concatenation, ports) and NetworkX's own `from_pydot` builds the graph from it. Other pydot versions go to pydot. About 100x faster.",
+    "approximate_average_clustering": "`nx.approximation.average_clustering`, replaying `random.Random`'s draws (`random()` and `sample`) in Rust. About 20x faster.",
+    "random_reference": "Replays `random.Random`'s draws in Rust and swaps edges on NetworkX's own copy of the graph, as `add_edge` / `remove_edge` do; the connectivity check (a max-flow in NetworkX before 3.7, `has_path` after) is a breadth-first search, with the same answer. 500x to 1,400x faster.",
+    "lattice_reference": "As `random_reference`, with NetworkX's default ring distance D (a given D goes to NetworkX). 150x to 850x faster.",
+    "sigma": "NetworkX's own code, with its reference graphs, transitivity and path lengths from rustnx. 400x to 1,200x faster.",
+    "omega": "NetworkX's own code, with its reference graphs, clustering and path lengths from rustnx. 400x to 1,200x faster.",
+    "generate_random_paths": "Replays a legacy NumPy `RandomState` (`randint`, and `choice` with NumPy's own probability checks) in Rust, one path at a time on the generator's own state, so it stays lazy and the generator is exactly where NetworkX leaves it after every path. `Generator` seeds and graphs with isolated nodes go to NetworkX. 15x to 25x faster.",
+    "panther_similarity": "NetworkX's own code, with its random paths from rustnx. About 20x faster.",
+    "panther_vector_similarity": "NetworkX's own code, with its random paths from rustnx. 1.5x to 5x faster (the rest is NumPy).",
+    "christofides": "NetworkX's own code, with its spanning tree, matching and Euler circuit from rustnx. About 5x faster.",
+    "traveling_salesman_problem": "NetworkX's own code, with its all-pairs shortest paths and the Christofides steps from rustnx. About 4x faster.",
+})
 SECTIONS.append(("Bipartite measures", [
     "latapy_clustering", "bipartite_average_clustering", "robins_alexander_clustering",
     "bipartite_betweenness_centrality", "overlap_weighted_projected_graph",

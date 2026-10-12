@@ -4452,6 +4452,22 @@ impl CoreGraph {
         }))
     }
 
+    /// `approximate_average_clustering`'s triangle count and the
+    /// generator's new state. `None` for an empty graph or a bad state.
+    fn approx_avg_triangles(
+        &self,
+        py: Python<'_>,
+        trials: usize,
+        state: Vec<u32>,
+    ) -> Option<(u64, Vec<u32>)> {
+        py.detach(|| {
+            let mut rng = communities::Mt19937::from_state(&state)?;
+            let rows: Vec<&[u32]> = (0..self.n).map(|v| self.succ.neighbors(v)).collect();
+            let t = algorithms::random_measures::approx_triangles(&rows, trials, &mut rng)?;
+            Some((t, rng.state()))
+        })
+    }
+
     /// `fast_label_propagation_communities`: final labels and the
     /// generator's new state. Directed graphs need exact in-edge order.
     #[allow(clippy::type_complexity)]
@@ -7651,6 +7667,114 @@ impl CoreGraph {
         })
     }
 
+    /// `nx.nx_pydot.read_dot`'s first graph as pydot 4 parses `text`:
+    /// `(digraph, strict, name, attributes, nodes, edges)`, with nodes as
+    /// `(name, [attributes, ...])` groups and edges as groups of
+    /// `(source, target, attributes)`, an endpoint being a node id or a
+    /// list (a subgraph's node names); attributes are `(name, value or
+    /// None)` lists. `ident` is pyparsing's identifier-character bitmap.
+    /// `None` lets pydot parse it.
+    #[staticmethod]
+    fn dot_read<'py>(
+        py: Python<'py>,
+        text: &str,
+        ident: &[u8],
+    ) -> PyResult<Option<Bound<'py, PyTuple>>> {
+        use algorithms::dot::Endpoint;
+        let Some(g) = py.detach(|| algorithms::dot::parse(text, ident)) else {
+            return Ok(None);
+        };
+        let attrs = |a: &algorithms::dot::Attrs| -> PyResult<Bound<'py, PyList>> {
+            PyList::new(py, a.iter().map(|(k, v)| (k.as_str(), v.as_deref())))
+        };
+        let endpoint = |e: &Endpoint| -> PyResult<Bound<'py, PyAny>> {
+            Ok(match e {
+                Endpoint::Name(s) => pyo3::types::PyString::new(py, s).into_any(),
+                Endpoint::Subgraph(names) => PyList::new(py, names)?.into_any(),
+            })
+        };
+        let nodes = PyList::empty(py);
+        for (name, groups) in &g.nodes {
+            let list = PyList::empty(py);
+            for a in groups {
+                list.append(attrs(a)?)?;
+            }
+            nodes.append((name.as_str(), list))?;
+        }
+        let edges = PyList::empty(py);
+        for group in &g.edges {
+            let list = PyList::empty(py);
+            for (u, v, a) in group {
+                list.append((endpoint(u)?, endpoint(v)?, attrs(a)?))?;
+            }
+            edges.append(list)?;
+        }
+        Ok(Some(PyTuple::new(
+            py,
+            [
+                g.digraph.into_pyobject(py)?.to_owned().into_any(),
+                g.strict.into_pyobject(py)?.to_owned().into_any(),
+                pyo3::types::PyString::new(py, &g.name).into_any(),
+                attrs(&g.attrs)?.into_any(),
+                nodes.into_any(),
+                edges.into_any(),
+            ],
+        )?))
+    }
+
+    /// `random_reference` / `lattice_reference` on `adj`, the `_adj` of a
+    /// fresh copy of the graph: the swaps applied as NetworkX's
+    /// `add_edge` / `remove_edge` would, and the generator's new state.
+    /// `None` (graph untouched) where NetworkX raises or for a bad state.
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    fn reference_swaps<'py>(
+        py: Python<'py>,
+        adj: &Bound<'py, PyDict>,
+        lattice: bool,
+        niter: usize,
+        connectivity: bool,
+        old_cdf: bool,
+        state: Vec<u32>,
+    ) -> PyResult<Option<Vec<u32>>> {
+        let nodes: Vec<Bound<'py, PyAny>> = adj.keys().iter().collect();
+        let index = PyDict::new(py);
+        for (i, u) in nodes.iter().enumerate() {
+            index.set_item(u, i)?;
+        }
+        let mut rows = Vec::with_capacity(nodes.len());
+        for (_, nbrs) in adj.iter() {
+            let nbrs = nbrs.cast_into::<PyDict>()?;
+            let mut row = Vec::with_capacity(nbrs.len());
+            for v in nbrs.keys() {
+                row.push(
+                    index
+                        .get_item(&v)?
+                        .expect("neighbor is a node")
+                        .extract::<u32>()?,
+                );
+            }
+            rows.push(row);
+        }
+        let Some(mut rng) = communities::Mt19937::from_state(&state) else {
+            return Ok(None);
+        };
+        let Some(ops) = py.detach(|| {
+            algorithms::random_measures::reference_swaps(
+                rows,
+                niter,
+                connectivity,
+                lattice,
+                old_cdf,
+                &mut rng,
+            )
+        }) else {
+            return Ok(None);
+        };
+        algorithms::random_measures::apply_ops(py, adj, &nodes, &ops)?;
+        Ok(Some(rng.state()))
+    }
+
     /// `read_gexf` on the document `data` (before `relabel`): NetworkX's
     /// graph, built into one of `classes` (Graph, DiGraph, MultiGraph,
     /// MultiDiGraph); `None` lets NetworkX read it. `versions` are the
@@ -9696,6 +9820,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(operators::_op_projection, m)?)?;
     m.add_function(wrap_pyfunction!(operators::_op_intersection, m)?)?;
     m.add_class::<AllPaths>()?;
+    m.add_class::<algorithms::random_measures::RandomPaths>()?;
     m.add_class::<algorithms::cycle_search::CycleLists>()?;
     m.add_class::<algorithms::cycle_search::CycleSearch>()?;
     m.add_class::<PredPaths>()?;

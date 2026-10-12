@@ -42,6 +42,16 @@ NESTED = (
     "chordal_graph_cliques",
     "maximum_spanning_tree",
     "is_chordal",
+    "all_pairs_dijkstra",
+    "minimum_spanning_tree",
+    "min_weight_matching",
+    "eulerian_circuit",
+    "random_reference",
+    "lattice_reference",
+    "transitivity",
+    "average_shortest_path_length",
+    "average_clustering",
+    "generate_random_paths",
 )
 
 # NetworkX functions that hybrids must run in NetworkX itself: they return

@@ -214,6 +214,8 @@ STAYS = {
     'double_edge_swap': MUTATES,
     'directed_edge_swap': MUTATES,
     'connected_double_edge_swap': MUTATES,
+    'agraph_read_dot': "Graphviz's own C parser reads the file (0.04 s for 8,000 edges, measured), and the rest is reading pygraphviz's objects through pygraphviz (0.15 s), which rustnx would have to do the same way",
+    'from_agraph': "it reads pygraphviz's objects through pygraphviz's own accessors (0.15 s for 8,000 edges, measured), which rustnx would have to call the same way",
     'from_pydot': "it reads pydot's Python objects through pydot's own methods (0.055 s for 8,000 edges, measured), which rustnx would have to call the same way",
 }
 
