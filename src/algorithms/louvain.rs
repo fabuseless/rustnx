@@ -1,6 +1,7 @@
 //! NetworkX's Louvain community detection (`louvain_partitions`), level by
 //! level, with Python's own arithmetic: ints and floats as Python mixes
-//! them, and `sum()` as CPython adds (compensated for floats from 3.12).
+//! them, and `sum()` as CPython adds (compensated for floats from 3.12, and
+//! for ints after the first float from 3.14).
 //! Two variants: NetworkX 3.4 to 3.6, and 3.7 (rescaled gains, a separate
 //! `gamma`). The Python side replays the set operations (so the yielded
 //! sets are NetworkX's own, with the same history) and hands back the
@@ -144,10 +145,12 @@ impl Num {
 /// CPython's builtin `sum()` over ints and floats, from the start value 0:
 /// ints add exactly; the first float switches to float adding, compensated
 /// (Neumaier) from Python 3.12 (`compensated`). Ints added in float mode
-/// are converted and added plainly. Partial int sums are kept within a C
+/// are converted and added plainly, or compensated too from Python 3.14
+/// (`flow::SUM_INTS_COMPENSATED`). Partial int sums are kept within a C
 /// long on every platform (2^31), else the caller declines.
 pub struct PySum {
     compensated: bool,
+    ints_compensated: bool,
     int: Option<i128>,
     f: f64,
     c: f64,
@@ -158,6 +161,8 @@ impl PySum {
     pub fn new(compensated: bool) -> Self {
         PySum {
             compensated,
+            ints_compensated: compensated
+                && super::flow::SUM_INTS_COMPENSATED.load(std::sync::atomic::Ordering::Relaxed),
             int: Some(0),
             f: 0.0,
             c: 0.0,
@@ -179,25 +184,27 @@ impl PySum {
                 self.f = i as f64 + v;
                 self.c = 0.0;
             }
-            (None, Num::F(x)) => {
-                if self.compensated {
-                    let t = self.f + x;
-                    if self.f.abs() >= x.abs() {
-                        self.c += (self.f - t) + x;
-                    } else {
-                        self.c += (x - t) + self.f;
-                    }
-                    self.f = t;
-                } else {
-                    self.f += x;
-                }
-            }
+            (None, Num::F(x)) => self.add_float(x, self.compensated),
             (None, Num::I(v)) => {
                 if v.abs() >= (1 << 31) {
                     self.ok = false;
                 }
-                self.f += v as f64;
+                self.add_float(v as f64, self.ints_compensated);
             }
+        }
+    }
+
+    fn add_float(&mut self, x: f64, compensated: bool) {
+        if compensated {
+            let t = self.f + x;
+            if self.f.abs() >= x.abs() {
+                self.c += (self.f - t) + x;
+            } else {
+                self.c += (x - t) + self.f;
+            }
+            self.f = t;
+        } else {
+            self.f += x;
         }
     }
 

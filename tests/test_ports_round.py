@@ -345,3 +345,201 @@ def test_louvain_is_used():
     G = nx.karate_club_graph()
     # Raises NotImplementedError if rustnx declines (backend given explicitly).
     assert list(nx.community.louvain_partitions(G, seed=random.Random(1), backend="rustnx"))
+
+
+# --- lukes, approximate k-components, random spanning trees, ATSP ---------------
+
+
+def _run(func, *args, **kwargs):
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return "ok", func(*args, **kwargs)
+    except Exception as exc:
+        return type(exc).__name__, str(exc)
+
+
+def _tree(n, seed, directed):
+    T = nx.random_labeled_tree(n, seed=seed) if hasattr(nx, "random_labeled_tree") else nx.random_tree(n, seed=seed)
+    rnd = random.Random(seed)
+    if rnd.random() < 0.3:
+        T = nx.relabel_nodes(T, {v: (f"s{v}" if v % 2 else (v, v)) for v in T})
+    if directed:
+        T = nx.bfs_tree(T, next(iter(T)))
+    for u, v in T.edges:
+        T.edges[u, v]["w"] = rnd.choice([rnd.random(), rnd.randint(1, 5)])
+    for v in T:
+        T.nodes[v]["nw"] = rnd.randint(1, 3)
+    return T
+
+
+@pytest.mark.parametrize("s", range(20))
+def test_lukes_partitioning(s):
+    for directed in (False, True):
+        T = _tree(1 + s % 25, s, directed)
+        for kw in ({"max_size": 4}, {"max_size": 6, "node_weight": "nw", "edge_weight": "w"},
+                   {"max_size": 3, "edge_weight": "w"}, {"max_size": 0}):
+            def run(backend):
+                random.seed(s)
+                out = _run(nx.community.lukes_partitioning, T, backend=backend, **kw)
+                if out[0] == "ok" and out[1] is not None:
+                    out = "ok", [list(c) for c in out[1]]
+                return out, random.random()
+            assert run("rustnx") == run("networkx")
+
+
+def test_fast_descendants_iterate_the_same():
+    from rustnx import _hybrid
+
+    for G in (nx.gnp_random_graph(40, 0.08, seed=1, directed=True), nx.gnp_random_graph(30, 0.1, seed=2),
+              nx.relabel_nodes(nx.path_graph(9, create_using=nx.DiGraph), {i: str(i) for i in range(9)})):
+        for v in G:
+            assert list(_hybrid._descendants(G, v)) == list(nx.descendants(G, v, backend="networkx"))
+    with pytest.raises(nx.NetworkXError):
+        _hybrid._descendants(nx.path_graph(3, create_using=nx.DiGraph), 7)
+
+
+@pytest.mark.parametrize("s", range(6))
+def test_approximate_k_components(s):
+    from networkx.algorithms import approximation as ap
+
+    G = [nx.connected_watts_strogatz_graph(30 + 10 * s, 4 + s % 3, 0.3, seed=s), nx.gnm_random_graph(40, 160, seed=s),
+         nx.karate_club_graph()][s % 3]
+
+    def run(backend):
+        out = _run(ap.k_components, G, backend=backend)
+        if out[0] == "ok":
+            out = "ok", [(k, [list(c) for c in v]) for k, v in out[1].items()]
+        return out
+
+    assert run("rustnx") == run("networkx")
+
+
+def test_approximate_k_components_uses_rust():
+    from rustnx import _hybrid
+
+    assert "approximate_local_node_connectivity" in _hybrid.DISPATCH_HELPERS
+    assert _hybrid.scratch() is None
+
+
+def _spanning_outcome(G, backend, **kw):
+    out = _run(nx.random_spanning_tree, G, backend=backend, **kw)
+    if out[0] == "ok":
+        T = out[1]
+        out = "ok", list(T.nodes), list(T.edges), T.graph
+    return out
+
+
+@pytest.mark.parametrize("s", range(60))
+def test_random_spanning_tree(s):
+    rnd = random.Random(s)
+    n = rnd.randint(0, 14)
+    G = nx.gnm_random_graph(n, rnd.randint(0, n * (n - 1) // 2), seed=s)
+    if rnd.random() < 0.3:
+        G = nx.relabel_nodes(G, {v: (f"s{v}" if v % 2 else (v, 1)) for v in G})
+    for u, v in G.edges:
+        G.edges[u, v]["w"] = rnd.randint(1, 6)
+    for kw in ({}, {"weight": "w"}):
+        ours = _spanning_outcome(G, "rustnx", seed=s, **kw)
+        if ours[0] == "NotImplementedError":
+            assert not algorithms._random_spanning_tree_recognized()
+            continue
+        assert ours == _spanning_outcome(G, "networkx", seed=s, **kw)
+    random.seed(s)
+    ours = _spanning_outcome(G, "rustnx"), random.random()
+    random.seed(s)
+    assert ours == (_spanning_outcome(G, "networkx"), random.random()) or ours[0][0] == "NotImplementedError"
+
+
+def test_random_spanning_tree_declines():
+    G = nx.cycle_graph(5)
+    G.add_edge(0, 0)
+    H = nx.cycle_graph(5)
+    nx.set_edge_attributes(H, 0.5, "w")
+    for graph, kw in ((G, {}), (H, {"weight": "w"}), (nx.cycle_graph(5), {"multiplicative": False, "weight": "w"})):
+        with pytest.raises(NotImplementedError):
+            nx.random_spanning_tree(graph, seed=1, backend="rustnx", **kw)
+
+
+@pytest.mark.parametrize("s", range(8))
+def test_asadpour_and_held_karp(s):
+    from networkx.algorithms import approximation as ap
+
+    rnd = random.Random(s)
+    n = rnd.randint(3, 6)
+    A = nx.complete_graph(n, create_using=nx.DiGraph)
+    for u, v in A.edges:
+        A.edges[u, v]["weight"] = rnd.choice([rnd.randint(1, 100), rnd.random() * 50])
+
+    def run(func, backend, **kw):
+        out = _run(func, A, backend=backend, **kw)
+        if out[0] == "ok" and isinstance(out[1], tuple):
+            out = "ok", (out[1][0], snapshot(out[1][1]) if hasattr(out[1][1], "edges") else out[1][1])
+        return out
+
+    for func, kw in ((ap.asadpour_atsp, {"seed": s}), (ap.traveling_salesman.held_karp_ascent, {})):
+        ref = run(func, "networkx", **kw)
+        # NetworkX keeps the minimum 1-arborescences in a set of graphs,
+        # which iterates in memory-address order; compare only where its
+        # own runs agree.
+        if ref != run(func, "networkx", **kw):
+            continue
+        assert run(func, "rustnx", **kw) == ref
+
+
+def _walk(G, backend, n, **kw):
+    import itertools
+
+    try:
+        it = nx.random_walk(G, backend=backend, **kw)
+    except Exception as exc:
+        return "call", type(exc).__name__, str(exc)
+    out = []
+    try:
+        out.extend(itertools.islice(it, n))
+        return "ok", out
+    except Exception as exc:
+        return type(exc).__name__, str(exc), out
+
+
+@pytest.mark.parametrize("s", range(30))
+def test_random_walk(s):
+    if not algorithms._random_walk_recognized():
+        pytest.skip("this NetworkX has no random_walk rustnx follows")
+    rnd = random.Random(s)
+    n = rnd.randint(1, 12)
+    G = nx.gnp_random_graph(n, rnd.random() * 0.5, seed=s, directed=rnd.random() < 0.5)
+    for u, v in G.edges:
+        r = rnd.random()
+        G.edges[u, v]["w"] = 0 if r < 0.2 else (-1 if r < 0.25 else (rnd.randint(1, 4) if r < 0.6 else rnd.random()))
+    for kw in ({}, {"weight": "w"}, {"weight": "missing"}):
+        for start in (0, n + 5):
+            assert _walk(G, "rustnx", 300, start=start, seed=s, **kw) == _walk(G, "networkx", 300, start=start, seed=s, **kw)
+    random.seed(s)
+    ours = _walk(G, "rustnx", 50, start=0), random.random()
+    random.seed(s)
+    assert ours == (_walk(G, "networkx", 50, start=0), random.random())
+
+
+@pytest.mark.parametrize("s", range(6))
+def test_random_walk_follows_graph_changes(s):
+    import itertools
+
+    if not algorithms._random_walk_recognized():
+        pytest.skip("this NetworkX has no random_walk rustnx follows")
+    runs = []
+    for backend in ("rustnx", "networkx"):
+        G = nx.cycle_graph(8)
+        out = []
+        for i, x in enumerate(itertools.islice(nx.random_walk(G, start=0, seed=random.Random(s), backend=backend), 200)):
+            out.append(x)
+            if i % 17 == 5:
+                G.add_edge(x, (x * 3 + i) % 11)
+            if i % 29 == 7 and G.has_edge(x, (x + 1) % 8):
+                G.remove_edge(x, (x + 1) % 8)
+            if i == 150:
+                G.__networkx_cache__ = None
+            if i in (160, 170):
+                G.add_edge(x, 20 + i)
+        runs.append(out)
+    assert runs[0] == runs[1]

@@ -993,6 +993,24 @@ NOTES.update({
     "louvain_partitions": "NetworkX's Louvain (3.4 to 3.6, and 3.7's rescaled variant) run level by level in Rust with Python's own arithmetic: ints and floats mixed as Python mixes them, `sum()` as CPython adds (compensated from Python 3.12, checked against the running interpreter), and `pow` from the same C library. Python replays the set operations, so every yielded set is built exactly as NetworkX builds it, and `modularity` follows the iteration order of the same set copies. `Graph` and `DiGraph` with int or float weights; the rest goes to NetworkX. 4x to 10x faster.",
     "louvain_communities": "NetworkX's own code, with `louvain_partitions` from rustnx.",
 })
+SECTIONS.append(("Ports round: partitions, k-components, spanning trees, ATSP", [
+    "lukes_partitioning", "approximate_k_components", "random_spanning_tree", "asadpour_atsp",
+    "held_karp_ascent", "random_walk",
+]))
+NOTES.update({
+    "lukes_partitioning": "NetworkX's own code, with `nx.descendants` (called for every node it checks) as the same breadth-first search over the same dicts in Rust, collected into a set in the same order. About 2.5x faster.",
+    "approximate_k_components": "`nx.approximation.k_components`: NetworkX's own code, with every `local_node_connectivity` call answered by rustnx's port on one conversion of each subgraph, without NetworkX's per-call dispatch. 10x to 25x faster.",
+    "random_spanning_tree": "NetworkX's draws on `seed` in NetworkX's order over the same Python sets; each contracted Laplacian (the same integers, nodes in the same order) is built directly and handed to the same `np.linalg.det`. Multiplicative, unweighted or int weights, `Graph` without self-loops, NetworkX 3.5+; the rest goes to NetworkX. 15x to 20x faster.",
+    "asadpour_atsp": "NetworkX's own code, with `held_karp_ascent` and the arborescences its `ArborescenceIterator` enumerates from rustnx. About 30x faster.",
+    "random_walk": "NetworkX 3.7+. The same `seed.choice` / `seed.choices` calls in the same order, on each node's neighbors (and cumulative weights) built once instead of at every step. Changing the graph during the walk clears its `__networkx_cache__`, which drops them, so the walk follows the graph as NetworkX's does. `random.Random` seeds and plain `Graph` / `DiGraph`. 2x to 14x faster.",
+    "held_karp_ascent": "NetworkX's own code, with the arborescences its `ArborescenceIterator` enumerates from rustnx. NetworkX keeps the minimum 1-arborescences in a set of graphs, which iterates in memory-address order, so ties can come out differently from one run to the next (in NetworkX too).",
+})
+QUALIFIED.update({
+    "approximate_k_components": "nx.approximation.k_components",
+    "asadpour_atsp": "nx.approximation",
+    "held_karp_ascent": "nx.approximation.traveling_salesman",
+    "lukes_partitioning": "nx.community",
+})
 SECTIONS.append(("Bipartite measures", [
     "latapy_clustering", "bipartite_average_clustering", "robins_alexander_clustering",
     "bipartite_betweenness_centrality", "overlap_weighted_projected_graph",

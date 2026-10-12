@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 649 NetworkX functions. Call them as usual (for
+rustnx implements 655 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly, except that
 the functions marked "fast by default" in the Floats column can differ
@@ -880,6 +880,17 @@ in the last bits of their floats until you turn on exact floats.
 |---|---|---|---|---|---|
 | `nx.louvain_partitions` | `weight`, `resolution`, `threshold`, `seed` | no | rustnx | exact | NetworkX's Louvain (3.4 to 3.6, and 3.7's rescaled variant) run level by level in Rust with Python's own arithmetic: ints and floats mixed as Python mixes them, `sum()` as CPython adds (compensated from Python 3.12, checked against the running interpreter), and `pow` from the same C library. Python replays the set operations, so every yielded set is built exactly as NetworkX builds it, and `modularity` follows the iteration order of the same set copies. `Graph` and `DiGraph` with int or float weights; the rest goes to NetworkX. 4x to 10x faster. |
 | `nx.louvain_communities` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with `louvain_partitions` from rustnx. |
+
+### Ports round: partitions, k-components, spanning trees, ATSP
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Floats | Notes |
+|---|---|---|---|---|---|
+| `nx.community` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with `nx.descendants` (called for every node it checks) as the same breadth-first search over the same dicts in Rust, collected into a set in the same order. About 2.5x faster. |
+| `nx.approximation.k_components` | all (NetworkX's own code runs) | no | rustnx | exact | `nx.approximation.k_components`: NetworkX's own code, with every `local_node_connectivity` call answered by rustnx's port on one conversion of each subgraph, without NetworkX's per-call dispatch. 10x to 25x faster. |
+| `nx.random_spanning_tree` | `weight`, `multiplicative`, `seed` | no | rustnx | exact | NetworkX's draws on `seed` in NetworkX's order over the same Python sets; each contracted Laplacian (the same integers, nodes in the same order) is built directly and handed to the same `np.linalg.det`. Multiplicative, unweighted or int weights, `Graph` without self-loops, NetworkX 3.5+; the rest goes to NetworkX. 15x to 20x faster. |
+| `nx.approximation` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with `held_karp_ascent` and the arborescences its `ArborescenceIterator` enumerates from rustnx. About 30x faster. |
+| `nx.approximation.traveling_salesman` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with the arborescences its `ArborescenceIterator` enumerates from rustnx. NetworkX keeps the minimum 1-arborescences in a set of graphs, which iterates in memory-address order, so ties can come out differently from one run to the next (in NetworkX too). |
+| `nx.random_walk` | `start`, `weight`, `seed` | no | rustnx | exact | NetworkX 3.7+. The same `seed.choice` / `seed.choices` calls in the same order, on each node's neighbors (and cumulative weights) built once instead of at every step. Changing the graph during the walk clears its `__networkx_cache__`, which drops them, so the walk follows the graph as NetworkX's does. `random.Random` seeds and plain `Graph` / `DiGraph`. 2x to 14x faster. |
 
 ### Bipartite measures
 

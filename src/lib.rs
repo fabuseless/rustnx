@@ -7775,6 +7775,41 @@ impl CoreGraph {
         Ok(Some(rng.state()))
     }
 
+    /// `nx.descendants(G, source)` over `G._adj` (`adj`, a dict of dicts):
+    /// the children in NetworkX's breadth-first discovery order, added to
+    /// the set one by one as its set comprehension does. None if a row is
+    /// not a dict.
+    #[staticmethod]
+    fn dict_descendants<'py>(
+        py: Python<'py>,
+        adj: &Bound<'py, PyDict>,
+        source: &Bound<'py, PyAny>,
+    ) -> PyResult<Option<Bound<'py, pyo3::types::PySet>>> {
+        let seen = pyo3::types::PySet::new(py, [source])?;
+        let mut order: Vec<Bound<'py, PyAny>> = vec![source.clone()];
+        let mut i = 0;
+        while i < order.len() {
+            let Some(row) = adj.get_item(&order[i])? else {
+                return Ok(None);
+            };
+            let Ok(row) = row.cast_into::<PyDict>() else {
+                return Ok(None);
+            };
+            for v in row.keys() {
+                if !seen.contains(&v)? {
+                    seen.add(&v)?;
+                    order.push(v);
+                }
+            }
+            i += 1;
+        }
+        let out = pyo3::types::PySet::empty(py)?;
+        for v in &order[1..] {
+            out.add(v)?;
+        }
+        Ok(Some(out))
+    }
+
     /// `x ** 2` for a float as rustnx's Louvain computes it, for its
     /// self-test.
     #[staticmethod]

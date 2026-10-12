@@ -8,6 +8,27 @@ versions may change behavior.
 ## [Unreleased]
 
 ### Added
+- Ports round, all exact on NetworkX 3.4 to 3.7:
+  - `nx.nx_pydot.read_dot` parses with pydot 4.0.1's grammar in Rust (about
+    100x faster); other pydot versions go to pydot.
+  - Louvain: `louvain_partitions` runs in Rust with Python's own arithmetic
+    (int and float mixing, CPython's `sum()`, the C library's `pow`) for both
+    NetworkX variants, and `louvain_communities` is NetworkX's code around it.
+    4x to 10x faster.
+  - Randomized measures that replay Python's or NumPy's draws:
+    `random_reference` and `lattice_reference` (150x to 1,400x), `sigma` and
+    `omega` (400x to 1,200x), `approximate_average_clustering` (about 20x),
+    `generate_random_paths` (15x to 25x), `panther_similarity` (about 20x)
+    and `panther_vector_similarity` (1.5x to 5x), `random_spanning_tree`
+    (15x to 20x; multiplicative, unweighted or int weights, NetworkX 3.5+)
+    and NetworkX 3.7's `random_walk` (2x to 14x).
+  - Hybrids: `christofides` (5x), `traveling_salesman_problem` (4x),
+    `asadpour_atsp` and `held_karp_ascent` (about 30x),
+    `approximate_k_components` (10x to 25x) and `lukes_partitioning` (about
+    2.5x).
+  - `docs/COVERAGE.md` gives measured reasons for 15 more functions that stay
+    in NetworkX (edit distance, Leiden, polynomials, `simrank_similarity`,
+    pygraphviz readers, ...).
 - `simple_cycles` and `chordless_cycles` as hybrids: NetworkX's own code
   makes every choice that depends on set order, and the cycle searches inside
   it (Johnson's, the length-bounded one and the chordless one) run in Rust on
