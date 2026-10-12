@@ -20,6 +20,7 @@ import functools
 import inspect
 import threading
 import types
+import warnings
 
 import networkx as nx
 
@@ -52,6 +53,7 @@ NESTED = (
     "average_shortest_path_length",
     "average_clustering",
     "generate_random_paths",
+    "louvain_partitions",
 )
 
 # NetworkX functions that hybrids must run in NetworkX itself: they return
@@ -98,11 +100,19 @@ def _nested(func):
     @functools.wraps(func)
     def call(*args, **kwargs):
         try:
-            return func(*args, backend="rustnx", **kwargs)
+            with warnings.catch_warnings():
+                # NetworkX notes each reuse of a converted graph; a nested
+                # call on the input graph reuses the outer call's conversion,
+                # which NetworkX's own code never does.
+                warnings.filterwarnings("ignore", message=_CACHE_NOTE)
+                return func(*args, backend="rustnx", **kwargs)
         except NotImplementedError:
             return func(*args, backend="networkx", **kwargs)
 
     return call
+
+
+_CACHE_NOTE = "Note: conversions to backend graphs are saved to cache"
 
 
 def _nested_name(value):

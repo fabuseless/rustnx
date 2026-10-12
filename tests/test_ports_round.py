@@ -283,3 +283,65 @@ def test_traveling_salesman(s):
             H[u][v]["weight"] = (u * 7 + v * 3) % 11 + 1
         assert (nx.approximation.traveling_salesman_problem(H, backend="rustnx")
                 == nx.approximation.traveling_salesman_problem(H, backend="networkx"))
+
+
+# --- Louvain ------------------------------------------------------------------
+
+
+def _louvain_graph(s):
+    rnd = random.Random(s)
+    n = rnd.randint(1, 70)
+    kind = s % 6
+    if kind == 0:
+        G = nx.connected_watts_strogatz_graph(max(n, 5), 4, 0.3, seed=s)
+    elif kind == 1:
+        G = nx.gnm_random_graph(n, rnd.randint(0, 3 * n), seed=s)
+    elif kind == 2:
+        G = nx.gnm_random_graph(n, rnd.randint(0, 3 * n), seed=s, directed=True)
+    elif kind == 3:
+        G = nx.planted_partition_graph(4, max(n // 4, 2), 0.7, 0.05, seed=s)
+    elif kind == 4:
+        G = nx.relabel_nodes(nx.karate_club_graph(), {v: f"n{v}" for v in range(34)})
+    else:
+        G = nx.gnp_random_graph(n, 0.1, seed=s, directed=True)
+    if s % 3 == 0:
+        for u, v in G.edges():
+            G[u][v]["weight"] = rnd.choice([1, 2, 0.5, 3.25, 7])
+    if s % 7 == 0 and len(G):
+        G.add_edge(list(G)[0], list(G)[0], weight=2)
+    return G
+
+
+def _louvain_outcome(func, G, s, **kwargs):
+    seed = random.Random(s)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = func(G, seed=seed, **kwargs)
+            if not isinstance(out, list):
+                out = list(out)
+    except NotImplementedError:
+        return ("declined",)
+    except Exception as exc:
+        return type(exc).__name__, str(exc)
+    # Each set's iteration order too: the sets are built as NetworkX's.
+    sets = [[typed(list(c)) for c in part] for part in out] if out and isinstance(out[0], list) else [typed(list(c)) for c in out]
+    return "ok", sets, seed.random()
+
+
+@pytest.mark.parametrize("s", range(40))
+def test_louvain(s):
+    G = _louvain_graph(s)
+    for kwargs in ({}, {"resolution": 0.5}, {"resolution": 2}, {"threshold": 0.01}, {"weight": None}, {"weight": "w"}):
+        for name in ("louvain_partitions", "louvain_communities"):
+            func = getattr(nx.community, name)
+            ref = _louvain_outcome(lambda G, **k: func(G, backend="networkx", **k), G, s, **kwargs)
+            ours = _louvain_outcome(lambda G, **k: func(G, backend="rustnx", **k), G, s, **kwargs)
+            assert ours == ref
+
+
+def test_louvain_is_used():
+    assert algorithms._louvain_variant() is not None
+    G = nx.karate_club_graph()
+    # Raises NotImplementedError if rustnx declines (backend given explicitly).
+    assert list(nx.community.louvain_partitions(G, seed=random.Random(1), backend="rustnx"))

@@ -7775,6 +7775,32 @@ impl CoreGraph {
         Ok(Some(rng.state()))
     }
 
+    /// `x ** 2` for a float as rustnx's Louvain computes it, for its
+    /// self-test.
+    #[staticmethod]
+    fn louvain_square(x: f64) -> f64 {
+        match algorithms::louvain::Num::F(x).sq() {
+            Some(algorithms::louvain::Num::F(f)) => f,
+            _ => f64::NAN,
+        }
+    }
+
+    /// Python's `sum(values)` as rustnx's Louvain replays it (ints and
+    /// floats; `compensated` for Python 3.12+), for its self-test: an int
+    /// or float, or None where rustnx would decline.
+    #[staticmethod]
+    fn louvain_sum<'py>(
+        py: Python<'py>,
+        values: Vec<Bound<'py, PyAny>>,
+        compensated: bool,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        Ok(match algorithms::louvain::check_sum(&values, compensated) {
+            Some(algorithms::louvain::Num::I(i)) => Some(i.into_pyobject(py)?.into_any()),
+            Some(algorithms::louvain::Num::F(f)) => Some(PyFloat::new(py, f).into_any()),
+            None => None,
+        })
+    }
+
     /// `read_gexf` on the document `data` (before `relabel`): NetworkX's
     /// graph, built into one of `classes` (Graph, DiGraph, MultiGraph,
     /// MultiDiGraph); `None` lets NetworkX read it. `versions` are the
@@ -9820,6 +9846,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(operators::_op_projection, m)?)?;
     m.add_function(wrap_pyfunction!(operators::_op_intersection, m)?)?;
     m.add_class::<AllPaths>()?;
+    m.add_class::<algorithms::louvain::Louvain>()?;
     m.add_class::<algorithms::random_measures::RandomPaths>()?;
     m.add_class::<algorithms::cycle_search::CycleLists>()?;
     m.add_class::<algorithms::cycle_search::CycleSearch>()?;

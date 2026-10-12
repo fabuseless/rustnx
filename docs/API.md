@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 647 NetworkX functions. Call them as usual (for
+rustnx implements 649 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly, except that
 the functions marked "fast by default" in the Floats column can differ
@@ -873,6 +873,13 @@ in the last bits of their floats until you turn on exact floats.
 | `nx.panther_vector_similarity` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with its random paths from rustnx. 1.5x to 5x faster (the rest is NumPy). |
 | `nx.christofides` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with its spanning tree, matching and Euler circuit from rustnx. About 5x faster. |
 | `nx.traveling_salesman_problem` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with its all-pairs shortest paths and the Christofides steps from rustnx. About 4x faster. |
+
+### Louvain communities
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Floats | Notes |
+|---|---|---|---|---|---|
+| `nx.louvain_partitions` | `weight`, `resolution`, `threshold`, `seed` | no | rustnx | exact | NetworkX's Louvain (3.4 to 3.6, and 3.7's rescaled variant) run level by level in Rust with Python's own arithmetic: ints and floats mixed as Python mixes them, `sum()` as CPython adds (compensated from Python 3.12, checked against the running interpreter), and `pow` from the same C library. Python replays the set operations, so every yielded set is built exactly as NetworkX builds it, and `modularity` follows the iteration order of the same set copies. `Graph` and `DiGraph` with int or float weights; the rest goes to NetworkX. 4x to 10x faster. |
+| `nx.louvain_communities` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with `louvain_partitions` from rustnx. |
 
 ### Bipartite measures
 

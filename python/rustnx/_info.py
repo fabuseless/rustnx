@@ -395,6 +395,8 @@ FUNCTIONS = {
     "local_node_connectivity": {},
     "local_reaching_centrality": {},
     "lollipop_graph": {},
+    "louvain_communities": {},
+    "louvain_partitions": {},
     "lowest_common_ancestor": {},
     "magnetic_laplacian_matrix": {},
     "make_clique_bipartite": {},

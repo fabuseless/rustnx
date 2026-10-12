@@ -15580,6 +15580,7 @@ HYBRID_FUNCTIONS = [
     "omega",
     "panther_similarity",
     "panther_vector_similarity",
+    "louvain_communities",
 ]
 
 
@@ -16533,3 +16534,170 @@ def _register_panther_helper():
 
 
 _register_panther_helper()
+
+
+# --- Louvain community detection --------------------------------------------------
+#
+# Rust runs each level (moves, modularity, the aggregated graph) with
+# Python's int/float arithmetic and CPython's sum(); Python replays the set
+# operations, so the sets yielded are built exactly as NetworkX builds them,
+# and gives Rust the iteration order of the set copies modularity sums over.
+
+# Normalized source (docstrings removed) of networkx.algorithms.community.
+# louvain and of modularity: (louvain, modularity) -> NetworkX 3.7's variant.
+_LOUVAIN_SOURCES = {
+    ("68ca0d87c1544c7e", "3c63236004ee806e"): False,  # NetworkX 3.4 to 3.6
+    ("7e8bbe8d33ef8984", "2be9f63609dd6349"): True,  # NetworkX 3.7
+}
+
+
+def _normalized_source(obj):
+    import ast
+    import hashlib
+
+    tree = ast.parse(inspect.getsource(obj))
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if (
+            isinstance(node, (ast.FunctionDef, ast.ClassDef, ast.Module))
+            and body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(getattr(body[0], "value", None), ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            node.body = body[1:] or [ast.Pass()]
+    return hashlib.sha256(ast.unparse(tree).encode()).hexdigest()[:16]
+
+
+@functools.cache
+def _louvain_variant():
+    """True for NetworkX 3.7's Louvain, False for 3.4 to 3.6's, None if the
+    installed code is another, or Python's sum() isn't the one rustnx
+    replays."""
+    from networkx.algorithms.community import louvain, quality
+
+    try:
+        key = (
+            _normalized_source(louvain),
+            _normalized_source(getattr(quality.modularity, "__wrapped__", quality.modularity)),
+        )
+    except (OSError, TypeError, SyntaxError):
+        return None
+    variant = _LOUVAIN_SOURCES.get(key)
+    if variant is None or not _louvain_sum_ok():
+        return None
+    return variant
+
+
+def _louvain_sum_ok():
+    """Whether rustnx's replay of sum() (and of float ** 2) agrees with this
+    interpreter on a battery of int and float mixes."""
+    import struct
+
+    compensated = sys.version_info >= (3, 12)
+    rnd = random.Random(12345)
+    choices = (0.0, -0.0, 1e16, -1e16, 1.0, 0.1, 1e-300, 3, -7, True)
+    for _ in range(3000):
+        seq = []
+        for _ in range(rnd.randint(0, 10)):
+            r = rnd.random()
+            if r < 0.3:
+                seq.append(rnd.randint(-1000, 1000))
+            elif r < 0.45:
+                seq.append(rnd.choice(choices))
+            else:
+                seq.append(rnd.uniform(-1, 1) * 10 ** rnd.randint(-20, 20))
+        ours = _core.CoreGraph.louvain_sum(seq, compensated)
+        theirs = sum(seq)
+        if type(theirs) is bool:
+            theirs = int(theirs)
+        if ours is None or type(ours) is not type(theirs):
+            return False
+        if isinstance(theirs, float):
+            if struct.pack("<d", ours) != struct.pack("<d", theirs):
+                return False
+        elif ours != theirs:
+            return False
+        x = rnd.uniform(-1, 1) * 10 ** rnd.randint(-150, 150)
+        if struct.pack("<d", x**2) != struct.pack("<d", _core.CoreGraph.louvain_square(x)):
+            return False
+    return True
+
+
+def louvain_partitions(G, weight="weight", resolution=1, threshold=1e-07, seed=None):
+    variant = _louvain_variant()
+    if variant is None:
+        raise NotImplementedError("unrecognized NetworkX Louvain")
+    _rg_seed(seed)
+    if type(resolution) not in (int, float) or type(threshold) not in (int, float):
+        raise NotImplementedError("rustnx needs int or float resolution and threshold")
+    base = _networkx_graph(G)
+    if type(base) not in (nx.Graph, nx.DiGraph):
+        raise NotImplementedError("rustnx runs Louvain on Graph and DiGraph")
+    partition = [{u} for u in base.nodes()]
+    if nx.is_empty(base):
+        return _louvain_empty(partition)
+    try:
+        run = _core.Louvain(
+            base._adj, base._pred if base.is_directed() else None, weight, resolution, variant,
+            sys.version_info >= (3, 12),
+        )
+    except (ValueError, TypeError):
+        raise NotImplementedError("NetworkX runs this Louvain") from None
+    return _louvain_levels(run, list(base), partition, threshold, seed)
+
+
+def _louvain_empty(partition):
+    yield partition
+
+
+def _louvain_levels(run, nodes, partition, threshold, seed):
+    inner = [{u} for u in nodes]
+    attrs = None  # level 0: a node's "nodes" are {node}
+    while True:
+        moves, improvement = _rg_run(seed, lambda state: _louvain_level(run, state))
+        for u, a, b in moves:
+            node = nodes[u] if attrs is None else u
+            com = {node} if attrs is None else attrs[u]
+            partition[a].difference_update(com)
+            inner[a].remove(node)
+            partition[b].update(com)
+            inner[b].add(node)
+        partition = [p for p in partition if p]
+        inner = [p for p in inner if p]
+        if attrs is not None and not improvement:
+            return
+        yield [s.copy() for s in partition]
+        if attrs is None:
+            index = {u: i for i, u in enumerate(nodes)}
+            orders = [[index[x] for x in set(c)] for c in inner]
+        else:
+            orders = [list(set(c)) for c in inner]
+        stop = run.stop(orders, threshold)
+        if stop is None:
+            raise RuntimeError("rustnx could not follow NetworkX's Louvain arithmetic")
+        if stop:
+            return
+        # _gen_graph / _aggregate_graph: the communities' "nodes" sets.
+        new_attrs = []
+        for part in inner:
+            members = set()
+            for x in part:
+                members.update({x} if attrs is None else attrs[x])
+            new_attrs.append(members)
+        attrs = new_attrs
+        if run.aggregate() is None:
+            raise RuntimeError("rustnx could not follow NetworkX's Louvain arithmetic")
+        nodes = range(len(attrs))
+        inner = [{u} for u in nodes]
+
+
+def _louvain_level(run, state):
+    found = run.one_level(state)
+    if found is None:
+        return None
+    moves, improvement, state = found
+    return (moves, improvement), state
+
+
+__all__ += ["louvain_partitions"]

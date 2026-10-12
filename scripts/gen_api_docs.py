@@ -988,6 +988,11 @@ NOTES.update({
     "christofides": "NetworkX's own code, with its spanning tree, matching and Euler circuit from rustnx. About 5x faster.",
     "traveling_salesman_problem": "NetworkX's own code, with its all-pairs shortest paths and the Christofides steps from rustnx. About 4x faster.",
 })
+SECTIONS.append(("Louvain communities", ["louvain_partitions", "louvain_communities"]))
+NOTES.update({
+    "louvain_partitions": "NetworkX's Louvain (3.4 to 3.6, and 3.7's rescaled variant) run level by level in Rust with Python's own arithmetic: ints and floats mixed as Python mixes them, `sum()` as CPython adds (compensated from Python 3.12, checked against the running interpreter), and `pow` from the same C library. Python replays the set operations, so every yielded set is built exactly as NetworkX builds it, and `modularity` follows the iteration order of the same set copies. `Graph` and `DiGraph` with int or float weights; the rest goes to NetworkX. 4x to 10x faster.",
+    "louvain_communities": "NetworkX's own code, with `louvain_partitions` from rustnx.",
+})
 SECTIONS.append(("Bipartite measures", [
     "latapy_clustering", "bipartite_average_clustering", "robins_alexander_clustering",
     "bipartite_betweenness_centrality", "overlap_weighted_projected_graph",

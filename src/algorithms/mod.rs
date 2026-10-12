@@ -23,6 +23,7 @@ pub mod graphml;
 pub mod isomorphism;
 pub mod leftovers;
 pub mod link_analysis;
+pub mod louvain;
 pub mod matching;
 pub mod measures;
 pub mod nxdicts;
