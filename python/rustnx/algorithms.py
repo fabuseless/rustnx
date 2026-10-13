@@ -16564,27 +16564,46 @@ _register_panther_helper()
 # Normalized source (docstrings removed) of networkx.algorithms.community.
 # louvain and of modularity: (louvain, modularity) -> NetworkX 3.7's variant.
 _LOUVAIN_SOURCES = {
-    ("68ca0d87c1544c7e", "3c63236004ee806e"): False,  # NetworkX 3.4 to 3.6
-    ("7e8bbe8d33ef8984", "2be9f63609dd6349"): True,  # NetworkX 3.7
+    ("68df62a4fc0a328c", "c842ee15eed67718"): False,  # NetworkX 3.4 to 3.6
+    ("5d4a3894914303a5", "19f1525f13b2f7e1"): True,  # NetworkX 3.7
 }
 
 
 def _normalized_source(obj):
+    """A hash of ``obj``'s source without docstrings, comments or layout:
+    the code NetworkX runs, independent of the Python version reading it
+    (``ast.unparse`` prints the same code differently across versions)."""
     import ast
     import hashlib
+    import io
+    import textwrap
+    import tokenize
 
-    tree = ast.parse(inspect.getsource(obj))
-    for node in ast.walk(tree):
+    source = inspect.getsource(obj)
+    drop = set()
+    for node in ast.walk(ast.parse(textwrap.dedent(source))):
         body = getattr(node, "body", None)
         if (
-            isinstance(node, (ast.FunctionDef, ast.ClassDef, ast.Module))
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module))
             and body
             and isinstance(body[0], ast.Expr)
             and isinstance(getattr(body[0], "value", None), ast.Constant)
             and isinstance(body[0].value.value, str)
         ):
-            node.body = body[1:] or [ast.Pass()]
-    return hashlib.sha256(ast.unparse(tree).encode()).hexdigest()[:16]
+            drop.update(range(body[0].lineno, body[0].end_lineno + 1))
+    comment_at = {}
+    for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+        if tok.type == tokenize.COMMENT:
+            comment_at.setdefault(tok.start[0], tok.start[1])
+    kept = []
+    for number, line in enumerate(source.splitlines(keepends=True), start=1):
+        if number in drop:
+            continue
+        if number in comment_at:
+            line = line[: comment_at[number]]
+        kept.append(line)
+    text = " ".join("".join(kept).split())
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
 @functools.cache
@@ -16756,7 +16775,7 @@ _hybrid.DISPATCH_HELPERS["approximate_local_node_connectivity"] = (
 # Normalized sources of random_spanning_tree and number_of_spanning_trees
 # this replays (3.5 to 3.7; 3.4's calls the deprecated
 # total_spanning_tree_weight, which warns on every call).
-_RANDOM_SPANNING_TREE_SOURCES = {("af15ecb9efc78642", "ffeb4c6298854347")}
+_RANDOM_SPANNING_TREE_SOURCES = {("3ffc6a2052efb5f7", "377459892cffe533")}
 
 
 @functools.cache
