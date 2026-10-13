@@ -8,6 +8,20 @@ versions may change behavior.
 ## [Unreleased]
 
 ### Added
+- Flows and structure round, all exact on NetworkX 3.4 to 3.7:
+  - `snap_aggregation`: each split decided in time linear in the edges,
+    with NetworkX's own set operations, so the summary graph is identical.
+    80x faster at 300 nodes, about 800x at 1,000.
+  - `create_component_structure` in Rust with CPython's set orders replayed
+    (about 20x) and `capacity_scaling` with its phases in Rust (int
+    capacities, weights and demands; about 12x).
+  - `spanner` replayed in Rust, including NetworkX's `id()` tie-breaks,
+    random draws and set orders (4x to 5x).
+  - `k_edge_augmentation` with k >= 3 or `avail`, and its helpers, as hybrids
+    with their flows and connectivity tests in rustnx (2x to 26x).
+  - Measured reasons in `docs/COVERAGE.md` for 6 more that stay in NetworkX
+    (`all_node_cuts`, `k_components`, `collapse`, `complement_edges`,
+    `detect_unboundedness`, `dedensify`).
 - Ports round, all exact on NetworkX 3.4 to 3.7:
   - `nx.nx_pydot.read_dot` parses with pydot 4.0.1's grammar in Rust (about
     100x faster); other pydot versions go to pydot.

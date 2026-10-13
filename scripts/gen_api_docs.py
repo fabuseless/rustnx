@@ -1011,6 +1011,30 @@ QUALIFIED.update({
     "held_karp_ascent": "nx.approximation.traveling_salesman",
     "lukes_partitioning": "nx.community",
 })
+SECTIONS.append(("Flows, structure and summaries", [
+    "snap_aggregation", "create_component_structure", "capacity_scaling", "spanner",
+    "greedy_k_edge_augmentation", "partial_k_edge_augmentation", "weighted_bridge_augmentation",
+    "weighted_one_edge_augmentation", "general_k_edge_subgraphs",
+]))
+NOTES.update({
+    "snap_aggregation": "NetworkX builds a `Counter` for every (node, group) pair on every pass; here each node's set of (neighbor group, edge type) pairs decides whether its group splits (the same test), in time linear in the edges, and the splits are NetworkX's own set operations on the same sets, so the summary graph is identical. All four graph classes. 80x at 300 nodes, about 800x at 1,000.",
+    "create_component_structure": "In Rust with CPython's set orders replayed (the loop over `set(G.nodes)`, each closed neighborhood, the subgraph view's node filter and each component), so every row has the same keys in the same order. About 20x.",
+    "capacity_scaling": "NetworkX's own residual network and checks, then its phases in Rust with Python's int arithmetic, `BinaryHeap`'s order and `arbitrary_element` of the excess set in CPython's order, then NetworkX's own cost sum and flow dict. Int capacities, weights and demands; floats go to NetworkX. About 12x.",
+    "spanner": "Replayed in Rust: NetworkX's weight tuples (with `id()` of the same node objects breaking ties), `random.Random`'s draws in NetworkX's order, CPython's order for the sets of centers and of edges to add, and the neighbor order of `G.copy()`, giving the same sequence of `add_edge` calls. `Graph` with int or float weights. 4x to 5x.",
+    "greedy_k_edge_augmentation": "NetworkX's own code with its connectivity tests and flows in rustnx. `k_edge_augmentation` with k >= 3 or `avail` runs this way too. About 2x.",
+    "partial_k_edge_augmentation": "NetworkX's own code with its k-edge subgraphs and augmentations in rustnx. NetworkX iterates a set of graph objects here (memory-address order), so the order of the edges can differ between runs, in NetworkX too. About 25x.",
+    "weighted_bridge_augmentation": "NetworkX's own code with its minimum spanning arborescence in rustnx. About 20x.",
+    "weighted_one_edge_augmentation": "NetworkX's own code with its inner calls in rustnx.",
+    "general_k_edge_subgraphs": "NetworkX's own code with its minimum edge cuts in rustnx. NetworkX keeps its work in a set of graph objects (memory-address order), so the order of the subgraphs can differ between runs, in NetworkX too. About 15x.",
+})
+QUALIFIED.update({
+    "create_component_structure": "nx.algorithms.asteroidal",
+    "greedy_k_edge_augmentation": "nx.algorithms.connectivity.edge_augmentation",
+    "partial_k_edge_augmentation": "nx.algorithms.connectivity.edge_augmentation",
+    "weighted_bridge_augmentation": "nx.algorithms.connectivity.edge_augmentation",
+    "weighted_one_edge_augmentation": "nx.algorithms.connectivity.edge_augmentation",
+    "general_k_edge_subgraphs": "nx.algorithms.connectivity.edge_kcomponents",
+})
 SECTIONS.append(("Bipartite measures", [
     "latapy_clustering", "bipartite_average_clustering", "robins_alexander_clustering",
     "bipartite_betweenness_centrality", "overlap_weighted_projected_graph",
