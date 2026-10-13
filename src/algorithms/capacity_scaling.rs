@@ -98,12 +98,10 @@ pub fn run(
                         continue;
                     }
                     let mut best: Option<(i128, usize)> = None;
-                    for e in a..b {
-                        if r.cap[e] - flow[e] >= delta {
-                            let w = r.weight[e];
-                            if best.is_none_or(|(bw, _)| w < bw) {
-                                best = Some((w, e));
-                            }
+                    let edges = r.cap[a..b].iter().zip(&r.weight[a..b]).zip(&flow[a..b]);
+                    for (i, ((&c, &w), &f)) in edges.enumerate() {
+                        if c - f >= delta && best.is_none_or(|(bw, _)| w < bw) {
+                            best = Some((w, a + i));
                         }
                     }
                     let Some((wmin, emin)) = best else { continue };
