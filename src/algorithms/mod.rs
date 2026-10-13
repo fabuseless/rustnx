@@ -1,6 +1,7 @@
 pub mod approximation;
 pub mod bipartite;
 pub mod bipartite_more;
+pub mod capacity_scaling;
 pub mod centrality;
 pub mod centrality_more;
 pub mod cliques;

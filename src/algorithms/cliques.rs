@@ -1463,3 +1463,77 @@ pub fn kernighan_lin(
     }
     Ok(Some(side))
 }
+
+/// One node's row of `create_component_structure`: the keys of NetworkX's
+/// `row_dict` in insertion order, and their labels.
+pub type ComponentRow = (u32, Vec<u32>, Vec<u32>);
+
+/// NetworkX's `create_component_structure`, in CPython's set orders (from
+/// `hashes`): for each node `v` of `set(G.nodes)`, its closed neighborhood
+/// (`set(G[v]).union({v})`, label 0) and then the connected components of
+/// `G.subgraph(set(G.nodes) - closed)`, numbered from 1 in the order
+/// `connected_components` finds them, each listed in its set's order. The
+/// subgraph view iterates its node filter (a set rebuilt from the
+/// difference) when that is under half the graph, else the graph's order;
+/// neighbors come in adjacency order.
+pub fn component_structure(adj: &Csr, n: usize, hashes: &[i64]) -> Vec<ComponentRow> {
+    let all = PySet::from_iter(0..n as u32, hashes);
+    let mut out = Vec::with_capacity(n);
+    let mut inside = vec![false; n];
+    let mut done = vec![false; n];
+    let mut queued = vec![false; n];
+    for v in all.iter() {
+        let closed = PySet::from_iter(adj.neighbors(v as usize).iter().copied(), hashes)
+            .union(&PySet::from_iter([v], hashes), hashes);
+        let mut keys: Vec<u32> = closed.iter().collect();
+        let mut labels = vec![0u32; keys.len()];
+        let filter = PySet::from_iter(all.difference(&closed, hashes).iter(), hashes);
+        inside.iter_mut().for_each(|x| *x = false);
+        done.iter_mut().for_each(|x| *x = false);
+        for u in filter.iter() {
+            inside[u as usize] = true;
+        }
+        let order: Vec<u32> = if 2 * filter.len() < n {
+            filter.iter().collect()
+        } else {
+            (0..n as u32).filter(|&u| inside[u as usize]).collect()
+        };
+        let mut label = 0;
+        for s in order {
+            if done[s as usize] {
+                continue;
+            }
+            // _plain_bfs: `seen = {source}`, one `add` per new node in
+            // breadth-first order.
+            let mut seen = PySet::from_iter([s], hashes);
+            queued[s as usize] = true;
+            let mut level = vec![s];
+            let mut members = vec![s];
+            while !level.is_empty() {
+                let mut next = Vec::new();
+                for &x in &level {
+                    for &w in adj.neighbors(x as usize) {
+                        if inside[w as usize] && !queued[w as usize] {
+                            queued[w as usize] = true;
+                            seen.add(w, hashes);
+                            next.push(w);
+                            members.push(w);
+                        }
+                    }
+                }
+                level = next;
+            }
+            label += 1;
+            for u in seen.iter() {
+                keys.push(u);
+                labels.push(label);
+                done[u as usize] = true;
+            }
+            for u in members {
+                queued[u as usize] = false;
+            }
+        }
+        out.push((v, keys, labels));
+    }
+    out
+}
