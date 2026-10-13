@@ -8107,7 +8107,12 @@ def unconstrained_one_edge_augmentation(G):
 def one_edge_augmentation(G, avail=None, weight=None, partial=False):
     _undirected_only(G)
     if avail is not None:
-        raise NotImplementedError("rustnx does not support avail here")
+        # NetworkX's own code, with its inner calls in rustnx.
+        return _hybrid.run(
+            "one_edge_augmentation",
+            {"G": G, "avail": avail, "weight": weight, "partial": partial},
+            _networkx_graph,
+        )
     return unconstrained_one_edge_augmentation(G)
 
 
@@ -8188,17 +8193,21 @@ def bridge_augmentation(G, avail=None, weight=None):
     if len(G) < 3:
         raise nx.NetworkXUnfeasible("impossible to bridge connect less than 3 nodes")
     if avail is not None:
-        raise NotImplementedError("rustnx does not support avail here")
+        # NetworkX's own code, with its inner calls in rustnx.
+        return _hybrid.run("bridge_augmentation", {"G": G, "avail": avail, "weight": weight}, _networkx_graph)
     return unconstrained_bridge_augmentation(G)
 
 
 def k_edge_augmentation(G, k, avail=None, weight=None, partial=False):
     _undirected_only(G)
-    if avail is not None:
-        raise NotImplementedError("rustnx does not support avail here")
-    if type(k) is not int or k >= 3:
-        # k >= 3 is a greedy search with a seeded shuffle.
-        raise NotImplementedError("rustnx only does k = 1 and 2 here")
+    if avail is not None or type(k) is not int or k >= 3:
+        # NetworkX's own code (k >= 3 is a greedy search with a seeded
+        # shuffle), with its connectivity tests and flows in rustnx.
+        return _hybrid.run(
+            "k_edge_augmentation",
+            {"G": G, "k": k, "avail": avail, "weight": weight, "partial": partial},
+            _networkx_graph,
+        )
 
     def compute():
         try:
@@ -15585,6 +15594,11 @@ HYBRID_FUNCTIONS = [
     "approximate_k_components",
     "asadpour_atsp",
     "held_karp_ascent",
+    "greedy_k_edge_augmentation",
+    "partial_k_edge_augmentation",
+    "weighted_bridge_augmentation",
+    "weighted_one_edge_augmentation",
+    "general_k_edge_subgraphs",
 ]
 
 
@@ -17239,3 +17253,75 @@ def _b25_hashes_of(nodes):
 
 
 __all__ += ["capacity_scaling"]
+
+
+# --- spanner ----------------------------------------------------------------------
+
+_SPANNER_SOURCES = {"cc926a59bd514e04"}
+
+
+@functools.cache
+def _spanner_recognized():
+    try:
+        module = sys.modules[_registered("spanner").orig_func.__module__]
+        return _normalized_source(module) in _SPANNER_SOURCES
+    except (AttributeError, KeyError, OSError, TypeError, SyntaxError):
+        return False
+
+
+def spanner(G, stretch, weight=None, seed=None):
+    """NetworkX's ``spanner`` (Baswana-Sen) replayed in Rust: the same
+    weight tuples (with ``id()`` of the same node objects breaking ties),
+    ``random.Random``'s draws in NetworkX's order, and CPython's order for
+    the sets of centers and of edges to add, giving the same sequence of
+    ``add_edge`` calls on the result."""
+    _rg_seed(seed)
+    if not _spanner_recognized():
+        raise NotImplementedError("unrecognized NetworkX spanner")
+    core = G._core
+    G = _networkx_graph(G)
+    if type(G) is not nx.Graph:
+        raise NotImplementedError("rustnx runs spanner on Graph only")
+    if not isinstance(stretch, (int, float)) or isinstance(stretch, bool) or not stretch >= 1:
+        raise NotImplementedError("NetworkX checks this stretch")
+    k = (stretch + 1) // 2
+    if k != int(k) or len(G) == 0:
+        raise NotImplementedError("rustnx needs a whole k and a non-empty graph")
+    nodes = list(G)
+    node_ids = [id(v) for v in nodes]
+    # NetworkX breaks ties on the id()s of the objects in the adjacency;
+    # they must be the node objects themselves.
+    if not {id(v) for nbrs in G._adj.values() for v in nbrs} <= set(node_ids):
+        raise NotImplementedError("equal but distinct node objects")
+    weights = None
+    if weight:
+        weights = []
+        for _, _, w in G.edges(data=weight, default=_SPANNER_MISSING):
+            if type(w) is float:
+                if w != w:
+                    raise NotImplementedError("NaN weights")
+            elif type(w) is not int or not -(2**53) < w < 2**53:
+                raise NotImplementedError("rustnx needs int or float weights")
+            weights.append(w)
+    hashes = _b25_hashes_of(nodes)
+    n = G.number_of_nodes()
+    sample_prob = math.pow(n, -1 / k)
+    size_limit = 2 * math.pow(n, 1 + 1 / k)
+    fweights = None if weights is None else [float(w) for w in weights]
+    ops = _rg_run(
+        seed,
+        lambda state: core.spanner_ops(node_ids, fweights, hashes, int(k), sample_prob, size_limit, state),
+    )
+    H = nx.empty_graph()
+    H.add_nodes_from(G.nodes)
+    if weight:
+        H.add_edges_from((nodes[u], nodes[v], {weight: weights[e]}) for u, v, e in ops)
+    else:
+        H.add_edges_from((nodes[u], nodes[v]) for u, v, e in ops)
+    return H
+
+
+_SPANNER_MISSING = object()
+
+
+__all__ += ["spanner"]

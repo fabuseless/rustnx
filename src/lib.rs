@@ -7875,6 +7875,72 @@ impl CoreGraph {
         Ok((flow.into_iter().map(|f| f as i64).collect(), feasible))
     }
 
+    /// `spanner`'s `_add_edge_to_spanner` calls `(u, v, edge)` (edges
+    /// numbered in `G.edges()` order) and the generator's new state.
+    /// `node_ids` are the nodes' `id()`s, `weights` the edges' weights in
+    /// `G.edges()` order (None when unweighted). None where NetworkX would
+    /// raise.
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    fn spanner_ops(
+        &self,
+        py: Python<'_>,
+        node_ids: Vec<u64>,
+        weights: Option<Vec<f64>>,
+        hashes: Vec<i64>,
+        k: u64,
+        sample_prob: f64,
+        size_limit: f64,
+        state: Vec<u32>,
+    ) -> PyResult<Option<(Vec<(u32, u32, u32)>, Vec<u32>)>> {
+        let n = self.n;
+        if hashes.len() != n || node_ids.len() != n {
+            return Err(PyValueError::new_err("one hash and id per node"));
+        }
+        Ok(py.detach(|| {
+            // Edges in G.edges() order; the residual graph is G.copy(),
+            // whose neighbor dicts fill in the order the edges come up.
+            let mut keys = Vec::new();
+            let mut adj: Vec<Vec<(u32, u32)>> = vec![Vec::new(); n];
+            for u in 0..n {
+                for &v in self.succ.neighbors(u) {
+                    if (v as usize) < u {
+                        continue;
+                    }
+                    let e = keys.len() as u32;
+                    let w = match &weights {
+                        Some(ws) => *ws.get(e as usize)?,
+                        None => 0.0,
+                    };
+                    keys.push(algorithms::spanner::WeightKey {
+                        w,
+                        a: node_ids[u],
+                        b: node_ids[v as usize],
+                    });
+                    adj[u].push((v, e));
+                    if v as usize != u {
+                        adj[v as usize].push((u as u32, e));
+                    }
+                }
+            }
+            if let Some(ws) = &weights {
+                if ws.len() != keys.len() {
+                    return None;
+                }
+            }
+            let mut rng = algorithms::pyrandom::Mt19937::from_state(&state)?;
+            let input = algorithms::spanner::Input {
+                adj: &adj,
+                keys: &keys,
+                hashes: &hashes,
+                k,
+                sample_prob,
+                size_limit,
+            };
+            let ops = algorithms::spanner::run(&input, &mut rng)?;
+            Some((ops, rng.state()))
+        }))
+    }
+
     /// `x ** 2` for a float as rustnx's Louvain computes it, for its
     /// self-test.
     #[staticmethod]

@@ -483,7 +483,7 @@ _BUILDS_FROM_SOURCE = {
 
 # Functions that read edge attributes of any type from the original NetworkX
 # graph's dicts, so they don't convert their `edge_attrs` to numbers.
-_EDGE_DATA_FROM_SOURCE = {"get_edge_attributes", "stochastic_graph", "random_walk", "snap_aggregation"}
+_EDGE_DATA_FROM_SOURCE = {"get_edge_attributes", "stochastic_graph", "random_walk", "snap_aggregation", "spanner"}
 
 
 def convert_from_nx(
