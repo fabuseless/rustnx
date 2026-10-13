@@ -429,6 +429,7 @@ MULTIGRAPH_FUNCTIONS |= {"simple_cycles", "chordless_cycles", "eulerize"}
 # Functions that return subgraphs of the original NetworkX graph, or (the flow
 # functions) read its edge attributes there.
 _BUILDS_FROM_SOURCE = {
+    "random_spanning_tree",
     "boruvka_mst_edges",
     "boykov_kolmogorov",
     "build_residual_network",
@@ -482,7 +483,7 @@ _BUILDS_FROM_SOURCE = {
 
 # Functions that read edge attributes of any type from the original NetworkX
 # graph's dicts, so they don't convert their `edge_attrs` to numbers.
-_EDGE_DATA_FROM_SOURCE = {"get_edge_attributes", "stochastic_graph"}
+_EDGE_DATA_FROM_SOURCE = {"get_edge_attributes", "stochastic_graph", "random_walk"}
 
 
 def convert_from_nx(

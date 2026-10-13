@@ -52,6 +52,14 @@ jobs:
           # Optional: prominent_group's tests need pandas, as NetworkX does.
           # Binary wheels only, so a platform without one just skips them.
           pip install --only-binary=:all: pandas || echo "no pandas wheel; prominent_group tests will skip"
+          # pydot 4.0.1: the pydot version rustnx's DOT reader reproduces.
+          # With pydot installed, NetworkX's own pydot tests run Graphviz.
+          # NetworkX 3.4's from_pydot doesn't work with pydot 4 (its own
+          # tests fail without rustnx), so that job runs without pydot.
+          if [ "${{ matrix.networkx }}" != "3.4.*" ]; then
+            pip install "pydot==4.0.1"
+            sudo apt-get install -y --no-install-recommends graphviz
+          fi
           python -c "import networkx; print('NetworkX', networkx.__version__)"
           maturin develop --release
       - name: Compare against NetworkX

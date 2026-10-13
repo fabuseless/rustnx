@@ -105,6 +105,12 @@ CONSTRUCTOR = (
     "the hook behind every nx.Graph() / DiGraph() / MultiGraph() / MultiDiGraph(): creating a graph takes 3.4 microseconds and dispatching a call about 9 (measured), and rustnx's results are NetworkX graphs anyway"
 )
 
+GED = (
+    "its time is NetworkX's Python branch-and-bound around SciPy's linear_sum_assignment "
+    "(building cost matrices is 60% of it, measured); run as a hybrid it measured 1.0x, and a "
+    "port would have to replay the float costs and SciPy's assignment tie-breaking"
+)
+
 STAYS = {
     'bull_graph': SMALL_GRAPH,
     'chvatal_graph': SMALL_GRAPH,
@@ -214,6 +220,20 @@ STAYS = {
     'double_edge_swap': MUTATES,
     'directed_edge_swap': MUTATES,
     'connected_double_edge_swap': MUTATES,
+    'agraph_read_dot': "Graphviz's own C parser reads the file (0.04 s for 8,000 edges, measured), and the rest is reading pygraphviz's objects through pygraphviz (0.15 s), which rustnx would have to do the same way",
+    'from_agraph': "it reads pygraphviz's objects through pygraphviz's own accessors (0.15 s for 8,000 edges, measured), which rustnx would have to call the same way",
+    'simrank_similarity': "its time is NumPy's dense matrix products (85% for 400 nodes, measured), whose floats follow NumPy's BLAS summation order",
+    'non_randomness': "its time is NumPy's dense eigvals (O(n^3); most of it at 400 nodes, measured), and its result is LAPACK's eigenvalues in LAPACK's order",
+    'edge_current_flow_betweenness_partition': "its time is edge_current_flow_betweenness_centrality's NumPy and SciPy solves (98%, measured), whose floats Rust can't reproduce bit for bit",
+    'spanning_tree_distribution': "each step takes LAPACK determinants of Laplacians over float exp() weights, summed by SciPy over parallel edges in SciPy's order; the result must be those floats exactly",
+    'chromatic_polynomial': "it returns a SymPy expression built with SymPy's own arithmetic",
+    'tutte_polynomial': "it returns a SymPy expression built with SymPy's own arithmetic",
+    'leiden_communities': "NetworkX has no implementation of its own (it runs only in backends), so there is no NetworkX result for rustnx to match",
+    'leiden_partitions': "NetworkX has no implementation of its own (it runs only in backends), so there is no NetworkX result for rustnx to match",
+    'graph_edit_distance': GED,
+    'optimal_edit_paths': GED,
+    'optimize_edit_paths': GED,
+    'optimize_graph_edit_distance': GED,
     'from_pydot': "it reads pydot's Python objects through pydot's own methods (0.055 s for 8,000 edges, measured), which rustnx would have to call the same way",
 }
 

@@ -15574,6 +15574,17 @@ HYBRID_FUNCTIONS = [
     "eulerize",
     "harmonic_function",
     "local_and_global_consistency",
+    "christofides",
+    "traveling_salesman_problem",
+    "sigma",
+    "omega",
+    "panther_similarity",
+    "panther_vector_similarity",
+    "louvain_communities",
+    "lukes_partitioning",
+    "approximate_k_components",
+    "asadpour_atsp",
+    "held_karp_ascent",
 ]
 
 
@@ -16136,3 +16147,860 @@ def _register_cycle_helpers():
 
 
 _CYCLE_HELPERS_REGISTERED = _register_cycle_helpers()
+
+
+# --- DOT: nx.nx_pydot.read_dot ---------------------------------------------------
+#
+# pydot spends nearly all of read_dot's time in pyparsing. Rust parses the
+# document with pydot 4's grammar and hands NetworkX's own from_pydot an
+# object answering the same questions as the pydot graph, so the NetworkX
+# graph is built by NetworkX's code.
+
+
+@functools.cache
+def _dot_parser_info():
+    """pyparsing's identifier-character bitmap if the installed pydot and
+    pyparsing parse as rustnx does (pydot 4.0's grammar), else None."""
+    try:
+        import pydot
+        import pydot.core
+        import pydot.dot_parser
+        import pyparsing
+    except ImportError:
+        return None
+    import hashlib
+
+    def text(obj):
+        try:
+            return " ".join(inspect.getsource(obj).split())
+        except (OSError, TypeError):
+            return ""
+
+    parts = [text(pydot.dot_parser)] + [
+        text(f) for f in (
+            pydot.core.Node.__init__, pydot.core.Edge.__init__, pydot.core.Edge._get_endpoint,
+            pydot.core.Graph.add_node, pydot.core.Graph.add_edge, pydot.core.Graph.get_node,
+            pydot.core.Graph.get_node_list, pydot.core.Graph.get_edge_list,
+            pydot.core.Graph.get_node_defaults, pydot.core.Graph.get_edge_defaults,
+            pydot.graph_from_dot_data,
+        )
+    ]
+    digest = hashlib.sha256("\n".join(parts).encode()).hexdigest()
+    if digest not in _DOT_PARSER_DIGESTS:
+        return None
+    if not hasattr(pyparsing, "DelimitedList") or not pyparsing.__version__.startswith("3."):
+        return None
+    read = " ".join(_source_text(_registered("pydot_read_dot")).split())
+    if "P_list = pydot.graph_from_dot_data(data)" not in read or "return from_pydot(P_list[0])" not in read:
+        return None
+    bitmap = bytearray(0x10000 // 8)
+    for c in set(pyparsing.unicode.BasicMultilingualPlane.alphanums + "_."):
+        u = ord(c)
+        if u < 0x10000:
+            bitmap[u >> 3] |= 1 << (u & 7)
+    return bytes(bitmap)
+
+
+# pydot.dot_parser and the pydot.core methods from_pydot relies on, as in
+# pydot 4.0.1 (normalized source). 4.0.0 builds graphs differently.
+_DOT_PARSER_DIGESTS = {"7d5c933c6f9694c99f9c345294a5004c1fde03cf5a2b9c7095085c79869a844e"}
+
+
+class _DotNode:
+    __slots__ = ("_name", "_attrs")
+
+    def __init__(self, name, attrs):
+        self._name = name
+        self._attrs = attrs
+
+    def get_name(self):
+        return self._name
+
+    def get_attributes(self):
+        return self._attrs
+
+
+class _DotEdge:
+    __slots__ = ("_points", "_attrs")
+
+    def __init__(self, u, v, attrs):
+        self._points = (u, v)
+        self._attrs = attrs
+
+    def get_source(self):
+        return self._points[0]
+
+    def get_destination(self):
+        return self._points[1]
+
+    def get_attributes(self):
+        return self._attrs
+
+
+class _DotGraph:
+    """What ``from_pydot`` asks of a ``pydot.Dot``, answered from rustnx's
+    parse."""
+
+    def __init__(self, parsed):
+        digraph, strict, name, attrs, nodes, edges = parsed
+        self._type = "digraph" if digraph else "graph"
+        self._strict = strict
+        self._name = name
+        self._attrs = dict(attrs)
+        self._nodes = [(n, [_DotNode(n, dict(a)) for a in group]) for n, group in nodes]
+
+        def endpoint(e):
+            # A subgraph endpoint is a dict whose "nodes" are its node names.
+            return e if type(e) is str else {"nodes": dict.fromkeys(e)}
+
+        self._edges = [
+            _DotEdge(endpoint(u), endpoint(v), dict(a)) for group in edges for u, v, a in group
+        ]
+
+    def get_strict(self):
+        return self._strict
+
+    # pydot 4's Graph.get_strict takes no argument; NetworkX 3.4 passes one
+    # and gets this TypeError, with this name in its message.
+    get_strict.__qualname__ = "Graph.get_strict"
+
+    def get_type(self):
+        return self._type
+
+    def get_name(self):
+        return self._name
+
+    def get_attributes(self):
+        return self._attrs
+
+    def get_node_list(self):
+        return [node for _, group in self._nodes for node in group]
+
+    def get_edge_list(self):
+        return self._edges
+
+    def _defaults(self, kind):
+        return [node.get_attributes() for name, group in self._nodes if name == kind for node in group]
+
+    def get_node_defaults(self):
+        return self._defaults("node")
+
+    def get_edge_defaults(self):
+        return self._defaults("edge")
+
+
+def pydot_read_dot(path):
+    ident = _dot_parser_info()
+    if ident is None:
+        raise NotImplementedError("rustnx parses DOT as pydot 4.0 does")
+    try:
+        if not path.seekable():
+            raise NotImplementedError("rustnx needs a seekable file")
+        position = path.tell()
+        data = path.read()
+    except (AttributeError, OSError, ValueError):
+        raise NotImplementedError("NetworkX reads this file") from None
+    parsed = _core.CoreGraph.dot_read(data, ident) if type(data) is str else None
+    if parsed is None:
+        path.seek(position)
+        raise NotImplementedError("pydot parses this document")
+    return _registered("from_pydot").orig_func(_DotGraph(parsed))
+
+
+__all__ += ["pydot_read_dot"]
+
+
+# --- Randomized measures replayed on random.Random -------------------------------
+
+
+def _approx_clustering_recognized():
+    text = " ".join(_source_text(_registered("approximate_average_clustering")).split())
+    return (
+        "for i in [int(seed.random() * n) for i in range(trials)]: nbrs = list(G[nodes[i]])" in text
+        and "u, v = seed.sample(nbrs, 2) if u in G[v]: triangles += 1 return triangles / trials" in text
+    )
+
+
+def approximate_average_clustering(G, trials=1000, seed=None):
+    _rg_seed(seed)
+    if not _approx_clustering_recognized():
+        raise NotImplementedError("unrecognized NetworkX approximate average_clustering")
+    if type(trials) is not int or not 0 < trials < _RG_MAX_NODES:
+        raise NotImplementedError("rustnx needs a positive int number of trials")
+    if G.is_multigraph():
+        raise NotImplementedError("NetworkX's multigraph neighbor lists")
+    triangles = _rg_run(seed, lambda state: G._core.approx_avg_triangles(trials, state))
+    return triangles / trials
+
+
+@functools.cache
+def _reference_version():
+    """``(old_cdf,)`` if the installed random_reference / lattice_reference
+    swap edges as rustnx replays them, else None."""
+    from networkx.utils import random_sequence
+
+    cdf = " ".join(inspect.getsource(random_sequence.cumulative_distribution).split())
+    if "psum = sum(distribution) for i in range(len(distribution)): cdf.append(cdf[i] + distribution[i] / psum) return cdf" in cdf:
+        old_cdf = True
+    elif "cumulative += element cdf.append(cumulative) return [element / cumulative for element in cdf]" in cdf:
+        old_cdf = False
+    else:
+        return None
+    seq = " ".join(inspect.getsource(random_sequence.discrete_sequence).split())
+    if "inputseq = [seed.random() for i in range(n)] # choose from CDF seq = [bisect.bisect_left(cdf, s) - 1 for s in inputseq]" not in seq:
+        return None
+    common = (
+        "G = G.copy() keys, degrees = zip(*G.degree())",
+        "cdf = cumulative_distribution(degrees)",
+        "(ai, ci) = discrete_sequence(2, cdistribution=cdf, seed=seed) if ai == ci: continue",
+        "b = seed.choice(list(G.neighbors(a))) d = seed.choice(list(G.neighbors(c)))",
+        "G.add_edge(a, d) G.add_edge(c, b) G.remove_edge(a, b) G.remove_edge(c, d)",
+        "G.remove_edge(a, d) G.remove_edge(c, b) G.add_edge(a, b) G.add_edge(c, d)",
+    )
+    for name, extra in (
+        ("random_reference", ("ntries = int(nnodes * nedges / (nnodes * (nnodes - 1) / 2))",
+                              "if b in [a, c, d] or d in [a, b, c]: continue")),
+        ("lattice_reference", ("max_attempts = int(nnodes * nedges / (nnodes * (nnodes - 1) / 2))",
+                               "if D[ai, bi] + D[ci, di] >= D[ai, ci] + D[bi, di]:")),
+    ):
+        text = " ".join(_source_text(_registered(name)).split())
+        if not all(s in text for s in common + extra):
+            return None
+        if not ("local_conn(G, a, b) == 0" in text or "not nx.has_path(G, a, b)" in text):
+            return None
+    return (old_cdf,)
+
+
+def _reference(G, niter, connectivity, seed, lattice):
+    _rg_seed(seed)
+    version = _reference_version()
+    if version is None:
+        raise NotImplementedError("unrecognized NetworkX reference graph code")
+    if type(niter) is not int or niter < 0:
+        raise NotImplementedError("rustnx needs a non-negative int niter")
+    base = _networkx_graph(G)
+    if len(base) < 4 or base.number_of_edges() < 2:
+        raise NotImplementedError("NetworkX raises for this graph")
+    H = base.copy()
+    _rg_run(seed, lambda state: _CoreGraph.reference_swaps(
+        H._adj, lattice, niter, bool(connectivity), version[0], state))
+    return H
+
+
+def random_reference(G, niter=1, connectivity=True, seed=None):
+    return _reference(G, niter, connectivity, seed, False)
+
+
+def lattice_reference(G, niter=5, D=None, connectivity=True, seed=None):
+    if D is not None:
+        raise NotImplementedError("rustnx uses NetworkX's default D")
+    return _reference(G, niter, connectivity, seed, True)
+
+
+__all__ += ["approximate_average_clustering", "random_reference", "lattice_reference"]
+
+
+# --- generate_random_paths: NumPy RandomState walks replayed in Rust ----------
+
+
+@functools.cache
+def _random_paths_recognized():
+    text = " ".join(_source_text(_registered("generate_random_paths")).split())
+    return (
+        "randint_fn = ( seed.integers if isinstance(seed, np.random.Generator) else seed.randint )" in text
+        and "adj_mat = nx.to_numpy_array(G, weight=weight)" in text
+        and ("inv_row_sums = np.reciprocal(row_sums) transition_probabilities = adj_mat * inv_row_sums" in text
+             or "inv_row_sums = np.reciprocal(adj_mat.sum(axis=1)).reshape(-1, 1) transition_probabilities = adj_mat * inv_row_sums" in text)
+        and "node_index = randint_fn(num_nodes) node = node_map[node_index]" in text
+        and "nbr_index = seed.choice( num_nodes, p=transition_probabilities[starting_index] )" in text
+        and "index_map[node].add(path_index) else: index_map[node] = {path_index}" in text
+        and "index_map[nbr_node].add(path_index) else: index_map[nbr_node] = {path_index}" in text
+        and "yield path" in text
+    )
+
+
+def generate_random_paths(G, sample_size, path_length=5, index_map=None, weight="weight", seed=None,
+                          *, source=None):
+    import numpy as np
+
+    if not _random_paths_recognized():
+        raise NotImplementedError("unrecognized NetworkX generate_random_paths")
+    if type(seed) is not np.random.RandomState:
+        raise NotImplementedError("rustnx replays numpy.random.RandomState only")
+    for value in (sample_size, path_length):
+        if type(value) is not int or not 0 <= value < 2**62:
+            raise NotImplementedError("rustnx needs non-negative int sizes")
+    node_map = list(_networkx_graph(G))
+    n = len(node_map)
+    if n == 0:
+        raise NotImplementedError("NetworkX raises for an empty graph")
+    start = None
+    if source is not None:
+        if source not in node_map:
+            raise NotImplementedError("NetworkX raises NodeNotFound")
+        start = node_map.index(source)
+    try:
+        adj_mat = globals()["to_numpy_array"](G, weight=weight)
+    except Exception:
+        raise NotImplementedError("NetworkX builds this matrix") from None
+    row_sums = adj_mat.sum(axis=1).reshape(-1, 1)
+    if not (row_sums != 0).all():
+        # Isolated nodes: NaN rows, which NumPy's choice may refuse midway.
+        raise NotImplementedError("NetworkX handles isolated nodes")
+    probs = adj_mat * np.reciprocal(row_sums)
+    try:
+        walks = _core.RandomPaths(np.ascontiguousarray(probs, dtype=np.float64).tobytes(), n)
+    except ValueError:
+        raise NotImplementedError("NumPy's choice refuses these probabilities") from None
+    return _random_paths(seed, walks, node_map, sample_size, path_length, index_map, start, source)
+
+
+def _mt19937_address(seed):
+    """The address of ``seed``'s MT19937 state if its memory layout is
+    NumPy's ``mt19937_state`` (checked against ``get_state()``), else None."""
+    import ctypes
+
+    import numpy as np
+
+    try:
+        address = seed._bit_generator.ctypes.state_address
+        state = seed.get_state()
+        key = (ctypes.c_uint32 * 624).from_address(address)
+        pos = ctypes.c_int.from_address(address + 624 * 4).value
+    except Exception:
+        return None
+    if pos != state[2] or not np.array_equal(np.frombuffer(key, dtype=np.uint32), state[1]):
+        return None
+    return address
+
+
+def _random_paths(seed, walks, node_map, sample_size, path_length, index_map, start, source):
+    import numpy as np
+
+    address = None
+    for path_index in range(sample_size):
+        if address is None:
+            address = _mt19937_address(seed)
+        if address is not None:
+            with seed._bit_generator.lock:
+                indices = walks.path_at(start, path_length, address)
+        else:
+            state = seed.get_state()
+            found = walks.path(start, path_length, np.ascontiguousarray(state[1], dtype=np.uint32).tobytes(), int(state[2]))
+            indices = None
+            if found is not None:
+                indices, key, pos = found
+                seed.set_state((state[0], np.frombuffer(key, dtype=np.uint32).copy(), pos, state[3], state[4]))
+        if indices is None:
+            raise RuntimeError("rustnx could not replay NumPy's draws")
+        path = [node_map[i] for i in indices]
+        if start is not None:
+            path[0] = source
+        if index_map is not None:
+            for node in path:
+                if node in index_map:
+                    index_map[node].add(path_index)
+                else:
+                    index_map[node] = {path_index}
+        yield path
+
+
+__all__ += ["generate_random_paths"]
+
+
+@functools.cache
+def _panther_paths_copy():
+    """NetworkX's ``_prepare_panther_paths`` (3.6+), copied for hybrids so
+    its ``generate_random_paths`` runs in rustnx, under the same seed
+    decorator."""
+    from networkx.algorithms import similarity
+    from networkx.utils import np_random_state
+
+    return np_random_state("seed")(_hybrid._copy(similarity._prepare_panther_paths.__wrapped__))
+
+
+def _prepare_panther_paths_rustnx(*args, **kwargs):
+    return _panther_paths_copy()(*args, **kwargs)
+
+
+def _register_panther_helper():
+    from networkx.algorithms import similarity
+
+    helper = getattr(similarity, "_prepare_panther_paths", None)
+    if helper is None or not hasattr(helper, "__wrapped__"):
+        return
+    try:
+        source = inspect.getsource(similarity)
+    except (OSError, TypeError):
+        return
+    if '@np_random_state("seed")\ndef _prepare_panther_paths(' in source:
+        _hybrid.HELPERS[(similarity.__name__, "_prepare_panther_paths")] = _prepare_panther_paths_rustnx
+
+
+_register_panther_helper()
+
+
+# --- Louvain community detection --------------------------------------------------
+#
+# Rust runs each level (moves, modularity, the aggregated graph) with
+# Python's int/float arithmetic and CPython's sum(); Python replays the set
+# operations, so the sets yielded are built exactly as NetworkX builds them,
+# and gives Rust the iteration order of the set copies modularity sums over.
+
+# Normalized source (docstrings removed) of networkx.algorithms.community.
+# louvain and of modularity: (louvain, modularity) -> NetworkX 3.7's variant.
+_LOUVAIN_SOURCES = {
+    ("68df62a4fc0a328c", "c842ee15eed67718"): False,  # NetworkX 3.4 to 3.6
+    ("5d4a3894914303a5", "19f1525f13b2f7e1"): True,  # NetworkX 3.7
+}
+
+
+def _normalized_source(obj):
+    """A hash of ``obj``'s source without docstrings, comments or layout:
+    the code NetworkX runs, independent of the Python version reading it
+    (``ast.unparse`` prints the same code differently across versions)."""
+    import ast
+    import hashlib
+    import io
+    import textwrap
+    import tokenize
+
+    source = inspect.getsource(obj)
+    drop = set()
+    for node in ast.walk(ast.parse(textwrap.dedent(source))):
+        body = getattr(node, "body", None)
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module))
+            and body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(getattr(body[0], "value", None), ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            drop.update(range(body[0].lineno, body[0].end_lineno + 1))
+    comment_at = {}
+    for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+        if tok.type == tokenize.COMMENT:
+            comment_at.setdefault(tok.start[0], tok.start[1])
+    kept = []
+    for number, line in enumerate(source.splitlines(keepends=True), start=1):
+        if number in drop:
+            continue
+        if number in comment_at:
+            line = line[: comment_at[number]]
+        kept.append(line)
+    text = " ".join("".join(kept).split())
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+@functools.cache
+def _louvain_variant():
+    """True for NetworkX 3.7's Louvain, False for 3.4 to 3.6's, None if the
+    installed code is another, or Python's sum() isn't the one rustnx
+    replays."""
+    from networkx.algorithms.community import louvain, quality
+
+    try:
+        key = (
+            _normalized_source(louvain),
+            _normalized_source(getattr(quality.modularity, "__wrapped__", quality.modularity)),
+        )
+    except (OSError, TypeError, SyntaxError):
+        return None
+    variant = _LOUVAIN_SOURCES.get(key)
+    if variant is None or not _louvain_sum_ok():
+        return None
+    return variant
+
+
+def _louvain_sum_ok():
+    """Whether rustnx's replay of sum() (and of float ** 2) agrees with this
+    interpreter on a battery of int and float mixes."""
+    import struct
+
+    compensated = sys.version_info >= (3, 12)
+    rnd = random.Random(12345)
+    choices = (0.0, -0.0, 1e16, -1e16, 1.0, 0.1, 1e-300, 3, -7, True)
+    for _ in range(3000):
+        seq = []
+        for _ in range(rnd.randint(0, 10)):
+            r = rnd.random()
+            if r < 0.3:
+                seq.append(rnd.randint(-1000, 1000))
+            elif r < 0.45:
+                seq.append(rnd.choice(choices))
+            else:
+                seq.append(rnd.uniform(-1, 1) * 10 ** rnd.randint(-20, 20))
+        ours = _core.CoreGraph.louvain_sum(seq, compensated)
+        theirs = sum(seq)
+        if type(theirs) is bool:
+            theirs = int(theirs)
+        if ours is None or type(ours) is not type(theirs):
+            return False
+        if isinstance(theirs, float):
+            if struct.pack("<d", ours) != struct.pack("<d", theirs):
+                return False
+        elif ours != theirs:
+            return False
+        x = rnd.uniform(-1, 1) * 10 ** rnd.randint(-150, 150)
+        if struct.pack("<d", x**2) != struct.pack("<d", _core.CoreGraph.louvain_square(x)):
+            return False
+    return True
+
+
+def louvain_partitions(G, weight="weight", resolution=1, threshold=1e-07, seed=None):
+    variant = _louvain_variant()
+    if variant is None:
+        raise NotImplementedError("unrecognized NetworkX Louvain")
+    _rg_seed(seed)
+    if type(resolution) not in (int, float) or type(threshold) not in (int, float):
+        raise NotImplementedError("rustnx needs int or float resolution and threshold")
+    base = _networkx_graph(G)
+    if type(base) not in (nx.Graph, nx.DiGraph):
+        raise NotImplementedError("rustnx runs Louvain on Graph and DiGraph")
+    partition = [{u} for u in base.nodes()]
+    if nx.is_empty(base):
+        return _louvain_empty(partition)
+    try:
+        run = _core.Louvain(
+            base._adj, base._pred if base.is_directed() else None, weight, resolution, variant,
+            sys.version_info >= (3, 12),
+        )
+    except (ValueError, TypeError):
+        raise NotImplementedError("NetworkX runs this Louvain") from None
+    return _louvain_levels(run, list(base), partition, threshold, seed)
+
+
+def _louvain_empty(partition):
+    yield partition
+
+
+def _louvain_levels(run, nodes, partition, threshold, seed):
+    inner = [{u} for u in nodes]
+    attrs = None  # level 0: a node's "nodes" are {node}
+    while True:
+        moves, improvement = _rg_run(seed, lambda state: _louvain_level(run, state))
+        for u, a, b in moves:
+            node = nodes[u] if attrs is None else u
+            com = {node} if attrs is None else attrs[u]
+            partition[a].difference_update(com)
+            inner[a].remove(node)
+            partition[b].update(com)
+            inner[b].add(node)
+        partition = [p for p in partition if p]
+        inner = [p for p in inner if p]
+        if attrs is not None and not improvement:
+            return
+        yield [s.copy() for s in partition]
+        if attrs is None:
+            index = {u: i for i, u in enumerate(nodes)}
+            orders = [[index[x] for x in set(c)] for c in inner]
+        else:
+            orders = [list(set(c)) for c in inner]
+        stop = run.stop(orders, threshold)
+        if stop is None:
+            raise RuntimeError("rustnx could not follow NetworkX's Louvain arithmetic")
+        if stop:
+            return
+        # _gen_graph / _aggregate_graph: the communities' "nodes" sets.
+        new_attrs = []
+        for part in inner:
+            members = set()
+            for x in part:
+                members.update({x} if attrs is None else attrs[x])
+            new_attrs.append(members)
+        attrs = new_attrs
+        if run.aggregate() is None:
+            raise RuntimeError("rustnx could not follow NetworkX's Louvain arithmetic")
+        nodes = range(len(attrs))
+        inner = [{u} for u in nodes]
+
+
+def _louvain_level(run, state):
+    found = run.one_level(state)
+    if found is None:
+        return None
+    moves, improvement, state = found
+    return (moves, improvement), state
+
+
+__all__ += ["louvain_partitions"]
+
+
+def _approximate_local_node_connectivity_hybrid(G, source, target, cutoff=None):
+    """``approximate_local_node_connectivity`` inside a hybrid
+    (``approximate_k_components`` calls it for every pair of nodes of each
+    subgraph): rustnx's port on a conversion of ``G`` kept for the call,
+    without NetworkX's dispatch on every call. NetworkX's otherwise."""
+    theirs = _registered("approximate_local_node_connectivity")
+    scratch = _hybrid.scratch()
+    if (
+        scratch is None
+        or type(G) is not nx.Graph
+        or not (cutoff is None or type(cutoff) in (int, bool))
+    ):
+        return theirs(G, source, target, cutoff=cutoff)
+    key = ("approximate_local_node_connectivity", id(G))
+    entry = scratch.get(key)
+    if entry is None or entry[0] is not G:
+        from .graph import from_networkx
+
+        entry = scratch[key] = (G, from_networkx(G, {}))
+    try:
+        return approximate_local_node_connectivity(entry[1], source, target, cutoff)
+    except NotImplementedError:
+        return theirs(G, source, target, cutoff=cutoff)
+
+
+_hybrid.DISPATCH_HELPERS["approximate_local_node_connectivity"] = (
+    _approximate_local_node_connectivity_hybrid
+)
+
+
+# --- random_spanning_tree: NetworkX's draws on Laplacians built directly -------
+
+# Normalized sources of random_spanning_tree and number_of_spanning_trees
+# this replays (3.5 to 3.7; 3.4's calls the deprecated
+# total_spanning_tree_weight, which warns on every call).
+_RANDOM_SPANNING_TREE_SOURCES = {("3ffc6a2052efb5f7", "377459892cffe533")}
+
+
+@functools.cache
+def _random_spanning_tree_recognized():
+    try:
+        key = (
+            _normalized_source(_registered("random_spanning_tree").orig_func),
+            _normalized_source(_registered("number_of_spanning_trees").orig_func),
+        )
+    except (AttributeError, KeyError, OSError, TypeError, SyntaxError):
+        return False
+    return key in _RANDOM_SPANNING_TREE_SOURCES
+
+
+def random_spanning_tree(G, weight=None, *, multiplicative=True, seed=None):
+    """NetworkX's ``random_spanning_tree`` for a Graph without self-loops,
+    multiplicative, unweighted or with int weights. NetworkX rebuilds and
+    contracts a MultiGraph for every edge to take the determinant of its
+    Laplacian; here each contracted Laplacian is built directly (the same
+    integers, nodes in the same order) and handed to the same
+    ``np.linalg.det``. Every random draw is NetworkX's own call on ``seed``,
+    and the edge sets are the same Python sets, so the tree is identical."""
+    import numpy as np
+
+    if not _random_spanning_tree_recognized():
+        raise NotImplementedError("unrecognized NetworkX random_spanning_tree")
+    if multiplicative is not True:
+        raise NotImplementedError("rustnx replays multiplicative=True only")
+    if not isinstance(seed, random.Random):
+        raise NotImplementedError("rustnx replays a random.Random seed only")
+    G = _networkx_graph(G)
+    if type(G) is not nx.Graph:
+        raise NotImplementedError("rustnx replays plain Graphs only")
+    if G.number_of_nodes() < 2:
+        return nx.empty_graph(G.nodes)
+    try:
+        import scipy  # noqa: F401  (NetworkX's laplacian_matrix needs it)
+    except ImportError:
+        raise NotImplementedError("NetworkX needs SciPy here") from None
+    index = {v: i for i, v in enumerate(G)}
+    n = len(index)
+    edges = list(G.edges())
+    ei = np.fromiter((index[u] for u, _ in edges), dtype=np.int64, count=len(edges))
+    ej = np.fromiter((index[v] for _, v in edges), dtype=np.int64, count=len(edges))
+    if (ei == ej).any():
+        raise NotImplementedError("rustnx declines self-loops here")
+    if weight is None:
+        weights = [1] * len(edges)
+    else:
+        weights = []
+        total = 0
+        for u, v in edges:
+            w = G[u][v].get(weight)
+            if type(w) is not int:
+                raise NotImplementedError("rustnx replays int weights only")
+            total += abs(w)
+            weights.append(w)
+        if total >= 2**52:
+            raise NotImplementedError("weights too large to replay")
+    w_arr = np.array(weights, dtype=np.int64)
+    edge_pos = {e: i for i, e in enumerate(edges)}
+
+    def find_node(merged_nodes, node):
+        if node not in merged_nodes:
+            return node
+        rep = find_node(merged_nodes, merged_nodes[node])
+        merged_nodes[node] = rep
+        return rep
+
+    def total_weight(cls, alive, keep):
+        # number_of_spanning_trees of the contracted MultiGraph: nodes `keep`
+        # (in G's order), each node's class in `cls`, the live edges.
+        pos = np.full(n, -1, dtype=np.int64)
+        pos[keep] = np.arange(len(keep))
+        a = pos[cls[ei[alive]]]
+        b = pos[cls[ej[alive]]]
+        w = w_arr[alive]
+        cut = a != b
+        a, b, w = a[cut], b[cut], w[cut]
+        k = len(keep)
+        if not _classes_connected(k, a, b):
+            return 0
+        L = np.zeros((k, k), dtype=np.int64)
+        np.add.at(L, (a, b), -w)
+        np.add.at(L, (b, a), -w)
+        np.add.at(L, (a, a), w)
+        np.add.at(L, (b, b), w)
+        return float(np.linalg.det(L[1:, 1:]))
+
+    U = set()
+    V = set(edges)
+    shuffled_edges = list(edges)
+    seed.shuffle(shuffled_edges)
+    for u, v in shuffled_edges:
+        e_weight = G[u][v][weight] if weight is not None else 1
+        merged_nodes = {}
+        for x, y in U:
+            x_rep = find_node(merged_nodes, x)
+            y_rep = find_node(merged_nodes, y)
+            if x_rep == y_rep:
+                continue
+            merged_nodes[y_rep] = x_rep
+        cls = np.arange(n, dtype=np.int64)
+        for x in merged_nodes:
+            cls[index[x]] = index[find_node(merged_nodes, x)]
+        alive = np.zeros(len(edges), dtype=bool)
+        alive[[edge_pos[e] for e in V]] = True
+        keep = np.flatnonzero(cls == np.arange(n))
+        G_total_tree_weight = total_weight(cls, alive, keep)
+        ru, rv = find_node(merged_nodes, u), find_node(merged_nodes, v)
+        cu, cv = cls == index[ru], cls == index[rv]
+        if ru != rv and (alive & ((cu[ei] & cv[ej]) | (cv[ei] & cu[ej]))).any():
+            # contracted_edge: rv's class joins ru's, rv leaves the order.
+            cls_e = cls.copy()
+            cls_e[cv] = index[ru]
+            G_e_total_tree_weight = total_weight(cls_e, alive, keep[keep != index[rv]])
+            threshold = e_weight * G_e_total_tree_weight / G_total_tree_weight
+        else:
+            threshold = 0.0
+        z = seed.uniform(0.0, 1.0)
+        if z > threshold:
+            V.remove((u, v))
+        else:
+            U.add((u, v))
+        if len(U) == G.number_of_nodes() - 1:
+            spanning_tree = nx.Graph()
+            spanning_tree.add_edges_from(U)
+            return spanning_tree
+    raise Exception(f"Something went wrong! Only {len(U)} edges in the spanning tree!")
+
+
+def _classes_connected(k, a, b):
+    """Whether edges a[i]-b[i] connect all of nodes 0..k-1."""
+    if k <= 1:
+        return True
+    parent = list(range(k))
+
+    def root(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    parts = k
+    for x, y in zip(a.tolist(), b.tolist()):
+        rx, ry = root(x), root(y)
+        if rx != ry:
+            parent[ry] = rx
+            parts -= 1
+            if parts == 1:
+                return True
+    return parts == 1
+
+
+__all__ += ["random_spanning_tree"]
+
+
+# --- random_walk (NetworkX 3.7) -------------------------------------------------
+
+
+_RANDOM_WALK_BODY = (
+    "if start not in G: raise nx.NodeNotFound(start) node = start yield node "
+    "while nbrs := G._adj[node]: if weight is None: node = seed.choice(list(nbrs)) "
+    "else: wts = [nbr.get(weight, 1) for nbr in nbrs.values()] "
+    "if any(w < 0 for w in wts): raise ValueError(\"random_walk doesn't support negative weights\") "
+    "if sum(wts) == 0: return node = seed.choices(list(nbrs), weights=wts, k=1)[0] yield node"
+)
+
+
+@functools.cache
+def _random_walk_recognized():
+    if "random_walk" not in nx.utils.backends._registered_algorithms:
+        return False
+    return _source_text(_registered("random_walk")).endswith(_RANDOM_WALK_BODY)
+
+
+def random_walk(G, *, start, weight=None, seed=None):
+    """NetworkX 3.7's ``random_walk``: the same ``seed.choice`` and
+    ``seed.choices`` calls in the same order, on each node's neighbors and
+    cumulative weights built once (NetworkX rebuilds them at every step).
+    A change to the graph (which clears its ``__networkx_cache__``, as all of
+    NetworkX's graph methods do) drops them, so the walk follows the graph
+    as NetworkX's does. Plain ``random.Random`` seeds only."""
+    import itertools
+
+    if not _random_walk_recognized():
+        raise NotImplementedError("unrecognized NetworkX random_walk")
+    G = _networkx_graph(G)
+    if type(G) not in (nx.Graph, nx.DiGraph) or nx.is_frozen(G):
+        raise NotImplementedError("rustnx walks plain Graphs and DiGraphs only")
+    if type(getattr(G, "__networkx_cache__", None)) is not dict:
+        raise NotImplementedError("rustnx needs NetworkX's graph cache")
+    seed = nx.utils.create_py_random_state(seed)
+    if type(seed) is not random.Random:
+        raise NotImplementedError("rustnx walks with a random.Random seed only")
+    accumulate = itertools.accumulate
+
+    def walk():
+        if start not in G:
+            raise nx.NodeNotFound(start)
+        adj = G._adj
+        # A key of this walk's own in the graph's cache: gone once the graph
+        # changes (or the cache is replaced), and the lists are rebuilt.
+        sentinel = object()
+        cache = None
+        lists = {}
+        node = start
+        yield node
+        while True:
+            if G.__networkx_cache__ is not cache or cache is None or sentinel not in cache:
+                lists.clear()
+                cache = G.__networkx_cache__
+                if type(cache) is dict:
+                    cache[sentinel] = None
+                else:
+                    cache = None
+            entry = lists.get(node)
+            if entry is None:
+                nbrs = adj[node]
+                if not nbrs:
+                    return
+                if weight is None:
+                    entry = tuple(nbrs)
+                else:
+                    wts = [nbr.get(weight, 1) for nbr in nbrs.values()]
+                    if any(w < 0 for w in wts):
+                        raise ValueError("random_walk doesn't support negative weights")
+                    if sum(wts) == 0:
+                        return
+                    entry = tuple(nbrs), list(accumulate(wts))
+                if cache is not None:
+                    lists[node] = entry
+            if weight is None:
+                node = seed.choice(entry)
+            else:
+                node = seed.choices(entry[0], cum_weights=entry[1], k=1)[0]
+            yield node
+
+    return walk()
+
+
+__all__ += ["random_walk"]

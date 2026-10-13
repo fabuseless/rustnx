@@ -20,6 +20,7 @@ import functools
 import inspect
 import threading
 import types
+import warnings
 
 import networkx as nx
 
@@ -42,6 +43,20 @@ NESTED = (
     "chordal_graph_cliques",
     "maximum_spanning_tree",
     "is_chordal",
+    "all_pairs_dijkstra",
+    "minimum_spanning_tree",
+    "min_weight_matching",
+    "eulerian_circuit",
+    "random_reference",
+    "lattice_reference",
+    "transitivity",
+    "average_shortest_path_length",
+    "average_clustering",
+    "generate_random_paths",
+    "louvain_partitions",
+    "minimum_spanning_arborescence",
+    "maximum_spanning_arborescence",
+    "random_spanning_tree",
 )
 
 # NetworkX functions that hybrids must run in NetworkX itself: they return
@@ -51,8 +66,42 @@ NETWORKX_ONLY = (
     "biconnected_components",
 )
 
+
+
+def _descendants(G, source):
+    """``nx.descendants`` on a plain Graph or DiGraph: the same breadth-first
+    search over the same neighbor dicts, in Rust, collected into a set in
+    the same order (so it iterates the same). Anything else runs
+    NetworkX's."""
+    if type(G) in (nx.Graph, nx.DiGraph) and source in G._adj:
+        from . import _core
+
+        found = _core.CoreGraph.dict_descendants(G._adj, source)
+        if found is not None:
+            return found
+    return nx.descendants(G, source)
+
+
+# NetworkX functions the proxy answers with an exact equivalent.
+FAST = {"descendants": _descendants}
+
+# NetworkX classes copied for hybrids, by name: their methods run with ``nx``
+# replaced by the proxy too (``ArborescenceIterator`` calls
+# ``minimum_spanning_arborescence`` for every arborescence it yields).
+CLASSES = ("ArborescenceIterator",)
+
 # id(networkx graph) -> (networkx graph, rustnx graph) for the current call.
 _graphs = contextvars.ContextVar("rustnx_hybrid_graphs", default={})
+
+# Scratch space for the current call (None outside one): replacements keep
+# what they build from graphs NetworkX's code makes (and doesn't change
+# while the call runs) here, so it lives as long as the call.
+_scratch = contextvars.ContextVar("rustnx_hybrid_scratch", default=None)
+
+
+def scratch():
+    """The current hybrid call's scratch dict, or None outside one."""
+    return _scratch.get()
 
 
 def _rustnx_builder(name):
@@ -88,26 +137,67 @@ def _nested(func):
     @functools.wraps(func)
     def call(*args, **kwargs):
         try:
-            return func(*args, backend="rustnx", **kwargs)
+            with warnings.catch_warnings():
+                # NetworkX notes each reuse of a converted graph; a nested
+                # call on the input graph reuses the outer call's conversion,
+                # which NetworkX's own code never does.
+                warnings.filterwarnings("ignore", message=_CACHE_NOTE)
+                return func(*args, backend="rustnx", **kwargs)
         except NotImplementedError:
             return func(*args, backend="networkx", **kwargs)
 
     return call
 
 
+_CACHE_NOTE = "Note: conversions to backend graphs are saved to cache"
+
+
 def _nested_name(value):
     """The NetworkX name of ``value`` if it is one of ``NESTED`` (a
-    dispatchable, or a decorated function wrapping one), else None."""
+    dispatchable, or a decorated function wrapping one), or a decorated
+    function wrapping one of ``HYBRIDS`` (whose decorators' checks must
+    run, so it is called through dispatch rather than copied), else None."""
     name = getattr(value, "name", None) or getattr(value, "__name__", None)
-    if name not in NESTED:
-        return None
-    if isinstance(value, nx.utils.backends._dispatchable) or hasattr(value, "__wrapped__"):
-        return name
+    if name in NESTED:
+        if isinstance(value, nx.utils.backends._dispatchable) or hasattr(value, "__wrapped__"):
+            return name
+    elif name in HYBRIDS:
+        if not isinstance(value, nx.utils.backends._dispatchable) and hasattr(value, "__wrapped__"):
+            return name
     return None
 
 
-@functools.cache
+def _dispatch_helper(value):
+    """The replacement for ``value`` if it is a NetworkX dispatchable (or a
+    decorated function wrapping one) named in ``DISPATCH_HELPERS``."""
+    name = getattr(value, "name", None)
+    if not isinstance(name, str) or name not in DISPATCH_HELPERS:
+        return None
+    if isinstance(value, nx.utils.backends._dispatchable) or hasattr(value, "__wrapped__"):
+        return DISPATCH_HELPERS[name]
+    return None
+
+
+_proxy_module = None
+
+
 def _proxy():
+    """The proxy ``nx`` module (built once; class copies are added after it
+    is stored, since copying their methods needs the proxy)."""
+    global _proxy_module
+    if _proxy_module is not None:
+        return _proxy_module
+    with _copy_lock:
+        if _proxy_module is None:
+            proxy = _build_proxy()
+            _proxy_module = proxy
+            for name in CLASSES:
+                if hasattr(nx, name):
+                    setattr(proxy, name, _copy_class(getattr(nx, name)))
+    return _proxy_module
+
+
+def _build_proxy():
     proxy = types.ModuleType("networkx")
     proxy.__dict__.update(nx.__dict__)
     bipartite = types.ModuleType("networkx.bipartite")
@@ -116,6 +206,8 @@ def _proxy():
     for name in NESTED:
         if hasattr(nx, name):
             setattr(proxy, name, _nested(getattr(nx, name)))
+    for name, func in FAST.items():
+        setattr(proxy, name, func)
     for name in NETWORKX_ONLY:
         if hasattr(nx, name):
             setattr(proxy, name, functools.partial(getattr(nx, name), backend="networkx"))
@@ -166,6 +258,10 @@ def _copy_locked(func):
             scope[name] = proxy
         elif _nested_name(value):
             scope[name] = _nested(value)
+        elif isinstance(value, type) and value.__name__ in CLASSES and getattr(nx, value.__name__, None) is value:
+            scope[name] = _copy_class(value)
+        elif _dispatch_helper(value) is not None:
+            scope[name] = _dispatch_helper(value)
         elif isinstance(value, nx.utils.backends._dispatchable):
             if value.name in BUILDERS:
                 scope[name] = _builder(value.name)
@@ -188,6 +284,27 @@ def _copy_locked(func):
     return copy_
 
 
+def _copy_class(cls):
+    """A copy of NetworkX class ``cls`` (same bases) whose methods are
+    copied as functions are, so they see the proxy. A thread that reads the
+    proxy before its class copies are added gets NetworkX's own class,
+    which gives the same results, more slowly."""
+    with _copy_lock:
+        if cls in _copies:
+            return _copies[cls]
+        namespace = {}
+        for key, value in cls.__dict__.items():
+            if key in ("__dict__", "__weakref__"):
+                continue
+            if isinstance(value, types.FunctionType) and not hasattr(value, "__wrapped__"):
+                value = _copy_locked(value)
+            namespace[key] = value
+        copy_ = type(cls.__name__, cls.__bases__, namespace)
+        copy_.__qualname__ = cls.__qualname__
+        _copies[cls] = copy_
+        return copy_
+
+
 def _wrapper_for(name, dispatchable):
     """A nested call of another hybrid function: NetworkX's own code, copied,
     so its matrices come from rustnx too when it is handed the same graph."""
@@ -208,6 +325,12 @@ HYBRIDS = set()
 # what the helper returns (for example the same integers from a faster
 # formula and a cache), so NetworkX's code around it is unchanged.
 HELPERS = {}
+
+# NetworkX dispatchables replaced inside hybrids, by name: each replacement
+# returns exactly what the function returns (falling back to it), without
+# NetworkX's per-call dispatch, for functions NetworkX's code calls many
+# times. Filled in by algorithms.py.
+DISPATCH_HELPERS = {}
 
 
 @functools.cache
@@ -250,7 +373,9 @@ def run(name, arguments, base_graph):
             graphs[id(base)] = (base, G)
             call_args[param] = base
     token = _graphs.set(graphs)
+    scratch_token = _scratch.set({})
     try:
         return func(**call_args)
     finally:
+        _scratch.reset(scratch_token)
         _graphs.reset(token)
