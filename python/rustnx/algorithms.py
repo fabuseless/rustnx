@@ -17022,7 +17022,7 @@ __all__ += ["random_walk"]
 
 # --- snap_aggregation -------------------------------------------------------
 
-_SNAP_SOURCES = {(("d3885a47d9154a8d", "e3cdf4648b6f0a13", "a2ac156b4d5d8020"), "620c0198e2b0f708")}
+_SNAP_SOURCES = {(("aed6e069d8cfff09", "9af9d4181c51a8cb", "25b1611b47a08c76"), "db0cf4055563a980")}
 
 
 @functools.cache
@@ -17140,7 +17140,7 @@ __all__ += ["snap_aggregation"]
 
 # --- create_component_structure -------------------------------------------------
 
-_COMPONENT_STRUCTURE_SOURCES = {"c6e7ed7f838657a9"}
+_COMPONENT_STRUCTURE_SOURCES = {"bd47dc49ed6e4f37"}
 
 
 @functools.cache
@@ -17172,7 +17172,7 @@ __all__ += ["create_component_structure"]
 
 # --- capacity_scaling -----------------------------------------------------------
 
-_CAPACITY_SCALING_SOURCES = {("08cd747838e05936", "b0cee8aaebf1eaf1", "ddac98ec86903d3a")}
+_CAPACITY_SCALING_SOURCES = {("f3e86162a100791e", "36b7ecb8efacd040", "ec5bc6628c87fd91")}
 
 
 @functools.cache
@@ -17276,7 +17276,7 @@ __all__ += ["capacity_scaling"]
 
 # --- spanner ----------------------------------------------------------------------
 
-_SPANNER_SOURCES = {"cc926a59bd514e04"}
+_SPANNER_SOURCES = {"a94eb6613378ab83"}
 
 
 @functools.cache
