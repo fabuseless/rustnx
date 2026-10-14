@@ -57,6 +57,17 @@ NESTED = (
     "minimum_spanning_arborescence",
     "maximum_spanning_arborescence",
     "random_spanning_tree",
+    "is_k_edge_connected",
+    "is_locally_k_edge_connected",
+    "local_edge_connectivity",
+    "edge_connectivity",
+    "k_edge_subgraphs",
+    "k_edge_components",
+    "k_edge_augmentation",
+    "one_edge_augmentation",
+    "bridge_augmentation",
+    "minimum_edge_cut",
+    "minimum_st_edge_cut",
 )
 
 # NetworkX functions that hybrids must run in NetworkX itself: they return

@@ -3940,8 +3940,6 @@ def test_batch13_declines():
         lambda: _b13_conn.is_k_edge_connected(G, 3, backend="rustnx"),
         lambda: list(_b13_conn.k_edge_components(G, 3, backend="rustnx")),
         lambda: list(_b13_conn.k_edge_subgraphs(G, 3, backend="rustnx")),
-        lambda: list(_b13_conn.k_edge_augmentation(G, 3, backend="rustnx")),
-        lambda: list(_b13_aug.one_edge_augmentation(G, avail=[(0, 1)], backend="rustnx")),
         lambda: nx.node_connectivity(G, flow_func=nx.flow.dinitz, backend="rustnx"),
         lambda: _b13_conn.local_edge_connectivity(G, [1], 0, backend="rustnx"),
     ]

@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 655 NetworkX functions. Call them as usual (for
+rustnx implements 664 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly, except that
 the functions marked "fast by default" in the Floats column can differ
@@ -891,6 +891,20 @@ in the last bits of their floats until you turn on exact floats.
 | `nx.approximation` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with `held_karp_ascent` and the arborescences its `ArborescenceIterator` enumerates from rustnx. About 30x faster. |
 | `nx.approximation.traveling_salesman` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with the arborescences its `ArborescenceIterator` enumerates from rustnx. NetworkX keeps the minimum 1-arborescences in a set of graphs, which iterates in memory-address order, so ties can come out differently from one run to the next (in NetworkX too). |
 | `nx.random_walk` | `start`, `weight`, `seed` | no | rustnx | exact | NetworkX 3.7+. The same `seed.choice` / `seed.choices` calls in the same order, on each node's neighbors (and cumulative weights) built once instead of at every step. Changing the graph during the walk clears its `__networkx_cache__`, which drops them, so the walk follows the graph as NetworkX's does. `random.Random` seeds and plain `Graph` / `DiGraph`. 2x to 14x faster. |
+
+### Flows, structure and summaries
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Floats | Notes |
+|---|---|---|---|---|---|
+| `nx.snap_aggregation` | `node_attributes`, `edge_attributes`, `prefix`, `supernode_attribute`, `superedge_attribute` | yes | rustnx | exact | NetworkX builds a `Counter` for every (node, group) pair on every pass; here each node's set of (neighbor group, edge type) pairs decides whether its group splits (the same test), in time linear in the edges, and the splits are NetworkX's own set operations on the same sets, so the summary graph is identical. All four graph classes. 80x at 300 nodes, about 800x at 1,000. |
+| `nx.algorithms.asteroidal` | none | no | rustnx | exact | In Rust with CPython's set orders replayed (the loop over `set(G.nodes)`, each closed neighborhood, the subgraph view's node filter and each component), so every row has the same keys in the same order. About 20x. |
+| `nx.capacity_scaling` | `demand`, `capacity`, `weight`, `heap` | yes | rustnx | exact | NetworkX's own residual network and checks, then its phases in Rust with Python's int arithmetic, `BinaryHeap`'s order and `arbitrary_element` of the excess set in CPython's order, then NetworkX's own cost sum and flow dict. Int capacities, weights and demands; floats go to NetworkX. About 12x. |
+| `nx.spanner` | `stretch`, `weight`, `seed` | no | rustnx | exact | Replayed in Rust: NetworkX's weight tuples (with `id()` of the same node objects breaking ties), `random.Random`'s draws in NetworkX's order, CPython's order for the sets of centers and of edges to add, and the neighbor order of `G.copy()`, giving the same sequence of `add_edge` calls. `Graph` with int or float weights. 4x to 5x. |
+| `nx.algorithms.connectivity.edge_augmentation` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code with its connectivity tests and flows in rustnx. `k_edge_augmentation` with k >= 3 or `avail` runs this way too. About 2x. |
+| `nx.algorithms.connectivity.edge_augmentation` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code with its k-edge subgraphs and augmentations in rustnx. NetworkX iterates a set of graph objects here (memory-address order), so the order of the edges can differ between runs, in NetworkX too. About 25x. |
+| `nx.algorithms.connectivity.edge_augmentation` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code with its minimum spanning arborescence in rustnx. About 20x. |
+| `nx.algorithms.connectivity.edge_augmentation` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code with its inner calls in rustnx. |
+| `nx.algorithms.connectivity.edge_kcomponents` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code with its minimum edge cuts in rustnx. NetworkX keeps its work in a set of graph objects (memory-address order), so the order of the subgraphs can differ between runs, in NetworkX too. About 15x. |
 
 ### Bipartite measures
 

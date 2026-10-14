@@ -251,6 +251,7 @@ NetworkX, is in [docs/API.md](docs/API.md).
 | `louvain_communities`, `louvain_partitions` | Louvain in Rust with Python's own arithmetic and set operations, for both NetworkX variants (3.4 to 3.6, and 3.7's): the same communities for the same `seed`. 4x to 10x faster. |
 | Randomized measures: `random_reference`, `lattice_reference`, `sigma`, `omega`, `nx.approximation.average_clustering`, `generate_random_paths`, `panther_similarity`, `panther_vector_similarity`, `random_spanning_tree`, `random_walk` | The same results for the same `seed` (Python's `random.Random` and NumPy's legacy `RandomState` replayed, or called in NetworkX's order). 1.5x to 1,400x faster. |
 | `christofides`, `traveling_salesman_problem`, `asadpour_atsp`, `held_karp_ascent`, `nx.approximation.k_components`, `lukes_partitioning` | NetworkX's own code with its inner work (spanning trees, matchings, arborescences, connectivity, `descendants`) in rustnx. 2.5x to 30x faster. |
+| `snap_aggregation`, `create_component_structure`, `capacity_scaling`, `spanner`, `k_edge_augmentation` (k >= 3 or `avail`) and its helpers | The same results in the same order (Python's set orders, `id()` tie-breaks and random draws replayed where NetworkX depends on them). 2x to 800x faster. |
 The rest of NetworkX's functions run in NetworkX. [docs/COVERAGE.md](docs/COVERAGE.md)
 lists every function NetworkX lets a backend implement and which ones rustnx
 does.

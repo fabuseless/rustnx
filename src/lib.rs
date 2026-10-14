@@ -6782,6 +6782,17 @@ impl CoreGraph {
         Ok((found, comps))
     }
 
+    /// `create_component_structure`: per node (in `set(G.nodes)` order)
+    /// the row's keys in insertion order and their labels.
+    fn component_structure(
+        &self,
+        py: Python<'_>,
+        hashes: Vec<i64>,
+    ) -> PyResult<Vec<cliques::ComponentRow>> {
+        self.b25_check_hashes(&hashes)?;
+        Ok(py.detach(|| cliques::component_structure(&self.succ, self.n, &hashes)))
+    }
+
     /// The iteration order of `set(G)` (one `add` per node, in order).
     fn set_iteration_order(&self, hashes: Vec<i64>) -> PyResult<Vec<u32>> {
         self.b25_check_hashes(&hashes)?;
@@ -7808,6 +7819,126 @@ impl CoreGraph {
             out.add(v)?;
         }
         Ok(Some(out))
+    }
+
+    /// `capacity_scaling`'s phases on NetworkX's residual network: per
+    /// node its neighbor groups `(v, first edge, end)` (as `group_ends`,
+    /// each node's end in `groups`), per edge capacity, weight and reverse
+    /// edge; the nodes' excesses and hashes. Each edge's final flow, and
+    /// whether every excess ended at zero.
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    fn capacity_scaling_phases(
+        py: Python<'_>,
+        group_ends: Vec<usize>,
+        groups: Vec<(u32, usize, usize)>,
+        cap: Vec<i64>,
+        weight: Vec<i64>,
+        partner: Vec<u32>,
+        excess: Vec<i64>,
+        delta: i64,
+        hashes: Vec<i64>,
+    ) -> PyResult<(Vec<i64>, bool)> {
+        let n = excess.len();
+        let m = cap.len();
+        let bad = || PyValueError::new_err("bad residual network");
+        if group_ends.len() != n || hashes.len() != n || weight.len() != m || partner.len() != m {
+            return Err(bad());
+        }
+        let mut node_groups = Vec::with_capacity(n);
+        let mut start = 0;
+        for &end in &group_ends {
+            if end < start || end > groups.len() {
+                return Err(bad());
+            }
+            node_groups.push(start..end);
+            start = end;
+        }
+        if groups
+            .iter()
+            .any(|&(v, a, b)| v as usize >= n || a > b || b > m)
+            || partner.iter().any(|&p| p as usize >= m)
+        {
+            return Err(bad());
+        }
+        let r = algorithms::capacity_scaling::Residual {
+            node_groups,
+            groups,
+            cap: cap.into_iter().map(i128::from).collect(),
+            weight: weight.into_iter().map(i128::from).collect(),
+            partner,
+        };
+        let excess: Vec<i128> = excess.into_iter().map(i128::from).collect();
+        let (flow, feasible) =
+            py.detach(|| algorithms::capacity_scaling::run(&r, excess, i128::from(delta), &hashes));
+        // The caller bounds the inputs, so flows fit an i64.
+        Ok((flow.into_iter().map(|f| f as i64).collect(), feasible))
+    }
+
+    /// `spanner`'s `_add_edge_to_spanner` calls `(u, v, edge)` (edges
+    /// numbered in `G.edges()` order) and the generator's new state.
+    /// `node_ids` are the nodes' `id()`s, `weights` the edges' weights in
+    /// `G.edges()` order (None when unweighted). None where NetworkX would
+    /// raise.
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    fn spanner_ops(
+        &self,
+        py: Python<'_>,
+        node_ids: Vec<u64>,
+        weights: Option<Vec<f64>>,
+        hashes: Vec<i64>,
+        k: u64,
+        sample_prob: f64,
+        size_limit: f64,
+        state: Vec<u32>,
+    ) -> PyResult<Option<(Vec<(u32, u32, u32)>, Vec<u32>)>> {
+        let n = self.n;
+        if hashes.len() != n || node_ids.len() != n {
+            return Err(PyValueError::new_err("one hash and id per node"));
+        }
+        Ok(py.detach(|| {
+            // Edges in G.edges() order; the residual graph is G.copy(),
+            // whose neighbor dicts fill in the order the edges come up.
+            let mut keys = Vec::new();
+            let mut adj: Vec<Vec<(u32, u32)>> = vec![Vec::new(); n];
+            for u in 0..n {
+                for &v in self.succ.neighbors(u) {
+                    if (v as usize) < u {
+                        continue;
+                    }
+                    let e = keys.len() as u32;
+                    let w = match &weights {
+                        Some(ws) => *ws.get(e as usize)?,
+                        None => 0.0,
+                    };
+                    keys.push(algorithms::spanner::WeightKey {
+                        w,
+                        a: node_ids[u],
+                        b: node_ids[v as usize],
+                    });
+                    adj[u].push((v, e));
+                    if v as usize != u {
+                        adj[v as usize].push((u as u32, e));
+                    }
+                }
+            }
+            if let Some(ws) = &weights {
+                if ws.len() != keys.len() {
+                    return None;
+                }
+            }
+            let mut rng = algorithms::pyrandom::Mt19937::from_state(&state)?;
+            let input = algorithms::spanner::Input {
+                adj: &adj,
+                keys: &keys,
+                hashes: &hashes,
+                k,
+                sample_prob,
+                size_limit,
+            };
+            let ops = algorithms::spanner::run(&input, &mut rng)?;
+            Some((ops, rng.state()))
+        }))
     }
 
     /// `x ** 2` for a float as rustnx's Louvain computes it, for its

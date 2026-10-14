@@ -424,7 +424,7 @@ MULTIGRAPH_FUNCTIONS = {
 
 # Hybrids that run NetworkX's own code on the original (multi)graph, so a
 # multigraph needs no special conversion.
-MULTIGRAPH_FUNCTIONS |= {"simple_cycles", "chordless_cycles", "eulerize"}
+MULTIGRAPH_FUNCTIONS |= {"simple_cycles", "chordless_cycles", "eulerize", "snap_aggregation", "capacity_scaling"}
 
 # Functions that return subgraphs of the original NetworkX graph, or (the flow
 # functions) read its edge attributes there.
@@ -483,7 +483,7 @@ _BUILDS_FROM_SOURCE = {
 
 # Functions that read edge attributes of any type from the original NetworkX
 # graph's dicts, so they don't convert their `edge_attrs` to numbers.
-_EDGE_DATA_FROM_SOURCE = {"get_edge_attributes", "stochastic_graph", "random_walk"}
+_EDGE_DATA_FROM_SOURCE = {"get_edge_attributes", "stochastic_graph", "random_walk", "snap_aggregation", "spanner"}
 
 
 def convert_from_nx(

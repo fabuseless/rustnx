@@ -1,6 +1,7 @@
 pub mod approximation;
 pub mod bipartite;
 pub mod bipartite_more;
+pub mod capacity_scaling;
 pub mod centrality;
 pub mod centrality_more;
 pub mod cliques;
@@ -36,6 +37,7 @@ pub mod random_generators_more;
 pub mod random_measures;
 pub mod readwrite;
 pub mod shortest_paths_more;
+pub mod spanner;
 pub mod spectral;
 pub mod structure;
 pub mod structure_more;

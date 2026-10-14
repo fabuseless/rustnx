@@ -8107,7 +8107,12 @@ def unconstrained_one_edge_augmentation(G):
 def one_edge_augmentation(G, avail=None, weight=None, partial=False):
     _undirected_only(G)
     if avail is not None:
-        raise NotImplementedError("rustnx does not support avail here")
+        # NetworkX's own code, with its inner calls in rustnx.
+        return _hybrid.run(
+            "one_edge_augmentation",
+            {"G": G, "avail": avail, "weight": weight, "partial": partial},
+            _networkx_graph,
+        )
     return unconstrained_one_edge_augmentation(G)
 
 
@@ -8188,17 +8193,21 @@ def bridge_augmentation(G, avail=None, weight=None):
     if len(G) < 3:
         raise nx.NetworkXUnfeasible("impossible to bridge connect less than 3 nodes")
     if avail is not None:
-        raise NotImplementedError("rustnx does not support avail here")
+        # NetworkX's own code, with its inner calls in rustnx.
+        return _hybrid.run("bridge_augmentation", {"G": G, "avail": avail, "weight": weight}, _networkx_graph)
     return unconstrained_bridge_augmentation(G)
 
 
 def k_edge_augmentation(G, k, avail=None, weight=None, partial=False):
     _undirected_only(G)
-    if avail is not None:
-        raise NotImplementedError("rustnx does not support avail here")
-    if type(k) is not int or k >= 3:
-        # k >= 3 is a greedy search with a seeded shuffle.
-        raise NotImplementedError("rustnx only does k = 1 and 2 here")
+    if avail is not None or type(k) is not int or k >= 3:
+        # NetworkX's own code (k >= 3 is a greedy search with a seeded
+        # shuffle), with its connectivity tests and flows in rustnx.
+        return _hybrid.run(
+            "k_edge_augmentation",
+            {"G": G, "k": k, "avail": avail, "weight": weight, "partial": partial},
+            _networkx_graph,
+        )
 
     def compute():
         try:
@@ -15585,6 +15594,11 @@ HYBRID_FUNCTIONS = [
     "approximate_k_components",
     "asadpour_atsp",
     "held_karp_ascent",
+    "greedy_k_edge_augmentation",
+    "partial_k_edge_augmentation",
+    "weighted_bridge_augmentation",
+    "weighted_one_edge_augmentation",
+    "general_k_edge_subgraphs",
 ]
 
 
@@ -17004,3 +17018,329 @@ def random_walk(G, *, start, weight=None, seed=None):
 
 
 __all__ += ["random_walk"]
+
+
+# --- snap_aggregation -------------------------------------------------------
+
+_SNAP_SOURCES = {(("aed6e069d8cfff09", "9af9d4181c51a8cb", "25b1611b47a08c76"), "db0cf4055563a980")}
+
+
+@functools.cache
+def _snap_recognized():
+    try:
+        module = sys.modules[_registered("snap_aggregation").orig_func.__module__]
+        key = (
+            tuple(_normalized_source(getattr(module, n)) for n in ("_snap_build_graph", "_snap_eligible_group", "_snap_split")),
+            _normalized_source(_registered("snap_aggregation").orig_func),
+        )
+    except (AttributeError, KeyError, OSError, TypeError, SyntaxError):
+        return False
+    return key in _SNAP_SOURCES
+
+
+def snap_aggregation(G, node_attributes, edge_attributes=(), prefix="Supernode-",
+                     supernode_attribute="group", superedge_attribute="types"):
+    """NetworkX's ``snap_aggregation``. NetworkX builds a ``Counter`` for
+    every (node, group) pair on every pass to find a group whose nodes
+    disagree; here each node's set of (neighbor group, edge type) pairs
+    decides that (the same test: every node has the same edge types to
+    every group), in time linear in the edges. The splits are NetworkX's
+    own set operations on the same sets, in the same order, and the summary
+    graph is built from the same neighbor counts, so the result is
+    identical."""
+    from collections import Counter
+
+    if not _snap_recognized():
+        raise NotImplementedError("unrecognized NetworkX snap_aggregation")
+    G = _networkx_graph(G)
+    multigraph = G.is_multigraph()
+    edge_types = {edge: tuple(attrs.get(attr) for attr in edge_attributes) for edge, attrs in G.edges.items()}
+    if not G.is_directed():
+        if multigraph:
+            edges = [((v, u, k), etype) for (u, v, k), etype in edge_types.items()]
+        else:
+            edges = [((v, u), etype) for (u, v), etype in edge_types.items()]
+        edge_types.update(edges)
+    group_lookup = {node: tuple(attrs[attr] for attr in node_attributes) for node, attrs in G.nodes.items()}
+    groups = defaultdict(set)
+    for node, node_type in group_lookup.items():
+        groups[node_type].add(node)
+    # Each node's out-edges as (neighbor, edge type), in G.edges(node) order.
+    if multigraph:
+        rows = {node: [(e[1], edge_types[e]) for e in G.edges(node, keys=True)] for node in G}
+    else:
+        rows = {node: [(e[1], edge_types[e]) for e in G.edges(node)] for node in G}
+
+    def signature(node):
+        return frozenset((group_lookup[nbr], etype) for nbr, etype in rows[node])
+
+    def first_ineligible():
+        for group_id, members in groups.items():
+            it = iter(members)
+            first = signature(next(it))
+            for node in it:
+                if signature(node) != first:
+                    return group_id
+        return None
+
+    eligible_group_id = first_ineligible()
+    while eligible_group_id:
+        # _snap_split: the same set operations in the same order.
+        new_group_mappings = defaultdict(set)
+        for node in groups[eligible_group_id]:
+            new_group_mappings[signature(node)].add(node)
+        new_groups = sorted(new_group_mappings.values(), key=len)
+        for new_group in new_groups[:-1]:
+            new_group_id = len(groups)
+            groups[new_group_id] = new_group
+            groups[eligible_group_id] -= new_group
+            for node in new_group:
+                group_lookup[node] = new_group_id
+        eligible_group_id = first_ineligible()
+
+    # _snap_build_graph, with each group's first node's neighbor counts.
+    output = G.__class__()
+    node_label_lookup = {}
+    for index, group_id in enumerate(groups):
+        group_set = groups[group_id]
+        supernode = f"{prefix}{index}"
+        node_label_lookup[group_id] = supernode
+        supernode_attributes = {attr: G.nodes[next(iter(group_set))][attr] for attr in node_attributes}
+        supernode_attributes[supernode_attribute] = group_set
+        output.add_node(supernode, **supernode_attributes)
+    for group_id in groups:
+        group_set = groups[group_id]
+        source_supernode = node_label_lookup[group_id]
+        counts = {}
+        for nbr, etype in rows[next(iter(group_set))]:
+            counts.setdefault(group_lookup[nbr], Counter())[etype] += 1
+        for other_group in groups:
+            group_edge_types = counts.get(other_group)
+            if group_edge_types:
+                target_supernode = node_label_lookup[other_group]
+                summary_graph_edge = (source_supernode, target_supernode)
+                edge_type_dicts = [dict(zip(edge_attributes, edge_type)) for edge_type in group_edge_types]
+                has_edge = output.has_edge(*summary_graph_edge)
+                if output.is_multigraph():
+                    if not has_edge:
+                        for edge_type in edge_type_dicts:
+                            output.add_edge(*summary_graph_edge, **edge_type)
+                    elif not output.is_directed():
+                        existing_edge_data = output.get_edge_data(*summary_graph_edge)
+                        for edge_type in edge_type_dicts:
+                            if edge_type not in existing_edge_data.values():
+                                output.add_edge(*summary_graph_edge, **edge_type)
+                else:
+                    output.add_edge(*summary_graph_edge, **{superedge_attribute: edge_type_dicts})
+    return output
+
+
+__all__ += ["snap_aggregation"]
+
+
+# --- create_component_structure -------------------------------------------------
+
+_COMPONENT_STRUCTURE_SOURCES = {"bd47dc49ed6e4f37"}
+
+
+@functools.cache
+def _component_structure_recognized():
+    try:
+        return _normalized_source(_registered("create_component_structure").orig_func) in _COMPONENT_STRUCTURE_SOURCES
+    except (AttributeError, KeyError, OSError, TypeError, SyntaxError):
+        return False
+
+
+def create_component_structure(G):
+    """NetworkX's ``create_component_structure``, computed in Rust with
+    CPython's set orders replayed (the outer loop over ``set(G.nodes)``,
+    each closed neighborhood, the subgraph's node filter and each
+    component), so every row has the same keys in the same order."""
+    _undirected_only(G)
+    if not _component_structure_recognized():
+        raise NotImplementedError("unrecognized NetworkX create_component_structure")
+    nodes = G._nodes
+    get = nodes.__getitem__
+    return {
+        nodes[v]: dict(zip(map(get, keys), labels))
+        for v, keys, labels in G._core.component_structure(_b25_hashes(G))
+    }
+
+
+__all__ += ["create_component_structure"]
+
+
+# --- capacity_scaling -----------------------------------------------------------
+
+_CAPACITY_SCALING_SOURCES = {("f3e86162a100791e", "36b7ecb8efacd040", "ec5bc6628c87fd91")}
+
+
+@functools.cache
+def _capacity_scaling_recognized():
+    from networkx.algorithms.flow import capacityscaling
+
+    try:
+        key = tuple(
+            _normalized_source(getattr(f, "__wrapped__", f))
+            for f in (
+                _registered("capacity_scaling").orig_func,
+                capacityscaling._build_residual_network,
+                capacityscaling._build_flow_dict,
+            )
+        )
+    except (AttributeError, KeyError, OSError, TypeError, SyntaxError):
+        return False
+    return key in _CAPACITY_SCALING_SOURCES
+
+
+def capacity_scaling(G, demand="demand", capacity="capacity", weight="weight",
+                     heap=nx.utils.heaps.BinaryHeap):
+    """NetworkX's ``capacity_scaling`` with int capacities, weights and
+    demands: NetworkX's own residual network (with its checks), its phases
+    in Rust with Python's int arithmetic, ``BinaryHeap``'s order and
+    ``arbitrary_element`` of the set of excess nodes in CPython's order,
+    then NetworkX's own cost sum and flow dict."""
+    from math import log
+
+    from networkx.algorithms.flow import capacityscaling as cs
+
+    if heap is not nx.utils.heaps.BinaryHeap:
+        raise NotImplementedError("rustnx replays BinaryHeap only")
+    if not _capacity_scaling_recognized():
+        raise NotImplementedError("unrecognized NetworkX capacity_scaling")
+    G = _networkx_graph(G)
+    if type(G) not in (nx.DiGraph, nx.MultiDiGraph, nx.Graph, nx.MultiGraph):
+        raise NotImplementedError("rustnx runs capacity_scaling on plain graph classes")
+    hashes = _b25_hashes_of(list(G))
+    R = cs._build_residual_network(G, demand, capacity, weight)
+    inf = float("inf")
+    flow_cost = sum(
+        0 if e.get(capacity, inf) <= 0 or e.get(weight, 0) >= 0 else e[capacity] * e[weight]
+        for u, v, e in nx.selfloop_edges(G, data=True)
+    )
+    wmax = max(chain([-inf], (e["capacity"] for u, v, e in R.edges(data=True))))
+    if wmax == -inf:
+        return flow_cost, cs._build_flow_dict(G, R, capacity, weight)
+    index = {u: i for i, u in enumerate(R)}
+    edges, groups, group_ends, cap, wts = [], [], [], [], []
+    limit = 2**50
+    for u, nbrs in R.succ.items():
+        for v, es in nbrs.items():
+            start = len(edges)
+            for k, e in es.items():
+                c, w = e["capacity"], e["weight"]
+                if type(c) is not int or type(w) is not int or not (-limit < c < limit and -limit < w < limit):
+                    raise NotImplementedError("rustnx replays int capacities and weights only")
+                edges.append(e)
+                cap.append(c)
+                wts.append(w)
+            groups.append((index[v], start, len(edges)))
+        group_ends.append(len(groups))
+    position = {id(e): i for i, e in enumerate(edges)}
+    partner = []
+    for u, nbrs in R.succ.items():
+        for v, es in nbrs.items():
+            for k in es:
+                partner.append(position[id(R.succ[v][u][k[0], not k[1]])])
+    excess = []
+    for u in R:
+        x = R.nodes[u]["excess"]
+        if type(x) is not int or not -limit < x < limit:
+            raise NotImplementedError("rustnx replays int demands only")
+        excess.append(x)
+    delta = 2 ** int(log(wmax, 2))
+    flows, feasible = _core.CoreGraph.capacity_scaling_phases(
+        group_ends, groups, cap, wts, partner, excess, delta, hashes
+    )
+    if not feasible:
+        raise nx.NetworkXUnfeasible("No flow satisfying all demands.")
+    for e, f in zip(edges, flows):
+        e["flow"] = f
+    for u in R:
+        for v, es in R.succ[u].items():
+            for e in es.values():
+                flow = e["flow"]
+                if flow > 0:
+                    flow_cost += flow * e["weight"]
+    return flow_cost, cs._build_flow_dict(G, R, capacity, weight)
+
+
+def _b25_hashes_of(nodes):
+    if not _b25_set_algebra_replayable():
+        raise NotImplementedError("this interpreter's sets can't be replayed")
+    return [hash(v) for v in nodes]
+
+
+__all__ += ["capacity_scaling"]
+
+
+# --- spanner ----------------------------------------------------------------------
+
+_SPANNER_SOURCES = {"a94eb6613378ab83"}
+
+
+@functools.cache
+def _spanner_recognized():
+    try:
+        module = sys.modules[_registered("spanner").orig_func.__module__]
+        return _normalized_source(module) in _SPANNER_SOURCES
+    except (AttributeError, KeyError, OSError, TypeError, SyntaxError):
+        return False
+
+
+def spanner(G, stretch, weight=None, seed=None):
+    """NetworkX's ``spanner`` (Baswana-Sen) replayed in Rust: the same
+    weight tuples (with ``id()`` of the same node objects breaking ties),
+    ``random.Random``'s draws in NetworkX's order, and CPython's order for
+    the sets of centers and of edges to add, giving the same sequence of
+    ``add_edge`` calls on the result."""
+    _rg_seed(seed)
+    if not _spanner_recognized():
+        raise NotImplementedError("unrecognized NetworkX spanner")
+    core = G._core
+    G = _networkx_graph(G)
+    if type(G) is not nx.Graph:
+        raise NotImplementedError("rustnx runs spanner on Graph only")
+    if not isinstance(stretch, (int, float)) or isinstance(stretch, bool) or not stretch >= 1:
+        raise NotImplementedError("NetworkX checks this stretch")
+    k = (stretch + 1) // 2
+    if k != int(k) or len(G) == 0:
+        raise NotImplementedError("rustnx needs a whole k and a non-empty graph")
+    nodes = list(G)
+    node_ids = [id(v) for v in nodes]
+    # NetworkX breaks ties on the id()s of the objects in the adjacency;
+    # they must be the node objects themselves.
+    if not {id(v) for nbrs in G._adj.values() for v in nbrs} <= set(node_ids):
+        raise NotImplementedError("equal but distinct node objects")
+    weights = None
+    if weight:
+        weights = []
+        for _, _, w in G.edges(data=weight, default=_SPANNER_MISSING):
+            if type(w) is float:
+                if w != w:
+                    raise NotImplementedError("NaN weights")
+            elif type(w) is not int or not -(2**53) < w < 2**53:
+                raise NotImplementedError("rustnx needs int or float weights")
+            weights.append(w)
+    hashes = _b25_hashes_of(nodes)
+    n = G.number_of_nodes()
+    sample_prob = math.pow(n, -1 / k)
+    size_limit = 2 * math.pow(n, 1 + 1 / k)
+    fweights = None if weights is None else [float(w) for w in weights]
+    ops = _rg_run(
+        seed,
+        lambda state: core.spanner_ops(node_ids, fweights, hashes, int(k), sample_prob, size_limit, state),
+    )
+    H = nx.empty_graph()
+    H.add_nodes_from(G.nodes)
+    if weight:
+        H.add_edges_from((nodes[u], nodes[v], {weight: weights[e]}) for u, v, e in ops)
+    else:
+        H.add_edges_from((nodes[u], nodes[v]) for u, v, e in ops)
+    return H
+
+
+_SPANNER_MISSING = object()
+
+
+__all__ += ["spanner"]

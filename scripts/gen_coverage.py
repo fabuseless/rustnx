@@ -105,6 +105,13 @@ CONSTRUCTOR = (
     "the hook behind every nx.Graph() / DiGraph() / MultiGraph() / MultiDiGraph(): creating a graph takes 3.4 microseconds and dispatching a call about 9 (measured), and rustnx's results are NetworkX graphs anyway"
 )
 
+NODE_CUTS = (
+    "half its time is NetworkX's own loop over the antichains of each residual condensation and the "
+    "sets built from them, whose iteration order (from the transitive closure's predecessor dicts and "
+    "string-named auxiliary nodes) decides the order of the cuts it yields; the rest, transitive "
+    "closures and antichains, could at most halve it (measured)"
+)
+
 GED = (
     "its time is NetworkX's Python branch-and-bound around SciPy's linear_sum_assignment "
     "(building cost matrices is 60% of it, measured); run as a hybrid it measured 1.0x, and a "
@@ -230,6 +237,12 @@ STAYS = {
     'tutte_polynomial': "it returns a SymPy expression built with SymPy's own arithmetic",
     'leiden_communities': "NetworkX has no implementation of its own (it runs only in backends), so there is no NetworkX result for rustnx to match",
     'leiden_partitions': "NetworkX has no implementation of its own (it runs only in backends), so there is no NetworkX result for rustnx to match",
+    'all_node_cuts': NODE_CUTS,
+    'k_components': NODE_CUTS,
+    'collapse': "80% of its time is building its output graph with add_edges_from (measured), which rustnx would have to do the same way",
+    'complement_edges': "it yields the non-edges one pair at a time; NetworkX's loop is cheaper than yielding pairs built in Rust (measured)",
+    'detect_unboundedness': "one breadth-first search over the residual network that stops at the first infinite-capacity path; it takes microseconds (measured)",
+    'dedensify': "most of its time is copying the graph it returns (9 of 14 ms for 2,000 nodes, measured), which rustnx would have to do the same way",
     'graph_edit_distance': GED,
     'optimal_edit_paths': GED,
     'optimize_edit_paths': GED,
