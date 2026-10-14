@@ -8,6 +8,11 @@ versions may change behavior.
 ## [Unreleased]
 
 ### Added
+- `random_walk` stepped in Rust: each draw is made on the `random.Random`
+  object's own Mersenne Twister state, updated in place (checked against
+  Python's own draws first), so the generator stays exactly in step with
+  NetworkX's walk. 2.5x to 6x faster unweighted, 8x to 50x weighted (from
+  1x and 4x to 14x).
 - `random_spanning_tree`: the contractions and Laplacians for each edge
   are built in Rust (the accepted edges merged in CPython's set order), with
   NumPy still taking the determinants. 35x to 85x faster than NetworkX

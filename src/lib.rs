@@ -8,6 +8,7 @@ mod graph;
 mod native;
 mod rx;
 mod serialize;
+mod walk;
 
 use pyo3::exceptions::{PyIndexError, PyNotImplementedError, PyValueError};
 use pyo3::prelude::*;
@@ -10350,6 +10351,9 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<algorithms::louvain::Louvain>()?;
     m.add_class::<Vf2ppMap>()?;
     m.add_class::<SpanningContraction>()?;
+    m.add_class::<walk::RandomWalker>()?;
+    m.add_function(wrap_pyfunction!(walk::_mt_layout, m)?)?;
+    m.add_function(wrap_pyfunction!(walk::_mt_draws, m)?)?;
     m.add_class::<algorithms::random_measures::RandomPaths>()?;
     m.add_class::<algorithms::cycle_search::CycleLists>()?;
     m.add_class::<algorithms::cycle_search::CycleSearch>()?;

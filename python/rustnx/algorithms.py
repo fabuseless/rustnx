@@ -16900,13 +16900,46 @@ def _random_walk_recognized():
     return _source_text(_registered("random_walk")).endswith(_RANDOM_WALK_BODY)
 
 
+@functools.cache
+def _mt_layout():
+    """Where a ``random.Random`` keeps its Mersenne Twister state, for
+    stepping it in place from Rust; checked against Python's own draws (and
+    state refills), or None."""
+    try:
+        import _random
+
+        probe = random.Random(20261014)
+        for _ in range(700):
+            probe.random()
+        _, words, _ = probe.getstate()
+        layout = _core._mt_layout(probe, list(words[:624]), words[624], _random.Random.__basicsize__)
+        if layout is None:
+            return None
+        twin = random.Random()
+        twin.setstate(probe.getstate())
+        rng = random.Random(7)
+        draws = [
+            (0, rng.choice([1, 2, 3, 5, 8, 100, 1000, 2**31 + 5, 2**32 - 1])) if rng.random() < 0.6 else (1, 0)
+            for _ in range(3000)
+        ]
+        ours = _core._mt_draws(probe, layout, draws)
+        theirs = [twin._randbelow(n) if kind == 0 else twin.random() for kind, n in draws]
+        if ours != theirs or probe.getstate() != twin.getstate():
+            return None
+        return layout
+    except Exception:
+        return None
+
+
 def random_walk(G, *, start, weight=None, seed=None):
     """NetworkX 3.7's ``random_walk``: the same ``seed.choice`` and
-    ``seed.choices`` calls in the same order, on each node's neighbors and
+    ``seed.choices`` draws in the same order, on each node's neighbors and
     cumulative weights built once (NetworkX rebuilds them at every step).
-    A change to the graph (which clears its ``__networkx_cache__``, as all of
-    NetworkX's graph methods do) drops them, so the walk follows the graph
-    as NetworkX's does. Plain ``random.Random`` seeds only."""
+    The draws are made in Rust on ``seed``'s own state, in place (see
+    ``_mt_layout``), or else by ``seed``'s methods. A change to the graph
+    (which clears its ``__networkx_cache__``, as all of NetworkX's graph
+    methods do) drops the lists, so the walk follows the graph as
+    NetworkX's does. Plain ``random.Random`` seeds only."""
     import itertools
 
     if not _random_walk_recognized():
@@ -16919,6 +16952,31 @@ def random_walk(G, *, start, weight=None, seed=None):
     seed = nx.utils.create_py_random_state(seed)
     if type(seed) is not random.Random:
         raise NotImplementedError("rustnx walks with a random.Random seed only")
+    layout = _mt_layout()
+    if layout is not None:
+        stop = object()
+
+        def slow(nbrs):
+            # NetworkX's own step, for neighbor dicts or weights the Rust
+            # walker doesn't hold.
+            if not nbrs:
+                return stop
+            if weight is None:
+                return seed.choice(list(nbrs))
+            wts = [nbr.get(weight, 1) for nbr in nbrs.values()]
+            if any(w < 0 for w in wts):
+                raise ValueError("random_walk doesn't support negative weights")
+            if sum(wts) == 0:
+                return stop
+            return seed.choices(list(nbrs), weights=wts, k=1)[0]
+
+        def rust_walk():
+            if start not in G:
+                raise nx.NodeNotFound(start)
+            yield start
+            yield from _core.RandomWalker(G, start, weight, seed, layout, slow, stop)
+
+        return rust_walk()
     accumulate = itertools.accumulate
 
     def walk():

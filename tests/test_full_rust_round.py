@@ -176,3 +176,43 @@ def test_lukes_partitioning(s, monkeypatch):
 def test_lukes_sum_mode():
     # sum()'s float mode is recognized on every supported interpreter.
     assert algorithms._sum_mode() is not None
+
+
+# --- random_walk stepped in Rust ---------------------------------------------------
+
+
+def _walk(G, backend, n, rng, between, **kw):
+    out = []
+    try:
+        for i, x in enumerate(itertools.islice(nx.random_walk(G, backend=backend, seed=rng, **kw), n)):
+            # The caller drawing from the same generator between steps.
+            out.append((x, rng.random() if between and i % 3 == 0 else None))
+    except Exception as exc:
+        out.append((type(exc).__name__, str(exc)))
+    return out, rng.getstate()
+
+
+@pytest.mark.parametrize("s", range(80))
+def test_random_walk_in_rust(s):
+    from fractions import Fraction
+
+    if not algorithms._random_walk_recognized():
+        pytest.skip("this NetworkX has no random_walk rustnx follows")
+    assert algorithms._mt_layout() is not None
+    rnd = random.Random(s)
+    n = rnd.randint(1, 12)
+    G = nx.gnp_random_graph(n, rnd.random() * 0.6, seed=s, directed=rnd.random() < 0.5)
+    for u, v in G.edges:
+        r = rnd.random()
+        G.edges[u, v]["w"] = 0 if r < 0.2 else (-1 if r < 0.23 else (rnd.randint(1, 4) if r < 0.5 else rnd.random()))
+        if s % 7 == 1:
+            # Odd weights: infinities, bools, huge ints, other numeric types.
+            G.edges[u, v]["w"] = rnd.choice([float("inf"), True, False, 2**60, 0.0, float("nan"), Fraction(1, 3), -0.0])
+    if s % 5 == 2:
+        G = nx.relabel_nodes(G, {v: (f"n{v}" if v % 2 else (v, "t")) for v in G})
+    start = next(iter(G))
+    for kw in ({}, {"weight": "w"}, {"weight": "missing"}):
+        for between in (False, True):
+            ours = _walk(G, "rustnx", 200, random.Random(s), between, start=start, **kw)
+            ref = _walk(G, "networkx", 200, random.Random(s), between, start=start, **kw)
+            assert ours == ref
