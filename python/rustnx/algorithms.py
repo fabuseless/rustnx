@@ -15590,7 +15590,7 @@ HYBRID_FUNCTIONS = [
     "panther_similarity",
     "panther_vector_similarity",
     "louvain_communities",
-    "lukes_partitioning",
+    "lukes_partitioning",  # the fallback for the Rust replay further down
     "approximate_k_components",
     "asadpour_atsp",
     "held_karp_ascent",
@@ -17529,3 +17529,147 @@ __all__ += [
     "vf2pp_isomorphism", "vf2pp_all_isomorphisms", "vf2pp_subgraph_isomorphism",
     "vf2pp_all_subgraph_isomorphisms", "vf2pp_monomorphism", "vf2pp_all_monomorphisms",
 ]
+
+
+# --- lukes_partitioning in Rust ------------------------------------------------------
+#
+# NetworkX's loop replayed in Rust (algorithms/lukes.rs): the same tree, the
+# same next parent of leaves (CPython's set order), its children in the
+# order of `nx.descendants`' set, and partition values summed as Python's
+# `sum()` does. The result's sets are rebuilt here with NetworkX's own
+# `{v}` and `.union` calls, so they iterate the same. Anything it can't
+# replay runs as the hybrid (NetworkX's code with `descendants` in Rust).
+
+_LUKES_SOURCES = {"4bc1c2ee655bf2ce"}  # NetworkX 3.4 to 3.7
+
+
+@functools.cache
+def _lukes_module():
+    try:
+        module = sys.modules[_registered("lukes_partitioning").orig_func.__module__]
+        if _normalized_source(module) in _LUKES_SOURCES:
+            return module
+    except (AttributeError, KeyError, OSError, TypeError, SyntaxError):
+        pass
+    return None
+
+
+def _sum_model(items, mode):
+    """``sum(items)`` as lukes.rs computes it: 0 plain float adds (Python
+    3.10, 3.11), 1 Neumaier-compensated floats (3.12), 2 ints in the float
+    loop compensated too (3.14)."""
+    total, it = 0, iter(items)
+    for x in it:
+        if type(x) is not float:
+            total += x
+            continue
+        hi, lo = total + x, 0.0
+        break
+    else:
+        return total
+    for x in it:
+        x_is_float = type(x) is float
+        x = float(x)
+        if mode == 0 or (mode == 1 and not x_is_float):
+            hi += x
+            continue
+        t = hi + x
+        lo += (hi - t) + x if abs(hi) >= abs(x) else (x - t) + hi
+        hi = t
+    if mode and lo and math.isfinite(lo):
+        return hi + lo
+    return hi
+
+
+@functools.cache
+def _sum_mode():
+    """Which of ``_sum_model``'s modes this interpreter's ``sum()`` follows
+    (checked on random int and float sequences), or None."""
+    rng = random.Random(20261014)
+    cases = [
+        [rng.choice([rng.randint(1, 9), rng.random() * 10, rng.random() * 1e16, -rng.random()])
+         for _ in range(rng.randint(2, 12))]
+        for _ in range(600)
+    ]
+    for mode in (0, 1, 2):
+        if all(sum(c) == _sum_model(c, mode) for c in cases):
+            return mode
+    return None
+
+
+def _lukes_inputs(G, max_size, node_weight, edge_weight):
+    """The Rust replay's inputs, or None where it declines (before NetworkX
+    would draw its root, so declining leaves the generator alone)."""
+    if _lukes_module() is None or type(G) not in (nx.Graph, nx.DiGraph):
+        return None
+    if not isinstance(max_size, int) or abs(max_size) >= 2**53:
+        return None
+    n = len(G)
+    if n < 2 or G.number_of_edges() != n - 1:
+        return None
+    mode = _sum_mode()
+    if mode is None:
+        return None
+    nodes = list(G)
+    try:
+        hashes = _b25_hashes_of(nodes)
+    except NotImplementedError:
+        return None
+    index = {v: i for i, v in enumerate(nodes)}
+    adj = [[index[v] for v in nbrs] for nbrs in G._adj.values()]
+    directed = G.is_directed()
+    root = _core.CoreGraph.lukes_tree(adj, directed)
+    if root is None:
+        return None
+    nw = None
+    if node_weight is not None:
+        # Missing or non-int weights raise in NetworkX.
+        nw, total = [], 0
+        for data in G._node.values():
+            w = data.get(node_weight, None)
+            if not isinstance(w, int):
+                return None
+            w = int(w)
+            total += abs(w)
+            nw.append(w)
+        if total >= 2**53:
+            return None
+    ew = None
+    if edge_weight is not None:
+        # Exact ints, bools and floats only: other types change how sum()
+        # adds them. Ints stay small enough to compare exactly with floats.
+        ew, total = [], 0
+        for *_, w in G.edges(data=edge_weight, default=None):
+            t = type(w)
+            if t is float:
+                pass
+            elif t is int or t is bool:
+                total += abs(w)
+            else:
+                return None
+            ew.append(w)
+        if total >= 2**53:
+            return None
+    return nodes, index, adj, directed, root, nw, ew, hashes, int(max_size), mode
+
+
+def lukes_partitioning(G, max_size, node_weight=None, edge_weight=None):
+    """NetworkX's ``lukes_partitioning``, replayed in Rust: the same root
+    (NetworkX's own ``choice`` call), the same order of parents and
+    children, Python's ``sum()`` for the values, and the same sets."""
+    G = _networkx_graph(G)
+    inputs = _lukes_inputs(G, max_size, node_weight, edge_weight)
+    if inputs is None:
+        arguments = {"G": G, "max_size": max_size, "node_weight": node_weight, "edge_weight": edge_weight}
+        return _hybrid.run("lukes_partitioning", arguments, _networkx_graph)
+    nodes, index, adj, directed, root, nw, ew, hashes, max_size, mode = inputs
+    if not directed:
+        root = index[_lukes_module().choice(list(G.nodes))]
+    out = _core.CoreGraph.lukes_partition(adj, directed, root, nw, ew, hashes, max_size, mode)
+    if out is None:
+        return None
+    clusters, partition = out
+    built = []
+    for a, b in clusters:
+        built.append({nodes[a]} if b == 0xFFFFFFFF else built[a].union(built[b]))
+    return [built[k] for k in partition]

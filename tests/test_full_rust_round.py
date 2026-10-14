@@ -106,3 +106,73 @@ def test_vf2pp_directedness_error():
         pytest.skip("NetworkX 3.7 raises here")
     with pytest.raises(nx.NetworkXError):
         nx.vf2pp_isomorphism(nx.path_graph(3), nx.path_graph(3, create_using=nx.DiGraph), backend="rustnx")
+
+
+# --- lukes_partitioning -------------------------------------------------------------
+
+
+def _lukes_tree(rnd, directed):
+    n = rnd.randint(1, 30)
+    T = nx.random_labeled_tree(n, seed=rnd.randrange(10**9)) if hasattr(nx, "random_labeled_tree") \
+        else nx.random_tree(n, seed=rnd.randrange(10**9))
+    r = rnd.random()
+    if r < 0.2:
+        T = nx.relabel_nodes(T, {v: (f"s{v}" if v % 2 else (v, v)) for v in T})
+    elif r < 0.35:
+        T = nx.relabel_nodes(T, {v: v * 8 for v in T})
+    elif r < 0.5:
+        order, edges = list(T), list(T.edges)
+        rnd.shuffle(order)
+        rnd.shuffle(edges)
+        T = nx.Graph()
+        T.add_nodes_from(order)
+        T.add_edges_from(edges)
+    if directed:
+        T = nx.bfs_tree(T, rnd.choice(list(T)))
+    kind = rnd.randrange(5)
+    for u, v in T.edges:
+        T.edges[u, v]["w"] = [
+            lambda: rnd.randint(-3, 9),
+            lambda: rnd.random() * 10,
+            lambda: rnd.choice([rnd.random(), rnd.randint(1, 5)]),
+            # Large and small floats: 3.12+'s compensated sum() differs here.
+            lambda: rnd.choice([rnd.random() * 1e16, rnd.random(), -rnd.random() * 1e15, 1]),
+            lambda: rnd.choice([0.1, 0.2, 0.3, 1, True]),
+        ][kind]()
+    for v in T:
+        T.nodes[v]["nw"] = rnd.choice([1, 1, 2, 3, 0, True])
+    if rnd.random() < 0.1:
+        T.nodes[rnd.choice(list(T))]["nw"] = -1
+    return T
+
+
+@pytest.mark.parametrize("s", range(150))
+def test_lukes_partitioning(s, monkeypatch):
+    rnd = random.Random(s)
+    G = _lukes_tree(rnd, rnd.random() < 0.3)
+    declined = []
+    run = algorithms._hybrid.run
+    monkeypatch.setattr(algorithms._hybrid, "run", lambda *a: declined.append(1) or run(*a))
+    for kw in (
+        {"max_size": rnd.randint(0, 6)},
+        {"max_size": rnd.randint(1, 8), "node_weight": "nw", "edge_weight": "w"},
+        {"max_size": rnd.randint(1, 5), "edge_weight": "w"},
+        {"max_size": rnd.randint(1, 5), "node_weight": "nw"},
+        {"max_size": 2.5},
+    ):
+        results = []
+        for backend in ("rustnx", "networkx"):
+            random.seed(s)
+            out = outcome(nx.community.lukes_partitioning, G, backend=backend, **kw)
+            if out[0] == "ok" and out[1] is not None:
+                # Each set's own iteration order counts.
+                out = "ok", [list(c) for c in out[1]]
+            results.append((out, random.random()))
+        assert results[0] == results[1]
+    # Only the float max_size (and a lone node) goes to the hybrid.
+    assert len(declined) == (5 if len(G) < 2 else 1)
+
+
+def test_lukes_sum_mode():
+    # sum()'s float mode is recognized on every supported interpreter.
+    assert algorithms._sum_mode() is not None

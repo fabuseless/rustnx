@@ -25,6 +25,7 @@ pub mod isomorphism;
 pub mod leftovers;
 pub mod link_analysis;
 pub mod louvain;
+pub mod lukes;
 pub mod matching;
 pub mod measures;
 pub mod nxdicts;

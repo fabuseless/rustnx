@@ -8,6 +8,11 @@ versions may change behavior.
 ## [Unreleased]
 
 ### Added
+- `lukes_partitioning` replayed fully in Rust: the same root draw, the
+  same order of parents and children (CPython's set order), and values
+  summed as Python's `sum()` does, so the partition and each set's order
+  are NetworkX's. 100x faster at 100 nodes, about 1,000x at 1,000 (the
+  previous hybrid was about 2.5x).
 - The six mapping-returning VF2++ functions (`vf2pp_isomorphism`,
   `vf2pp_all_isomorphisms` and, on NetworkX 3.7, the subgraph and
   monomorphism variants): the search in Rust, replaying the installed

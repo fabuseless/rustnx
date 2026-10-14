@@ -7875,6 +7875,170 @@ impl CoreGraph {
         Ok((flow.into_iter().map(|f| f as i64).collect(), feasible))
     }
 
+    /// `lukes_partitioning`'s tree: `adj` is `G._adj` (successors when
+    /// directed) as node indices. The root for a directed tree (its one
+    /// node without predecessors), 0 for an undirected tree, None if `G`
+    /// is not a tree (or an arborescence when directed).
+    #[staticmethod]
+    fn lukes_tree(adj: Vec<Vec<u32>>, directed: bool) -> Option<u32> {
+        let n = adj.len();
+        if n < 2 || adj.iter().flatten().any(|&v| v as usize >= n) {
+            return None;
+        }
+        let root = if directed {
+            let mut has_pred = vec![false; n];
+            for &v in adj.iter().flatten() {
+                has_pred[v as usize] = true;
+            }
+            let mut sources = (0..n).filter(|&v| !has_pred[v]);
+            let root = sources.next()?;
+            if sources.next().is_some() {
+                return None;
+            }
+            root
+        } else {
+            0
+        };
+        let mut seen = vec![false; n];
+        seen[root] = true;
+        let mut stack = vec![root as u32];
+        let mut reached = 1;
+        while let Some(u) = stack.pop() {
+            for &v in &adj[u as usize] {
+                if !seen[v as usize] {
+                    seen[v as usize] = true;
+                    reached += 1;
+                    stack.push(v);
+                }
+            }
+        }
+        (reached == n).then_some(root as u32)
+    }
+
+    /// `lukes_partitioning` on a tree `lukes_tree` accepted, from `root`:
+    /// node weights (None: all 1), edge weights in `G.edges` order (ints or
+    /// floats; None: all 1), the nodes' hashes, and `sum`'s float mode (0
+    /// plain, 1 compensated floats, 2 compensated ints too). Returns
+    /// `(clusters, partition)` (see `algorithms::lukes::Output`), None
+    /// where NetworkX returns None; raises TypeError where NetworkX does.
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    fn lukes_partition(
+        py: Python<'_>,
+        adj: Vec<Vec<u32>>,
+        directed: bool,
+        root: u32,
+        node_weight: Option<Vec<i64>>,
+        edge_weight: Option<Vec<Bound<'_, PyAny>>>,
+        hashes: Vec<i64>,
+        max_size: i64,
+        sum_mode: u8,
+    ) -> PyResult<Option<(Vec<(u32, u32)>, Vec<u32>)>> {
+        use algorithms::lukes::{SumMode, Val};
+        let n = adj.len();
+        let bad = || PyValueError::new_err("bad lukes input");
+        if hashes.len() != n || root as usize >= n || adj.iter().flatten().any(|&v| v as usize >= n)
+        {
+            return Err(bad());
+        }
+        // Edges in G.edges order.
+        let mut edge_at: Vec<Vec<u32>> = adj.iter().map(|a| vec![u32::MAX; a.len()]).collect();
+        let mut m = 0u32;
+        if directed {
+            for row in edge_at.iter_mut() {
+                for e in row.iter_mut() {
+                    *e = m;
+                    m += 1;
+                }
+            }
+        } else {
+            let mut index: std::collections::HashMap<(u32, u32), u32> =
+                std::collections::HashMap::new();
+            let mut seen = vec![false; n];
+            for u in 0..n {
+                for (k, &v) in adj[u].iter().enumerate() {
+                    let key = ((u as u32).min(v), (u as u32).max(v));
+                    if !seen[v as usize] {
+                        index.insert(key, m);
+                        m += 1;
+                    }
+                    edge_at[u][k] = *index.get(&key).ok_or_else(bad)?;
+                }
+                seen[u] = true;
+            }
+        }
+        let edge_weight: Vec<Val> = match edge_weight {
+            None => vec![Val::I(1); m as usize],
+            Some(ws) => ws
+                .iter()
+                .map(|w| {
+                    if w.is_exact_instance_of::<pyo3::types::PyFloat>() {
+                        w.extract::<f64>().map(Val::F)
+                    } else {
+                        w.extract::<i64>().map(Val::I)
+                    }
+                })
+                .collect::<PyResult<_>>()?,
+        };
+        let node_weight = node_weight.unwrap_or_else(|| vec![1; n]);
+        if edge_weight.len() != m as usize || node_weight.len() != n {
+            return Err(bad());
+        }
+        // t_G: the arborescence itself, or nx.dfs_tree(G, root).
+        let mut children: Vec<Vec<u32>> = vec![Vec::new(); n];
+        let mut parent_edge = vec![u32::MAX; n];
+        let order: Vec<u32> = if directed {
+            for u in 0..n {
+                for (k, &v) in adj[u].iter().enumerate() {
+                    children[u].push(v);
+                    parent_edge[v as usize] = edge_at[u][k];
+                }
+            }
+            (0..n as u32).collect()
+        } else {
+            let mut order = vec![root];
+            let mut seen = vec![false; n];
+            seen[root as usize] = true;
+            let mut stack: Vec<(u32, usize)> = vec![(root, 0)];
+            while let Some(top) = stack.last_mut() {
+                let (u, k) = *top;
+                if k == adj[u as usize].len() {
+                    stack.pop();
+                    continue;
+                }
+                top.1 += 1;
+                let v = adj[u as usize][k];
+                if !seen[v as usize] {
+                    seen[v as usize] = true;
+                    order.push(v);
+                    children[u as usize].push(v);
+                    parent_edge[v as usize] = edge_at[u as usize][k];
+                    stack.push((v, 0));
+                }
+            }
+            order
+        };
+        let mode = match sum_mode {
+            0 => SumMode::Plain,
+            1 => SumMode::Floats,
+            _ => SumMode::All,
+        };
+        let input = algorithms::lukes::Input {
+            order,
+            children,
+            parent_edge,
+            node_weight,
+            edge_weight,
+            hashes,
+            root,
+            max_size,
+            mode,
+        };
+        py.detach(|| algorithms::lukes::run(&input)).map_err(|()| {
+            pyo3::exceptions::PyTypeError::new_err("'NoneType' object is not iterable")
+        })
+    }
+
     /// `spanner`'s `_add_edge_to_spanner` calls `(u, v, edge)` (edges
     /// numbered in `G.edges()` order) and the generator's new state.
     /// `node_ids` are the nodes' `id()`s, `weights` the edges' weights in
