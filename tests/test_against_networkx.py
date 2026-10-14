@@ -890,6 +890,10 @@ def test_backend_function_list_matches_implementations():
         "random_lobster_graph",
         "random_walk",
         "tree_centroid",
+        "vf2pp_all_monomorphisms",
+        "vf2pp_all_subgraph_isomorphisms",
+        "vf2pp_monomorphism",
+        "vf2pp_subgraph_isomorphism",
         "vf2pp_is_monomorphic",
         "vf2pp_subgraph_is_isomorphic",
     }

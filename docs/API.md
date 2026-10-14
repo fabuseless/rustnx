@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 664 NetworkX functions. Call them as usual (for
+rustnx implements 670 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly, except that
 the functions marked "fast by default" in the Floats column can differ
@@ -905,6 +905,17 @@ in the last bits of their floats until you turn on exact floats.
 | `nx.algorithms.connectivity.edge_augmentation` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code with its minimum spanning arborescence in rustnx. About 20x. |
 | `nx.algorithms.connectivity.edge_augmentation` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code with its inner calls in rustnx. |
 | `nx.algorithms.connectivity.edge_kcomponents` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code with its minimum edge cuts in rustnx. NetworkX keeps its work in a set of graph objects (memory-address order), so the order of the subgraphs can differ between runs, in NetworkX too. About 15x. |
+
+### Isomorphism mappings
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Floats | Notes |
+|---|---|---|---|---|---|
+| `nx.vf2pp_isomorphism` | `FG`, `SG`, `node_label`, `default_label` | no | rustnx | exact | The VF2++ search in Rust, replaying the installed NetworkX's version (3.4 to 3.6, or 3.7's `_all_morphisms`): its matching order with Python's tie rules, and its candidate sets with CPython's set orders, so mappings come out in the same order with the same keys. Node labels are read from the NetworkX graphs. Multigraphs go to NetworkX. 10x at 200 nodes, 25x at 500 (4-regular). |
+| `nx.vf2pp_all_isomorphisms` | `FG`, `SG`, `node_label`, `default_label` | no | rustnx | exact | As `vf2pp_isomorphism`; mappings are produced lazily, in batches. 12x to 16x on small symmetric graphs. |
+| `nx.vf2pp_subgraph_isomorphism` | `FG`, `SG`, `node_label`, `default_label` | no | rustnx | exact | NetworkX 3.7+. As `vf2pp_isomorphism` (the second graph is the smaller). 1x to 4x. |
+| `nx.vf2pp_all_subgraph_isomorphisms` | `FG`, `SG`, `node_label`, `default_label` | no | rustnx | exact | NetworkX 3.7+. As `vf2pp_all_isomorphisms`. |
+| `nx.vf2pp_monomorphism` | `FG`, `SG`, `node_label`, `default_label` | no | rustnx | exact | NetworkX 3.7+. As `vf2pp_subgraph_isomorphism`. |
+| `nx.vf2pp_all_monomorphisms` | `FG`, `SG`, `node_label`, `default_label` | no | rustnx | exact | NetworkX 3.7+. As `vf2pp_all_isomorphisms`. |
 
 ### Bipartite measures
 

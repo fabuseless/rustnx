@@ -17344,3 +17344,188 @@ _SPANNER_MISSING = object()
 
 
 __all__ += ["spanner"]
+
+
+# --- VF2++ mappings (row 42) ----------------------------------------------------
+
+# Normalized source of networkx.algorithms.isomorphism.vf2pp -> variant
+# (False: NetworkX 3.4 to 3.6, True: 3.7's rewrite).
+_VF2PP_SOURCES = {
+    "d528bdea7d207280": False,  # 3.4, 3.6
+    "d457c41089acaa6b": False,  # 3.5
+    "d7dc64781efac07c": True,  # 3.7
+}
+
+
+@functools.cache
+def _vf2pp_variant():
+    from networkx.algorithms.isomorphism import vf2pp
+
+    try:
+        return _VF2PP_SOURCES.get(_normalized_source(vf2pp))
+    except (OSError, TypeError, SyntaxError):
+        return None
+
+
+def _vf2pp_graph(G):
+    """The NetworkX graph behind ``G``, if rustnx can replay VF2++ on it:
+    a simple graph whose neighbor dicts hold the node objects themselves
+    (NetworkX's mappings are built from those objects)."""
+    base = _networkx_graph(G)
+    if base.is_multigraph():
+        raise NotImplementedError("rustnx replays VF2++ on simple graphs")
+    # NetworkX's mappings hold objects from the neighbor dicts as well as
+    # the node dict; equal objects of the same type are interchangeable
+    # there (VF2++ never looks at id()), others (1 and 1.0) are not.
+    ids = {id(v) for v in base}
+    stray = [v for nbrs in base._adj.values() for v in nbrs if id(v) not in ids]
+    if stray:
+        nodes = {v: v for v in base}
+        if any(type(nodes[v]) is not type(v) for v in stray):
+            raise NotImplementedError("neighbor objects of another type than the nodes")
+    return base
+
+
+def _vf2pp_side(G, labels, label_ids, degree, deg_ids):
+    nodes = list(G)
+    index = {v: i for i, v in enumerate(nodes)}
+    directed = G.is_directed()
+    succ = [[index[v] for v in nbrs] for nbrs in G._adj.values()]
+    pred = [[index[v] for v in nbrs] for nbrs in G._pred.values()] if directed else []
+    label = [label_ids.setdefault(labels[v], len(label_ids)) for v in nodes]
+    deg = [d if directed else (d, 0) for d in (degree[v] for v in nodes)]
+    deg_id = [deg_ids.setdefault(degree[v], len(deg_ids)) for v in nodes] if deg_ids is not None else [0] * len(nodes)
+    loops = [1 if v in G._adj[v] else 0 for v in nodes]
+    return nodes, (succ, pred, _b25_hashes_of(nodes), label, deg, deg_id, loops)
+
+
+def _vf2pp_degrees(G):
+    if G.is_directed():
+        return {n: (i, o) for (n, i), (_, o) in zip(G.in_degree, G.out_degree)}
+    return dict(G.degree)
+
+
+def _vf2pp_search(first, second, pattern, target, pattern_side, target_side, directed, kind, new, label_ids, deg_ids):
+    search = _core.Vf2ppMap(
+        pattern_side, target_side, directed, kind, new, len(label_ids), max(len(deg_ids or ()), 1)
+    )
+    size = 1
+    while True:
+        batch = search.next_batch(size)
+        if not batch:
+            return
+        for pairs in batch:
+            yield {first[a]: second[b] for a, b in pairs}
+        size = min(size * 4, 256)
+
+
+def _vf2pp_old(G1, G2, node_label, default_label):
+    """NetworkX 3.4 to 3.6's ``vf2pp_all_isomorphisms``: its checks, then
+    the search in Rust."""
+    if G1.number_of_nodes() == 0 or G2.number_of_nodes() == 0:
+        return
+    G1_degree = _vf2pp_degrees(G1)
+    G2_degree = _vf2pp_degrees(G2)
+    if G1.order() != G2.order():
+        return
+    if sorted(G1_degree.values()) != sorted(G2_degree.values()):
+        return
+    G1_labels = dict(G1.nodes(data=node_label, default=default_label))
+    G2_labels = dict(G2.nodes(data=node_label, default=default_label))
+    nodes_of_G1Labels = nx.utils.groups(G1_labels)
+    nodes_of_G2Labels = nx.utils.groups(G2_labels)
+    if any(
+        label not in nodes_of_G1Labels or len(nodes_of_G1Labels[label]) != len(nodes)
+        for label, nodes in nodes_of_G2Labels.items()
+    ):
+        return
+    label_ids, deg_ids = {}, {}
+    n2, t = _vf2pp_side(G2, G2_labels, label_ids, G2_degree, deg_ids)
+    n1, p = _vf2pp_side(G1, G1_labels, label_ids, G1_degree, deg_ids)
+    yield from _vf2pp_search(n1, n2, G1, G2, p, t, G1.is_directed(), 0, False, label_ids, deg_ids)
+
+
+def _vf2pp_new(FG, SG, node_label, default_label, kind):
+    """NetworkX 3.7's ``_all_morphisms``: its checks, then the search in
+    Rust. ``kind``: 0 isomorphism, 1 induced subgraph, 2 monomorphism."""
+    import operator
+
+    N1, N2 = len(SG), len(FG)
+    if N1 == 0 or N2 == 0:
+        return
+    directed = SG.is_directed()
+    if directed != FG.is_directed():
+        raise nx.NetworkXError("SG and FG must have the same directedness")
+    SG_fits = operator.eq if kind == 0 else operator.le
+    SG_labels = dict(SG.nodes(data=node_label, default=default_label))
+    FG_labels = dict(FG.nodes(data=node_label, default=default_label))
+    FG_by_label = nx.utils.groups(FG_labels)
+    if not SG_fits(N1, N2):
+        return
+    SG_by_label = nx.utils.groups(SG_labels)
+    try:
+        labels_mismatch = any(
+            SG_fits == operator.eq
+            and label not in FG_by_label
+            or not SG_fits(len(nodes), len(FG_by_label[label]))
+            for label, nodes in SG_by_label.items()
+        )
+    except KeyError:
+        return
+    if labels_mismatch:
+        return
+    label_ids = {}
+    nf, t = _vf2pp_side(FG, FG_labels, label_ids, _vf2pp_degrees(FG), None)
+    ns, p = _vf2pp_side(SG, SG_labels, label_ids, _vf2pp_degrees(SG), None)
+    yield from _vf2pp_search(nf, ns, SG, FG, p, t, directed, kind, True, label_ids, None)
+
+
+def _vf2pp_morphisms(FG, SG, node_label, default_label, kind):
+    """A generator of NetworkX's mappings, in NetworkX's order."""
+    variant = _vf2pp_variant()
+    if variant is None:
+        raise NotImplementedError("unrecognized NetworkX VF2++")
+    if not variant and kind != 0:
+        raise NotImplementedError("this NetworkX has no such VF2++ function")
+    first, second = _vf2pp_graph(FG), _vf2pp_graph(SG)
+    if not _b25_set_algebra_replayable():
+        raise NotImplementedError("this interpreter's sets can't be replayed")
+    if variant:
+        return _vf2pp_new(first, second, node_label, default_label, kind)
+    if first.is_directed() != second.is_directed():
+        raise NotImplementedError("graphs differ in directedness")
+    return _vf2pp_old(first, second, node_label, default_label)
+
+
+def _vf2pp_first(gen):
+    return next(gen, None)
+
+
+def vf2pp_isomorphism(FG, SG, node_label=None, default_label=None):
+    return _vf2pp_first(_vf2pp_morphisms(FG, SG, node_label, default_label, 0))
+
+
+def vf2pp_all_isomorphisms(FG, SG, node_label=None, default_label=None):
+    return _vf2pp_morphisms(FG, SG, node_label, default_label, 0)
+
+
+def vf2pp_subgraph_isomorphism(FG, SG, node_label=None, default_label=None):
+    return _vf2pp_first(_vf2pp_morphisms(FG, SG, node_label, default_label, 1))
+
+
+def vf2pp_all_subgraph_isomorphisms(FG, SG, node_label=None, default_label=None):
+    return _vf2pp_morphisms(FG, SG, node_label, default_label, 1)
+
+
+def vf2pp_monomorphism(FG, SG, node_label=None, default_label=None):
+    return _vf2pp_first(_vf2pp_morphisms(FG, SG, node_label, default_label, 2))
+
+
+def vf2pp_all_monomorphisms(FG, SG, node_label=None, default_label=None):
+    return _vf2pp_morphisms(FG, SG, node_label, default_label, 2)
+
+
+__all__ += [
+    "vf2pp_isomorphism", "vf2pp_all_isomorphisms", "vf2pp_subgraph_isomorphism",
+    "vf2pp_all_subgraph_isomorphisms", "vf2pp_monomorphism", "vf2pp_all_monomorphisms",
+]

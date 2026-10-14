@@ -1035,6 +1035,18 @@ QUALIFIED.update({
     "weighted_one_edge_augmentation": "nx.algorithms.connectivity.edge_augmentation",
     "general_k_edge_subgraphs": "nx.algorithms.connectivity.edge_kcomponents",
 })
+SECTIONS.append(("Isomorphism mappings", [
+    "vf2pp_isomorphism", "vf2pp_all_isomorphisms", "vf2pp_subgraph_isomorphism",
+    "vf2pp_all_subgraph_isomorphisms", "vf2pp_monomorphism", "vf2pp_all_monomorphisms",
+]))
+NOTES.update({
+    "vf2pp_isomorphism": "The VF2++ search in Rust, replaying the installed NetworkX's version (3.4 to 3.6, or 3.7's `_all_morphisms`): its matching order with Python's tie rules, and its candidate sets with CPython's set orders, so mappings come out in the same order with the same keys. Node labels are read from the NetworkX graphs. Multigraphs go to NetworkX. 10x at 200 nodes, 25x at 500 (4-regular).",
+    "vf2pp_all_isomorphisms": "As `vf2pp_isomorphism`; mappings are produced lazily, in batches. 12x to 16x on small symmetric graphs.",
+    "vf2pp_subgraph_isomorphism": "NetworkX 3.7+. As `vf2pp_isomorphism` (the second graph is the smaller). 1x to 4x.",
+    "vf2pp_all_subgraph_isomorphisms": "NetworkX 3.7+. As `vf2pp_all_isomorphisms`.",
+    "vf2pp_monomorphism": "NetworkX 3.7+. As `vf2pp_subgraph_isomorphism`.",
+    "vf2pp_all_monomorphisms": "NetworkX 3.7+. As `vf2pp_all_isomorphisms`.",
+})
 SECTIONS.append(("Bipartite measures", [
     "latapy_clustering", "bipartite_average_clustering", "robins_alexander_clustering",
     "bipartite_betweenness_centrality", "overlap_weighted_projected_graph",

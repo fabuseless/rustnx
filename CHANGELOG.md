@@ -8,6 +8,11 @@ versions may change behavior.
 ## [Unreleased]
 
 ### Added
+- The six mapping-returning VF2++ functions (`vf2pp_isomorphism`,
+  `vf2pp_all_isomorphisms` and, on NetworkX 3.7, the subgraph and
+  monomorphism variants): the search in Rust, replaying the installed
+  NetworkX's matching order and candidate set orders, so the mappings come
+  out in the same order. 10x to 25x faster on 200 to 500 node graphs.
 - Flows and structure round, all exact on NetworkX 3.4 to 3.7:
   - `snap_aggregation`: each split decided in time linear in the edges,
     with NetworkX's own set operations, so the summary graph is identical.

@@ -9997,6 +9997,103 @@ impl B24NonisoTrees {
     }
 }
 
+/// One graph for `Vf2ppMap`: neighbor lists (successors) and predecessor
+/// lists in dict order, `hash()`es, label ids, degrees, degree-value ids
+/// and self-loop counts.
+type Vf2ppSide = (
+    Vec<Vec<u32>>,
+    Vec<Vec<u32>>,
+    Vec<i64>,
+    Vec<u32>,
+    Vec<(i64, i64)>,
+    Vec<u32>,
+    Vec<u32>,
+);
+
+fn vf2pp_side(
+    side: Vf2ppSide,
+    n_labels: usize,
+    n_degs: usize,
+    directed: bool,
+) -> PyResult<algorithms::vf2pp_map::Side> {
+    let (succ, pred, hashes, label, deg, deg_id, loops) = side;
+    let n = succ.len();
+    let bad = || PyValueError::new_err("bad vf2pp input");
+    if hashes.len() != n
+        || label.len() != n
+        || deg.len() != n
+        || deg_id.len() != n
+        || loops.len() != n
+        || (directed && pred.len() != n)
+    {
+        return Err(bad());
+    }
+    if succ
+        .iter()
+        .chain(pred.iter())
+        .flatten()
+        .any(|&x| x as usize >= n)
+        || label.iter().any(|&l| l as usize >= n_labels)
+        || deg_id.iter().any(|&d| d as usize >= n_degs.max(1))
+    {
+        return Err(bad());
+    }
+    Ok(algorithms::vf2pp_map::Side {
+        succ,
+        pred,
+        hashes,
+        label,
+        deg,
+        deg_id,
+        loops,
+    })
+}
+
+/// NetworkX's VF2++ search, replayed (`algorithms::vf2pp_map`): mappings
+/// as (first graph's node, second graph's node) index pairs, in batches.
+#[pyclass(module = "rustnx._core")]
+struct Vf2ppMap {
+    inner: Option<algorithms::vf2pp_map::Vf2pp>,
+}
+
+#[pymethods]
+impl Vf2ppMap {
+    /// `pattern` is the graph whose nodes NetworkX orders (3.7's SG, 3.4's
+    /// G1), `target` the other. `kind`: 0 isomorphism, 1 induced subgraph,
+    /// 2 monomorphism. `new`: NetworkX 3.7's variant.
+    #[new]
+    fn new(
+        pattern: Vf2ppSide,
+        target: Vf2ppSide,
+        directed: bool,
+        kind: u8,
+        new: bool,
+        n_labels: usize,
+        n_degs: usize,
+    ) -> PyResult<Self> {
+        use algorithms::vf2pp_map::{Kind, Vf2pp};
+        let kind = match kind {
+            0 => Kind::Iso,
+            1 => Kind::Ind,
+            2 => Kind::Mono,
+            _ => return Err(PyValueError::new_err("bad vf2pp kind")),
+        };
+        let p = vf2pp_side(pattern, n_labels, n_degs, directed)?;
+        let t = vf2pp_side(target, n_labels, n_degs, directed)?;
+        Ok(Vf2ppMap {
+            inner: Vf2pp::new(p, t, directed, kind, new, n_labels, n_degs),
+        })
+    }
+
+    /// Up to `max` more mappings; an empty list once the search is over.
+    fn next_batch(&mut self, py: Python<'_>, max: usize) -> Vec<Vec<(u32, u32)>> {
+        match &mut self.inner {
+            Some(s) => py.detach(|| s.next_batch(max.max(1))),
+            None => Vec::new(),
+        }
+    }
+}
+
 #[pymodule(gil_used = false)]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CoreGraph>()?;
@@ -10013,6 +10110,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(operators::_op_intersection, m)?)?;
     m.add_class::<AllPaths>()?;
     m.add_class::<algorithms::louvain::Louvain>()?;
+    m.add_class::<Vf2ppMap>()?;
     m.add_class::<algorithms::random_measures::RandomPaths>()?;
     m.add_class::<algorithms::cycle_search::CycleLists>()?;
     m.add_class::<algorithms::cycle_search::CycleSearch>()?;

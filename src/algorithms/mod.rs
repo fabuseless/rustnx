@@ -44,3 +44,4 @@ pub mod structure_more;
 pub mod transforms;
 pub mod traversal;
 pub mod trees_more;
+pub mod vf2pp_map;
