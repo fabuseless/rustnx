@@ -16835,99 +16835,47 @@ def random_spanning_tree(G, weight=None, *, multiplicative=True, seed=None):
             weights.append(w)
         if total >= 2**52:
             raise NotImplementedError("weights too large to replay")
-    w_arr = np.array(weights, dtype=np.int64)
+    if not _b25_set_algebra_replayable():
+        raise NotImplementedError("this interpreter's sets can't be replayed")
+    # NetworkX merges the accepted edges in the order it iterates the set U
+    # of (u, v) tuples; Rust replays that order from their hashes.
+    steps = _core.SpanningContraction(
+        n, ei.tolist(), ej.tolist(), weights, [hash(e) for e in edges]
+    )
     edge_pos = {e: i for i, e in enumerate(edges)}
 
-    def find_node(merged_nodes, node):
-        if node not in merged_nodes:
-            return node
-        rep = find_node(merged_nodes, merged_nodes[node])
-        merged_nodes[node] = rep
-        return rep
-
-    def total_weight(cls, alive, keep):
-        # number_of_spanning_trees of the contracted MultiGraph: nodes `keep`
-        # (in G's order), each node's class in `cls`, the live edges.
-        pos = np.full(n, -1, dtype=np.int64)
-        pos[keep] = np.arange(len(keep))
-        a = pos[cls[ei[alive]]]
-        b = pos[cls[ej[alive]]]
-        w = w_arr[alive]
-        cut = a != b
-        a, b, w = a[cut], b[cut], w[cut]
-        k = len(keep)
-        if not _classes_connected(k, a, b):
+    def total_weight(reduced):
+        # number_of_spanning_trees of the contracted MultiGraph: 0 if it is
+        # disconnected, else the determinant of its reduced Laplacian.
+        if reduced is None:
             return 0
-        L = np.zeros((k, k), dtype=np.int64)
-        np.add.at(L, (a, b), -w)
-        np.add.at(L, (b, a), -w)
-        np.add.at(L, (a, a), w)
-        np.add.at(L, (b, b), w)
-        return float(np.linalg.det(L[1:, 1:]))
+        k, data = reduced
+        return float(np.linalg.det(np.frombuffer(data, dtype=np.float64).reshape(k, k)))
 
     U = set()
-    V = set(edges)
     shuffled_edges = list(edges)
     seed.shuffle(shuffled_edges)
     for u, v in shuffled_edges:
         e_weight = G[u][v][weight] if weight is not None else 1
-        merged_nodes = {}
-        for x, y in U:
-            x_rep = find_node(merged_nodes, x)
-            y_rep = find_node(merged_nodes, y)
-            if x_rep == y_rep:
-                continue
-            merged_nodes[y_rep] = x_rep
-        cls = np.arange(n, dtype=np.int64)
-        for x in merged_nodes:
-            cls[index[x]] = index[find_node(merged_nodes, x)]
-        alive = np.zeros(len(edges), dtype=bool)
-        alive[[edge_pos[e] for e in V]] = True
-        keep = np.flatnonzero(cls == np.arange(n))
-        G_total_tree_weight = total_weight(cls, alive, keep)
-        ru, rv = find_node(merged_nodes, u), find_node(merged_nodes, v)
-        cu, cv = cls == index[ru], cls == index[rv]
-        if ru != rv and (alive & ((cu[ei] & cv[ej]) | (cv[ei] & cu[ej]))).any():
-            # contracted_edge: rv's class joins ru's, rv leaves the order.
-            cls_e = cls.copy()
-            cls_e[cv] = index[ru]
-            G_e_total_tree_weight = total_weight(cls_e, alive, keep[keep != index[rv]])
+        i = edge_pos[u, v]
+        total, joined, contracted = steps.step(i)
+        G_total_tree_weight = total_weight(total)
+        if joined:
+            G_e_total_tree_weight = total_weight(contracted)
             threshold = e_weight * G_e_total_tree_weight / G_total_tree_weight
         else:
             threshold = 0.0
         z = seed.uniform(0.0, 1.0)
         if z > threshold:
-            V.remove((u, v))
+            steps.reject(i)
         else:
             U.add((u, v))
+            steps.accept(i)
         if len(U) == G.number_of_nodes() - 1:
             spanning_tree = nx.Graph()
             spanning_tree.add_edges_from(U)
             return spanning_tree
     raise Exception(f"Something went wrong! Only {len(U)} edges in the spanning tree!")
-
-
-def _classes_connected(k, a, b):
-    """Whether edges a[i]-b[i] connect all of nodes 0..k-1."""
-    if k <= 1:
-        return True
-    parent = list(range(k))
-
-    def root(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    parts = k
-    for x, y in zip(a.tolist(), b.tolist()):
-        rx, ry = root(x), root(y)
-        if rx != ry:
-            parent[ry] = rx
-            parts -= 1
-            if parts == 1:
-                return True
-    return parts == 1
 
 
 __all__ += ["random_spanning_tree"]

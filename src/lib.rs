@@ -10258,6 +10258,80 @@ impl Vf2ppMap {
     }
 }
 
+/// `random_spanning_tree`'s contractions (`algorithms::spanning_contraction`):
+/// edges `(ei, ej)` in `G.edges()` order with int weights and the hashes
+/// of their `(u, v)` tuples.
+#[pyclass(module = "rustnx._core")]
+struct SpanningContraction {
+    inner: algorithms::spanning_contraction::Contraction,
+}
+
+type ReducedBytes<'py> = Option<(usize, Bound<'py, PyBytes>)>;
+
+fn reduced_bytes<'py>(
+    py: Python<'py>,
+    r: algorithms::spanning_contraction::Reduced,
+) -> ReducedBytes<'py> {
+    r.map(|(k, values)| {
+        let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_ne_bytes()).collect();
+        (k, PyBytes::new(py, &bytes))
+    })
+}
+
+#[pymethods]
+impl SpanningContraction {
+    #[new]
+    fn new(n: usize, ei: Vec<u32>, ej: Vec<u32>, w: Vec<i64>, hashes: Vec<i64>) -> PyResult<Self> {
+        let m = ei.len();
+        if ej.len() != m
+            || w.len() != m
+            || hashes.len() != m
+            || ei.iter().chain(&ej).any(|&v| v as usize >= n)
+        {
+            return Err(PyValueError::new_err("bad spanning tree input"));
+        }
+        Ok(SpanningContraction {
+            inner: algorithms::spanning_contraction::Contraction::new(n, ei, ej, w, hashes),
+        })
+    }
+
+    /// For edge `e`: the reduced Laplacian of the contracted graph (`(k,
+    /// bytes)` of a k-by-k float64 matrix, None when disconnected), whether
+    /// `e` can be contracted, and the reduced Laplacian with it contracted.
+    fn step<'py>(
+        &self,
+        py: Python<'py>,
+        e: u32,
+    ) -> PyResult<(ReducedBytes<'py>, bool, ReducedBytes<'py>)> {
+        if e as usize >= self.inner.edges() {
+            return Err(PyIndexError::new_err("edge out of range"));
+        }
+        let (total, contracted) = py.detach(|| self.inner.step(e));
+        let joined = contracted.is_some();
+        Ok((
+            reduced_bytes(py, total),
+            joined,
+            reduced_bytes(py, contracted.flatten()),
+        ))
+    }
+
+    fn accept(&mut self, e: u32) -> PyResult<()> {
+        if e as usize >= self.inner.edges() {
+            return Err(PyIndexError::new_err("edge out of range"));
+        }
+        self.inner.accept(e);
+        Ok(())
+    }
+
+    fn reject(&mut self, e: u32) -> PyResult<()> {
+        if e as usize >= self.inner.edges() {
+            return Err(PyIndexError::new_err("edge out of range"));
+        }
+        self.inner.reject(e);
+        Ok(())
+    }
+}
+
 #[pymodule(gil_used = false)]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CoreGraph>()?;
@@ -10275,6 +10349,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<AllPaths>()?;
     m.add_class::<algorithms::louvain::Louvain>()?;
     m.add_class::<Vf2ppMap>()?;
+    m.add_class::<SpanningContraction>()?;
     m.add_class::<algorithms::random_measures::RandomPaths>()?;
     m.add_class::<algorithms::cycle_search::CycleLists>()?;
     m.add_class::<algorithms::cycle_search::CycleSearch>()?;

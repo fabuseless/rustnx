@@ -39,6 +39,7 @@ pub mod random_measures;
 pub mod readwrite;
 pub mod shortest_paths_more;
 pub mod spanner;
+pub mod spanning_contraction;
 pub mod spectral;
 pub mod structure;
 pub mod structure_more;
