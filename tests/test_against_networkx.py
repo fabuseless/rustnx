@@ -1761,3 +1761,17 @@ def test_operators_accept_unpickled_graphs(call):
     assert type(got) is type(want)
     assert list(got.nodes(data=True)) == list(want.nodes(data=True))
     assert list(got.edges(data=True)) == list(want.edges(data=True))
+
+
+def test_generators_with_hub_nodes():
+    # Every node of gnc_graph links to node 0, and dense generators pair each
+    # node with many others: keys that once shared one hash bucket.
+    for f in (
+        lambda b: nx.gnc_graph(3000, seed=2, backend=b),
+        lambda b: nx.complete_graph(300, backend=b),
+        lambda b: nx.turan_graph(300, 3, backend=b),
+        lambda b: nx.partial_duplication_graph(400, 100, 0.6, 0.4, seed=2, backend=b),
+    ):
+        want, got = f("networkx"), f("rustnx")
+        assert list(got.edges) == list(want.edges)
+        assert [list(r) for r in got._adj.values()] == [list(r) for r in want._adj.values()]

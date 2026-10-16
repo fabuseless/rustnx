@@ -15,7 +15,11 @@ pub struct PairHasher(u64);
 
 impl Hasher for PairHasher {
     fn finish(&self) -> u64 {
-        self.0
+        // The multiply leaves a key's low bits depending only on its own
+        // low bits, and hash tables pick buckets from the low bits: every
+        // pair `(u, 0)` would share one. The rotation brings the well-mixed
+        // high bits down (as rustc-hash does).
+        self.0.rotate_left(26)
     }
 
     fn write(&mut self, bytes: &[u8]) {

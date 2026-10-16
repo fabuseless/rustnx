@@ -5,6 +5,7 @@
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use rayon::prelude::*;
 
 use super::pyrandom::Mt19937;
 
@@ -276,55 +277,51 @@ pub struct RandomPaths {
 /// A path's node indices, and the MT19937 key (bytes) and position after it.
 type PathAndState<'py> = (Vec<u32>, Bound<'py, pyo3::types::PyBytes>, usize);
 
-/// NumPy's `kahan_sum` (legacy `mtrand`).
-fn kahan_sum(values: &[f64]) -> f64 {
-    let mut sum = values[0];
-    let mut c = 0.0;
-    for &x in &values[1..] {
-        let y = x - c;
-        let t = sum + y;
-        c = (t - sum) - y;
-        sum = t;
-    }
-    sum
-}
-
 #[pymethods]
 impl RandomPaths {
     /// `probs`: the `n` by `n` matrix as native-endian float64 bytes. Fails
     /// (ValueError) if any row is one `choice` would refuse.
     #[new]
-    fn new(probs: &[u8], n: usize) -> PyResult<Self> {
+    fn new(py: Python<'_>, probs: &[u8], n: usize) -> PyResult<Self> {
         let bad = || pyo3::exceptions::PyValueError::new_err("rows NumPy's choice refuses");
         if n == 0 || probs.len() != n * n * 8 {
             return Err(bad());
         }
         let atol = f64::EPSILON.sqrt();
-        let mut cdfs = Vec::with_capacity(n);
-        for r in 0..n {
-            let row: Vec<f64> = probs[r * n * 8..(r + 1) * n * 8]
-                .as_chunks::<8>()
-                .0
-                .iter()
-                .map(|b| f64::from_ne_bytes(*b))
-                .collect();
-            if row.iter().any(|x| x.is_nan() || *x < 0.0) || (kahan_sum(&row) - 1.0).abs() > atol {
-                return Err(bad());
+        // One pass per row: the checks, NumPy's `kahan_sum` (legacy `mtrand`) and the cumulative
+        // sums (cdf = p.cumsum(); cdf /= cdf[-1]).
+        let row_cdf = |chunk: &[u8]| -> Option<Vec<f64>> {
+            let mut cdf = Vec::with_capacity(n);
+            let (mut sum, mut c, mut acc) = (0.0f64, 0.0f64, 0.0f64);
+            for (i, b) in chunk.as_chunks::<8>().0.iter().enumerate() {
+                let x = f64::from_ne_bytes(*b);
+                if x.is_nan() || x < 0.0 {
+                    return None;
+                }
+                if i == 0 {
+                    sum = x;
+                } else {
+                    let y = x - c;
+                    let t = sum + y;
+                    c = (t - sum) - y;
+                    sum = t;
+                }
+                acc += x;
+                cdf.push(acc);
             }
-            // cdf = p.cumsum(); cdf /= cdf[-1]
-            let mut acc = 0.0;
-            let mut cdf: Vec<f64> = row
-                .iter()
-                .map(|&x| {
-                    acc += x;
-                    acc
-                })
-                .collect();
+            if (sum - 1.0).abs() > atol {
+                return None;
+            }
             let last = cdf[n - 1];
-            cdf.iter_mut().for_each(|c| *c /= last);
-            cdfs.push(cdf);
-        }
-        Ok(RandomPaths { n, cdfs })
+            cdf.iter_mut().for_each(|v| *v /= last);
+            Some(cdf)
+        };
+        let cdfs: Option<Vec<Vec<f64>>> =
+            py.detach(|| probs.par_chunks(n * 8).map(row_cdf).collect());
+        Ok(RandomPaths {
+            n,
+            cdfs: cdfs.ok_or_else(bad)?,
+        })
     }
 
     /// As `path`, on the MT19937 state at `address` (NumPy's
