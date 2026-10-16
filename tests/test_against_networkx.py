@@ -245,6 +245,44 @@ def test_small_graphs_stay_in_networkx(rustnx_priority, caplog):
     assert any("Using backend 'rustnx'" in r.getMessage() for r in caplog.records)
 
 
+def test_quick_checks_wait_for_a_conversion(rustnx_priority, caplog):
+    # Checks NetworkX settles at the first counter-example stay in NetworkX
+    # until the graph has been converted for something else.
+    G = nx.gnm_random_graph(2000, 6000, seed=1)
+    with caplog.at_level(logging.DEBUG, logger="networkx"):
+        assert nx.is_regular(G) is False
+    assert not any("Using backend 'rustnx'" in r.getMessage() for r in caplog.records)
+    nx.pagerank(G)
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger="networkx"):
+        assert nx.is_regular(G) is False
+        assert nx.is_eulerian(G) is False
+    assert sum("Using backend 'rustnx'" in r.getMessage() for r in caplog.records) == 2
+
+
+def test_quick_checks_against_networkx():
+    rng = random.Random(5)
+    for i in range(300):
+        n = rng.randint(1, 10)
+        G = nx.gnp_random_graph(n, rng.random(), seed=i, directed=i % 2 == 0)
+        if i % 3 == 0:
+            G = nx.random_regular_graph(2 * rng.randint(0, 2), 2 * rng.randint(3, 5), seed=i)
+        for _ in range(rng.randint(0, 2)):
+            u = rng.randrange(len(G))
+            G.add_edge(u, u)
+        checks = [("is_regular", ()), ("is_eulerian", ()), ("is_k_regular", (2,)),
+                  ("is_strongly_connected", ())]
+        for name, args in checks:
+            f = getattr(nx, name)
+            try:
+                want = f(G, *args, backend="networkx")
+            except nx.NetworkXException as e:
+                with pytest.raises(type(e)):
+                    f(G, *args, backend="rustnx")
+                continue
+            assert f(G, *args, backend="rustnx") == want, (name, i)
+
+
 @pytest.mark.parametrize(
     "call",
     [

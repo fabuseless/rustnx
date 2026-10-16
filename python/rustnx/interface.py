@@ -686,16 +686,50 @@ def can_run(name, args, kwargs):
     return True
 
 
+# Queries and checks NetworkX usually answers without reading the whole
+# graph (one path, one cycle, a check that stops at its first
+# counter-example). On a graph not yet converted, converting costs more than
+# NetworkX's whole answer, so automatic dispatch leaves them to NetworkX;
+# once the graph is converted (or native), rustnx answers.
+_QUERIES = {
+    "bidirectional_shortest_path",
+    "efficiency",
+    "ego_graph",
+    "find_cycle",
+    "has_path",
+    "is_distance_regular",
+    "is_eulerian",
+    "is_k_regular",
+    "is_regular",
+    "is_simple_path",
+    "is_strongly_connected",
+    "is_strongly_regular",
+    "volume",
+}
+
+
+def _converted(G):
+    """Whether NetworkX has a cached rustnx conversion of ``G``."""
+    cache = getattr(G, "__networkx_cache__", None)
+    if not isinstance(cache, dict):
+        return False
+    return bool(cache.get("backends", {}).get("rustnx"))
+
+
 def should_run(name, args, kwargs):
     """Decline automatic dispatch where NetworkX is faster.
 
     Only consulted when rustnx is chosen via ``nx.config.backend_priority``;
     an explicit ``backend="rustnx"`` always runs rustnx.
     """
-    if name not in _LINEAR_TIME:
+    if name not in _LINEAR_TIME and name not in _QUERIES:
         return True
     G = args[0] if args else kwargs.get("G")
     if isinstance(G, RustnxGraph) or G is None:
+        return True
+    if name in _QUERIES and not _converted(G):
+        return "NetworkX answers this without reading the whole graph"
+    if name not in _LINEAR_TIME:
         return True
     if len(G) < SMALL_GRAPH_NODES:
         return "graph is small; NetworkX is faster"

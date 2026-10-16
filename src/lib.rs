@@ -134,6 +134,17 @@ impl CoreGraph {
         Ok(self.succ.neighbors(u).contains(&(v as u32)))
     }
 
+    /// A node's degree as NetworkX counts it (a self-loop twice when
+    /// undirected; in plus out when directed).
+    fn node_degree(&self, v: usize) -> usize {
+        let out = self.succ.neighbors(v);
+        if self.directed {
+            out.len() + self.adj(true).neighbors(v).len()
+        } else {
+            out.len() + out.iter().filter(|&&w| w as usize == v).count()
+        }
+    }
+
     /// NetworkX degrees: self-loops count twice; directed = in + out.
     fn degrees(&self) -> Vec<usize> {
         (0..self.n)
@@ -1789,28 +1800,75 @@ impl CoreGraph {
     /// NetworkX's `G.degree(v)` for one node.
     fn degree_of(&self, v: usize) -> PyResult<usize> {
         self.check_index(v)?;
-        let out = self.succ.neighbors(v);
-        Ok(if self.directed {
-            out.len() + self.adj(true).neighbors(v).len()
-        } else {
-            out.len() + out.iter().filter(|&&w| w as usize == v).count()
-        })
+        Ok(self.node_degree(v))
     }
 
     /// `nx.is_regular` on a non-empty graph.
     fn is_regular(&self) -> bool {
+        // Stops at the first node that differs, as NetworkX's does.
+        if self.n == 0 {
+            return true;
+        }
         if self.directed {
-            let (ins, outs) = self.in_out_degrees();
-            ins.iter().all(|&d| d == ins[0]) && outs.iter().all(|&d| d == outs[0])
+            let pred = self.adj(true);
+            let (i0, o0) = (pred.neighbors(0).len(), self.succ.neighbors(0).len());
+            (0..self.n).all(|v| pred.neighbors(v).len() == i0)
+                && (0..self.n).all(|v| self.succ.neighbors(v).len() == o0)
         } else {
-            let d = self.degrees();
-            d.iter().all(|&x| x == d[0])
+            let d0 = self.node_degree(0);
+            (0..self.n).all(|v| self.node_degree(v) == d0)
         }
     }
 
-    /// Whether every degree equals `k` (`nx.is_k_regular`).
+    /// Whether every degree equals `k` (`nx.is_k_regular`), stopping at the
+    /// first that doesn't.
     fn all_degrees_equal(&self, k: i64) -> bool {
-        self.degrees().iter().all(|&d| d as i64 == k)
+        (0..self.n).all(|v| self.node_degree(v) as i64 == k)
+    }
+
+    /// The degree test of `nx.is_eulerian` (every degree even, or every
+    /// in-degree equal to the out-degree), stopping at the first node that
+    /// fails. Simple graphs only; the caller tests connectivity.
+    fn euler_degrees_ok(&self) -> bool {
+        if self.directed {
+            let pred = self.adj(true);
+            (0..self.n).all(|v| pred.neighbors(v).len() == self.succ.neighbors(v).len())
+        } else {
+            (0..self.n).all(|v| self.node_degree(v).is_multiple_of(2))
+        }
+    }
+
+    /// `nx.is_strongly_connected` for a non-empty graph: no node without
+    /// in- or out-edges (which settles most graphs that aren't, at once),
+    /// then every node reached from the first both ways.
+    fn is_strongly_connected(&self, py: Python<'_>) -> bool {
+        let n = self.n;
+        if n <= 1 {
+            return true;
+        }
+        let pred = self.adj(true);
+        if (0..n).any(|v| self.succ.neighbors(v).is_empty() || pred.neighbors(v).is_empty()) {
+            return false;
+        }
+        py.detach(|| {
+            let reaches_all = |adj: &graph::Csr| {
+                let mut seen = vec![false; n];
+                seen[0] = true;
+                let mut stack = vec![0usize];
+                let mut count = 1;
+                while let Some(u) = stack.pop() {
+                    for &w in adj.neighbors(u) {
+                        if !seen[w as usize] {
+                            seen[w as usize] = true;
+                            count += 1;
+                            stack.push(w as usize);
+                        }
+                    }
+                }
+                count == n
+            };
+            reaches_all(&self.succ) && reaches_all(pred)
+        })
     }
 
     /// `nx.is_tournament`: one arc between each pair, no self-loops.

@@ -925,7 +925,7 @@ def number_strongly_connected_components(G):
 def is_strongly_connected(G):
     _directed_only(G)
     _check_not_null(G)
-    return len(G._core.strongly_connected_components()[0]) == len(G)
+    return G._core.is_strongly_connected()
 
 
 def weakly_connected_components(G):
@@ -4649,6 +4649,12 @@ def has_eulerian_path(G, source=None):
         return True
     s = None if source is None else _node_arg(G, source)
     plus_in, plus_out, bad = _b26_euler_balance(G)
+    if not G._multigraph:
+        # NetworkX's order: the degree test (stopping at the first node that
+        # fails), then connectivity (which raises for the null graph).
+        if not G._core.euler_degrees_ok():
+            return False
+        return is_strongly_connected(G) if G.is_directed() else is_connected(G)
     if G.is_directed():
         if s is not None:
             if G._multigraph:
