@@ -1763,6 +1763,28 @@ def test_operators_accept_unpickled_graphs(call):
     assert list(got.edges(data=True)) == list(want.edges(data=True))
 
 
+def test_spanning_tree_copies_attributes():
+    # The tree is filled in Rust; like NetworkX's, it holds fresh copies of
+    # the node and edge attribute dicts, in NetworkX's order.
+    G = nx.gnm_random_graph(300, 900, seed=3)
+    rng = random.Random(3)
+    for u, v, d in G.edges(data=True):
+        d["weight"] = rng.randint(1, 9)
+        d["tag"] = (u, v)
+    G.nodes[7]["color"] = "red"
+    G.graph["name"] = "g"
+    for f in (nx.minimum_spanning_tree, nx.maximum_spanning_tree):
+        want = f(G, backend="networkx")
+        got = f(G, backend="rustnx")
+        assert list(got.nodes(data=True)) == list(want.nodes(data=True))
+        assert list(got.edges(data=True)) == list(want.edges(data=True))
+        assert [list(r) for r in got._adj.values()] == [list(r) for r in want._adj.values()]
+        assert got.graph == want.graph
+        u, v = next(iter(got.edges))
+        assert got[u][v] is got[v][u] and got[u][v] is not G[u][v]
+        assert got.nodes[7] is not G.nodes[7]
+
+
 def test_generators_with_hub_nodes():
     # Every node of gnc_graph links to node 0, and dense generators pair each
     # node with many others: keys that once shared one hash bucket.

@@ -8506,6 +8506,58 @@ impl CoreGraph {
         }))
     }
 
+    /// Fills the empty `Graph` dicts `t_node` / `t_adj` as
+    /// `T.add_nodes_from(G.nodes.items())` and then
+    /// `T.add_edges_from((u, v, G.adj[u][v]) for each kept edge)` leave
+    /// them: a fresh attribute dict per node and per edge (shallow copies).
+    /// `nodes` is `G`'s node list; `node_dict` and `adj` are `G._node` and
+    /// `G._adj`.
+    #[allow(clippy::too_many_arguments)]
+    fn fill_edge_subgraph<'py>(
+        &self,
+        nodes: &Bound<'py, PyList>,
+        node_dict: &Bound<'py, PyDict>,
+        adj: &Bound<'py, PyDict>,
+        us: Vec<u32>,
+        vs: Vec<u32>,
+        t_node: &Bound<'py, PyDict>,
+        t_adj: &Bound<'py, PyDict>,
+    ) -> PyResult<()> {
+        let py = nodes.py();
+        let changed = || PyNotImplementedError::new_err("the graph does not match its conversion");
+        if nodes.len() != self.n || node_dict.len() != self.n || us.len() != vs.len() {
+            return Err(changed());
+        }
+        let mut rows = Vec::with_capacity(self.n);
+        let mut keys = Vec::with_capacity(self.n);
+        for (i, (k, d)) in node_dict.iter().enumerate() {
+            if !operators::same_node(&k, &nodes.get_item(i)?)? {
+                return Err(changed());
+            }
+            let row = PyDict::new(py);
+            t_adj.set_item(&k, &row)?;
+            let attrs = PyDict::new(py);
+            attrs.update(d.cast::<PyDict>().map_err(|_| changed())?.as_mapping())?;
+            t_node.set_item(&k, attrs)?;
+            rows.push(row);
+            keys.push(k);
+        }
+        for (&u, &v) in us.iter().zip(&vs) {
+            let (u, v) = (u as usize, v as usize);
+            if u >= self.n || v >= self.n {
+                return Err(changed());
+            }
+            let dd = adj
+                .get_item(&keys[u])?
+                .ok_or_else(changed)?
+                .get_item(&keys[v])
+                .map_err(|_| changed())?;
+            let data = nxdicts::simple_edge(&rows[u], &rows[v], &keys[u], &keys[v])?;
+            data.update(dd.cast::<PyDict>().map_err(|_| changed())?.as_mapping())?;
+        }
+        Ok(())
+    }
+
     /// `all_shortest_paths` from `source` to `target` as a lazy path
     /// iterator, or `None` if `target` isn't reached. `weight=None` uses
     /// `nx.predecessor` (BFS).

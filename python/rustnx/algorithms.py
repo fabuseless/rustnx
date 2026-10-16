@@ -2003,7 +2003,9 @@ def _mst_algorithms():
     return getattr(mst, "ALGORITHMS", {"kruskal": None, "prim": None, "boruvka": None})
 
 
-def _spanning_edges(G, algorithm, weight, data, maximum, keys=True):
+def _spanning_edges(G, algorithm, weight, data, maximum, keys=True, positions=False):
+    """The spanning edges as NetworkX yields them; with ``positions``, the
+    kept edges' endpoint positions ``(us, vs)`` (simple graphs)."""
     if G.is_directed():
         raise nx.NetworkXNotImplemented("not implemented for directed type")
     try:
@@ -2020,6 +2022,8 @@ def _spanning_edges(G, algorithm, weight, data, maximum, keys=True):
     base = _networkx_graph(G)
     _unhidden_weight(G, weight)
     us, vs = G._core.kruskal(weight, maximum)
+    if positions:
+        return us, vs
     guard = _MutationGuard(G)
     nodes = G._nodes
     adj = base._adj
@@ -2046,8 +2050,15 @@ def maximum_spanning_edges(G, algorithm="kruskal", weight="weight", keys=True, d
 
 
 def _spanning_tree(G, weight, algorithm, maximum):
-    edges = _spanning_edges(G, algorithm, weight, True, maximum)
     base = _networkx_graph(G)
+    if type(base) is nx.Graph:
+        # NetworkX's `add_nodes_from` / `add_edges_from`, done in Rust.
+        us, vs = _spanning_edges(G, algorithm, weight, True, maximum, positions=True)
+        T = nx.Graph()
+        T.graph.update(base.graph)
+        G._core.fill_edge_subgraph(list(G._nodes), base._node, base._adj, us, vs, T._node, T._adj)
+        return T
+    edges = _spanning_edges(G, algorithm, weight, True, maximum)
     T = base.__class__()
     T.graph.update(base.graph)
     T.add_nodes_from(base.nodes.items())
@@ -4638,6 +4649,12 @@ def chain_decomposition(G, root=None):
 
 
 def is_eulerian(G):
+    if not G._multigraph:
+        # NetworkX's order: the degree test (stopping at the first node that
+        # fails), then connectivity (which raises for the null graph).
+        if not G._core.euler_degrees_ok():
+            return False
+        return is_strongly_connected(G) if G.is_directed() else is_connected(G)
     plus_in, plus_out, bad = _b26_euler_balance(G)
     if G.is_directed():
         return not (plus_in or plus_out or bad) and is_strongly_connected(G)
@@ -4649,12 +4666,6 @@ def has_eulerian_path(G, source=None):
         return True
     s = None if source is None else _node_arg(G, source)
     plus_in, plus_out, bad = _b26_euler_balance(G)
-    if not G._multigraph:
-        # NetworkX's order: the degree test (stopping at the first node that
-        # fails), then connectivity (which raises for the null graph).
-        if not G._core.euler_degrees_ok():
-            return False
-        return is_strongly_connected(G) if G.is_directed() else is_connected(G)
     if G.is_directed():
         if s is not None:
             if G._multigraph:
