@@ -124,10 +124,10 @@ def main():
         faster = sum(s > 1.1 for s in speeds)
         slower = sum(s < 1 for s in speeds)
         w(f"Of {len(ok)} functions timed, {faster} are faster with rustnx on a repeat call "
-          f"(median speedup {med:.1f}x) and {slower} are slower. Those are single queries NetworkX answers "
-          "in microseconds (one path, one cycle), checks NetworkX stops at the first counter-example "
-          "(`is_regular`, `is_eulerian`, `is_strongly_connected` on graphs that aren't), and functions "
-          "whose time goes into building a Python result (generators of small or dense graphs).")
+          f"(median speedup {med:.1f}x) and {slower} are slower. Those are queries and checks NetworkX "
+          "answers in microseconds (one cycle, `is_eulerian` on a graph that isn't), where NetworkX's "
+          "dispatch overhead is most of rustnx's time, and functions whose time goes into building "
+          "Python results (labeled edge streams, tiny generated graphs).")
         w("")
     match = collections.Counter(r.get("match") for r in ok)
     w(f"Results: {match.get('same', 0)} identical, {match.get('close', 0)} within 1e-9, "

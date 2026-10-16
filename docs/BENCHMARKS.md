@@ -15,7 +15,7 @@ Each pipeline runs its steps once, as an analysis script would, on a [SNAP](http
 | collaboration network (astrophysics) | 17,903 nodes, 196,972 edges, undirected | 629 s | 1.27 s | **495x** |
 | trust network (Epinions) | 75,879 nodes, 508,837 edges, directed | 10.23 s | 1.33 s | **7.7x** |
 | citation network (HEP-PH) | 34,546 nodes, 421,534 edges, directed | 7.15 s | 0.817 s | **8.8x** |
-| road routing (Pennsylvania) | 1,088,092 nodes, 1,541,898 edges, undirected | 98.57 s | 23.92 s | **4.1x** |
+| road routing (Pennsylvania) | 1,088,092 nodes, 1,541,898 edges, undirected | 92.70 s | 14.01 s | **6.6x** |
 | web graph (Google) | 875,713 nodes, 5,105,039 edges, directed | 18.47 s | 10.39 s | **1.8x** |
 
 ### social network (Facebook)
@@ -107,13 +107,13 @@ Each pipeline runs its steps once, as an analysis script would, on a [SNAP](http
 
 | Step | NetworkX | rustnx | Speedup | Result |
 |---|---|---|---|---|
-| `connected_components` | 0.948 s | 0.859 s | 1.1x | same |
-| `dijkstra_path (20 routes)` | 62.47 s | 3.55 s | 18x | same |
-| `single_source_dijkstra_path_length` | 3.73 s | 0.820 s | 4.5x | same |
-| `bfs_edges` | 5.47 s | 1.33 s | 4.1x | same |
-| `minimum_spanning_tree` | 21.71 s | 16.69 s | 1.3x | same |
-| `articulation_points` | 4.24 s | 0.665 s | 6.4x | same |
-| **total** | **98.57 s** | **23.92 s** | **4.1x** | |
+| `connected_components` | 0.928 s | 1.08 s | 0.9x | same |
+| `dijkstra_path (20 routes)` | 58.94 s | 3.22 s | 18x | same |
+| `single_source_dijkstra_path_length` | 3.52 s | 0.759 s | 4.6x | same |
+| `bfs_edges` | 5.04 s | 1.23 s | 4.1x | same |
+| `minimum_spanning_tree` | 20.66 s | 7.06 s | 2.9x | same |
+| `articulation_points` | 3.61 s | 0.654 s | 5.5x | same |
+| **total** | **92.70 s** | **14.01 s** | **6.6x** | |
 
 ### web graph (Google)
 
@@ -131,7 +131,7 @@ Each pipeline runs its steps once, as an analysis script would, on a [SNAP](http
 
 `python benchmarks/all_functions.py` times each function rustnx implements. It grows the input (a scale-free graph, or the first graph family the function accepts) until NetworkX takes about half a second, or to 262,144 nodes, and times both on that input.
 
-Of 665 functions timed, 629 are faster with rustnx on a repeat call (median speedup 10.2x) and 33 are slower. Those are single queries NetworkX answers in microseconds (one path, one cycle), checks NetworkX stops at the first counter-example (`is_regular`, `is_eulerian`, `is_strongly_connected` on graphs that aren't), and functions whose time goes into building a Python result (generators of small or dense graphs).
+Of 665 functions timed, 645 are faster with rustnx on a repeat call (median speedup 10.2x) and 13 are slower. Those are queries and checks NetworkX answers in microseconds (one cycle, `is_eulerian` on a graph that isn't), where NetworkX's dispatch overhead is most of rustnx's time, and functions whose time goes into building Python results (labeled edge streams, tiny generated graphs).
 
 Results: 660 identical, 5 within 1e-9, 0 different.
 
@@ -181,7 +181,7 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 | `degree_mixing_dict` | scale-free, 65,536 nodes, 196,599 edges | 0.715 s | 0.062 s | 0.028 s | 26x | same |
 | `degree_mixing_matrix` | scale-free, 65,536 nodes, 196,599 edges | 0.742 s | 0.074 s | 0.031 s | 24x | same |
 | `degree_pearson_correlation_coefficient` | scale-free, 65,536 nodes, 196,599 edges | 0.869 s | 0.150 s | 0.113 s | 7.7x | same |
-| `node_attribute_xy` | scale-free, 524,288 nodes, 1,572,855 edges | 0.218 s | 1.01 s | 0.528 s | 0.4x | same |
+| `node_attribute_xy` | scale-free, 262,144 nodes, 786,423 edges | 0.150 s | 0.378 s | 0.193 s | 0.8x | same |
 | `node_degree_xy` | scale-free, 262,144 nodes, 786,423 edges | 0.351 s | 0.526 s | 0.276 s | 1.3x | same |
 | `numeric_assortativity_coefficient` | scale-free, 131,072 nodes, 393,207 edges | 0.578 s | 0.149 s | 0.062 s | 9.4x | same |
 
@@ -238,7 +238,7 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 
 | Function | Input | NetworkX | rustnx, first call | rustnx, repeat | Speedup | Result |
 |---|---|---|---|---|---|---|
-| `edge_boundary` | scale-free, 262,144 nodes, 786,423 edges | 0.143 s | 0.291 s | 0.157 s | 0.9x | same |
+| `edge_boundary` | scale-free, 262,144 nodes, 786,423 edges | 0.102 s | 0.280 s | 0.098 s | 1.0x | same |
 | `node_boundary` | scale-free, 262,144 nodes, 786,423 edges | 0.063 s | 0.206 s | 0.031 s | 2.0x | same |
 
 ### Bridges
@@ -299,7 +299,7 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 | `chordal_graph_cliques` | random tree, 2,048 nodes, 2,047 edges | 0.816 s | 3.86 ms | 2.66 ms | 307x | same |
 | `chordal_graph_treewidth` | random tree, 2,048 nodes, 2,047 edges | 1.52 s | 0.74 ms | 0.15 ms | 10,105x | same |
 | `complete_to_chordal_graph` | scale-free, 256 nodes, 759 edges | 1.68 s | 8.58 ms | 7.83 ms | 214x | same |
-| `find_induced_nodes` | random tree, 1,024 nodes, 1,023 edges | 1.78 s | 1.68 s | 1.50 s | 1.2x | same |
+| `find_induced_nodes` | random tree, 1,024 nodes, 1,023 edges | 1.55 s | 1.42 s | 1.37 s | 1.1x | same |
 | `is_chordal` | scale-free, 262,144 nodes, 786,423 edges | 0.674 s | 0.183 s | 0.027 s | 25x | same |
 
 ### Classes
@@ -384,7 +384,7 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 | `is_biconnected` | scale-free, 65,536 nodes, 196,599 edges | 0.520 s | 0.040 s | 7.74 ms | 67x | same |
 | `is_connected` | scale-free, 262,144 nodes, 786,423 edges | 0.429 s | 0.172 s | 0.019 s | 22x | same |
 | `is_semiconnected` | random directed, 262,144 nodes, 1,048,576 edges | 0.815 s | 0.132 s | 0.030 s | 27x | same |
-| `is_strongly_connected` | random directed, 262,144 nodes, 1,048,576 edges | 0.13 ms | 0.176 s | 0.045 s | 0.00x | same |
+| `is_strongly_connected` | random directed, 262,144 nodes, 1,048,576 edges | 86 µs | 0.119 s | 29 µs | 2.9x | same |
 | `is_weakly_connected` | random directed, 262,144 nodes, 1,048,576 edges | 0.732 s | 0.125 s | 0.025 s | 29x | same |
 | `kosaraju_strongly_connected_components` | random directed, 131,072 nodes, 524,288 edges | 1.04 s | 0.161 s | 0.035 s | 30x | same |
 | `node_connected_component` | scale-free, 262,144 nodes, 786,423 edges | 0.403 s | 0.265 s | 0.050 s | 8.0x | same |
@@ -427,8 +427,8 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 | `stoer_wagner` | scale-free, 1,024 nodes, 3,063 edges | 3.22 s | 0.220 s | 0.188 s | 17x | same |
 | `unconstrained_bridge_augmentation` | scale-free, 16,384 nodes, 49,143 edges | 0.527 s | 0.023 s | 0.015 s | 36x | same |
 | `unconstrained_one_edge_augmentation` | scale-free, 262,144 nodes, 786,423 edges | 0.756 s | 0.216 s | 0.043 s | 17x | same |
-| `weighted_bridge_augmentation` | scale-free, 16,384 nodes, 49,143 edges | 0.545 s | 0.603 s | 0.618 s | 0.9x | same |
-| `weighted_one_edge_augmentation` | scale-free, 262,144 nodes, 786,423 edges | 0.667 s | 0.905 s | 0.718 s | 0.9x | same |
+| `weighted_bridge_augmentation` | scale-free, 32,768 nodes, 98,295 edges | 1.22 s | 1.17 s | 1.15 s | 1.1x | same |
+| `weighted_one_edge_augmentation` | scale-free, 262,144 nodes, 786,423 edges | 0.639 s | 0.799 s | 0.608 s | 1.1x | same |
 
 ### Core
 
@@ -467,7 +467,7 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 |---|---|---|---|---|---|---|
 | `chordless_cycles` | scale-free, 64 nodes, 183 edges | 0.946 s | 0.164 s | 0.180 s | 5.2x | same |
 | `cycle_basis` | scale-free, 16,384 nodes, 49,143 edges | 1.66 s | 0.820 s | 0.744 s | 2.2x | same |
-| `find_cycle` | scale-free, 262,144 nodes, 786,423 edges | 88 µs | 0.161 s | 0.52 ms | 0.2x | same |
+| `find_cycle` | scale-free, 262,144 nodes, 786,423 edges | 79 µs | 0.147 s | 0.43 ms | 0.2x | same |
 | `girth` | scale-free, 65,536 nodes, 196,599 edges | 0.510 s | 0.051 s | 3.92 ms | 130x | same |
 | `minimum_cycle_basis` | scale-free, 64 nodes, 183 edges | 1.67 s | 0.085 s | 0.082 s | 20x | same |
 | `simple_cycles` | scale-free, 64 nodes, 183 edges | 0.655 s | 0.290 s | 0.352 s | 1.9x | same |
@@ -494,7 +494,7 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 | `descendants` | scale-free, 131,072 nodes, 393,207 edges | 0.455 s | 0.090 s | 0.020 s | 23x | same |
 | `has_cycle` | random directed, 262,144 nodes, 1,048,576 edges | 0.083 s | 0.116 s | 0.95 ms | 88x | same |
 | `is_aperiodic` | random tournament, 2,000 nodes, 1,999,000 edges | 0.061 s | 0.125 s | 0.021 s | 3.0x | same |
-| `is_directed_acyclic_graph` | scale-free, 262,144 nodes, 786,423 edges | 8 µs | 0.205 s | 28 µs | 0.3x | same |
+| `is_directed_acyclic_graph` | scale-free, 262,144 nodes, 786,423 edges | 8 µs | 0.151 s | 29 µs | 0.3x | same |
 | `lexicographical_topological_sort` | random DAG, 131,072 nodes, 262,339 edges | 0.844 s | 0.136 s | 0.093 s | 9.1x | same |
 | `root_to_leaf_paths` | random directed, 64 nodes, 256 edges | 10.12 s | 0.625 s | 0.594 s | 17x | same |
 | `topological_generations` | random DAG, 262,144 nodes, 524,802 edges | 0.590 s | 0.165 s | 0.024 s | 25x | same |
@@ -544,7 +544,7 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 
 | Function | Input | NetworkX | rustnx, first call | rustnx, repeat | Speedup | Result |
 |---|---|---|---|---|---|---|
-| `efficiency` | scale-free, 262,144 nodes, 786,423 edges | 0.29 ms | 0.162 s | 0.25 ms | 1.2x | same |
+| `efficiency` | scale-free, 262,144 nodes, 786,423 edges | 0.28 ms | 0.144 s | 0.25 ms | 1.1x | same |
 | `global_efficiency` | scale-free, 2,048 nodes, 6,135 edges | 1.81 s | 0.048 s | 0.050 s | 36x | same |
 | `local_efficiency` | scale-free, 8,192 nodes, 24,567 edges | 0.884 s | 0.027 s | 0.015 s | 60x | same |
 
@@ -556,7 +556,7 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 | `eulerian_path` | complete directed, 300 nodes, 89,700 edges | 0.568 s | 0.022 s | 0.016 s | 36x | same |
 | `eulerize` | scale-free, 1,024 nodes, 3,063 edges | 26.79 s | 6.05 s | 6.04 s | 4.4x | same |
 | `has_eulerian_path` | scale-free, 262,144 nodes, 786,423 edges | 0.049 s | 0.166 s | 6.98 ms | 7.1x | same |
-| `is_eulerian` | scale-free, 262,144 nodes, 786,423 edges | 31 µs | 0.157 s | 3.56 ms | 0.01x | same |
+| `is_eulerian` | scale-free, 262,144 nodes, 786,423 edges | 19 µs | 0.164 s | 25 µs | 0.8x | same |
 | `is_semieulerian` | scale-free, 262,144 nodes, 786,423 edges | 0.050 s | 0.154 s | 6.84 ms | 7.3x | same |
 
 ### Flow
@@ -589,14 +589,14 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 | `LCF_graph` | n = 262,144 | 0.483 s | 0.239 s | 0.195 s | 2.5x | same |
 | `balanced_tree` | n = 131,072 | 0.337 s | 0.180 s | 0.168 s | 2.0x | same |
 | `barabasi_albert_graph` | n = 131,072 | 0.894 s | 0.300 s | 0.284 s | 3.2x | same |
-| `barbell_graph` | n = 512 | 3.00 s | 3.74 s | 4.62 s | 0.6x | same |
+| `barbell_graph` | n = 512 | 2.73 s | 1.60 s | 1.58 s | 1.7x | same |
 | `binomial_tree` | n = 262,144 | 0.374 s | 0.203 s | 0.199 s | 1.9x | same |
-| `caveman_graph` | n = 262,144 | 31 µs | 43 µs | 32 µs | 1.0x | same |
+| `caveman_graph` | n = 262,144 | 32 µs | 51 µs | 31 µs | 1.0x | same |
 | `chordal_cycle_graph` | n = 131,072 | 1.62 s | 0.260 s | 0.262 s | 6.2x | same |
 | `circulant_graph` | n = 131,072 | 0.617 s | 0.171 s | 0.186 s | 3.3x | same |
 | `circular_ladder_graph` | n = 262,144 | 2.84 s | 0.502 s | 0.500 s | 5.7x | same |
-| `complete_graph` | n = 2,048 | 1.34 s | 1.57 s | 1.49 s | 0.9x | same |
-| `complete_multipartite_graph` | n = 16,384 | 1.24 s | 1.88 s | 1.75 s | 0.7x | same |
+| `complete_graph` | n = 2,048 | 1.30 s | 0.889 s | 0.813 s | 1.6x | same |
+| `complete_multipartite_graph` | n = 16,384 | 1.25 s | 0.636 s | 0.600 s | 2.1x | same |
 | `configuration_model` | n = 65,536 | 0.600 s | 0.147 s | 0.123 s | 4.9x | same |
 | `connected_caveman_graph` | n = 262,144 | 39 µs | 42 µs | 29 µs | 1.4x | same |
 | `connected_watts_strogatz_graph` | n = 131,072 | 0.481 s | 0.093 s | 0.094 s | 5.1x | same |
@@ -610,7 +610,7 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 | `dual_barabasi_albert_graph` | n = 131,072 | 0.914 s | 0.370 s | 0.294 s | 3.1x | same |
 | `duplication_divergence_graph` | n = 2,048 | 2.16 s | 9.92 ms | 9.28 ms | 233x | same |
 | `ego_graph` | scale-free, 262,144 nodes, 786,423 edges | 0.018 s | 0.154 s | 3.42 ms | 5.4x | same |
-| `empty_graph` | n = 262,144 | 15 µs | 41 µs | 32 µs | 0.5x | same |
+| `empty_graph` | n = 262,144 | 12 µs | 42 µs | 30 µs | 0.4x | same |
 | `expected_degree_graph` | n = 131,072 | 0.437 s | 0.140 s | 0.130 s | 3.4x | same |
 | `extended_barabasi_albert_graph` | n = 32,768 | 0.584 s | 0.065 s | 0.064 s | 9.1x | same |
 | `fast_gnp_random_graph` | n = 65,536 | 0.527 s | 0.221 s | 0.203 s | 2.6x | same |
@@ -622,7 +622,7 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 | `geometric_edges` | n = 131,072 | 0.495 s | 0.210 s | 0.121 s | 4.1x | same |
 | `geometric_soft_configuration_graph` | n = 2,048 | 1.07 s | 0.113 s | 0.092 s | 12x | same |
 | `gn_graph` | n = 4,096 | 0.853 s | 4.57 ms | 3.01 ms | 284x | same |
-| `gnc_graph` | n = 65,536 | 1.12 s | 6.36 s | 6.23 s | 0.2x | same |
+| `gnc_graph` | n = 65,536 | 0.793 s | 0.417 s | 0.356 s | 2.2x | same |
 | `gnm_random_graph` | n = 262,144 | 0.106 s | 0.097 s | 0.082 s | 1.3x | same |
 | `gnp_random_graph` | n = 4,096 | 0.611 s | 0.050 s | 0.050 s | 12x | same |
 | `gnr_graph` | n = 131,072 | 0.391 s | 0.255 s | 0.205 s | 1.9x | same |
@@ -647,14 +647,14 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 | `margulis_gabber_galil_graph` | n = 32,768 | 0.274 s | 0.105 s | 0.107 s | 2.6x | same |
 | `maybe_regular_expander_graph` | n = 131,072 | 1.26 s | 0.402 s | 0.359 s | 3.5x | same |
 | `mycielski_graph` | n = 16,384 | 1.86 s | 1.35 s | 1.26 s | 1.5x | same |
-| `mycielskian` | scale-free, 32,768 nodes, 98,295 edges | 0.620 s | 0.777 s | 0.721 s | 0.9x | same |
+| `mycielskian` | scale-free, 32,768 nodes, 98,295 edges | 0.599 s | 0.267 s | 0.187 s | 3.2x | same |
 | `navigable_small_world_graph` | n = 1,024 | 0.714 s | 0.010 s | 7.32 ms | 98x | same |
 | `newman_watts_strogatz_graph` | n = 262,144 | 0.418 s | 0.199 s | 0.168 s | 2.5x | same |
 | `nonisomorphic_trees` | n = 65,536 | 0.700 s | 1.34 s | 0.299 s | 2.3x | same |
 | `paley_graph` | n = 16,384 | 0.454 s | 0.323 s | 0.262 s | 1.7x | same |
-| `partial_duplication_graph` | n = 2,048 | 1.30 s | 2.26 s | 2.15 s | 0.6x | same |
+| `partial_duplication_graph` | n = 2,048 | 1.20 s | 0.773 s | 0.715 s | 1.7x | same |
 | `path_graph` | n = 262,144 | 0.296 s | 0.207 s | 0.173 s | 1.7x | same |
-| `planted_partition_graph` | n = 262,144 | 63 µs | 0.12 ms | 0.11 ms | 0.6x | same |
+| `planted_partition_graph` | n = 262,144 | 65 µs | 0.12 ms | 0.10 ms | 0.6x | same |
 | `powerlaw_cluster_graph` | n = 131,072 | 0.938 s | 0.352 s | 0.405 s | 2.3x | same |
 | `prefix_tree` | n = 65,536 | 0.369 s | 0.131 s | 0.135 s | 2.7x | same |
 | `prefix_tree_recursive` | n = 65,536 | 0.755 s | 0.133 s | 0.141 s | 5.4x | same |
@@ -670,15 +670,15 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 | `random_labeled_tree` | n = 131,072 | 0.589 s | 0.169 s | 0.152 s | 3.9x | same |
 | `random_lobster_graph` | n = 262,144 | 0.278 s | 0.253 s | 0.170 s | 1.6x | same |
 | `random_partition_graph` | n = 16,384 | 1.46 s | 0.058 s | 0.033 s | 45x | same |
-| `random_powerlaw_tree` | n = 64 | 0.16 ms | 0.16 ms | 0.17 ms | 0.9x | same |
-| `random_powerlaw_tree_sequence` | n = 64 | 0.17 ms | 0.18 ms | 0.15 ms | 1.1x | same |
+| `random_powerlaw_tree` | n = 64 | 0.30 ms | 0.23 ms | 0.18 ms | 1.7x | same |
+| `random_powerlaw_tree_sequence` | n = 64 | 90 µs | 0.11 ms | 77 µs | 1.2x | same |
 | `random_regular_graph` | n = 131,072 | 0.801 s | 0.206 s | 0.188 s | 4.3x | same |
 | `random_shell_graph` | n = 65,536 | 0.840 s | 0.112 s | 0.098 s | 8.6x | same |
 | `random_uniform_k_out_graph` | n = 16,384 | 5.44 s | 0.068 s | 0.033 s | 162x | same |
 | `random_unlabeled_rooted_forest` | n = 1,024 | 1.76 s | 0.391 s | 0.012 s | 143x | same |
 | `random_unlabeled_rooted_tree` | n = 1,024 | 0.899 s | 0.257 s | 0.014 s | 63x | same |
 | `random_unlabeled_tree` | n = 1,024 | 1.80 s | 0.441 s | 0.012 s | 154x | same |
-| `relaxed_caveman_graph` | n = 262,144 | 92 µs | 0.16 ms | 85 µs | 1.1x | same |
+| `relaxed_caveman_graph` | n = 262,144 | 51 µs | 0.10 ms | 80 µs | 0.6x | same |
 | `ring_of_cliques` | n = 131,072 | 0.383 s | 0.177 s | 0.160 s | 2.4x | same |
 | `scale_free_graph` | n = 65,536 | 0.482 s | 0.371 s | 0.393 s | 1.2x | same |
 | `soft_random_geometric_graph` | n = 1,024 | 1.73 s | 0.272 s | 0.209 s | 8.3x | same |
@@ -689,7 +689,7 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 | `tadpole_graph` | n = 32,768 | 0.209 s | 0.102 s | 0.097 s | 2.2x | same |
 | `thresholded_random_geometric_graph` | n = 1,024 | 1.06 s | 0.243 s | 0.236 s | 4.5x | same |
 | `triangular_lattice_graph` | n = 32,768 | 0.349 s | 0.126 s | 0.100 s | 3.5x | same |
-| `turan_graph` | n = 2,048 | 1.03 s | 2.11 s | 1.40 s | 0.7x | same |
+| `turan_graph` | n = 2,048 | 0.853 s | 0.486 s | 0.449 s | 1.9x | same |
 | `uniform_random_intersection_graph` | n = 262,144 | 0.748 s | 0.092 s | 0.096 s | 7.8x | same |
 | `visibility_graph` | n = 1,024 | 0.736 s | 7.20 ms | 6.51 ms | 113x | same |
 | `watts_strogatz_graph` | n = 262,144 | 0.619 s | 0.212 s | 0.200 s | 3.1x | same |
@@ -781,19 +781,19 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 | Function | Input | NetworkX | rustnx, first call | rustnx, repeat | Speedup | Result |
 |---|---|---|---|---|---|---|
 | `adamic_adar_index` | scale-free, 1,024 nodes, 3,063 edges | 1.04 s | 0.275 s | 0.273 s | 3.8x | same |
-| `cn_soundarajan_hopcroft` | complete, 300 nodes, 44,850 edges | 2.72 ms | 6.15 ms | 2.94 ms | 0.9x | same |
+| `cn_soundarajan_hopcroft` | complete, 300 nodes, 44,850 edges | 1.60 ms | 4.15 ms | 1.59 ms | 1.0x | same |
 | `common_neighbor_centrality` | scale-free, 1,024 nodes, 3,063 edges | 0.812 s | 0.181 s | 0.156 s | 5.2x | same |
 | `jaccard_coefficient` | scale-free, 1,024 nodes, 3,063 edges | 0.736 s | 0.133 s | 0.119 s | 6.2x | same |
 | `preferential_attachment` | scale-free, 262,144 nodes, 786,423 edges | 0.259 s | 0.283 s | 0.111 s | 2.3x | same |
-| `ra_index_soundarajan_hopcroft` | complete, 300 nodes, 44,850 edges | 1.51 ms | 4.07 ms | 1.66 ms | 0.9x | same |
+| `ra_index_soundarajan_hopcroft` | complete, 300 nodes, 44,850 edges | 1.48 ms | 4.15 ms | 1.59 ms | 0.9x | same |
 | `resource_allocation_index` | scale-free, 65,536 nodes, 196,599 edges | 0.423 s | 0.228 s | 0.189 s | 2.2x | same |
-| `within_inter_cluster` | complete, 300 nodes, 44,850 edges | 1.32 ms | 3.90 ms | 1.54 ms | 0.9x | same |
+| `within_inter_cluster` | complete, 300 nodes, 44,850 edges | 1.26 ms | 3.41 ms | 1.31 ms | 1.0x | same |
 
 ### Lowest common ancestors
 
 | Function | Input | NetworkX | rustnx, first call | rustnx, repeat | Speedup | Result |
 |---|---|---|---|---|---|---|
-| `all_pairs_lowest_common_ancestor` | random DAG, 2,048 nodes, 4,128 edges | 0.779 s | 0.700 s | 0.716 s | 1.1x | same |
+| `all_pairs_lowest_common_ancestor` | random DAG, 2,048 nodes, 4,128 edges | 0.642 s | 0.609 s | 0.569 s | 1.1x | same |
 | `lowest_common_ancestor` | random DAG, 262,144 nodes, 524,802 edges | 0.492 s | 0.143 s | 0.022 s | 22x | same |
 | `tree_all_pairs_lowest_common_ancestor` | random directed, 32,768 nodes, 131,072 edges | 0.687 s | 0.180 s | 0.118 s | 5.8x | same |
 
@@ -886,7 +886,7 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 | `cytoscape_graph` | n = 131,072 | 1.10 s | 0.659 s | 0.738 s | 1.5x | same |
 | `from_dict_of_dicts` | n = 65,536 | 0.858 s | 0.616 s | 0.603 s | 1.4x | same |
 | `from_dict_of_lists` | n = 65,536 | 0.701 s | 0.562 s | 0.440 s | 1.6x | same |
-| `from_edgelist` | n = 131,072 | 0.608 s | 0.540 s | 0.519 s | 1.2x | same |
+| `from_edgelist` | n = 131,072 | 0.532 s | 0.338 s | 0.298 s | 1.8x | same |
 | `from_graph6_bytes` | n = 8,192 | 3.99 s | 0.093 s | 0.063 s | 64x | same |
 | `from_numpy_array` | n = 16,384 | 0.310 s | 0.259 s | 0.243 s | 1.3x | same |
 | `from_pandas_adjacency` | n = 16,384 | 0.141 s | 0.121 s | 0.108 s | 1.3x | same |
@@ -931,8 +931,8 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 
 | Function | Input | NetworkX | rustnx, first call | rustnx, repeat | Speedup | Result |
 |---|---|---|---|---|---|---|
-| `is_k_regular` | scale-free, 262,144 nodes, 786,423 edges | 29 µs | 0.169 s | 3.59 ms | 0.01x | same |
-| `is_regular` | scale-free, 262,144 nodes, 786,423 edges | 45 µs | 0.156 s | 3.33 ms | 0.01x | same |
+| `is_k_regular` | scale-free, 262,144 nodes, 786,423 edges | 14 µs | 0.138 s | 31 µs | 0.5x | same |
+| `is_regular` | scale-free, 262,144 nodes, 786,423 edges | 29 µs | 0.177 s | 27 µs | 1.1x | same |
 | `k_factor` | scale-free, 128 nodes, 375 edges | 1.35 s | 0.038 s | 0.025 s | 54x | same |
 
 ### Rich club
@@ -967,7 +967,7 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 | `bellman_ford_path_length` | scale-free, 65,536 nodes, 196,599 edges | 0.717 s | 0.096 s | 0.017 s | 41x | same |
 | `bellman_ford_predecessor_and_distance` | scale-free, 65,536 nodes, 196,599 edges | 0.554 s | 0.260 s | 0.096 s | 5.8x | same |
 | `bidirectional_dijkstra` | scale-free, 262,144 nodes, 786,423 edges | 0.115 s | 0.359 s | 1.25 ms | 92x | same |
-| `bidirectional_shortest_path` | scale-free, 262,144 nodes, 786,423 edges | 0.25 ms | 0.156 s | 0.27 ms | 0.9x | same |
+| `bidirectional_shortest_path` | scale-free, 262,144 nodes, 786,423 edges | 0.30 ms | 0.159 s | 0.23 ms | 1.3x | same |
 | `dijkstra_path` | scale-free, 65,536 nodes, 196,599 edges | 0.415 s | 0.090 s | 0.019 s | 21x | same |
 | `dijkstra_path_length` | scale-free, 131,072 nodes, 393,207 edges | 0.918 s | 0.228 s | 0.057 s | 16x | same |
 | `dijkstra_predecessor_and_distance` | scale-free, 65,536 nodes, 196,599 edges | 0.574 s | 0.287 s | 0.081 s | 7.1x | same |
@@ -977,23 +977,23 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 | `floyd_warshall_predecessor_and_distance` | scale-free, 1,024 nodes, 3,063 edges | 80.65 s | 0.844 s | 0.771 s | 105x | same |
 | `floyd_warshall_tree` | scale-free, 1,024 nodes, 3,063 edges | 3.49 s | 0.398 s | 0.333 s | 10x | same |
 | `goldberg_radzik` | scale-free, 32,768 nodes, 98,295 edges | 0.621 s | 0.087 s | 0.028 s | 22x | same |
-| `has_path` | scale-free, 262,144 nodes, 786,423 edges | 0.24 ms | 0.183 s | 0.27 ms | 0.9x | same |
+| `has_path` | scale-free, 262,144 nodes, 786,423 edges | 0.31 ms | 0.160 s | 0.27 ms | 1.2x | same |
 | `johnson` | scale-free, 1,024 nodes, 3,063 edges | 4.16 s | 1.59 s | 1.12 s | 3.7x | same |
 | `multi_source_dijkstra` | scale-free, 65,536 nodes, 196,599 edges | 0.673 s | 0.290 s | 0.088 s | 7.7x | same |
 | `multi_source_dijkstra_path` | scale-free, 65,536 nodes, 196,599 edges | 0.528 s | 0.186 s | 0.072 s | 7.3x | same |
 | `multi_source_dijkstra_path_length` | scale-free, 131,072 nodes, 393,207 edges | 1.00 s | 0.262 s | 0.102 s | 9.8x | same |
 | `negative_edge_cycle` | scale-free, 131,072 nodes, 393,207 edges | 1.22 s | 0.212 s | 0.028 s | 43x | same |
 | `predecessor` | scale-free, 131,072 nodes, 393,207 edges | 0.531 s | 0.518 s | 0.114 s | 4.6x | same |
-| `shortest_path` | scale-free, 262,144 nodes, 786,423 edges | 0.23 ms | 0.162 s | 0.35 ms | 0.7x | same |
+| `shortest_path` | scale-free, 262,144 nodes, 786,423 edges | 0.32 ms | 0.173 s | 0.32 ms | 1.0x | same |
 | `shortest_path_length` | scale-free, 2,048 nodes, 6,135 edges | 1.60 s | 0.682 s | 0.581 s | 2.7x | same |
-| `single_source_all_shortest_paths` | scale-free, 32,768 nodes, 98,295 edges | 0.269 s | 0.469 s | 0.402 s | 0.7x | same |
+| `single_source_all_shortest_paths` | scale-free, 65,536 nodes, 196,599 edges | 0.648 s | 0.972 s | 0.251 s | 2.6x | same |
 | `single_source_bellman_ford` | scale-free, 65,536 nodes, 196,599 edges | 1.34 s | 0.187 s | 0.107 s | 13x | same |
 | `single_source_bellman_ford_path` | scale-free, 65,536 nodes, 196,599 edges | 1.33 s | 0.461 s | 0.116 s | 12x | same |
 | `single_source_bellman_ford_path_length` | scale-free, 65,536 nodes, 196,599 edges | 0.801 s | 0.122 s | 0.031 s | 25x | same |
 | `single_source_dijkstra` | scale-free, 65,536 nodes, 196,599 edges | 0.836 s | 0.231 s | 0.082 s | 10x | same |
 | `single_source_dijkstra_path` | scale-free, 65,536 nodes, 196,599 edges | 0.868 s | 0.312 s | 0.092 s | 9.4x | same |
 | `single_source_dijkstra_path_length` | scale-free, 65,536 nodes, 196,599 edges | 0.485 s | 0.131 s | 0.039 s | 12x | same |
-| `single_source_shortest_path` | scale-free, 131,072 nodes, 393,207 edges | 0.241 s | 0.416 s | 0.262 s | 0.9x | same |
+| `single_source_shortest_path` | scale-free, 262,144 nodes, 786,423 edges | 0.865 s | 0.695 s | 0.500 s | 1.7x | same |
 | `single_source_shortest_path_length` | scale-free, 262,144 nodes, 786,423 edges | 0.456 s | 0.303 s | 0.067 s | 6.8x | same |
 | `single_target_shortest_path` | scale-free, 131,072 nodes, 393,207 edges | 0.605 s | 0.419 s | 0.099 s | 6.1x | same |
 | `single_target_shortest_path_length` | scale-free, 262,144 nodes, 786,423 edges | 0.454 s | 0.237 s | 0.070 s | 6.5x | same |
@@ -1002,7 +1002,7 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 
 | Function | Input | NetworkX | rustnx, first call | rustnx, repeat | Speedup | Result |
 |---|---|---|---|---|---|---|
-| `generate_random_paths` | scale-free, 4,096 nodes, 12,279 edges | 0.275 s | 0.362 s | 0.336 s | 0.8x | same |
+| `generate_random_paths` | scale-free, 4,096 nodes, 12,279 edges | 0.299 s | 0.542 s | 0.216 s | 1.4x | same |
 | `panther_similarity` | scale-free, 1,024 nodes, 3,063 edges | 0.872 s | 0.075 s | 0.073 s | 12x | same |
 | `panther_vector_similarity` | scale-free, 512 nodes, 1,527 edges | 0.656 s | 0.322 s | 0.316 s | 2.1x | same |
 
@@ -1056,8 +1056,8 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 |---|---|---|---|---|---|---|
 | `hamiltonian_path` | random directed, 64 nodes, 256 edges | 0.014 s | 0.67 ms | 0.28 ms | 52x | same |
 | `is_reachable` | random directed, 1,024 nodes, 4,096 edges | 0.574 s | 0.77 ms | 0.15 ms | 3,952x | same |
-| `is_tournament` | random directed, 262,144 nodes, 1,048,576 edges | 3.10 ms | 0.095 s | 3.65 ms | 0.8x | same |
-| `random_tournament` | n = 2,048 | 2.13 s | 2.18 s | 1.96 s | 1.1x | same |
+| `is_tournament` | random directed, 262,144 nodes, 1,048,576 edges | 2.70 ms | 0.107 s | 3.36 ms | 0.8x | same |
+| `random_tournament` | n = 2,048 | 2.04 s | 0.822 s | 0.843 s | 2.4x | same |
 | `score_sequence` | random directed, 262,144 nodes, 1,048,576 edges | 0.049 s | 0.093 s | 2.71 ms | 18x | same |
 | `tournament_is_strongly_connected` | random directed, 64 nodes, 256 edges | 7.92 s | 0.21 ms | 31 µs | 252,677x | same |
 | `tournament_matrix` | random directed, 131,072 nodes, 524,288 edges | 1.04 s | 0.166 s | 0.049 s | 21x | same |
@@ -1067,14 +1067,14 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 | Function | Input | NetworkX | rustnx, first call | rustnx, repeat | Speedup | Result |
 |---|---|---|---|---|---|---|
 | `bfs_edges` | scale-free, 131,072 nodes, 393,207 edges | 0.532 s | 0.122 s | 0.053 s | 10.0x | same |
-| `bfs_labeled_edges` | scale-free, 262,144 nodes, 786,423 edges | 0.081 s | 0.358 s | 0.216 s | 0.4x | same |
+| `bfs_labeled_edges` | scale-free, 262,144 nodes, 786,423 edges | 0.093 s | 0.323 s | 0.168 s | 0.6x | same |
 | `bfs_layers` | scale-free, 262,144 nodes, 786,423 edges | 0.463 s | 0.218 s | 0.032 s | 14x | same |
 | `bfs_predecessors` | scale-free, 131,072 nodes, 393,207 edges | 0.476 s | 0.139 s | 0.062 s | 7.6x | same |
 | `bfs_successors` | scale-free, 131,072 nodes, 393,207 edges | 0.643 s | 0.144 s | 0.189 s | 3.4x | same |
 | `bfs_tree` | scale-free, 131,072 nodes, 393,207 edges | 1.07 s | 0.442 s | 0.263 s | 4.1x | same |
 | `descendants_at_distance` | scale-free, 262,144 nodes, 786,423 edges | 0.071 s | 0.192 s | 0.026 s | 2.7x | same |
 | `dfs_edges` | scale-free, 131,072 nodes, 393,207 edges | 0.320 s | 0.138 s | 0.073 s | 4.4x | same |
-| `dfs_labeled_edges` | scale-free, 262,144 nodes, 786,423 edges | 0.197 s | 0.474 s | 0.299 s | 0.7x | same |
+| `dfs_labeled_edges` | scale-free, 524,288 nodes, 1,572,855 edges | 0.130 s | 0.947 s | 0.536 s | 0.2x | same |
 | `dfs_postorder_nodes` | scale-free, 262,144 nodes, 786,423 edges | 1.03 s | 0.243 s | 0.080 s | 13x | same |
 | `dfs_predecessors` | scale-free, 262,144 nodes, 786,423 edges | 1.18 s | 0.349 s | 0.159 s | 7.5x | same |
 | `dfs_preorder_nodes` | scale-free, 262,144 nodes, 786,423 edges | 0.814 s | 0.273 s | 0.096 s | 8.5x | same |
@@ -1102,13 +1102,13 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 | `kruskal_mst_edges` | scale-free, 65,536 nodes, 196,599 edges | 0.833 s | 0.340 s | 0.092 s | 9.0x | same |
 | `maximum_branching` | scale-free, 16,384 nodes, 49,143 edges | 1.10 s | 0.097 s | 0.147 s | 7.5x | same |
 | `maximum_spanning_arborescence` | random tournament, 128 nodes, 8,128 edges | 2.61 s | 0.021 s | 0.018 s | 146x | same |
-| `maximum_spanning_edges` | scale-free, 65,536 nodes, 196,599 edges | 0.796 s | 0.282 s | 0.087 s | 9.2x | same |
-| `maximum_spanning_tree` | scale-free, 32,768 nodes, 98,295 edges | 0.496 s | 0.164 s | 0.144 s | 3.4x | same |
+| `maximum_spanning_edges` | scale-free, 65,536 nodes, 196,599 edges | 0.728 s | 0.175 s | 0.078 s | 9.3x | same |
+| `maximum_spanning_tree` | scale-free, 32,768 nodes, 98,295 edges | 0.503 s | 0.092 s | 0.047 s | 11x | same |
 | `minimal_branching` | scale-free, 8,192 nodes, 24,567 edges | 0.547 s | 0.088 s | 0.052 s | 11x | same |
 | `minimum_branching` | scale-free, 16,384 nodes, 49,143 edges | 0.875 s | 0.086 s | 0.101 s | 8.6x | same |
 | `minimum_spanning_arborescence` | random tournament, 128 nodes, 8,128 edges | 3.19 s | 0.028 s | 0.018 s | 179x | same |
-| `minimum_spanning_edges` | scale-free, 65,536 nodes, 196,599 edges | 0.910 s | 0.305 s | 0.089 s | 10x | same |
-| `minimum_spanning_tree` | scale-free, 32,768 nodes, 98,295 edges | 0.645 s | 0.198 s | 0.127 s | 5.1x | same |
+| `minimum_spanning_edges` | scale-free, 65,536 nodes, 196,599 edges | 0.698 s | 0.187 s | 0.087 s | 8.0x | same |
+| `minimum_spanning_tree` | scale-free, 65,536 nodes, 196,599 edges | 0.717 s | 0.192 s | 0.116 s | 6.2x | same |
 | `partition_spanning_tree` | scale-free, 32,768 nodes, 98,295 edges | 0.644 s | 0.201 s | 0.160 s | 4.0x | same |
 | `prim_mst_edges` | scale-free, 65,536 nodes, 196,599 edges | 0.751 s | 0.361 s | 0.156 s | 4.8x | same |
 | `random_spanning_tree` | scale-free, 64 nodes, 183 edges | 0.502 s | 7.59 ms | 6.68 ms | 75x | same |

@@ -8,7 +8,7 @@
 {"name": "all_pairs_dijkstra", "family": "graph", "n": 1024, "nx": 3.5852466900000763, "edges": 3063, "cold": 1.7465724470000623, "warm": 1.3879476619999878, "match": "same", "status": "ok"}
 {"name": "all_pairs_dijkstra_path", "family": "graph", "n": 1024, "nx": 3.842525648999981, "edges": 3063, "cold": 1.7629858950003836, "warm": 1.26941564200024, "match": "same", "status": "ok"}
 {"name": "all_pairs_dijkstra_path_length", "family": "graph", "n": 1024, "nx": 2.2629100999997718, "edges": 3063, "cold": 0.30637596299993675, "warm": 0.26855613099996845, "match": "same", "status": "ok"}
-{"name": "all_pairs_lowest_common_ancestor", "family": "dag", "n": 2048, "nx": 0.7792305729999498, "edges": 4128, "cold": 0.6998833070001638, "warm": 0.7158828850001555, "match": "same", "status": "ok"}
+{"name": "all_pairs_lowest_common_ancestor", "family": "dag", "n": 2048, "nx": 0.6421327769994605, "edges": 4128, "cold": 0.6093800449998525, "warm": 0.5690076549999503, "match": "same", "status": "ok"}
 {"name": "all_pairs_node_connectivity", "family": "graph", "n": 128, "nx": 2.0605329720001464, "edges": 375, "cold": 0.022849712000152067, "warm": 0.016711770000256365, "match": "same", "status": "ok"}
 {"name": "all_pairs_shortest_path", "family": "graph", "n": 1024, "nx": 1.0921002700001736, "edges": 3063, "cold": 1.0560340859997268, "warm": 0.826720357999875, "match": "same", "status": "ok"}
 {"name": "all_pairs_shortest_path_length", "family": "graph", "n": 2048, "nx": 1.748792762999983, "edges": 6135, "cold": 0.6374373319999904, "warm": 0.5948071810003057, "match": "same", "status": "ok"}
@@ -46,7 +46,7 @@
 {"name": "betweenness_centrality", "family": "graph", "n": 1024, "nx": 1.8930413519997273, "edges": 3063, "cold": 0.021877006000067922, "warm": 0.0215134670002044, "match": "close", "status": "ok"}
 {"name": "betweenness_centrality_subset", "family": "graph", "n": 2048, "nx": 0.7931163260000176, "edges": 6135, "cold": 0.021338904999993247, "warm": 0.019638927999949374, "match": "same", "status": "ok"}
 {"name": "bfs_edges", "family": "graph", "n": 131072, "nx": 0.5323478089999298, "edges": 393207, "cold": 0.12208527700022387, "warm": 0.05348361400001522, "match": "same", "status": "ok"}
-{"name": "bfs_labeled_edges", "family": "graph", "n": 262144, "nx": 0.08092922600008023, "edges": 786423, "cold": 0.3582167810000101, "warm": 0.21617313800015836, "match": "same", "status": "ok"}
+{"name": "bfs_labeled_edges", "family": "graph", "n": 262144, "nx": 0.0930978230007895, "edges": 786423, "cold": 0.3232433180000953, "warm": 0.16767051800070476, "match": "same", "status": "ok"}
 {"name": "bfs_layers", "family": "graph", "n": 262144, "nx": 0.46281638799973734, "edges": 786423, "cold": 0.21825265799998306, "warm": 0.031948768999882304, "match": "same", "status": "ok"}
 {"name": "bfs_predecessors", "family": "graph", "n": 131072, "nx": 0.47556289500016646, "edges": 393207, "cold": 0.13867726800026503, "warm": 0.062446341999930155, "match": "same", "status": "ok"}
 {"name": "bfs_successors", "family": "graph", "n": 131072, "nx": 0.6430542519997289, "edges": 393207, "cold": 0.1435103909998361, "warm": 0.18911131200002274, "match": "same", "status": "ok"}
@@ -54,7 +54,7 @@
 {"name": "biconnected_component_edges", "family": "graph", "n": 65536, "nx": 0.4336357499996666, "edges": 196599, "cold": 0.08311327499995969, "warm": 0.04418697399978555, "match": "same", "status": "ok"}
 {"name": "biconnected_components", "family": "graph", "n": 65536, "nx": 0.5933523989997411, "edges": 196599, "cold": 0.11523240699989401, "warm": 0.06723429400017267, "match": "same", "status": "ok"}
 {"name": "bidirectional_dijkstra", "family": "graph", "n": 262144, "nx": 0.11546176599995306, "edges": 786423, "cold": 0.35921649500005515, "warm": 0.001250122999863379, "match": "same", "status": "ok"}
-{"name": "bidirectional_shortest_path", "family": "graph", "n": 262144, "nx": 0.00025164899989249534, "edges": 786423, "cold": 0.15620092400013164, "warm": 0.00026554399983069743, "match": "same", "status": "ok"}
+{"name": "bidirectional_shortest_path", "family": "graph", "n": 262144, "nx": 0.0002986879999298253, "edges": 786423, "cold": 0.15891926099993725, "warm": 0.0002326949997950578, "match": "same", "status": "ok"}
 {"name": "bipartite_average_clustering", "family": "tree", "n": 65536, "nx": 0.7616554189999079, "edges": 65535, "cold": 0.06758421099993939, "warm": 0.03994516000011572, "match": "same", "status": "ok"}
 {"name": "bipartite_betweenness_centrality", "family": "graph", "n": 1024, "nx": 1.971629344000121, "edges": 3063, "cold": 0.025776454000151716, "warm": 0.024418522999894776, "match": "close", "status": "ok"}
 {"name": "cartesian_product", "family": "graph", "n": 512, "nx": 5.405028864000087, "edges": 1527, "cold": 1.1191325210002105, "warm": 1.0967647980000947, "match": "same", "status": "ok"}
@@ -75,8 +75,8 @@
 {"name": "common_neighbor_centrality", "family": "graph", "n": 1024, "nx": 0.8121445880001374, "edges": 3063, "cold": 0.18062753899994277, "warm": 0.1560582830002204, "match": "same", "status": "ok"}
 {"name": "complement", "family": "graph", "n": 1024, "nx": 0.7375783349998528, "edges": 3063, "cold": 0.16606261300012193, "warm": 0.15397541100037415, "match": "same", "status": "ok"}
 {"name": "complete_bipartite_graph", "family": "none", "n": 1024, "nx": 0.6526042280002002, "cold": 0.6305775639998501, "warm": 0.5355162299997573, "match": "same", "status": "ok"}
-{"name": "complete_graph", "family": "none", "n": 2048, "nx": 1.3379645909999454, "cold": 1.5692513139997573, "warm": 1.4912544899998466, "match": "same", "status": "ok"}
-{"name": "complete_multipartite_graph", "family": "manual", "n": 16384, "nx": 1.24406811200015, "cold": 1.8755927309998697, "warm": 1.7520133999996688, "match": "same", "status": "ok"}
+{"name": "complete_graph", "family": "none", "n": 2048, "nx": 1.3031080279997695, "cold": 0.889276455000072, "warm": 0.813374472999385, "match": "same", "status": "ok"}
+{"name": "complete_multipartite_graph", "family": "manual", "n": 16384, "nx": 1.250250352999501, "cold": 0.6356999259996883, "warm": 0.6000900660001207, "match": "same", "status": "ok"}
 {"name": "complete_to_chordal_graph", "family": "graph", "n": 256, "nx": 1.6777667630003634, "edges": 759, "cold": 0.008578318000218133, "warm": 0.007829116999801045, "match": "same", "status": "ok"}
 {"name": "condensation", "family": "digraph", "n": 131072, "nx": 0.8179293690000122, "edges": 524288, "cold": 0.11009750700031873, "warm": 0.07692291200010004, "match": "same", "status": "ok"}
 {"name": "conductance", "family": "graph", "n": 262144, "nx": 0.2978843370001414, "edges": 786423, "cold": 0.2284702200004176, "warm": 0.057177386000148545, "match": "same", "status": "ok"}
@@ -106,7 +106,7 @@
 {"name": "density", "family": "graph", "n": 262144, "nx": 0.04429142099979799, "edges": 786423, "cold": 0.1418384899998273, "warm": 0.0032506260004083742, "match": "same", "status": "ok"}
 {"name": "descendants", "family": "graph", "n": 131072, "nx": 0.4554128199997649, "edges": 393207, "cold": 0.0904311560007045, "warm": 0.01971984700048779, "match": "same", "status": "ok"}
 {"name": "dfs_edges", "family": "graph", "n": 131072, "nx": 0.32043765999969764, "edges": 393207, "cold": 0.13774074699995253, "warm": 0.07303090099958354, "match": "same", "status": "ok"}
-{"name": "dfs_labeled_edges", "family": "graph", "n": 262144, "nx": 0.19681508600024245, "edges": 786423, "cold": 0.47424231299919484, "warm": 0.2991430729998683, "match": "same", "status": "ok"}
+{"name": "dfs_labeled_edges", "family": "graph", "n": 524288, "nx": 0.13007444600043527, "edges": 1572855, "cold": 0.9473995939997621, "warm": 0.5363393979996545, "match": "same", "status": "ok"}
 {"name": "dfs_postorder_nodes", "family": "graph", "n": 262144, "nx": 1.0270676879999883, "edges": 786423, "cold": 0.24311954800032254, "warm": 0.08041820899961749, "match": "same", "status": "ok"}
 {"name": "dfs_predecessors", "family": "graph", "n": 262144, "nx": 1.1822211970002172, "edges": 786423, "cold": 0.34868493500016484, "warm": 0.15864391299965064, "match": "same", "status": "ok"}
 {"name": "dfs_preorder_nodes", "family": "graph", "n": 262144, "nx": 0.8141144050005096, "edges": 786423, "cold": 0.27282505000039237, "warm": 0.09611843799939379, "match": "same", "status": "ok"}
@@ -130,7 +130,7 @@
 {"name": "edge_betweenness_centrality", "family": "graph", "n": 1024, "nx": 2.4589046089995463, "edges": 3063, "cold": 0.026476435000404308, "warm": 0.02302062400030991, "match": "close", "status": "ok"}
 {"name": "edge_betweenness_centrality_subset", "family": "graph", "n": 2048, "nx": 1.0735674340003243, "edges": 6135, "cold": 0.025955244000215316, "warm": 0.024571339999965858, "match": "same", "status": "ok"}
 {"name": "edge_bfs", "family": "graph", "n": 32768, "nx": 0.698350398999537, "edges": 98295, "cold": 0.05841190099999949, "warm": 0.03937095800029056, "match": "same", "status": "ok"}
-{"name": "edge_boundary", "family": "graph", "n": 262144, "nx": 0.14282592800009297, "edges": 786423, "cold": 0.29090201500002877, "warm": 0.1572799159994247, "match": "same", "status": "ok"}
+{"name": "edge_boundary", "family": "graph", "n": 262144, "nx": 0.10201110200068797, "edges": 786423, "cold": 0.2802021369998329, "warm": 0.09808074000011402, "match": "same", "status": "ok"}
 {"name": "edge_connectivity", "family": "graph", "n": 2048, "nx": 0.5732071170004929, "edges": 6135, "cold": 0.012612495999746898, "warm": 0.010791953999614634, "match": "same", "status": "ok"}
 {"name": "edge_dfs", "family": "graph", "n": 32768, "nx": 1.1813796630003708, "edges": 98295, "cold": 0.08364588300082687, "warm": 0.05040732600082265, "match": "same", "status": "ok"}
 {"name": "edge_expansion", "family": "graph", "n": 262144, "nx": 0.274512302000403, "edges": 786423, "cold": 0.22975688199949218, "warm": 0.03734091600017564, "match": "same", "status": "ok"}
@@ -150,8 +150,8 @@
 {"name": "find_asteroidal_triple", "family": "graph", "n": 1024, "nx": 3.132456772000296, "edges": 3063, "cold": 0.006632850000642065, "warm": 0.003694417000588146, "match": "same", "status": "ok"}
 {"name": "find_cliques", "family": "graph", "n": 32768, "nx": 0.5180606310004805, "edges": 98295, "cold": 0.2153566580000188, "warm": 0.16480180000053224, "match": "same", "status": "ok"}
 {"name": "find_cliques_recursive", "family": "graph", "n": 32768, "nx": 0.546174888000678, "edges": 98295, "cold": 0.19037466400004632, "warm": 0.23380684499989002, "match": "same", "status": "ok"}
-{"name": "find_cycle", "family": "graph", "n": 262144, "nx": 8.821400024316972e-05, "edges": 786423, "cold": 0.160903543999666, "warm": 0.0005246739992799121, "match": "same", "status": "ok"}
-{"name": "find_induced_nodes", "family": "tree", "n": 1024, "nx": 1.7820896140001423, "edges": 1023, "cold": 1.6830868870001723, "warm": 1.4961957030000121, "match": "same", "status": "ok"}
+{"name": "find_cycle", "family": "graph", "n": 262144, "nx": 7.946900041133631e-05, "edges": 786423, "cold": 0.14705487099945458, "warm": 0.00043488699975569034, "match": "same", "status": "ok"}
+{"name": "find_induced_nodes", "family": "tree", "n": 1024, "nx": 1.5509907380001096, "edges": 1023, "cold": 1.4215133190000415, "warm": 1.370032423000339, "match": "same", "status": "ok"}
 {"name": "find_minimal_d_separator", "family": "dag", "n": 262144, "nx": 0.5601630630008003, "edges": 524802, "cold": 0.23186821800027246, "warm": 0.05379156399976637, "match": "same", "status": "ok"}
 {"name": "flow_hierarchy", "family": "digraph", "n": 65536, "nx": 0.5809929719998763, "edges": 262144, "cold": 0.05272544699982973, "warm": 0.007020321999334556, "match": "same", "status": "ok"}
 {"name": "floyd_warshall", "family": "graph", "n": 1024, "nx": 81.45724115899975, "edges": 3063, "cold": 0.7715484530008325, "warm": 0.8433173129997158, "match": "same", "status": "ok"}
@@ -161,7 +161,7 @@
 {"name": "from_biadjacency_matrix", "family": "manual", "n": 65536, "nx": 0.6226755549996597, "cold": 0.3603160619995833, "warm": 0.31626705000053335, "match": "same", "status": "ok"}
 {"name": "from_dict_of_dicts", "family": "manual", "n": 65536, "nx": 0.8583677810001973, "cold": 0.6161011829999552, "warm": 0.6025355640003909, "match": "same", "status": "ok"}
 {"name": "from_dict_of_lists", "family": "manual", "n": 65536, "nx": 0.701285858999654, "cold": 0.5616811580002832, "warm": 0.4397851969997646, "match": "same", "status": "ok"}
-{"name": "from_edgelist", "family": "manual", "n": 131072, "nx": 0.6077900849995785, "cold": 0.5404553230000602, "warm": 0.518631419000485, "match": "same", "status": "ok"}
+{"name": "from_edgelist", "family": "manual", "n": 131072, "nx": 0.5318309439999211, "cold": 0.3379879180001808, "warm": 0.2979984510002396, "match": "same", "status": "ok"}
 {"name": "from_graph6_bytes", "family": "manual", "n": 8192, "nx": 3.9922380620000695, "cold": 0.09268529299970396, "warm": 0.06261937399995077, "match": "same", "status": "ok"}
 {"name": "from_numpy_array", "family": "manual", "n": 16384, "nx": 0.30953904399939347, "cold": 0.25916731100005563, "warm": 0.2427283319993876, "match": "same", "status": "ok"}
 {"name": "from_pandas_adjacency", "family": "manual", "n": 16384, "nx": 0.14108587199916656, "cold": 0.12134455700015678, "warm": 0.10773763800079905, "match": "same", "status": "ok"}
@@ -183,7 +183,7 @@
 {"name": "global_efficiency", "family": "graph", "n": 2048, "nx": 1.8122267840008135, "edges": 6135, "cold": 0.04754023599980428, "warm": 0.05005170200001885, "match": "same", "status": "ok"}
 {"name": "global_reaching_centrality", "family": "graph", "n": 1024, "nx": 1.4385612669993861, "edges": 3063, "cold": 0.013319765999767696, "warm": 0.012712511000245286, "match": "same", "status": "ok"}
 {"name": "gn_graph", "family": "none", "n": 4096, "nx": 0.8529249400007757, "cold": 0.004565572000501561, "warm": 0.003007782999702613, "match": "same", "status": "ok"}
-{"name": "gnc_graph", "family": "none", "n": 65536, "nx": 1.117240319999837, "cold": 6.359340895999594, "warm": 6.231039323999539, "match": "same", "status": "ok"}
+{"name": "gnc_graph", "family": "none", "n": 65536, "nx": 0.7931578970001283, "cold": 0.4172025699999722, "warm": 0.3562595790008345, "match": "same", "status": "ok"}
 {"name": "gnm_random_graph", "family": "none", "n": 262144, "nx": 0.1059929410002951, "cold": 0.09697129400046833, "warm": 0.08187341800021386, "match": "same", "status": "ok"}
 {"name": "gnmk_random_graph", "family": "none", "n": 131072, "nx": 0.6238546949998636, "cold": 0.3550264130008145, "warm": 0.32985548299984657, "match": "same", "status": "ok"}
 {"name": "gnp_random_graph", "family": "none", "n": 4096, "nx": 0.6113368910000645, "cold": 0.05036373700022523, "warm": 0.05023592299949087, "match": "same", "status": "ok"}
@@ -207,7 +207,7 @@
 {"name": "has_bridges", "family": "graph", "n": 32768, "nx": 0.7549001380002665, "edges": 98295, "cold": 0.030781102000219107, "warm": 0.013661453999702644, "match": "same", "status": "ok"}
 {"name": "has_cycle", "family": "digraph", "n": 262144, "nx": 0.08322522500020568, "edges": 1048576, "cold": 0.11620032300015737, "warm": 0.0009491050004726276, "match": "same", "status": "ok"}
 {"name": "has_eulerian_path", "family": "graph", "n": 262144, "nx": 0.049208240000552905, "edges": 786423, "cold": 0.16612590800014004, "warm": 0.0069789340004717815, "match": "same", "status": "ok"}
-{"name": "has_path", "family": "graph", "n": 262144, "nx": 0.00023826500000723172, "edges": 786423, "cold": 0.1826295350001601, "warm": 0.00027056599992647534, "match": "same", "status": "ok"}
+{"name": "has_path", "family": "graph", "n": 262144, "nx": 0.0003116099996987032, "edges": 786423, "cold": 0.15975815299952956, "warm": 0.0002665250003701658, "match": "same", "status": "ok"}
 {"name": "havel_hakimi_graph", "family": "none", "n": 131072, "nx": 0.46400719600023876, "cold": 0.14772689399978844, "warm": 0.1421504649997587, "match": "same", "status": "ok"}
 {"name": "hexagonal_lattice_graph", "family": "none", "n": 16384, "nx": 0.455012462999548, "cold": 0.28506623299927014, "warm": 0.27933615799975087, "match": "same", "status": "ok"}
 {"name": "hits", "family": "graph", "n": 16384, "nx": 0.10410217200023908, "edges": 49143, "cold": 0.06725242500033346, "warm": 0.04388362200006668, "match": "same", "status": "ok", "note": "NetworkX raises at the next size: PowerIterationFailedConvergence(PowerIterationFailedConvergence(...), 'power iteration failed to converge within 100 ite"}
@@ -237,16 +237,16 @@
 {"name": "is_connected", "family": "graph", "n": 262144, "nx": 0.42876510999940365, "edges": 786423, "cold": 0.17184837900003913, "warm": 0.019215743000131624, "match": "same", "status": "ok"}
 {"name": "is_connected_dominating_set", "family": "graph", "n": 262144, "nx": 0.08811028999934933, "edges": 786423, "cold": 0.18925438899987057, "warm": 0.0022455900007116725, "match": "same", "status": "ok"}
 {"name": "is_cover", "family": "graph", "n": 262144, "nx": 0.02829751499939448, "edges": 786423, "cold": 0.15147994800008746, "warm": 0.014721797000674997, "match": "same", "status": "ok"}
-{"name": "is_directed_acyclic_graph", "family": "graph", "n": 262144, "nx": 7.8309994933079e-06, "edges": 786423, "cold": 0.20477351899990026, "warm": 2.7723000130208675e-05, "match": "same", "status": "ok"}
+{"name": "is_directed_acyclic_graph", "family": "graph", "n": 262144, "nx": 8.275999789475463e-06, "edges": 786423, "cold": 0.1505287740001222, "warm": 2.9398999686236493e-05, "match": "same", "status": "ok"}
 {"name": "is_distance_regular", "family": "graph", "n": 262144, "nx": 6.390900034602964e-05, "edges": 786423, "cold": 0.22698508799931005, "warm": 3.056599962292239e-05, "match": "same", "status": "ok"}
 {"name": "is_dominating_set", "family": "graph", "n": 262144, "nx": 0.09181128799991711, "edges": 786423, "cold": 0.15905038900018553, "warm": 0.002025744999627932, "match": "same", "status": "ok"}
 {"name": "is_equitable", "family": "graph", "n": 262144, "nx": 0.6082298009996521, "edges": 786423, "cold": 0.18904260700037412, "warm": 0.043496760000380164, "match": "same", "status": "ok"}
-{"name": "is_eulerian", "family": "graph", "n": 262144, "nx": 3.0963999961386435e-05, "edges": 786423, "cold": 0.15721733200007293, "warm": 0.0035550089996831957, "match": "same", "status": "ok"}
+{"name": "is_eulerian", "family": "graph", "n": 262144, "nx": 1.9350000002305023e-05, "edges": 786423, "cold": 0.164231706999999, "warm": 2.473600034136325e-05, "match": "same", "status": "ok"}
 {"name": "is_forest", "family": "graph", "n": 262144, "nx": 1.5281520449998425, "edges": 786423, "cold": 0.17743777800023963, "warm": 0.023098570000001928, "match": "same", "status": "ok"}
 {"name": "is_graphical", "family": "none", "n": 262144, "nx": 0.12132002700036537, "cold": 0.011806659999820113, "warm": 0.009295371999542112, "match": "same", "status": "ok"}
 {"name": "is_isomorphic", "family": "graph", "n": 1024, "nx": 0.6761961689999225, "edges": 3063, "cold": 0.003918571000212978, "warm": 0.0023488959996029735, "match": "same", "status": "ok"}
 {"name": "is_k_edge_connected", "family": "graph", "n": 16384, "nx": 43.122499727000104, "edges": 49143, "cold": 0.2297052949998033, "warm": 0.18462216300031287, "match": "same", "status": "ok"}
-{"name": "is_k_regular", "family": "graph", "n": 262144, "nx": 2.8866999855381437e-05, "edges": 786423, "cold": 0.1694559860006848, "warm": 0.003590283000448835, "match": "same", "status": "ok"}
+{"name": "is_k_regular", "family": "graph", "n": 262144, "nx": 1.4164999811328016e-05, "edges": 786423, "cold": 0.1381544030000441, "warm": 3.122899943264201e-05, "match": "same", "status": "ok"}
 {"name": "is_kl_connected", "family": "graph", "n": 1024, "nx": 0.03488329399988288, "edges": 3063, "cold": 0.00046581200058426475, "warm": 7.936000019981293e-05, "match": "same", "status": "ok", "note": "timed out at the next size"}
 {"name": "is_locally_k_edge_connected", "family": "graph", "n": 16384, "nx": 0.512467597000068, "edges": 49143, "cold": 0.03490255199994863, "warm": 0.022872034999636526, "match": "same", "status": "ok"}
 {"name": "is_matching", "family": "graph", "n": 262144, "nx": 0.2368884799998341, "edges": 786423, "cold": 0.23600731200076552, "warm": 0.07040061800034891, "match": "same", "status": "ok"}
@@ -259,13 +259,13 @@
 {"name": "is_perfect_matching", "family": "graph", "n": 262144, "nx": 0.21364910200009035, "edges": 786423, "cold": 0.24710180900001433, "warm": 0.08608891199946811, "match": "same", "status": "ok"}
 {"name": "is_planar", "family": "graph", "n": 16384, "nx": 0.528596799999832, "edges": 49143, "cold": 0.01838562800003274, "warm": 0.008913431000109995, "match": "same", "status": "ok"}
 {"name": "is_reachable", "family": "digraph", "n": 1024, "nx": 0.5740359459996398, "edges": 4096, "cold": 0.000771394000366854, "warm": 0.00014524000016535865, "match": "same", "status": "ok"}
-{"name": "is_regular", "family": "graph", "n": 262144, "nx": 4.4829000216850545e-05, "edges": 786423, "cold": 0.15552052200018807, "warm": 0.0033333370001855656, "match": "same", "status": "ok"}
+{"name": "is_regular", "family": "graph", "n": 262144, "nx": 2.8730999474646524e-05, "edges": 786423, "cold": 0.17669228900012968, "warm": 2.6779999643622432e-05, "match": "same", "status": "ok"}
 {"name": "is_semiconnected", "family": "digraph", "n": 262144, "nx": 0.8147046859994589, "edges": 1048576, "cold": 0.13241905199993198, "warm": 0.030340877000526234, "match": "same", "status": "ok"}
 {"name": "is_semieulerian", "family": "graph", "n": 262144, "nx": 0.0498232249992725, "edges": 786423, "cold": 0.15382338099971093, "warm": 0.006842786000561318, "match": "same", "status": "ok"}
 {"name": "is_simple_path", "family": "graph", "n": 262144, "nx": 0.0025186580005538417, "edges": 786423, "cold": 0.1534475709995604, "warm": 0.001211900000271271, "match": "same", "status": "ok"}
-{"name": "is_strongly_connected", "family": "digraph", "n": 262144, "nx": 0.00013185600073484238, "edges": 1048576, "cold": 0.17645971399997507, "warm": 0.04530917000010959, "match": "same", "status": "ok"}
+{"name": "is_strongly_connected", "family": "digraph", "n": 262144, "nx": 8.601799981988734e-05, "edges": 1048576, "cold": 0.11896449899995787, "warm": 2.920299994002562e-05, "match": "same", "status": "ok"}
 {"name": "is_strongly_regular", "family": "graph", "n": 262144, "nx": 6.936600038898177e-05, "edges": 786423, "cold": 0.15180022500044288, "warm": 3.1071000194060616e-05, "match": "same", "status": "ok"}
-{"name": "is_tournament", "family": "digraph", "n": 262144, "nx": 0.0031020470005387324, "edges": 1048576, "cold": 0.09500008699978935, "warm": 0.0036503800001810305, "match": "same", "status": "ok"}
+{"name": "is_tournament", "family": "digraph", "n": 262144, "nx": 0.0027011689999199007, "edges": 1048576, "cold": 0.10712298699945677, "warm": 0.003362758000548638, "match": "same", "status": "ok"}
 {"name": "is_tree", "family": "graph", "n": 262144, "nx": 0.044805134000853286, "edges": 786423, "cold": 0.15712365900071745, "warm": 0.0034330160005993093, "match": "same", "status": "ok"}
 {"name": "is_valid_degree_sequence_erdos_gallai", "family": "none", "n": 262144, "nx": 0.10734362400035025, "cold": 0.007301974999791128, "warm": 0.007956968000144116, "match": "same", "status": "ok"}
 {"name": "is_valid_degree_sequence_havel_hakimi", "family": "none", "n": 262144, "nx": 0.10680711799977871, "cold": 0.007316596999771718, "warm": 0.007735186999525467, "match": "same", "status": "ok"}
@@ -327,8 +327,8 @@
 {"name": "maximum_flow_value", "family": "graph", "n": 8192, "nx": 0.508695037000507, "edges": 24567, "cold": 0.023656260000279872, "warm": 0.0156407290005518, "match": "same", "status": "ok"}
 {"name": "maximum_independent_set", "family": "graph", "n": 256, "nx": 4.4586168530004215, "edges": 759, "cold": 0.050972731999536336, "warm": 0.05047819300034462, "match": "same", "status": "ok"}
 {"name": "maximum_spanning_arborescence", "family": "tournament", "n": 128, "nx": 2.614608711999608, "edges": 8128, "cold": 0.02106876600009855, "warm": 0.017870667000352114, "match": "same", "status": "ok"}
-{"name": "maximum_spanning_edges", "family": "graph", "n": 65536, "nx": 0.7961288790002072, "edges": 196599, "cold": 0.2818721319999895, "warm": 0.08676052700047876, "match": "same", "status": "ok"}
-{"name": "maximum_spanning_tree", "family": "graph", "n": 32768, "nx": 0.49593319700034044, "edges": 98295, "cold": 0.1637588469993716, "warm": 0.1438123349998932, "match": "same", "status": "ok"}
+{"name": "maximum_spanning_edges", "family": "graph", "n": 65536, "nx": 0.727983478999704, "edges": 196599, "cold": 0.17479129399998783, "warm": 0.07817879899994296, "match": "same", "status": "ok"}
+{"name": "maximum_spanning_tree", "family": "graph", "n": 32768, "nx": 0.5032688849996703, "edges": 98295, "cold": 0.09249619499951223, "warm": 0.04702479299976403, "match": "same", "status": "ok"}
 {"name": "maybe_regular_expander_graph", "family": "none", "n": 131072, "nx": 1.2560828530004073, "cold": 0.40217800000027637, "warm": 0.3588766069997291, "match": "same", "status": "ok"}
 {"name": "metric_closure", "family": "graph", "n": 1024, "nx": 5.1345289279997814, "edges": 3063, "cold": 0.49894964400027675, "warm": 0.5186861419997513, "match": "same", "status": "ok"}
 {"name": "min_cost_flow", "family": "digraph", "n": 65536, "nx": 0.5991645270005392, "edges": 262144, "cold": 0.18332681599986245, "warm": 0.0890765759995702, "match": "same", "status": "ok"}
@@ -346,8 +346,8 @@
 {"name": "minimum_edge_cut", "family": "graph", "n": 1024, "nx": 0.5629282620002414, "edges": 3063, "cold": 0.008042483999815886, "warm": 0.007342833000620885, "match": "same", "status": "ok"}
 {"name": "minimum_node_cut", "family": "graph", "n": 1024, "nx": 3.219946763000735, "edges": 3063, "cold": 0.15350326799944014, "warm": 0.13102458299999853, "match": "same", "status": "ok"}
 {"name": "minimum_spanning_arborescence", "family": "tournament", "n": 128, "nx": 3.1894911029994546, "edges": 8128, "cold": 0.028163117000076454, "warm": 0.017849207999461214, "match": "same", "status": "ok"}
-{"name": "minimum_spanning_edges", "family": "graph", "n": 65536, "nx": 0.9096414989999175, "edges": 196599, "cold": 0.30510372200023994, "warm": 0.08872187199995096, "match": "same", "status": "ok"}
-{"name": "minimum_spanning_tree", "family": "graph", "n": 32768, "nx": 0.645376557000418, "edges": 98295, "cold": 0.19843068399950425, "warm": 0.12728352999965864, "match": "same", "status": "ok"}
+{"name": "minimum_spanning_edges", "family": "graph", "n": 65536, "nx": 0.6975636170000143, "edges": 196599, "cold": 0.18709985799978313, "warm": 0.08694810599990888, "match": "same", "status": "ok"}
+{"name": "minimum_spanning_tree", "family": "graph", "n": 65536, "nx": 0.7170633310006451, "edges": 196599, "cold": 0.1917306280001867, "warm": 0.11550540999996883, "match": "same", "status": "ok"}
 {"name": "minimum_st_edge_cut", "family": "graph", "n": 16384, "nx": 0.5016616719995, "edges": 49143, "cold": 0.03069233299993357, "warm": 0.021032604000538413, "match": "same", "status": "ok"}
 {"name": "minimum_st_node_cut", "family": "graph", "n": 16384, "nx": 1.1456561619997956, "edges": 49143, "cold": 0.06186475899994548, "warm": 0.04353274599998258, "match": "same", "status": "ok"}
 {"name": "mixing_expansion", "family": "graph", "n": 262144, "nx": 0.2271248690003631, "edges": 786423, "cold": 0.19861922699965362, "warm": 0.008197311000003538, "match": "same", "status": "ok"}
@@ -361,7 +361,7 @@
 {"name": "network_simplex", "family": "digraph", "n": 65536, "nx": 0.5683986089998143, "edges": 262144, "cold": 0.15133838899964758, "warm": 0.0829406030006794, "match": "same", "status": "ok"}
 {"name": "newman_betweenness_centrality", "family": "graph", "n": 1024, "nx": 1.7239168409996637, "edges": 3063, "cold": 0.06829858599940053, "warm": 0.06768021500010946, "match": "same", "status": "ok"}
 {"name": "newman_watts_strogatz_graph", "family": "none", "n": 262144, "nx": 0.4184935980001683, "cold": 0.19905091800046648, "warm": 0.16751343799933238, "match": "same", "status": "ok"}
-{"name": "node_attribute_xy", "family": "graph", "n": 524288, "nx": 0.21825183100008871, "edges": 1572855, "cold": 1.0089774389998638, "warm": 0.5284047409995765, "match": "same", "status": "ok"}
+{"name": "node_attribute_xy", "family": "graph", "n": 262144, "nx": 0.14970839499983413, "edges": 786423, "cold": 0.3783462050005255, "warm": 0.1925268140003027, "match": "same", "status": "ok"}
 {"name": "node_boundary", "family": "graph", "n": 262144, "nx": 0.06306451100044796, "edges": 786423, "cold": 0.20640558899958705, "warm": 0.031044861000737, "match": "same", "status": "ok"}
 {"name": "node_clique_number", "family": "graph", "n": 32768, "nx": 0.9481547799996406, "edges": 98295, "cold": 0.025571460000719526, "warm": 0.009999529000197072, "match": "same", "status": "ok"}
 {"name": "node_connected_component", "family": "graph", "n": 262144, "nx": 0.4031264069999452, "edges": 786423, "cold": 0.26456408700050815, "warm": 0.05041546899974492, "match": "same", "status": "ok"}
@@ -397,7 +397,7 @@
 {"name": "parse_graphml", "family": "manual", "n": 8192, "nx": 0.5329883510003128, "cold": 0.082998210000369, "warm": 0.07085904799987475, "match": "same", "status": "ok"}
 {"name": "parse_leda", "family": "manual", "n": 65536, "nx": 0.5469681190006668, "cold": 0.311567341999762, "warm": 0.24946746600016922, "match": "same", "status": "ok"}
 {"name": "parse_pajek", "family": "manual", "n": 16384, "nx": 0.9828792680000333, "cold": 0.13718326399975922, "warm": 0.08875851199991303, "match": "same", "status": "ok"}
-{"name": "partial_duplication_graph", "family": "none", "n": 2048, "nx": 1.2955959860000803, "cold": 2.2636925679998967, "warm": 2.1493591950002155, "match": "same", "status": "ok"}
+{"name": "partial_duplication_graph", "family": "none", "n": 2048, "nx": 1.1970829509991745, "cold": 0.7730142299997169, "warm": 0.7151538460002484, "match": "same", "status": "ok"}
 {"name": "partial_k_edge_augmentation", "family": "graph", "n": 1024, "nx": 0.7909829510008421, "edges": 3063, "cold": 0.6396268830003464, "warm": 0.5983047200006695, "match": "same", "status": "ok"}
 {"name": "partition_quality", "family": "graph", "n": 262144, "nx": 0.827807049000512, "edges": 786423, "cold": 0.24094779999995808, "warm": 0.07506193700010044, "match": "same", "status": "ok"}
 {"name": "partition_spanning_tree", "family": "graph", "n": 32768, "nx": 0.6441483799999332, "edges": 98295, "cold": 0.20063859099991532, "warm": 0.16043857699969521, "match": "same", "status": "ok"}
@@ -413,7 +413,7 @@
 {"name": "prominent_group", "family": "graph", "n": 64, "nx": 3.3807453780000287, "edges": 183, "cold": 0.0018273119994773879, "warm": 0.0014904160007063183, "match": "same", "status": "ok"}
 {"name": "pydot_read_dot", "family": "manual", "n": 64, "nx": 0.32969024300018646, "cold": 0.06335760900037712, "warm": 0.0009712840001157019, "match": "same", "status": "ok"}
 {"name": "quotient_graph", "family": "graph", "n": 16384, "nx": 97.07840187799957, "edges": 49143, "cold": 0.1790838499991878, "warm": 0.09758128700013913, "match": "same", "status": "ok"}
-{"name": "ra_index_soundarajan_hopcroft", "family": "complete", "n": 300, "nx": 0.0015098399999260437, "edges": 44850, "cold": 0.004065725999680581, "warm": 0.001659081000070728, "match": "same", "status": "ok"}
+{"name": "ra_index_soundarajan_hopcroft", "family": "complete", "n": 300, "nx": 0.001484829999753856, "edges": 44850, "cold": 0.0041523979998601135, "warm": 0.0015940570001475862, "match": "same", "status": "ok"}
 {"name": "radius", "family": "graph", "n": 2048, "nx": 1.6746714219998466, "edges": 6135, "cold": 0.004878529000052367, "warm": 0.0034713409995674738, "match": "same", "status": "ok"}
 {"name": "ramsey_R2", "family": "graph", "n": 64, "nx": 0.008167579000655678, "edges": 183, "cold": 0.0002504800004317076, "warm": 0.00013140099963493412, "match": "same", "status": "ok", "note": "NetworkX raises at the next size: RecursionError('maximum recursion depth exceeded')"}
 {"name": "random_cograph", "family": "manual", "n": 1024, "nx": 0.5075950299997203, "cold": 0.20922826999958488, "warm": 0.20917269799974747, "match": "same", "status": "ok"}
@@ -429,7 +429,7 @@
 {"name": "random_reference", "family": "graph", "n": 4096, "nx": 0.675537254000119, "edges": 12279, "cold": 0.3950659550000637, "warm": 0.3959170540001651, "match": "same", "status": "ok"}
 {"name": "random_regular_graph", "family": "none", "n": 131072, "nx": 0.8005439670005217, "cold": 0.20567497100000764, "warm": 0.18833111900039512, "match": "same", "status": "ok"}
 {"name": "random_spanning_tree", "family": "graph", "n": 64, "nx": 0.5015895199994702, "edges": 183, "cold": 0.007592893000037293, "warm": 0.006678249999822583, "match": "same", "status": "ok"}
-{"name": "random_tournament", "family": "none", "n": 2048, "nx": 2.1346215430003213, "cold": 2.1812486970002283, "warm": 1.9571429030002037, "match": "same", "status": "ok"}
+{"name": "random_tournament", "family": "none", "n": 2048, "nx": 2.043105805999403, "cold": 0.8219279980003193, "warm": 0.8431423109996103, "match": "same", "status": "ok"}
 {"name": "random_uniform_k_out_graph", "family": "none", "n": 16384, "nx": 5.436373573999845, "cold": 0.06773365899971395, "warm": 0.03347767099967314, "match": "same", "status": "ok"}
 {"name": "random_unlabeled_rooted_forest", "family": "none", "n": 1024, "nx": 1.7646174649999011, "cold": 0.39059032799923443, "warm": 0.012300160999984655, "match": "same", "status": "ok"}
 {"name": "random_unlabeled_rooted_tree", "family": "none", "n": 1024, "nx": 0.8994156310000108, "cold": 0.25745791900044424, "warm": 0.014310460000160674, "match": "same", "status": "ok"}
@@ -457,19 +457,19 @@
 {"name": "schultz_index", "family": "graph", "n": 1024, "nx": 0.553491392000069, "edges": 3063, "cold": 0.01749073900100484, "warm": 0.016326077000485384, "match": "same", "status": "ok"}
 {"name": "score_sequence", "family": "digraph", "n": 262144, "nx": 0.04865626300124859, "edges": 1048576, "cold": 0.09331450900026539, "warm": 0.002712479999900097, "match": "same", "status": "ok"}
 {"name": "sets", "family": "tree", "n": 262144, "nx": 0.6722586599989882, "edges": 262143, "cold": 0.23254378199999337, "warm": 0.12393036499997834, "match": "same", "status": "ok"}
-{"name": "shortest_path", "family": "graph", "n": 262144, "nx": 0.00023168299958342686, "edges": 786423, "cold": 0.16231772300125158, "warm": 0.0003462490003585117, "match": "same", "status": "ok"}
+{"name": "shortest_path", "family": "graph", "n": 262144, "nx": 0.00032390799970016815, "edges": 786423, "cold": 0.17269993199988676, "warm": 0.0003223129997422802, "match": "same", "status": "ok"}
 {"name": "shortest_path_length", "family": "graph", "n": 2048, "nx": 1.5959371460012335, "edges": 6135, "cold": 0.6820054979998531, "warm": 0.5806049439997878, "match": "same", "status": "ok"}
 {"name": "sigma", "family": "graph", "n": 64, "nx": 5.026328838999689, "edges": 183, "cold": 0.22666430699973716, "warm": 0.21336708600028942, "match": "same", "status": "ok"}
 {"name": "simple_cycles", "family": "graph", "n": 64, "nx": 0.6554400529985287, "edges": 183, "cold": 0.29022759899999073, "warm": 0.35224546199970064, "match": "same", "status": "ok"}
 {"name": "simulated_annealing_tsp", "family": "complete", "n": 300, "nx": 0.15055462900090788, "edges": 44850, "cold": 0.015253560000928701, "warm": 0.005362733001675224, "match": "same", "status": "ok"}
-{"name": "single_source_all_shortest_paths", "family": "graph", "n": 32768, "nx": 0.2693488849999994, "edges": 98295, "cold": 0.4692983670011017, "warm": 0.40227855299963267, "match": "same", "status": "ok"}
+{"name": "single_source_all_shortest_paths", "family": "graph", "n": 65536, "nx": 0.6484166070003994, "edges": 196599, "cold": 0.9721393030004037, "warm": 0.25070107400006236, "match": "same", "status": "ok"}
 {"name": "single_source_bellman_ford", "family": "graph", "n": 65536, "nx": 1.3420479659998819, "edges": 196599, "cold": 0.18715571500069927, "warm": 0.10707137400095235, "match": "same", "status": "ok"}
 {"name": "single_source_bellman_ford_path", "family": "graph", "n": 65536, "nx": 1.332633383999564, "edges": 196599, "cold": 0.4613804849996086, "warm": 0.11587198199958948, "match": "same", "status": "ok"}
 {"name": "single_source_bellman_ford_path_length", "family": "graph", "n": 65536, "nx": 0.8012038560009387, "edges": 196599, "cold": 0.12163427599989518, "warm": 0.03149614699941594, "match": "same", "status": "ok"}
 {"name": "single_source_dijkstra", "family": "graph", "n": 65536, "nx": 0.8357730749994516, "edges": 196599, "cold": 0.23061406399938278, "warm": 0.08172668200131739, "match": "same", "status": "ok"}
 {"name": "single_source_dijkstra_path", "family": "graph", "n": 65536, "nx": 0.867969663000622, "edges": 196599, "cold": 0.3117940740012273, "warm": 0.09204861699981848, "match": "same", "status": "ok"}
 {"name": "single_source_dijkstra_path_length", "family": "graph", "n": 65536, "nx": 0.48452774600082194, "edges": 196599, "cold": 0.13091863199952058, "warm": 0.039388277000398375, "match": "same", "status": "ok"}
-{"name": "single_source_shortest_path", "family": "graph", "n": 131072, "nx": 0.24149409100027697, "edges": 393207, "cold": 0.4160493100007443, "warm": 0.261985127999651, "match": "same", "status": "ok"}
+{"name": "single_source_shortest_path", "family": "graph", "n": 262144, "nx": 0.8652365400002964, "edges": 786423, "cold": 0.69469485099944, "warm": 0.4998400230006155, "match": "same", "status": "ok"}
 {"name": "single_source_shortest_path_length", "family": "graph", "n": 262144, "nx": 0.45647864600141475, "edges": 786423, "cold": 0.3026934469999105, "warm": 0.06734967899865296, "match": "same", "status": "ok"}
 {"name": "single_target_shortest_path", "family": "graph", "n": 131072, "nx": 0.6049594839987549, "edges": 393207, "cold": 0.4187518660000933, "warm": 0.09934239500034892, "match": "same", "status": "ok"}
 {"name": "single_target_shortest_path_length", "family": "graph", "n": 262144, "nx": 0.4541470620006294, "edges": 786423, "cold": 0.2373699649997434, "warm": 0.07008975200005807, "match": "same", "status": "ok"}
@@ -508,7 +508,7 @@
 {"name": "triadic_census", "family": "digraph", "n": 4096, "nx": 0.7556059169999685, "edges": 16384, "cold": 0.0071414509999954134, "warm": 0.004467089000002034, "match": "same", "status": "ok"}
 {"name": "triangles", "family": "graph", "n": 131072, "nx": 0.9431416349999608, "edges": 393207, "cold": 0.1522534329999985, "warm": 0.08126199000002998, "match": "same", "status": "ok"}
 {"name": "triangular_lattice_graph", "family": "none", "n": 32768, "nx": 0.34872207500001196, "cold": 0.12570972299999994, "warm": 0.10048865499999238, "match": "same", "status": "ok"}
-{"name": "turan_graph", "family": "none", "n": 2048, "nx": 1.030648296000038, "cold": 2.1140457550000065, "warm": 1.396474517999991, "match": "same", "status": "ok"}
+{"name": "turan_graph", "family": "none", "n": 2048, "nx": 0.8533488440007204, "cold": 0.4861152410003342, "warm": 0.449174681999466, "match": "same", "status": "ok"}
 {"name": "unconstrained_bridge_augmentation", "family": "graph", "n": 16384, "nx": 0.5266743919999612, "edges": 49143, "cold": 0.022933412999975644, "warm": 0.014607737000005727, "match": "same", "status": "ok"}
 {"name": "unconstrained_one_edge_augmentation", "family": "graph", "n": 262144, "nx": 0.756334240000001, "edges": 786423, "cold": 0.21629608599999983, "warm": 0.043375858999979755, "match": "same", "status": "ok"}
 {"name": "uniform_random_intersection_graph", "family": "none", "n": 262144, "nx": 0.7476802559999669, "cold": 0.09216319699999076, "warm": 0.09571505999997498, "match": "same", "status": "ok"}
@@ -528,15 +528,15 @@
 {"name": "voterank", "family": "graph", "n": 1024, "nx": 0.7902871729997969, "edges": 3063, "cold": 0.003995801000201027, "warm": 0.00319021099994643, "match": "same", "status": "ok"}
 {"name": "watts_strogatz_graph", "family": "none", "n": 262144, "nx": 0.6193177179998202, "cold": 0.21170701500022915, "warm": 0.20003509600019242, "match": "same", "status": "ok"}
 {"name": "waxman_graph", "family": "none", "n": 2048, "nx": 0.9073577829999522, "cold": 0.18234836400006316, "warm": 0.1405682509998769, "match": "same", "status": "ok"}
-{"name": "weighted_bridge_augmentation", "family": "graph", "n": 16384, "nx": 0.5448441849998744, "edges": 49143, "cold": 0.6031288139997741, "warm": 0.6183895909998682, "match": "same", "status": "ok"}
-{"name": "weighted_one_edge_augmentation", "family": "graph", "n": 262144, "nx": 0.666637375999926, "edges": 786423, "cold": 0.9052333179997731, "warm": 0.7180700310000248, "match": "same", "status": "ok"}
+{"name": "weighted_bridge_augmentation", "family": "graph", "n": 32768, "nx": 1.224565158000587, "edges": 98295, "cold": 1.1743554390004647, "warm": 1.149668357000337, "match": "same", "status": "ok"}
+{"name": "weighted_one_edge_augmentation", "family": "graph", "n": 262144, "nx": 0.639193919999343, "edges": 786423, "cold": 0.798542204000114, "warm": 0.6081351769998946, "match": "same", "status": "ok"}
 {"name": "weighted_projected_graph", "family": "graph", "n": 8192, "nx": 0.6542932130000736, "edges": 24567, "cold": 0.11378802399985943, "warm": 0.11120106599992141, "match": "same", "status": "ok"}
 {"name": "weisfeiler_lehman_graph_hash", "family": "graph", "n": 131072, "nx": 1.2984833959999378, "edges": 393207, "cold": 0.36331671500011, "warm": 0.223118606999833, "match": "same", "status": "ok"}
 {"name": "weisfeiler_lehman_subgraph_hashes", "family": "graph", "n": 65536, "nx": 0.5264856839999084, "edges": 196599, "cold": 0.13645662399994762, "warm": 0.0891666110001097, "match": "same", "status": "ok"}
 {"name": "wheel_graph", "family": "none", "n": 262144, "nx": 0.6637361299999611, "cold": 0.24955627600002117, "warm": 0.2550541699997666, "match": "same", "status": "ok"}
 {"name": "wiener_index", "family": "graph", "n": 2048, "nx": 1.4369004770001084, "edges": 6135, "cold": 0.004359127000043372, "warm": 0.0031598479999956908, "match": "same", "status": "ok"}
 {"name": "windmill_graph", "family": "none", "n": 8192, "nx": 0.7433791019998353, "cold": 0.031052918000114005, "warm": 0.01330941600008373, "match": "same", "status": "ok"}
-{"name": "within_inter_cluster", "family": "complete", "n": 300, "nx": 0.0013172999997550505, "edges": 44850, "cold": 0.003896799999893119, "warm": 0.0015414310000778642, "match": "same", "status": "ok"}
+{"name": "within_inter_cluster", "family": "complete", "n": 300, "nx": 0.0012580639995576348, "edges": 44850, "cold": 0.0034136050007873564, "warm": 0.0013082200002827449, "match": "same", "status": "ok"}
 {"name": "all_simple_edge_paths", "family": "graph", "n": 8192, "nx": 0.5582056150001335, "edges": 24567, "cold": 0.0071902730001056625, "warm": 0.003979539000283694, "match": "same", "status": "ok"}
 {"name": "all_simple_paths", "family": "graph", "n": 8192, "nx": 0.5671329919996424, "edges": 24567, "cold": 0.008530725000127859, "warm": 0.0035873690003427328, "match": "same", "status": "ok"}
 {"name": "all_topological_sorts", "family": "dag", "n": 256, "nx": 0.5348727030000191, "edges": 541, "cold": 0.1656515770000624, "warm": 0.16984862999970574, "match": "same", "status": "ok"}
@@ -544,7 +544,7 @@
 {"name": "approximate_diameter", "family": "graph", "n": 262144, "nx": 0.7025457179997829, "edges": 786423, "cold": 0.18091830299999856, "warm": 0.027924303999952826, "match": "same", "status": "ok"}
 {"name": "asadpour_atsp", "status": "timeout", "note": "timed out at the next size"}
 {"name": "balanced_tree", "family": "manual", "n": 131072, "nx": 0.33680316699974355, "cold": 0.18025053400015167, "warm": 0.16791662800005724, "match": "same", "status": "ok"}
-{"name": "barbell_graph", "family": "none", "n": 512, "nx": 3.0008340590002263, "cold": 3.73567045100026, "warm": 4.620774665000226, "match": "same", "status": "ok"}
+{"name": "barbell_graph", "family": "none", "n": 512, "nx": 2.729936767000254, "cold": 1.598749486000088, "warm": 1.582673975999569, "match": "same", "status": "ok"}
 {"name": "biadjacency_matrix", "family": "bipartite", "n": 131072, "nx": 0.903990855000302, "edges": 523996, "cold": 0.2727389929996207, "warm": 0.041873780000059924, "match": "same", "status": "ok"}
 {"name": "binomial_tree", "family": "manual", "n": 262144, "nx": 0.3738079419999849, "cold": 0.20292479900035687, "warm": 0.19856478100018649, "match": "same", "status": "ok"}
 {"name": "bipartite_closeness_centrality", "family": "graph", "n": 2048, "nx": 1.5092089760000817, "edges": 6135, "cold": 0.0053735360002065136, "warm": 0.003671622999718238, "match": "same", "status": "ok"}
@@ -568,12 +568,12 @@
 {"name": "build_residual_network", "family": "graph", "n": 65536, "nx": 0.732275428000321, "edges": 196599, "cold": 0.38273314100024436, "warm": 0.40977584200027195, "match": "same", "status": "ok"}
 {"name": "butterflies", "family": "graph", "n": 65536, "nx": 0.9504054399999404, "edges": 196599, "cold": 0.07455850199994529, "warm": 0.03537540600018474, "match": "same", "status": "ok"}
 {"name": "capacity_scaling", "family": "digraph", "n": 8192, "nx": 1.218211877000158, "edges": 32768, "cold": 1.0646474489999491, "warm": 0.9578695059999518, "match": "same", "status": "ok"}
-{"name": "caveman_graph", "family": "none", "n": 262144, "nx": 3.0836999940220267e-05, "cold": 4.263299979356816e-05, "warm": 3.219500013074139e-05, "match": "same", "status": "ok"}
+{"name": "caveman_graph", "family": "none", "n": 262144, "nx": 3.167300019413233e-05, "cold": 5.118500030221185e-05, "warm": 3.091300004598452e-05, "match": "same", "status": "ok"}
 {"name": "cd_index", "family": "manual", "n": 262144, "nx": 0.028386536999732925, "cold": 0.10270762800018929, "warm": 0.00880642300035106, "match": "same", "status": "ok"}
 {"name": "check_planarity_recursive", "family": "graph", "n": 1024, "nx": 0.015746637000120245, "edges": 3063, "cold": 0.0010590949996185373, "warm": 0.0005103729999973439, "match": "same", "status": "ok", "note": "NetworkX raises at the next size: RecursionError('maximum recursion depth exceeded')"}
 {"name": "chordal_cycle_graph", "family": "manual", "n": 131072, "nx": 1.6214490319998731, "cold": 0.2595840879998832, "warm": 0.2623063649998585, "match": "same", "status": "ok"}
 {"name": "christofides", "family": "complete", "n": 300, "nx": 2.1687976990001516, "edges": 44850, "cold": 0.1439352840002357, "warm": 0.11154935499962448, "match": "same", "status": "ok"}
-{"name": "cn_soundarajan_hopcroft", "family": "complete", "n": 300, "nx": 0.002717516999837244, "edges": 44850, "cold": 0.006154029999834165, "warm": 0.0029366900002969487, "match": "same", "status": "ok"}
+{"name": "cn_soundarajan_hopcroft", "family": "complete", "n": 300, "nx": 0.001599877000444394, "edges": 44850, "cold": 0.004153667000537098, "warm": 0.0015930239997032913, "match": "same", "status": "ok"}
 {"name": "collaboration_weighted_projected_graph", "family": "manual", "n": 4096, "nx": 0.5648116040001696, "cold": 0.0949803870003052, "warm": 0.0889588919999369, "match": "same", "status": "ok"}
 {"name": "compose", "family": "graph", "n": 65536, "nx": 0.9190098119997856, "edges": 196599, "cold": 0.5002342469997529, "warm": 0.3616173139998864, "match": "same", "status": "ok"}
 {"name": "compose_all", "family": "graph", "n": 65536, "nx": 0.8082016200000908, "edges": 196599, "cold": 0.42777540299994143, "warm": 0.35594928399996206, "match": "same", "status": "ok"}
@@ -589,9 +589,9 @@
 {"name": "disjoint_union_all", "family": "graph", "n": 32768, "nx": 0.8520852380001998, "edges": 98295, "cold": 0.2232097790001717, "warm": 0.19173990399985996, "match": "same", "status": "ok"}
 {"name": "edge_betweenness_partition", "family": "graph", "n": 128, "nx": 2.8957492589997855, "edges": 375, "cold": 0.10319694100007837, "warm": 0.13516162799987796, "match": "same", "status": "ok"}
 {"name": "edge_disjoint_paths", "family": "graph", "n": 16384, "nx": 0.5129559100000733, "edges": 49143, "cold": 0.030605472999923222, "warm": 0.01990050299991708, "match": "same", "status": "ok"}
-{"name": "efficiency", "family": "graph", "n": 262144, "nx": 0.00029213400011940394, "edges": 786423, "cold": 0.16188262099967687, "warm": 0.0002482730001247546, "match": "same", "status": "ok"}
+{"name": "efficiency", "family": "graph", "n": 262144, "nx": 0.0002847460000339197, "edges": 786423, "cold": 0.14413930000046093, "warm": 0.0002478599999449216, "match": "same", "status": "ok"}
 {"name": "ego_graph", "family": "graph", "n": 262144, "nx": 0.018461132000084035, "edges": 786423, "cold": 0.15434473900040757, "warm": 0.0034231549998366972, "match": "same", "status": "ok"}
-{"name": "empty_graph", "family": "none", "n": 262144, "nx": 1.5318999885494122e-05, "cold": 4.0952999825094594e-05, "warm": 3.1567999940307345e-05, "match": "same", "status": "ok"}
+{"name": "empty_graph", "family": "none", "n": 262144, "nx": 1.1894000635948032e-05, "cold": 4.215500030113617e-05, "warm": 3.0080999749770854e-05, "match": "same", "status": "ok"}
 {"name": "eppstein_matching", "family": "manual", "n": 65536, "nx": 1.493295450000005, "cold": 0.20031925400007822, "warm": 0.1280379510003513, "match": "same", "status": "ok"}
 {"name": "eulerian_circuit", "family": "complete_digraph", "n": 300, "nx": 0.5557252090002294, "edges": 89700, "cold": 0.021146911999949225, "warm": 0.016703915000107372, "match": "same", "status": "ok"}
 {"name": "eulerian_path", "family": "complete_digraph", "n": 300, "nx": 0.5678525359999185, "edges": 89700, "cold": 0.021559996999712894, "warm": 0.015764195999963704, "match": "same", "status": "ok"}
@@ -599,7 +599,7 @@
 {"name": "full_join", "family": "graph", "n": 1024, "nx": 0.8960158140002932, "edges": 3063, "cold": 0.20944688800000222, "warm": 0.20401382899990494, "match": "same", "status": "ok"}
 {"name": "gaussian_random_partition_graph", "family": "manual", "n": 16384, "nx": 1.936056185000325, "cold": 0.21266364399980375, "warm": 0.19907284300006722, "match": "same", "status": "ok"}
 {"name": "general_random_intersection_graph", "family": "manual", "n": 8192, "nx": 2.3011569899999813, "cold": 0.1681677819997276, "warm": 0.19751239500010342, "match": "same", "status": "ok"}
-{"name": "generate_random_paths", "family": "graph", "n": 4096, "nx": 0.2746533219997218, "edges": 12279, "cold": 0.361587294000401, "warm": 0.3360609010001099, "match": "same", "status": "ok"}
+{"name": "generate_random_paths", "family": "graph", "n": 4096, "nx": 0.2990175829991131, "edges": 12279, "cold": 0.5423051329998998, "warm": 0.21592411099936726, "match": "same", "status": "ok"}
 {"name": "generic_weighted_projected_graph", "family": "manual", "n": 8192, "nx": 0.8885844100000213, "cold": 0.1228662860003169, "warm": 0.10729541699993206, "match": "same", "status": "ok"}
 {"name": "geometric_edges", "family": "manual", "n": 131072, "nx": 0.4950620140002684, "cold": 0.21014869500004352, "warm": 0.12113008200003605, "match": "same", "status": "ok"}
 {"name": "geometric_soft_configuration_graph", "family": "manual", "n": 2048, "nx": 1.0746229710002808, "cold": 0.11289351100003842, "warm": 0.09178225699997711, "match": "same", "status": "ok"}
@@ -624,24 +624,24 @@
 {"name": "minimal_branching", "family": "graph", "n": 8192, "nx": 0.5474017229998935, "edges": 24567, "cold": 0.08815201800007344, "warm": 0.05161976199997298, "match": "same", "status": "ok"}
 {"name": "modular_product", "family": "graph", "n": 8, "nx": 0.0016286459999719227, "edges": 15, "cold": 0.0004768609996972373, "warm": 0.0004476710000744788, "match": "same", "status": "ok", "note": "timed out at the next size"}
 {"name": "moral_graph", "family": "digraph", "n": 32768, "nx": 0.9050877939998827, "edges": 131072, "cold": 0.6940874920001079, "warm": 0.5235984639998605, "match": "same", "status": "ok"}
-{"name": "mycielskian", "family": "graph", "n": 32768, "nx": 0.6202815589999773, "edges": 98295, "cold": 0.7768294960001185, "warm": 0.7207738829997652, "match": "same", "status": "ok"}
+{"name": "mycielskian", "family": "graph", "n": 32768, "nx": 0.5994294980000632, "edges": 98295, "cold": 0.2666753940002309, "warm": 0.18686829899979784, "match": "same", "status": "ok"}
 {"name": "navigable_small_world_graph", "family": "manual", "n": 1024, "nx": 0.7137718900003165, "cold": 0.010386465999999928, "warm": 0.007319557000300847, "match": "same", "status": "ok"}
 {"name": "nonisomorphic_trees", "family": "manual", "n": 65536, "nx": 0.7001869719997558, "cold": 1.3356913320003514, "warm": 0.29919410799993784, "match": "same", "status": "ok"}
 {"name": "number_of_walks", "family": "graph", "n": 512, "nx": 3.4928025359999992, "edges": 1527, "cold": 0.023375263000161794, "warm": 0.017951111999991554, "match": "same", "status": "ok"}
 {"name": "overlap_weighted_projected_graph", "family": "manual", "n": 4096, "nx": 0.43560992199991233, "cold": 0.07873727500009409, "warm": 0.05764102400007687, "match": "same", "status": "ok"}
 {"name": "parse_multiline_adjlist", "family": "manual", "n": 16384, "nx": 0.8159209750001537, "cold": 0.0853201159998207, "warm": 0.07646096899998156, "match": "same", "status": "ok"}
-{"name": "planted_partition_graph", "family": "none", "n": 262144, "nx": 6.341200014503556e-05, "cold": 0.00012035800000376184, "warm": 0.00010514499990676995, "match": "same", "status": "ok"}
+{"name": "planted_partition_graph", "family": "none", "n": 262144, "nx": 6.465699971158756e-05, "cold": 0.000122921000183851, "warm": 0.00010428399946249556, "match": "same", "status": "ok"}
 {"name": "prefix_tree", "family": "manual", "n": 65536, "nx": 0.3692385809999905, "cold": 0.1305334319999929, "warm": 0.1347604960001263, "match": "same", "status": "ok"}
 {"name": "prefix_tree_recursive", "family": "manual", "n": 65536, "nx": 0.754946628000198, "cold": 0.13263380700027483, "warm": 0.14102482199996302, "match": "same", "status": "ok"}
 {"name": "preflow_push", "family": "graph", "n": 8192, "nx": 0.578645976000189, "edges": 24567, "cold": 0.13235662499982936, "warm": 0.08422836299996561, "match": "same", "status": "ok"}
 {"name": "projected_graph", "family": "manual", "n": 16384, "nx": 0.723466715000086, "cold": 0.33755739600019297, "warm": 0.2377978169997732, "match": "same", "status": "ok"}
 {"name": "random_clustered_graph", "family": "manual", "n": 65536, "nx": 0.3307536100001016, "cold": 0.17597062599998026, "warm": 0.16477169100016908, "match": "same", "status": "ok"}
 {"name": "random_lobster_graph", "family": "none", "n": 262144, "nx": 0.277671287999965, "cold": 0.2527521910001269, "warm": 0.16957446600008552, "match": "same", "status": "ok"}
-{"name": "random_powerlaw_tree", "family": "none", "n": 64, "nx": 0.00015660000008210773, "cold": 0.0001584820001880871, "warm": 0.00017289200013692607, "match": "same", "status": "ok", "note": "NetworkX raises at the next size: NetworkXError('Exceeded max (100) attempts for a valid tree sequence.')"}
-{"name": "random_powerlaw_tree_sequence", "family": "none", "n": 64, "nx": 0.00017008599979817518, "cold": 0.00018093500011673314, "warm": 0.0001519919997008401, "match": "same", "status": "ok", "note": "NetworkX raises at the next size: NetworkXError('Exceeded max (100) attempts for a valid tree sequence.')"}
+{"name": "random_powerlaw_tree", "family": "none", "n": 64, "nx": 0.0003035850004380336, "cold": 0.0002278220008520293, "warm": 0.0001756209994709934, "match": "same", "status": "ok", "note": "NetworkX raises at the next size: NetworkXError('Exceeded max (100) attempts for a valid tree sequence.')"}
+{"name": "random_powerlaw_tree_sequence", "family": "none", "n": 64, "nx": 9.046099967235932e-05, "cold": 0.00011369500043656444, "warm": 7.742300022073323e-05, "match": "same", "status": "ok", "note": "NetworkX raises at the next size: NetworkXError('Exceeded max (100) attempts for a valid tree sequence.')"}
 {"name": "random_shell_graph", "family": "manual", "n": 65536, "nx": 0.8398268219998499, "cold": 0.11179357199944207, "warm": 0.09763182300048356, "match": "same", "status": "ok"}
 {"name": "relabel_nodes", "family": "graph", "n": 131072, "nx": 1.040981042000567, "edges": 393207, "cold": 0.5033701000002111, "warm": 0.5058461859998715, "match": "same", "status": "ok"}
-{"name": "relaxed_caveman_graph", "family": "none", "n": 262144, "nx": 9.226400015904801e-05, "cold": 0.0001619239992578514, "warm": 8.524300028511789e-05, "match": "same", "status": "ok"}
+{"name": "relaxed_caveman_graph", "family": "none", "n": 262144, "nx": 5.132400019647321e-05, "cold": 0.00010272000054101227, "warm": 8.007500036910642e-05, "match": "same", "status": "ok"}
 {"name": "reverse", "family": "digraph", "n": 32768, "nx": 0.5985356350001894, "edges": 131072, "cold": 0.4551201289996243, "warm": 0.4296304559993587, "match": "same", "status": "ok"}
 {"name": "rich_club_coefficient", "family": "graph", "n": 65536, "nx": 0.6284637509997992, "edges": 196599, "cold": 0.04719994599963684, "warm": 0.0034854470004574978, "match": "same", "status": "ok"}
 {"name": "ring_of_cliques", "family": "manual", "n": 131072, "nx": 0.3828844689996913, "cold": 0.17736294799942698, "warm": 0.1604397870005414, "match": "same", "status": "ok"}

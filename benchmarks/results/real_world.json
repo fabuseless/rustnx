@@ -323,47 +323,47 @@
   "nodes": 1088092,
   "edges": 1541898,
   "directed": false,
-  "load": 7.669580139000573,
+  "load": 6.925954530000126,
   "steps": [
    {
     "step": "connected_components",
-    "networkx": 0.9481400619997657,
-    "rustnx": 0.8594901570004367,
+    "networkx": 0.9281031420005093,
+    "rustnx": 1.0760145180001928,
     "match": "same"
    },
    {
     "step": "dijkstra_path (20 routes)",
-    "networkx": 62.46855211100046,
-    "rustnx": 3.552570799000023,
+    "networkx": 58.93930105999971,
+    "rustnx": 3.224164338999799,
     "match": "same"
    },
    {
     "step": "single_source_dijkstra_path_length",
-    "networkx": 3.727366560000519,
-    "rustnx": 0.8199856809997073,
+    "networkx": 3.5208585629998197,
+    "rustnx": 0.7594643679994988,
     "match": "same"
    },
    {
     "step": "bfs_edges",
-    "networkx": 5.473966817000473,
-    "rustnx": 1.3316997499996432,
+    "networkx": 5.041802619999544,
+    "rustnx": 1.2341622339999958,
     "match": "same"
    },
    {
     "step": "minimum_spanning_tree",
-    "networkx": 21.70626355100012,
-    "rustnx": 16.69242863600084,
+    "networkx": 20.6603758629999,
+    "rustnx": 7.061978863000149,
     "match": "same"
    },
    {
     "step": "articulation_points",
-    "networkx": 4.2447867230002885,
-    "rustnx": 0.6650008000005982,
+    "networkx": 3.6073287569997774,
+    "rustnx": 0.6541182939999999,
     "match": "same"
    }
   ],
-  "networkx_total": 98.56907582400163,
-  "rustnx_total": 23.92117582300125
+  "networkx_total": 92.69777000499926,
+  "rustnx_total": 14.009902615999636
  },
  {
   "pipeline": "web graph (Google)",
