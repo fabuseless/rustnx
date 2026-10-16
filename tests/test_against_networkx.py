@@ -355,6 +355,21 @@ def test_weakly_connected_components(seed):
     assert nx.is_weakly_connected(G, backend="rustnx") == nx.is_weakly_connected(G)
 
 
+@pytest.mark.parametrize("seed", range(40))
+def test_weakly_connected_components_set_order(seed):
+    # Each component's set is built in NetworkX's discovery order, which
+    # follows G._pred; with colliding hashes (ints 64 apart, in-edges added
+    # in random order) the sets' iteration order depends on it.
+    rnd = random.Random(seed)
+    nodes = [i * 64 + rnd.randrange(3) for i in range(40)]
+    G = nx.DiGraph()
+    G.add_nodes_from(nodes)
+    G.add_edges_from((rnd.choice(nodes), rnd.choice(nodes)) for _ in range(50))
+    ours = [list(c) for c in nx.weakly_connected_components(G, backend="rustnx")]
+    ref = [list(c) for c in nx.weakly_connected_components(G, backend="networkx")]
+    assert ours == ref
+
+
 def test_directed_components_reject_undirected_and_null():
     with pytest.raises(nx.NetworkXNotImplemented):
         list(nx.strongly_connected_components(nx.path_graph(3), backend="rustnx"))

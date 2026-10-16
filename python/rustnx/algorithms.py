@@ -930,7 +930,11 @@ def is_strongly_connected(G):
 
 def weakly_connected_components(G):
     _directed_only(G)
-    return _components(G, G._core.weakly_connected_components())
+    # Each component's set is built in NetworkX's discovery order, which
+    # follows G._pred; with colliding hashes the set's iteration order
+    # depends on it.
+    G._ensure_exact_pred()
+    return _components(G, G._core.weakly_connected_components(True))
 
 
 def number_weakly_connected_components(G):

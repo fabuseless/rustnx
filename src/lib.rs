@@ -8569,8 +8569,18 @@ impl CoreGraph {
         py.detach(|| directed::strongly_connected_components(&self.succ, self.n, early_exit))
     }
 
-    fn weakly_connected_components(&self, py: Python<'_>) -> Vec<Vec<u32>> {
-        py.detach(|| directed::weakly_connected_components(&self.succ, self.adj(true), self.n))
+    /// The components in NetworkX's order. With `exact`, the search follows
+    /// predecessors in `G._pred` order (load it first with `load_exact_pred`):
+    /// each component's set is built in discovery order, and its iteration
+    /// order depends on it when node hashes collide. Counting doesn't need it.
+    #[pyo3(signature = (exact=false))]
+    fn weakly_connected_components(&self, py: Python<'_>, exact: bool) -> PyResult<Vec<Vec<u32>>> {
+        let pred = if exact {
+            self.reverse_exact_order(None)?.0
+        } else {
+            self.adj(true)
+        };
+        Ok(py.detach(|| directed::weakly_connected_components(&self.succ, pred, self.n)))
     }
 
     /// In-degrees left after removing the out-edges of `processed` nodes:
