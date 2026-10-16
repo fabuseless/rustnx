@@ -5,8 +5,10 @@ counterpart. Inputs rustnx can't handle raise ``NotImplementedError``, which
 makes NetworkX fall back to its own implementation.
 """
 
+import contextlib
 import copy
 import functools
+import gc
 from collections import Counter, defaultdict
 from collections.abc import Set
 import inspect
@@ -673,6 +675,20 @@ def _undirected_only(G):
 def _directed_only(G):
     if not G.is_directed():
         raise nx.NetworkXNotImplemented("not implemented for undirected type")
+
+
+@contextlib.contextmanager
+def _gc_paused():
+    """Pause Python's cyclic garbage collector while Rust builds millions of
+    dicts at once: every few hundred new containers it would scan, and its
+    full passes walk the whole heap. The dicts hold no cycles."""
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        yield
+    finally:
+        if enabled:
+            gc.enable()
 
 
 class _MutationGuard:
@@ -2003,9 +2019,9 @@ def _mst_algorithms():
     return getattr(mst, "ALGORITHMS", {"kruskal": None, "prim": None, "boruvka": None})
 
 
-def _spanning_edges(G, algorithm, weight, data, maximum, keys=True, positions=False):
-    """The spanning edges as NetworkX yields them; with ``positions``, the
-    kept edges' endpoint positions ``(us, vs)`` (simple graphs)."""
+def _spanning_edges(G, algorithm, weight, data, maximum, keys=True, checks_only=False):
+    """The spanning edges as NetworkX yields them; with ``checks_only``,
+    only NetworkX's argument checks (simple graphs)."""
     if G.is_directed():
         raise nx.NetworkXNotImplemented("not implemented for directed type")
     try:
@@ -2021,9 +2037,9 @@ def _spanning_edges(G, algorithm, weight, data, maximum, keys=True, positions=Fa
         return _b26_multi_kruskal(G, weight, keys, data, not maximum)
     base = _networkx_graph(G)
     _unhidden_weight(G, weight)
+    if checks_only:
+        return None
     us, vs = G._core.kruskal(weight, maximum)
-    if positions:
-        return us, vs
     guard = _MutationGuard(G)
     nodes = G._nodes
     adj = base._adj
@@ -2053,10 +2069,13 @@ def _spanning_tree(G, weight, algorithm, maximum):
     base = _networkx_graph(G)
     if type(base) is nx.Graph:
         # NetworkX's `add_nodes_from` / `add_edges_from`, done in Rust.
-        us, vs = _spanning_edges(G, algorithm, weight, True, maximum, positions=True)
+        _spanning_edges(G, algorithm, weight, True, maximum, checks_only=True)
         T = nx.Graph()
         T.graph.update(base.graph)
-        G._core.fill_edge_subgraph(list(G._nodes), base._node, base._adj, us, vs, T._node, T._adj)
+        with _gc_paused():
+            G._core.spanning_tree_into(
+                weight, maximum, list(G._nodes), base._node, base._adj, T._node, T._adj
+            )
         return T
     edges = _spanning_edges(G, algorithm, weight, True, maximum)
     T = base.__class__()

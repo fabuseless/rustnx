@@ -8506,28 +8506,31 @@ impl CoreGraph {
         }))
     }
 
-    /// Fills the empty `Graph` dicts `t_node` / `t_adj` as
+    /// Kruskal's spanning forest (as [`Self::kruskal`]) written into the
+    /// empty `Graph` dicts `t_node` / `t_adj` as
     /// `T.add_nodes_from(G.nodes.items())` and then
     /// `T.add_edges_from((u, v, G.adj[u][v]) for each kept edge)` leave
     /// them: a fresh attribute dict per node and per edge (shallow copies).
     /// `nodes` is `G`'s node list; `node_dict` and `adj` are `G._node` and
     /// `G._adj`.
     #[allow(clippy::too_many_arguments)]
-    fn fill_edge_subgraph<'py>(
+    #[pyo3(signature = (weight, maximum, nodes, node_dict, adj, t_node, t_adj))]
+    fn spanning_tree_into<'py>(
         &self,
+        weight: Option<&str>,
+        maximum: bool,
         nodes: &Bound<'py, PyList>,
         node_dict: &Bound<'py, PyDict>,
         adj: &Bound<'py, PyDict>,
-        us: Vec<u32>,
-        vs: Vec<u32>,
         t_node: &Bound<'py, PyDict>,
         t_adj: &Bound<'py, PyDict>,
     ) -> PyResult<()> {
         let py = nodes.py();
         let changed = || PyNotImplementedError::new_err("the graph does not match its conversion");
-        if nodes.len() != self.n || node_dict.len() != self.n || us.len() != vs.len() {
+        if nodes.len() != self.n || node_dict.len() != self.n {
             return Err(changed());
         }
+        let (us, vs) = self.kruskal(py, weight, maximum)?;
         let mut rows = Vec::with_capacity(self.n);
         let mut keys = Vec::with_capacity(self.n);
         for (i, (k, d)) in node_dict.iter().enumerate() {
