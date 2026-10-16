@@ -15590,7 +15590,7 @@ HYBRID_FUNCTIONS = [
     "panther_similarity",
     "panther_vector_similarity",
     "louvain_communities",
-    "lukes_partitioning",
+    "lukes_partitioning",  # the fallback for the Rust replay further down
     "approximate_k_components",
     "asadpour_atsp",
     "held_karp_ascent",
@@ -16835,99 +16835,47 @@ def random_spanning_tree(G, weight=None, *, multiplicative=True, seed=None):
             weights.append(w)
         if total >= 2**52:
             raise NotImplementedError("weights too large to replay")
-    w_arr = np.array(weights, dtype=np.int64)
+    if not _b25_set_algebra_replayable():
+        raise NotImplementedError("this interpreter's sets can't be replayed")
+    # NetworkX merges the accepted edges in the order it iterates the set U
+    # of (u, v) tuples; Rust replays that order from their hashes.
+    steps = _core.SpanningContraction(
+        n, ei.tolist(), ej.tolist(), weights, [hash(e) for e in edges]
+    )
     edge_pos = {e: i for i, e in enumerate(edges)}
 
-    def find_node(merged_nodes, node):
-        if node not in merged_nodes:
-            return node
-        rep = find_node(merged_nodes, merged_nodes[node])
-        merged_nodes[node] = rep
-        return rep
-
-    def total_weight(cls, alive, keep):
-        # number_of_spanning_trees of the contracted MultiGraph: nodes `keep`
-        # (in G's order), each node's class in `cls`, the live edges.
-        pos = np.full(n, -1, dtype=np.int64)
-        pos[keep] = np.arange(len(keep))
-        a = pos[cls[ei[alive]]]
-        b = pos[cls[ej[alive]]]
-        w = w_arr[alive]
-        cut = a != b
-        a, b, w = a[cut], b[cut], w[cut]
-        k = len(keep)
-        if not _classes_connected(k, a, b):
+    def total_weight(reduced):
+        # number_of_spanning_trees of the contracted MultiGraph: 0 if it is
+        # disconnected, else the determinant of its reduced Laplacian.
+        if reduced is None:
             return 0
-        L = np.zeros((k, k), dtype=np.int64)
-        np.add.at(L, (a, b), -w)
-        np.add.at(L, (b, a), -w)
-        np.add.at(L, (a, a), w)
-        np.add.at(L, (b, b), w)
-        return float(np.linalg.det(L[1:, 1:]))
+        k, data = reduced
+        return float(np.linalg.det(np.frombuffer(data, dtype=np.float64).reshape(k, k)))
 
     U = set()
-    V = set(edges)
     shuffled_edges = list(edges)
     seed.shuffle(shuffled_edges)
     for u, v in shuffled_edges:
         e_weight = G[u][v][weight] if weight is not None else 1
-        merged_nodes = {}
-        for x, y in U:
-            x_rep = find_node(merged_nodes, x)
-            y_rep = find_node(merged_nodes, y)
-            if x_rep == y_rep:
-                continue
-            merged_nodes[y_rep] = x_rep
-        cls = np.arange(n, dtype=np.int64)
-        for x in merged_nodes:
-            cls[index[x]] = index[find_node(merged_nodes, x)]
-        alive = np.zeros(len(edges), dtype=bool)
-        alive[[edge_pos[e] for e in V]] = True
-        keep = np.flatnonzero(cls == np.arange(n))
-        G_total_tree_weight = total_weight(cls, alive, keep)
-        ru, rv = find_node(merged_nodes, u), find_node(merged_nodes, v)
-        cu, cv = cls == index[ru], cls == index[rv]
-        if ru != rv and (alive & ((cu[ei] & cv[ej]) | (cv[ei] & cu[ej]))).any():
-            # contracted_edge: rv's class joins ru's, rv leaves the order.
-            cls_e = cls.copy()
-            cls_e[cv] = index[ru]
-            G_e_total_tree_weight = total_weight(cls_e, alive, keep[keep != index[rv]])
+        i = edge_pos[u, v]
+        total, joined, contracted = steps.step(i)
+        G_total_tree_weight = total_weight(total)
+        if joined:
+            G_e_total_tree_weight = total_weight(contracted)
             threshold = e_weight * G_e_total_tree_weight / G_total_tree_weight
         else:
             threshold = 0.0
         z = seed.uniform(0.0, 1.0)
         if z > threshold:
-            V.remove((u, v))
+            steps.reject(i)
         else:
             U.add((u, v))
+            steps.accept(i)
         if len(U) == G.number_of_nodes() - 1:
             spanning_tree = nx.Graph()
             spanning_tree.add_edges_from(U)
             return spanning_tree
     raise Exception(f"Something went wrong! Only {len(U)} edges in the spanning tree!")
-
-
-def _classes_connected(k, a, b):
-    """Whether edges a[i]-b[i] connect all of nodes 0..k-1."""
-    if k <= 1:
-        return True
-    parent = list(range(k))
-
-    def root(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    parts = k
-    for x, y in zip(a.tolist(), b.tolist()):
-        rx, ry = root(x), root(y)
-        if rx != ry:
-            parent[ry] = rx
-            parts -= 1
-            if parts == 1:
-                return True
-    return parts == 1
 
 
 __all__ += ["random_spanning_tree"]
@@ -16952,13 +16900,46 @@ def _random_walk_recognized():
     return _source_text(_registered("random_walk")).endswith(_RANDOM_WALK_BODY)
 
 
+@functools.cache
+def _mt_layout():
+    """Where a ``random.Random`` keeps its Mersenne Twister state, for
+    stepping it in place from Rust; checked against Python's own draws (and
+    state refills), or None."""
+    try:
+        import _random
+
+        probe = random.Random(20261014)
+        for _ in range(700):
+            probe.random()
+        _, words, _ = probe.getstate()
+        layout = _core._mt_layout(probe, list(words[:624]), words[624], _random.Random.__basicsize__)
+        if layout is None:
+            return None
+        twin = random.Random()
+        twin.setstate(probe.getstate())
+        rng = random.Random(7)
+        draws = [
+            (0, rng.choice([1, 2, 3, 5, 8, 100, 1000, 2**31 + 5, 2**32 - 1])) if rng.random() < 0.6 else (1, 0)
+            for _ in range(3000)
+        ]
+        ours = _core._mt_draws(probe, layout, draws)
+        theirs = [twin._randbelow(n) if kind == 0 else twin.random() for kind, n in draws]
+        if ours != theirs or probe.getstate() != twin.getstate():
+            return None
+        return layout
+    except Exception:
+        return None
+
+
 def random_walk(G, *, start, weight=None, seed=None):
     """NetworkX 3.7's ``random_walk``: the same ``seed.choice`` and
-    ``seed.choices`` calls in the same order, on each node's neighbors and
+    ``seed.choices`` draws in the same order, on each node's neighbors and
     cumulative weights built once (NetworkX rebuilds them at every step).
-    A change to the graph (which clears its ``__networkx_cache__``, as all of
-    NetworkX's graph methods do) drops them, so the walk follows the graph
-    as NetworkX's does. Plain ``random.Random`` seeds only."""
+    The draws are made in Rust on ``seed``'s own state, in place (see
+    ``_mt_layout``), or else by ``seed``'s methods. A change to the graph
+    (which clears its ``__networkx_cache__``, as all of NetworkX's graph
+    methods do) drops the lists, so the walk follows the graph as
+    NetworkX's does. Plain ``random.Random`` seeds only."""
     import itertools
 
     if not _random_walk_recognized():
@@ -16971,6 +16952,31 @@ def random_walk(G, *, start, weight=None, seed=None):
     seed = nx.utils.create_py_random_state(seed)
     if type(seed) is not random.Random:
         raise NotImplementedError("rustnx walks with a random.Random seed only")
+    layout = _mt_layout()
+    if layout is not None:
+        stop = object()
+
+        def slow(nbrs):
+            # NetworkX's own step, for neighbor dicts or weights the Rust
+            # walker doesn't hold.
+            if not nbrs:
+                return stop
+            if weight is None:
+                return seed.choice(list(nbrs))
+            wts = [nbr.get(weight, 1) for nbr in nbrs.values()]
+            if any(w < 0 for w in wts):
+                raise ValueError("random_walk doesn't support negative weights")
+            if sum(wts) == 0:
+                return stop
+            return seed.choices(list(nbrs), weights=wts, k=1)[0]
+
+        def rust_walk():
+            if start not in G:
+                raise nx.NodeNotFound(start)
+            yield start
+            yield from _core.RandomWalker(G, start, weight, seed, layout, slow, stop)
+
+        return rust_walk()
     accumulate = itertools.accumulate
 
     def walk():
@@ -17344,3 +17350,332 @@ _SPANNER_MISSING = object()
 
 
 __all__ += ["spanner"]
+
+
+# --- VF2++ mappings (row 42) ----------------------------------------------------
+
+# Normalized source of networkx.algorithms.isomorphism.vf2pp -> variant
+# (False: NetworkX 3.4 to 3.6, True: 3.7's rewrite).
+_VF2PP_SOURCES = {
+    "d528bdea7d207280": False,  # 3.4, 3.6
+    "d457c41089acaa6b": False,  # 3.5
+    "d7dc64781efac07c": True,  # 3.7
+}
+
+
+@functools.cache
+def _vf2pp_variant():
+    from networkx.algorithms.isomorphism import vf2pp
+
+    try:
+        return _VF2PP_SOURCES.get(_normalized_source(vf2pp))
+    except (OSError, TypeError, SyntaxError):
+        return None
+
+
+def _vf2pp_graph(G):
+    """The NetworkX graph behind ``G``, if rustnx can replay VF2++ on it:
+    a simple graph whose neighbor dicts hold the node objects themselves
+    (NetworkX's mappings are built from those objects)."""
+    base = _networkx_graph(G)
+    if base.is_multigraph():
+        raise NotImplementedError("rustnx replays VF2++ on simple graphs")
+    # NetworkX's mappings hold objects from the neighbor dicts as well as
+    # the node dict; equal objects of the same type are interchangeable
+    # there (VF2++ never looks at id()), others (1 and 1.0) are not.
+    ids = {id(v) for v in base}
+    stray = [v for nbrs in base._adj.values() for v in nbrs if id(v) not in ids]
+    if stray:
+        nodes = {v: v for v in base}
+        if any(type(nodes[v]) is not type(v) for v in stray):
+            raise NotImplementedError("neighbor objects of another type than the nodes")
+    return base
+
+
+def _vf2pp_side(G, labels, label_ids, degree, deg_ids):
+    nodes = list(G)
+    index = {v: i for i, v in enumerate(nodes)}
+    directed = G.is_directed()
+    succ = [[index[v] for v in nbrs] for nbrs in G._adj.values()]
+    pred = [[index[v] for v in nbrs] for nbrs in G._pred.values()] if directed else []
+    label = [label_ids.setdefault(labels[v], len(label_ids)) for v in nodes]
+    deg = [d if directed else (d, 0) for d in (degree[v] for v in nodes)]
+    deg_id = [deg_ids.setdefault(degree[v], len(deg_ids)) for v in nodes] if deg_ids is not None else [0] * len(nodes)
+    loops = [1 if v in G._adj[v] else 0 for v in nodes]
+    return nodes, (succ, pred, _b25_hashes_of(nodes), label, deg, deg_id, loops)
+
+
+def _vf2pp_degrees(G):
+    if G.is_directed():
+        return {n: (i, o) for (n, i), (_, o) in zip(G.in_degree, G.out_degree)}
+    return dict(G.degree)
+
+
+def _vf2pp_search(first, second, pattern, target, pattern_side, target_side, directed, kind, new, label_ids, deg_ids):
+    search = _core.Vf2ppMap(
+        pattern_side, target_side, directed, kind, new, len(label_ids), max(len(deg_ids or ()), 1)
+    )
+    size = 1
+    while True:
+        batch = search.next_batch(size)
+        if not batch:
+            return
+        for pairs in batch:
+            yield {first[a]: second[b] for a, b in pairs}
+        size = min(size * 4, 256)
+
+
+def _vf2pp_old(G1, G2, node_label, default_label):
+    """NetworkX 3.4 to 3.6's ``vf2pp_all_isomorphisms``: its checks, then
+    the search in Rust."""
+    if G1.number_of_nodes() == 0 or G2.number_of_nodes() == 0:
+        return
+    G1_degree = _vf2pp_degrees(G1)
+    G2_degree = _vf2pp_degrees(G2)
+    if G1.order() != G2.order():
+        return
+    if sorted(G1_degree.values()) != sorted(G2_degree.values()):
+        return
+    G1_labels = dict(G1.nodes(data=node_label, default=default_label))
+    G2_labels = dict(G2.nodes(data=node_label, default=default_label))
+    nodes_of_G1Labels = nx.utils.groups(G1_labels)
+    nodes_of_G2Labels = nx.utils.groups(G2_labels)
+    if any(
+        label not in nodes_of_G1Labels or len(nodes_of_G1Labels[label]) != len(nodes)
+        for label, nodes in nodes_of_G2Labels.items()
+    ):
+        return
+    label_ids, deg_ids = {}, {}
+    n2, t = _vf2pp_side(G2, G2_labels, label_ids, G2_degree, deg_ids)
+    n1, p = _vf2pp_side(G1, G1_labels, label_ids, G1_degree, deg_ids)
+    yield from _vf2pp_search(n1, n2, G1, G2, p, t, G1.is_directed(), 0, False, label_ids, deg_ids)
+
+
+def _vf2pp_new(FG, SG, node_label, default_label, kind):
+    """NetworkX 3.7's ``_all_morphisms``: its checks, then the search in
+    Rust. ``kind``: 0 isomorphism, 1 induced subgraph, 2 monomorphism."""
+    import operator
+
+    N1, N2 = len(SG), len(FG)
+    if N1 == 0 or N2 == 0:
+        return
+    directed = SG.is_directed()
+    if directed != FG.is_directed():
+        raise nx.NetworkXError("SG and FG must have the same directedness")
+    SG_fits = operator.eq if kind == 0 else operator.le
+    SG_labels = dict(SG.nodes(data=node_label, default=default_label))
+    FG_labels = dict(FG.nodes(data=node_label, default=default_label))
+    FG_by_label = nx.utils.groups(FG_labels)
+    if not SG_fits(N1, N2):
+        return
+    SG_by_label = nx.utils.groups(SG_labels)
+    try:
+        labels_mismatch = any(
+            SG_fits == operator.eq
+            and label not in FG_by_label
+            or not SG_fits(len(nodes), len(FG_by_label[label]))
+            for label, nodes in SG_by_label.items()
+        )
+    except KeyError:
+        return
+    if labels_mismatch:
+        return
+    label_ids = {}
+    nf, t = _vf2pp_side(FG, FG_labels, label_ids, _vf2pp_degrees(FG), None)
+    ns, p = _vf2pp_side(SG, SG_labels, label_ids, _vf2pp_degrees(SG), None)
+    yield from _vf2pp_search(nf, ns, SG, FG, p, t, directed, kind, True, label_ids, None)
+
+
+def _vf2pp_morphisms(FG, SG, node_label, default_label, kind):
+    """A generator of NetworkX's mappings, in NetworkX's order."""
+    variant = _vf2pp_variant()
+    if variant is None:
+        raise NotImplementedError("unrecognized NetworkX VF2++")
+    if not variant and kind != 0:
+        raise NotImplementedError("this NetworkX has no such VF2++ function")
+    first, second = _vf2pp_graph(FG), _vf2pp_graph(SG)
+    if not _b25_set_algebra_replayable():
+        raise NotImplementedError("this interpreter's sets can't be replayed")
+    if variant:
+        return _vf2pp_new(first, second, node_label, default_label, kind)
+    if first.is_directed() != second.is_directed():
+        raise NotImplementedError("graphs differ in directedness")
+    return _vf2pp_old(first, second, node_label, default_label)
+
+
+def _vf2pp_first(gen):
+    return next(gen, None)
+
+
+def vf2pp_isomorphism(FG, SG, node_label=None, default_label=None):
+    return _vf2pp_first(_vf2pp_morphisms(FG, SG, node_label, default_label, 0))
+
+
+def vf2pp_all_isomorphisms(FG, SG, node_label=None, default_label=None):
+    return _vf2pp_morphisms(FG, SG, node_label, default_label, 0)
+
+
+def vf2pp_subgraph_isomorphism(FG, SG, node_label=None, default_label=None):
+    return _vf2pp_first(_vf2pp_morphisms(FG, SG, node_label, default_label, 1))
+
+
+def vf2pp_all_subgraph_isomorphisms(FG, SG, node_label=None, default_label=None):
+    return _vf2pp_morphisms(FG, SG, node_label, default_label, 1)
+
+
+def vf2pp_monomorphism(FG, SG, node_label=None, default_label=None):
+    return _vf2pp_first(_vf2pp_morphisms(FG, SG, node_label, default_label, 2))
+
+
+def vf2pp_all_monomorphisms(FG, SG, node_label=None, default_label=None):
+    return _vf2pp_morphisms(FG, SG, node_label, default_label, 2)
+
+
+__all__ += [
+    "vf2pp_isomorphism", "vf2pp_all_isomorphisms", "vf2pp_subgraph_isomorphism",
+    "vf2pp_all_subgraph_isomorphisms", "vf2pp_monomorphism", "vf2pp_all_monomorphisms",
+]
+
+
+# --- lukes_partitioning in Rust ------------------------------------------------------
+#
+# NetworkX's loop replayed in Rust (algorithms/lukes.rs): the same tree, the
+# same next parent of leaves (CPython's set order), its children in the
+# order of `nx.descendants`' set, and partition values summed as Python's
+# `sum()` does. The result's sets are rebuilt here with NetworkX's own
+# `{v}` and `.union` calls, so they iterate the same. Anything it can't
+# replay runs as the hybrid (NetworkX's code with `descendants` in Rust).
+
+_LUKES_SOURCES = {"4bc1c2ee655bf2ce"}  # NetworkX 3.4 to 3.7
+
+
+@functools.cache
+def _lukes_module():
+    try:
+        module = sys.modules[_registered("lukes_partitioning").orig_func.__module__]
+        if _normalized_source(module) in _LUKES_SOURCES:
+            return module
+    except (AttributeError, KeyError, OSError, TypeError, SyntaxError):
+        pass
+    return None
+
+
+def _sum_model(items, mode):
+    """``sum(items)`` as lukes.rs computes it: 0 plain float adds (Python
+    3.10, 3.11), 1 Neumaier-compensated floats (3.12), 2 ints in the float
+    loop compensated too (3.14)."""
+    total, it = 0, iter(items)
+    for x in it:
+        if type(x) is not float:
+            total += x
+            continue
+        hi, lo = total + x, 0.0
+        break
+    else:
+        return total
+    for x in it:
+        x_is_float = type(x) is float
+        x = float(x)
+        if mode == 0 or (mode == 1 and not x_is_float):
+            hi += x
+            continue
+        t = hi + x
+        lo += (hi - t) + x if abs(hi) >= abs(x) else (x - t) + hi
+        hi = t
+    if mode and lo and math.isfinite(lo):
+        return hi + lo
+    return hi
+
+
+@functools.cache
+def _sum_mode():
+    """Which of ``_sum_model``'s modes this interpreter's ``sum()`` follows
+    (checked on random int and float sequences), or None."""
+    rng = random.Random(20261014)
+    cases = [
+        [rng.choice([rng.randint(1, 9), rng.random() * 10, rng.random() * 1e16, -rng.random()])
+         for _ in range(rng.randint(2, 12))]
+        for _ in range(600)
+    ]
+    for mode in (0, 1, 2):
+        if all(sum(c) == _sum_model(c, mode) for c in cases):
+            return mode
+    return None
+
+
+def _lukes_inputs(G, max_size, node_weight, edge_weight):
+    """The Rust replay's inputs, or None where it declines (before NetworkX
+    would draw its root, so declining leaves the generator alone)."""
+    if _lukes_module() is None or type(G) not in (nx.Graph, nx.DiGraph):
+        return None
+    if not isinstance(max_size, int) or abs(max_size) >= 2**53:
+        return None
+    n = len(G)
+    if n < 2 or G.number_of_edges() != n - 1:
+        return None
+    mode = _sum_mode()
+    if mode is None:
+        return None
+    nodes = list(G)
+    try:
+        hashes = _b25_hashes_of(nodes)
+    except NotImplementedError:
+        return None
+    index = {v: i for i, v in enumerate(nodes)}
+    adj = [[index[v] for v in nbrs] for nbrs in G._adj.values()]
+    directed = G.is_directed()
+    root = _core.CoreGraph.lukes_tree(adj, directed)
+    if root is None:
+        return None
+    nw = None
+    if node_weight is not None:
+        # Missing or non-int weights raise in NetworkX.
+        nw, total = [], 0
+        for data in G._node.values():
+            w = data.get(node_weight, None)
+            if not isinstance(w, int):
+                return None
+            w = int(w)
+            total += abs(w)
+            nw.append(w)
+        if total >= 2**53:
+            return None
+    ew = None
+    if edge_weight is not None:
+        # Exact ints, bools and floats only: other types change how sum()
+        # adds them. Ints stay small enough to compare exactly with floats.
+        ew, total = [], 0
+        for *_, w in G.edges(data=edge_weight, default=None):
+            t = type(w)
+            if t is float:
+                pass
+            elif t is int or t is bool:
+                total += abs(w)
+            else:
+                return None
+            ew.append(w)
+        if total >= 2**53:
+            return None
+    return nodes, index, adj, directed, root, nw, ew, hashes, int(max_size), mode
+
+
+def lukes_partitioning(G, max_size, node_weight=None, edge_weight=None):
+    """NetworkX's ``lukes_partitioning``, replayed in Rust: the same root
+    (NetworkX's own ``choice`` call), the same order of parents and
+    children, Python's ``sum()`` for the values, and the same sets."""
+    G = _networkx_graph(G)
+    inputs = _lukes_inputs(G, max_size, node_weight, edge_weight)
+    if inputs is None:
+        arguments = {"G": G, "max_size": max_size, "node_weight": node_weight, "edge_weight": edge_weight}
+        return _hybrid.run("lukes_partitioning", arguments, _networkx_graph)
+    nodes, index, adj, directed, root, nw, ew, hashes, max_size, mode = inputs
+    if not directed:
+        root = index[_lukes_module().choice(list(G.nodes))]
+    out = _core.CoreGraph.lukes_partition(adj, directed, root, nw, ew, hashes, max_size, mode)
+    if out is None:
+        return None
+    clusters, partition = out
+    built = []
+    for a, b in clusters:
+        built.append({nodes[a]} if b == 0xFFFFFFFF else built[a].union(built[b]))
+    return [built[k] for k in partition]

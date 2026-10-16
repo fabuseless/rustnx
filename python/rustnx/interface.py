@@ -552,6 +552,8 @@ def _nx_signature(name):
 # Parameters NetworkX renamed between releases: {function: {old: ours}}.
 _RENAMED_PARAMS = {
     "vf2pp_is_isomorphic": {"G1": "FG", "G2": "SG"},  # renamed in 3.7
+    "vf2pp_isomorphism": {"G1": "FG", "G2": "SG"},
+    "vf2pp_all_isomorphisms": {"G1": "FG", "G2": "SG"},
 }
 
 

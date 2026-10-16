@@ -8,6 +8,7 @@ mod graph;
 mod native;
 mod rx;
 mod serialize;
+mod walk;
 
 use pyo3::exceptions::{PyIndexError, PyNotImplementedError, PyValueError};
 use pyo3::prelude::*;
@@ -7875,6 +7876,170 @@ impl CoreGraph {
         Ok((flow.into_iter().map(|f| f as i64).collect(), feasible))
     }
 
+    /// `lukes_partitioning`'s tree: `adj` is `G._adj` (successors when
+    /// directed) as node indices. The root for a directed tree (its one
+    /// node without predecessors), 0 for an undirected tree, None if `G`
+    /// is not a tree (or an arborescence when directed).
+    #[staticmethod]
+    fn lukes_tree(adj: Vec<Vec<u32>>, directed: bool) -> Option<u32> {
+        let n = adj.len();
+        if n < 2 || adj.iter().flatten().any(|&v| v as usize >= n) {
+            return None;
+        }
+        let root = if directed {
+            let mut has_pred = vec![false; n];
+            for &v in adj.iter().flatten() {
+                has_pred[v as usize] = true;
+            }
+            let mut sources = (0..n).filter(|&v| !has_pred[v]);
+            let root = sources.next()?;
+            if sources.next().is_some() {
+                return None;
+            }
+            root
+        } else {
+            0
+        };
+        let mut seen = vec![false; n];
+        seen[root] = true;
+        let mut stack = vec![root as u32];
+        let mut reached = 1;
+        while let Some(u) = stack.pop() {
+            for &v in &adj[u as usize] {
+                if !seen[v as usize] {
+                    seen[v as usize] = true;
+                    reached += 1;
+                    stack.push(v);
+                }
+            }
+        }
+        (reached == n).then_some(root as u32)
+    }
+
+    /// `lukes_partitioning` on a tree `lukes_tree` accepted, from `root`:
+    /// node weights (None: all 1), edge weights in `G.edges` order (ints or
+    /// floats; None: all 1), the nodes' hashes, and `sum`'s float mode (0
+    /// plain, 1 compensated floats, 2 compensated ints too). Returns
+    /// `(clusters, partition)` (see `algorithms::lukes::Output`), None
+    /// where NetworkX returns None; raises TypeError where NetworkX does.
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    fn lukes_partition(
+        py: Python<'_>,
+        adj: Vec<Vec<u32>>,
+        directed: bool,
+        root: u32,
+        node_weight: Option<Vec<i64>>,
+        edge_weight: Option<Vec<Bound<'_, PyAny>>>,
+        hashes: Vec<i64>,
+        max_size: i64,
+        sum_mode: u8,
+    ) -> PyResult<Option<(Vec<(u32, u32)>, Vec<u32>)>> {
+        use algorithms::lukes::{SumMode, Val};
+        let n = adj.len();
+        let bad = || PyValueError::new_err("bad lukes input");
+        if hashes.len() != n || root as usize >= n || adj.iter().flatten().any(|&v| v as usize >= n)
+        {
+            return Err(bad());
+        }
+        // Edges in G.edges order.
+        let mut edge_at: Vec<Vec<u32>> = adj.iter().map(|a| vec![u32::MAX; a.len()]).collect();
+        let mut m = 0u32;
+        if directed {
+            for row in edge_at.iter_mut() {
+                for e in row.iter_mut() {
+                    *e = m;
+                    m += 1;
+                }
+            }
+        } else {
+            let mut index: std::collections::HashMap<(u32, u32), u32> =
+                std::collections::HashMap::new();
+            let mut seen = vec![false; n];
+            for u in 0..n {
+                for (k, &v) in adj[u].iter().enumerate() {
+                    let key = ((u as u32).min(v), (u as u32).max(v));
+                    if !seen[v as usize] {
+                        index.insert(key, m);
+                        m += 1;
+                    }
+                    edge_at[u][k] = *index.get(&key).ok_or_else(bad)?;
+                }
+                seen[u] = true;
+            }
+        }
+        let edge_weight: Vec<Val> = match edge_weight {
+            None => vec![Val::I(1); m as usize],
+            Some(ws) => ws
+                .iter()
+                .map(|w| {
+                    if w.is_exact_instance_of::<pyo3::types::PyFloat>() {
+                        w.extract::<f64>().map(Val::F)
+                    } else {
+                        w.extract::<i64>().map(Val::I)
+                    }
+                })
+                .collect::<PyResult<_>>()?,
+        };
+        let node_weight = node_weight.unwrap_or_else(|| vec![1; n]);
+        if edge_weight.len() != m as usize || node_weight.len() != n {
+            return Err(bad());
+        }
+        // t_G: the arborescence itself, or nx.dfs_tree(G, root).
+        let mut children: Vec<Vec<u32>> = vec![Vec::new(); n];
+        let mut parent_edge = vec![u32::MAX; n];
+        let order: Vec<u32> = if directed {
+            for u in 0..n {
+                for (k, &v) in adj[u].iter().enumerate() {
+                    children[u].push(v);
+                    parent_edge[v as usize] = edge_at[u][k];
+                }
+            }
+            (0..n as u32).collect()
+        } else {
+            let mut order = vec![root];
+            let mut seen = vec![false; n];
+            seen[root as usize] = true;
+            let mut stack: Vec<(u32, usize)> = vec![(root, 0)];
+            while let Some(top) = stack.last_mut() {
+                let (u, k) = *top;
+                if k == adj[u as usize].len() {
+                    stack.pop();
+                    continue;
+                }
+                top.1 += 1;
+                let v = adj[u as usize][k];
+                if !seen[v as usize] {
+                    seen[v as usize] = true;
+                    order.push(v);
+                    children[u as usize].push(v);
+                    parent_edge[v as usize] = edge_at[u as usize][k];
+                    stack.push((v, 0));
+                }
+            }
+            order
+        };
+        let mode = match sum_mode {
+            0 => SumMode::Plain,
+            1 => SumMode::Floats,
+            _ => SumMode::All,
+        };
+        let input = algorithms::lukes::Input {
+            order,
+            children,
+            parent_edge,
+            node_weight,
+            edge_weight,
+            hashes,
+            root,
+            max_size,
+            mode,
+        };
+        py.detach(|| algorithms::lukes::run(&input)).map_err(|()| {
+            pyo3::exceptions::PyTypeError::new_err("'NoneType' object is not iterable")
+        })
+    }
+
     /// `spanner`'s `_add_edge_to_spanner` calls `(u, v, edge)` (edges
     /// numbered in `G.edges()` order) and the generator's new state.
     /// `node_ids` are the nodes' `id()`s, `weights` the edges' weights in
@@ -9997,6 +10162,177 @@ impl B24NonisoTrees {
     }
 }
 
+/// One graph for `Vf2ppMap`: neighbor lists (successors) and predecessor
+/// lists in dict order, `hash()`es, label ids, degrees, degree-value ids
+/// and self-loop counts.
+type Vf2ppSide = (
+    Vec<Vec<u32>>,
+    Vec<Vec<u32>>,
+    Vec<i64>,
+    Vec<u32>,
+    Vec<(i64, i64)>,
+    Vec<u32>,
+    Vec<u32>,
+);
+
+fn vf2pp_side(
+    side: Vf2ppSide,
+    n_labels: usize,
+    n_degs: usize,
+    directed: bool,
+) -> PyResult<algorithms::vf2pp_map::Side> {
+    let (succ, pred, hashes, label, deg, deg_id, loops) = side;
+    let n = succ.len();
+    let bad = || PyValueError::new_err("bad vf2pp input");
+    if hashes.len() != n
+        || label.len() != n
+        || deg.len() != n
+        || deg_id.len() != n
+        || loops.len() != n
+        || (directed && pred.len() != n)
+    {
+        return Err(bad());
+    }
+    if succ
+        .iter()
+        .chain(pred.iter())
+        .flatten()
+        .any(|&x| x as usize >= n)
+        || label.iter().any(|&l| l as usize >= n_labels)
+        || deg_id.iter().any(|&d| d as usize >= n_degs.max(1))
+    {
+        return Err(bad());
+    }
+    Ok(algorithms::vf2pp_map::Side {
+        succ,
+        pred,
+        hashes,
+        label,
+        deg,
+        deg_id,
+        loops,
+    })
+}
+
+/// NetworkX's VF2++ search, replayed (`algorithms::vf2pp_map`): mappings
+/// as (first graph's node, second graph's node) index pairs, in batches.
+#[pyclass(module = "rustnx._core")]
+struct Vf2ppMap {
+    inner: Option<algorithms::vf2pp_map::Vf2pp>,
+}
+
+#[pymethods]
+impl Vf2ppMap {
+    /// `pattern` is the graph whose nodes NetworkX orders (3.7's SG, 3.4's
+    /// G1), `target` the other. `kind`: 0 isomorphism, 1 induced subgraph,
+    /// 2 monomorphism. `new`: NetworkX 3.7's variant.
+    #[new]
+    fn new(
+        pattern: Vf2ppSide,
+        target: Vf2ppSide,
+        directed: bool,
+        kind: u8,
+        new: bool,
+        n_labels: usize,
+        n_degs: usize,
+    ) -> PyResult<Self> {
+        use algorithms::vf2pp_map::{Kind, Vf2pp};
+        let kind = match kind {
+            0 => Kind::Iso,
+            1 => Kind::Ind,
+            2 => Kind::Mono,
+            _ => return Err(PyValueError::new_err("bad vf2pp kind")),
+        };
+        let p = vf2pp_side(pattern, n_labels, n_degs, directed)?;
+        let t = vf2pp_side(target, n_labels, n_degs, directed)?;
+        Ok(Vf2ppMap {
+            inner: Vf2pp::new(p, t, directed, kind, new, n_labels, n_degs),
+        })
+    }
+
+    /// Up to `max` more mappings; an empty list once the search is over.
+    fn next_batch(&mut self, py: Python<'_>, max: usize) -> Vec<Vec<(u32, u32)>> {
+        match &mut self.inner {
+            Some(s) => py.detach(|| s.next_batch(max.max(1))),
+            None => Vec::new(),
+        }
+    }
+}
+
+/// `random_spanning_tree`'s contractions (`algorithms::spanning_contraction`):
+/// edges `(ei, ej)` in `G.edges()` order with int weights and the hashes
+/// of their `(u, v)` tuples.
+#[pyclass(module = "rustnx._core")]
+struct SpanningContraction {
+    inner: algorithms::spanning_contraction::Contraction,
+}
+
+type ReducedBytes<'py> = Option<(usize, Bound<'py, PyBytes>)>;
+
+fn reduced_bytes<'py>(
+    py: Python<'py>,
+    r: algorithms::spanning_contraction::Reduced,
+) -> ReducedBytes<'py> {
+    r.map(|(k, values)| {
+        let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_ne_bytes()).collect();
+        (k, PyBytes::new(py, &bytes))
+    })
+}
+
+#[pymethods]
+impl SpanningContraction {
+    #[new]
+    fn new(n: usize, ei: Vec<u32>, ej: Vec<u32>, w: Vec<i64>, hashes: Vec<i64>) -> PyResult<Self> {
+        let m = ei.len();
+        if ej.len() != m
+            || w.len() != m
+            || hashes.len() != m
+            || ei.iter().chain(&ej).any(|&v| v as usize >= n)
+        {
+            return Err(PyValueError::new_err("bad spanning tree input"));
+        }
+        Ok(SpanningContraction {
+            inner: algorithms::spanning_contraction::Contraction::new(n, ei, ej, w, hashes),
+        })
+    }
+
+    /// For edge `e`: the reduced Laplacian of the contracted graph (`(k,
+    /// bytes)` of a k-by-k float64 matrix, None when disconnected), whether
+    /// `e` can be contracted, and the reduced Laplacian with it contracted.
+    fn step<'py>(
+        &self,
+        py: Python<'py>,
+        e: u32,
+    ) -> PyResult<(ReducedBytes<'py>, bool, ReducedBytes<'py>)> {
+        if e as usize >= self.inner.edges() {
+            return Err(PyIndexError::new_err("edge out of range"));
+        }
+        let (total, contracted) = py.detach(|| self.inner.step(e));
+        let joined = contracted.is_some();
+        Ok((
+            reduced_bytes(py, total),
+            joined,
+            reduced_bytes(py, contracted.flatten()),
+        ))
+    }
+
+    fn accept(&mut self, e: u32) -> PyResult<()> {
+        if e as usize >= self.inner.edges() {
+            return Err(PyIndexError::new_err("edge out of range"));
+        }
+        self.inner.accept(e);
+        Ok(())
+    }
+
+    fn reject(&mut self, e: u32) -> PyResult<()> {
+        if e as usize >= self.inner.edges() {
+            return Err(PyIndexError::new_err("edge out of range"));
+        }
+        self.inner.reject(e);
+        Ok(())
+    }
+}
+
 #[pymodule(gil_used = false)]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CoreGraph>()?;
@@ -10013,6 +10349,11 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(operators::_op_intersection, m)?)?;
     m.add_class::<AllPaths>()?;
     m.add_class::<algorithms::louvain::Louvain>()?;
+    m.add_class::<Vf2ppMap>()?;
+    m.add_class::<SpanningContraction>()?;
+    m.add_class::<walk::RandomWalker>()?;
+    m.add_function(wrap_pyfunction!(walk::_mt_layout, m)?)?;
+    m.add_function(wrap_pyfunction!(walk::_mt_draws, m)?)?;
     m.add_class::<algorithms::random_measures::RandomPaths>()?;
     m.add_class::<algorithms::cycle_search::CycleLists>()?;
     m.add_class::<algorithms::cycle_search::CycleSearch>()?;

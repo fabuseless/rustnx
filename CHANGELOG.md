@@ -8,6 +8,25 @@ versions may change behavior.
 ## [Unreleased]
 
 ### Added
+- `random_walk` stepped in Rust: each draw is made on the `random.Random`
+  object's own Mersenne Twister state, updated in place (checked against
+  Python's own draws first), so the generator stays exactly in step with
+  NetworkX's walk. 2.5x to 6x faster unweighted, 8x to 50x weighted (from
+  1x and 4x to 14x).
+- `random_spanning_tree`: the contractions and Laplacians for each edge
+  are built in Rust (the accepted edges merged in CPython's set order), with
+  NumPy still taking the determinants. 35x to 85x faster than NetworkX
+  (the previous port was 15x to 20x).
+- `lukes_partitioning` replayed fully in Rust: the same root draw, the
+  same order of parents and children (CPython's set order), and values
+  summed as Python's `sum()` does, so the partition and each set's order
+  are NetworkX's. 100x faster at 100 nodes, about 1,000x at 1,000 (the
+  previous hybrid was about 2.5x).
+- The six mapping-returning VF2++ functions (`vf2pp_isomorphism`,
+  `vf2pp_all_isomorphisms` and, on NetworkX 3.7, the subgraph and
+  monomorphism variants): the search in Rust, replaying the installed
+  NetworkX's matching order and candidate set orders, so the mappings come
+  out in the same order. 10x to 25x faster on 200 to 500 node graphs.
 - Flows and structure round, all exact on NetworkX 3.4 to 3.7:
   - `snap_aggregation`: each split decided in time linear in the edges,
     with NetworkX's own set operations, so the summary graph is identical.

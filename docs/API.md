@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 664 NetworkX functions. Call them as usual (for
+rustnx implements 670 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly, except that
 the functions marked "fast by default" in the Floats column can differ
@@ -885,12 +885,12 @@ in the last bits of their floats until you turn on exact floats.
 
 | Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Floats | Notes |
 |---|---|---|---|---|---|
-| `nx.community` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with `nx.descendants` (called for every node it checks) as the same breadth-first search over the same dicts in Rust, collected into a set in the same order. About 2.5x faster. |
+| `nx.community` | all (NetworkX's own code runs) | no | rustnx | exact | Replayed in Rust: NetworkX's own `choice` of the root, the same tree, the next parent of leaves in CPython's set order, its children in the order of the set `nx.descendants` builds, and the values summed as this Python's `sum()` does (3.12+ compensates float sums), so ties and rounding go the same way; the result's sets are rebuilt with the same `{v}` and `.union` calls, so they iterate the same. Plain `Graph` or `DiGraph` with int or float edge weights; anything else runs NetworkX's code with `descendants` in Rust. 100x at 100 nodes, about 1,000x at 1,000. |
 | `nx.approximation.k_components` | all (NetworkX's own code runs) | no | rustnx | exact | `nx.approximation.k_components`: NetworkX's own code, with every `local_node_connectivity` call answered by rustnx's port on one conversion of each subgraph, without NetworkX's per-call dispatch. 10x to 25x faster. |
-| `nx.random_spanning_tree` | `weight`, `multiplicative`, `seed` | no | rustnx | exact | NetworkX's draws on `seed` in NetworkX's order over the same Python sets; each contracted Laplacian (the same integers, nodes in the same order) is built directly and handed to the same `np.linalg.det`. Multiplicative, unweighted or int weights, `Graph` without self-loops, NetworkX 3.5+; the rest goes to NetworkX. 15x to 20x faster. |
+| `nx.random_spanning_tree` | `weight`, `multiplicative`, `seed` | no | rustnx | exact | NetworkX's draws on `seed` in NetworkX's order; the contractions are replayed in Rust (merging the accepted edges in CPython's order of the set NetworkX keeps them in, which decides the order of the Laplacian's rows), and each contracted Laplacian (the same integers, rows in the same order) goes to the same `np.linalg.det`. Multiplicative, unweighted or int weights, `Graph` without self-loops, NetworkX 3.5+; the rest goes to NetworkX. 35x to 85x faster (the determinants are most of the time at 200 nodes). |
 | `nx.approximation` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with `held_karp_ascent` and the arborescences its `ArborescenceIterator` enumerates from rustnx. About 30x faster. |
 | `nx.approximation.traveling_salesman` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code, with the arborescences its `ArborescenceIterator` enumerates from rustnx. NetworkX keeps the minimum 1-arborescences in a set of graphs, which iterates in memory-address order, so ties can come out differently from one run to the next (in NetworkX too). |
-| `nx.random_walk` | `start`, `weight`, `seed` | no | rustnx | exact | NetworkX 3.7+. The same `seed.choice` / `seed.choices` calls in the same order, on each node's neighbors (and cumulative weights) built once instead of at every step. Changing the graph during the walk clears its `__networkx_cache__`, which drops them, so the walk follows the graph as NetworkX's does. `random.Random` seeds and plain `Graph` / `DiGraph`. 2x to 14x faster. |
+| `nx.random_walk` | `start`, `weight`, `seed` | no | rustnx | exact | NetworkX 3.7+. Stepped in Rust: each step makes the draw `seed.choice` or `seed.choices` would make, on the `random.Random` object's own Mersenne Twister state, updated in place under the object's lock (the replay is checked against Python's own draws first), so the generator is always exactly where NetworkX's walk leaves it, even when the caller draws from it between steps. Neighbor lists and cumulative weights are built once per node; changing the graph clears its `__networkx_cache__`, which drops them, so the walk follows the graph as NetworkX's does. Weights other than ints and floats take NetworkX's own step. `random.Random` seeds and plain `Graph` / `DiGraph`. 2.5x to 6x faster unweighted, 8x to 50x weighted. |
 
 ### Flows, structure and summaries
 
@@ -905,6 +905,17 @@ in the last bits of their floats until you turn on exact floats.
 | `nx.algorithms.connectivity.edge_augmentation` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code with its minimum spanning arborescence in rustnx. About 20x. |
 | `nx.algorithms.connectivity.edge_augmentation` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code with its inner calls in rustnx. |
 | `nx.algorithms.connectivity.edge_kcomponents` | all (NetworkX's own code runs) | no | rustnx | exact | NetworkX's own code with its minimum edge cuts in rustnx. NetworkX keeps its work in a set of graph objects (memory-address order), so the order of the subgraphs can differ between runs, in NetworkX too. About 15x. |
+
+### Isomorphism mappings
+
+| Function | Parameters handled in Rust | Multigraphs | Under 500 nodes | Floats | Notes |
+|---|---|---|---|---|---|
+| `nx.vf2pp_isomorphism` | `FG`, `SG`, `node_label`, `default_label` | no | rustnx | exact | The VF2++ search in Rust, replaying the installed NetworkX's version (3.4 to 3.6, or 3.7's `_all_morphisms`): its matching order with Python's tie rules, and its candidate sets with CPython's set orders, so mappings come out in the same order with the same keys. Node labels are read from the NetworkX graphs. Multigraphs go to NetworkX. 10x at 200 nodes, 25x at 500 (4-regular). |
+| `nx.vf2pp_all_isomorphisms` | `FG`, `SG`, `node_label`, `default_label` | no | rustnx | exact | As `vf2pp_isomorphism`; mappings are produced lazily, in batches. 12x to 16x on small symmetric graphs. |
+| `nx.vf2pp_subgraph_isomorphism` | `FG`, `SG`, `node_label`, `default_label` | no | rustnx | exact | NetworkX 3.7+. As `vf2pp_isomorphism` (the second graph is the smaller). 1x to 4x. |
+| `nx.vf2pp_all_subgraph_isomorphisms` | `FG`, `SG`, `node_label`, `default_label` | no | rustnx | exact | NetworkX 3.7+. As `vf2pp_all_isomorphisms`. |
+| `nx.vf2pp_monomorphism` | `FG`, `SG`, `node_label`, `default_label` | no | rustnx | exact | NetworkX 3.7+. As `vf2pp_subgraph_isomorphism`. |
+| `nx.vf2pp_all_monomorphisms` | `FG`, `SG`, `node_label`, `default_label` | no | rustnx | exact | NetworkX 3.7+. As `vf2pp_all_isomorphisms`. |
 
 ### Bipartite measures
 
