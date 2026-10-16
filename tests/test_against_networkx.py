@@ -1728,3 +1728,36 @@ def test_version_numbers_agree():
     expected_cargo = m.group(1) + (f"-{labels[m.group(2)]}.{m.group(3)}" if m.group(2) else "")
     assert cargo.group(1) == expected_cargo
     assert rustnx.__version__ == py_version
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda g, b: nx.reverse(g(directed=True), backend=b),
+        lambda g, b: nx.compose(g(), g(2), backend=b),
+        lambda g, b: nx.disjoint_union(g(), g(2), backend=b),
+        lambda g, b: nx.line_graph(g(), backend=b),
+        lambda g, b: nx.cartesian_product(g(), g(2), backend=b),
+        lambda g, b: nx.intersection(g(), g(), backend=b),
+        lambda g, b: nx.ego_graph(g(), 1000, 2, backend=b),
+        lambda g, b: nx.mycielskian(g(), backend=b),
+        lambda g, b: nx.relabel_nodes(g(), lambda v: -v, backend=b),
+    ],
+)
+def test_operators_accept_unpickled_graphs(call):
+    # Pickle doesn't keep the identity of ints above 256, so an unpickled
+    # graph's `_node` and `_adj` hold equal but separate keys; rustnx used to
+    # decline those graphs.
+    import pickle
+
+    def g(seed=1, directed=False):
+        G = nx.gnm_random_graph(30, 60, seed=seed, directed=directed)
+        G = nx.relabel_nodes(G, {v: v + 1000 for v in G})
+        nx.set_edge_attributes(G, {e: i for i, e in enumerate(G.edges)}, "weight")
+        return pickle.loads(pickle.dumps(G))
+
+    want = call(g, "networkx")
+    got = call(g, "rustnx")
+    assert type(got) is type(want)
+    assert list(got.nodes(data=True)) == list(want.nodes(data=True))
+    assert list(got.edges(data=True)) == list(want.edges(data=True))
