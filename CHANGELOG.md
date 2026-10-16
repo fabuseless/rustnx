@@ -8,6 +8,11 @@ versions may change behavior.
 ## [Unreleased]
 
 ### Added
+- `benchmarks/all_functions.py` times every function rustnx implements
+  against NetworkX (665 of 667 timed; all results checked against
+  NetworkX's), and `benchmarks/real_world.py` runs seven analysis pipelines
+  on SNAP datasets. Results are in `docs/BENCHMARKS.md`; every number in the
+  README was re-measured on NetworkX 3.7.
 - `random_walk` stepped in Rust: each draw is made on the `random.Random`
   object's own Mersenne Twister state, updated in place (checked against
   Python's own draws first), so the generator stays exactly in step with
@@ -267,6 +272,10 @@ versions may change behavior.
   NetworkX lets a backend implement, and which ones rustnx does.
 
 ### Fixed
+- `weakly_connected_components` now builds each component's set in
+  NetworkX's discovery order, which follows `G._pred`. The sets held the same
+  nodes but, where node hashes collide, could iterate them in a different
+  order (found on SNAP's web-Google graph).
 - On Python 3.12+, weighted `wiener_index`, `average_shortest_path_length`
   and `closeness_centrality` now add float distances the way Python 3.12's
   compensated `sum()` does, so the last bits match NetworkX (they differed
