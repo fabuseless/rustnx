@@ -1769,6 +1769,33 @@ impl CoreGraph {
         Ok(py.detach(|| cores_more::connected_sequential(&self.succ, self.n, &sources, dfs)))
     }
 
+    /// `equitable_color(G, num_colors)` on a simple undirected graph whose
+    /// maximum degree is below `num_colors`: each node's color, or `None`
+    /// where NetworkX's own run fails.
+    fn equitable_color(&self, py: Python<'_>, num_colors: usize) -> Option<Vec<usize>> {
+        let rows: Vec<Vec<u32>> = (0..self.n)
+            .map(|u| {
+                let mut row = self.succ.neighbors(u).to_vec();
+                row.sort_unstable();
+                row
+            })
+            .collect();
+        py.detach(|| algorithms::equitable::equitable_color(&rows, num_colors))
+    }
+
+    /// [`algorithms::equitable::procedure_p_on`], for the tests.
+    #[staticmethod]
+    fn equitable_procedure_p(
+        l: Vec<Vec<u32>>,
+        f: Vec<usize>,
+        c: Vec<Vec<u32>>,
+        hashes: Vec<i64>,
+        v_minus: usize,
+        v_plus: usize,
+    ) -> Option<(Vec<usize>, Vec<Vec<u32>>)> {
+        algorithms::equitable::procedure_p_on(l, f, c, hashes, v_minus, v_plus)
+    }
+
     /// `is_coloring` for color ids per node (negative: not colored):
     /// `(result, None)`, or `(False, node)` for the node NetworkX's lookup
     /// fails on.

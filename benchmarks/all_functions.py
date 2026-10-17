@@ -455,10 +455,18 @@ def _vertex_cover(n):
     return {"G": B, "matching": nx.bipartite.hopcroft_karp_matching(B, top, backend="networkx"), "top_nodes": top}
 
 
+
+def _equitable_input(n):
+    # num_colors must exceed the maximum degree.
+    G = nx.gnm_random_graph(n, 4 * n, seed=18)
+    return {"G": G, "num_colors": max(d for _, d in G.degree) + 1}
+
+
 MANUAL = {
     "to_vertex_cover": _vertex_cover,
     "visibility_graph": lambda n: {"series": [random.Random(17 + i).random() for i in range(n)]},
     "random_k_lift": lambda n: {"G": nx.random_regular_graph(4, n - n % 2, seed=16), "k": 4},
+    "equitable_color": _equitable_input,
     "projected_graph": _bipartite_side,
     "collaboration_weighted_projected_graph": _bipartite_side,
     "overlap_weighted_projected_graph": _bipartite_side,

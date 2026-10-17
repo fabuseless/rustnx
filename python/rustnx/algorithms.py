@@ -220,6 +220,7 @@ __all__ = [
     "empty_graph",
     "enumerate_all_cliques",
     "eppstein_matching",
+    "equitable_color",
     "eulerian_circuit",
     "eulerian_path",
     "expected_degree_graph",
@@ -4457,6 +4458,23 @@ def _color_ids(G, coloring):
             raise NotImplementedError("rustnx supports int, str and float colors")
         out.append(ids.setdefault(c, len(ids)))
     return out
+
+
+def equitable_color(G, num_colors):
+    if G.is_directed() or G._multigraph:
+        raise NotImplementedError("rustnx colors simple undirected graphs")
+    if type(num_colors) is not int:
+        raise NotImplementedError("rustnx needs an int number of colors")
+    r_ = max(G._core.degrees(), default=0)
+    if r_ >= num_colors:
+        raise nx.NetworkXAlgorithmError(
+            f"Graph has maximum degree {r_}, needs "
+            f"{r_ + 1} (> {num_colors}) colors for guaranteed coloring."
+        )
+    colors = G._core.equitable_color(num_colors)
+    if colors is None:
+        raise NotImplementedError("NetworkX's own run fails on this graph")
+    return dict(zip(G._nodes, colors))
 
 
 def is_coloring(G, coloring):

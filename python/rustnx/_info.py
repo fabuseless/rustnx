@@ -206,6 +206,7 @@ FUNCTIONS = {
     "empty_graph": {},
     "enumerate_all_cliques": {},
     "eppstein_matching": {},
+    "equitable_color": {},
     "eulerian_circuit": {},
     "eulerian_path": {},
     "eulerize": {},

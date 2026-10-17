@@ -16,6 +16,7 @@ pub mod degree_generators;
 pub mod directed;
 pub mod distance;
 pub mod dot;
+pub mod equitable;
 pub mod flow;
 pub mod generators;
 pub mod gexf;

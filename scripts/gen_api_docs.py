@@ -97,7 +97,7 @@ SECTIONS = [
     ]),
     ("Cores, coloring and communities", [
         "core_number", "k_core", "k_shell", "k_crust", "k_corona", "k_truss", "onion_layers",
-        "is_bipartite", "greedy_color", "is_coloring", "is_equitable",
+        "is_bipartite", "greedy_color", "equitable_color", "is_coloring", "is_equitable",
         "label_propagation_communities",
     ]),
     ("Distance-regular graphs and other distance measures", [
@@ -443,6 +443,7 @@ NOTES = {
     "is_distance_regular": "Follows the installed NetworkX's checks.",
     "is_strongly_regular": "Follows the installed NetworkX's checks.",
     "is_coloring": "A coloring that isn't a `dict` of int, str or float colors falls back.",
+    "equitable_color": "Directed graphs, multigraphs and a non-int `num_colors` fall back.",
     "is_equitable": "A coloring that isn't a `dict` of int, str or float colors falls back.",
     "bfs_edges": "`sort_neighbors` falls back.",
     "bfs_tree": "`sort_neighbors` falls back.",
