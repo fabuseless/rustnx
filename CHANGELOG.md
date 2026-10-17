@@ -8,8 +8,12 @@ versions may change behavior.
 ## [Unreleased]
 
 ### Added
+- `equitable_color`: NetworkX's algorithm followed step by step in Rust,
+  with the one step whose result depends on a set's iteration order
+  (procedure P's Case II) replayed with CPython's set order. The same
+  coloring as NetworkX on NetworkX 3.4 to 3.7; 35x to 170x faster.
 - `benchmarks/all_functions.py` times every function rustnx implements
-  against NetworkX (665 of 667 timed; all results checked against
+  against NetworkX (666 of 668 timed; all results checked against
   NetworkX's), and `benchmarks/real_world.py` runs seven analysis pipelines
   on SNAP datasets. Results are in `docs/BENCHMARKS.md`; every number in the
   README was re-measured on NetworkX 3.7.

@@ -665,3 +665,4 @@
 {"name": "visibility_graph", "family": "manual", "n": 1024, "nx": 0.7355894800002716, "cold": 0.007201523999356141, "warm": 0.006506155999886687, "match": "same", "status": "ok"}
 {"name": "voronoi_cells", "family": "graph", "n": 65536, "nx": 0.8299758699995436, "edges": 196599, "cold": 0.2055217579991222, "warm": 0.06164181800068036, "match": "same", "status": "ok"}
 {"name": "weakly_connected_components", "family": "digraph", "n": 262144, "nx": 0.6574133610001809, "edges": 1048576, "cold": 0.3114454039996417, "warm": 0.045941852000396466, "match": "same", "status": "ok"}
+{"name": "equitable_color", "family": "manual", "n": 16384, "nx": 1.0392364169999837, "cold": 0.04135331399993447, "warm": 0.014072984999984328, "match": "same", "status": "ok"}

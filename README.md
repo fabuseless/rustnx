@@ -205,6 +205,7 @@ NetworkX, is in [docs/API.md](docs/API.md).
 | `square_clustering`, `generalized_degree`, `all_triangles` | **Bit-for-bit identical**, following the installed NetworkX's formula (square clustering changed in 3.5). |
 | `centroid` (`barycenter` before 3.7), `harmonic_diameter`, `is_distance_regular`, `intersection_array`, `is_strongly_regular` | Same results and errors as each NetworkX version. |
 | `is_coloring`, `is_equitable` | Same results as NetworkX. |
+| `equitable_color` | NetworkX's port of Kierstead, Kostochka, Mydlarz and Szemerédi followed step by step, its one set-order-dependent step (Case II) replayed with CPython's set order: the same coloring, in the same order. 35x to 170x faster. Directed graphs and multigraphs run in NetworkX. |
 | `is_arborescence`, `is_branching`, `to_prufer_sequence`, `kruskal_mst_edges` | Same results as NetworkX. |
 | `bridges`, `has_bridges`, `local_bridges`, `chain_decomposition`, `isolates`, `number_of_isolates`, `is_regular`, `is_k_regular`, `is_tournament`, `immediate_dominators`, `dominance_frontiers` | Same order as each NetworkX version (dominators changed in 3.7). `bridges` with a `root` runs in NetworkX. |
 | `is_eulerian`, `has_eulerian_path`, `is_semieulerian`, `eulerian_circuit`, `eulerian_path`, `cycle_basis`, `find_cycle`, `girth` | Same circuits, cycles and order as NetworkX. |
@@ -439,12 +440,12 @@ dicts.
 
 ### Every function
 
-`python benchmarks/all_functions.py` times all 667 functions rustnx
+`python benchmarks/all_functions.py` times all 668 functions rustnx
 implements, each on an input grown until NetworkX takes about half a second
-(up to 262,144 nodes). 665 were timed (NetworkX can't finish `asadpour_atsp`
-or `held_karp_ascent` at any size tried), and all 665 returned NetworkX's
-results: 660 identical, 5 within 1e-9. On a repeat call the median function
-is **10×** faster: 333 functions are over 10× faster, 72 over 100×, and 13
+(up to 262,144 nodes). 666 were timed (NetworkX can't finish `asadpour_atsp`
+or `held_karp_ascent` at any size tried), and all 666 returned NetworkX's
+results: 661 identical, 5 within 1e-9. On a repeat call the median function
+is **10×** faster: 334 functions are over 10× faster, 72 over 100×, and 13
 are slower, all of them queries NetworkX answers in microseconds or
 functions whose time goes into building Python results (see "When rustnx
 helps" above). The full table, grouped by

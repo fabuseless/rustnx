@@ -131,9 +131,9 @@ Each pipeline runs its steps once, as an analysis script would, on a [SNAP](http
 
 `python benchmarks/all_functions.py` times each function rustnx implements. It grows the input (a scale-free graph, or the first graph family the function accepts) until NetworkX takes about half a second, or to 262,144 nodes, and times both on that input.
 
-Of 665 functions timed, 645 are faster with rustnx on a repeat call (median speedup 10.2x) and 13 are slower. Those are queries and checks NetworkX answers in microseconds (one cycle, `is_eulerian` on a graph that isn't), where NetworkX's dispatch overhead is most of rustnx's time, and functions whose time goes into building Python results (labeled edge streams, tiny generated graphs).
+Of 666 functions timed, 646 are faster with rustnx on a repeat call (median speedup 10.4x) and 13 are slower. Those are queries and checks NetworkX answers in microseconds (one cycle, `is_eulerian` on a graph that isn't), where NetworkX's dispatch overhead is most of rustnx's time, and functions whose time goes into building Python results (labeled edge streams, tiny generated graphs).
 
-Results: 660 identical, 5 within 1e-9, 0 different.
+Results: 661 identical, 5 within 1e-9, 0 different.
 
 ### Approximation
 
@@ -340,6 +340,7 @@ Results: 660 identical, 5 within 1e-9, 0 different.
 
 | Function | Input | NetworkX | rustnx, first call | rustnx, repeat | Speedup | Result |
 |---|---|---|---|---|---|---|
+| `equitable_color` | n = 16,384 | 1.04 s | 0.041 s | 0.014 s | 74x | same |
 | `greedy_color` | scale-free, 262,144 nodes, 786,423 edges | 0.679 s | 0.208 s | 0.045 s | 15x | same |
 | `is_coloring` | scale-free, 262,144 nodes, 786,423 edges | 0.557 s | 0.195 s | 0.029 s | 19x | same |
 | `is_equitable` | scale-free, 262,144 nodes, 786,423 edges | 0.608 s | 0.189 s | 0.043 s | 14x | same |

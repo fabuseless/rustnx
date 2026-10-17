@@ -4,7 +4,7 @@
 
 ## NetworkX backend
 
-rustnx implements 670 NetworkX functions. Call them as usual (for
+rustnx implements 671 NetworkX functions. Call them as usual (for
 example `nx.pagerank(G)`) after `rustnx.enable()`, or pass `backend="rustnx"`.
 Results match the installed NetworkX (3.4 or newer) exactly, except that
 the functions marked "fast by default" in the Floats column can differ
@@ -261,6 +261,7 @@ in the last bits of their floats until you turn on exact floats.
 | `nx.onion_layers` | none | no | NetworkX | exact |  |
 | `nx.is_bipartite` | none | yes | NetworkX | exact |  |
 | `nx.greedy_color` | `strategy`, `interchange` | no | NetworkX | exact | Strategies `largest_first`, `saturation_largest_first` (`DSATUR`), `random_sequential` (draws from the global `random` state, as NetworkX does) and `connected_sequential` (`_bfs`, `_dfs`). `smallest_last`, `independent_set`, callables and `interchange` fall back. |
+| `nx.equitable_color` | `num_colors` | no | rustnx | exact | Directed graphs, multigraphs and a non-int `num_colors` fall back. |
 | `nx.algorithms.coloring.equitable_coloring.is_coloring` | `coloring` | no | NetworkX | exact | A coloring that isn't a `dict` of int, str or float colors falls back. |
 | `nx.algorithms.coloring.equitable_coloring.is_equitable` | `coloring`, `num_colors` | no | NetworkX | exact | A coloring that isn't a `dict` of int, str or float colors falls back. |
 | `nx.community.label_propagation_communities` | none | no | NetworkX | exact |  |
