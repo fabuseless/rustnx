@@ -10,6 +10,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
 
 use super::nxdicts::{simple_edge, NodeRows, NxDicts};
+use super::operators::same_node;
 use crate::graph::Csr;
 
 /// Coordinates and values for `scipy.sparse.coo_array`.
@@ -218,10 +219,14 @@ pub fn all_edges_have(adj: &Bound<'_, PyDict>, key: &Bound<'_, PyAny>) -> PyResu
 /// Check that `d`'s keys are exactly `nodes`, in order (the positions the
 /// CSR arrays use).
 fn check_order(nodes: &Bound<'_, PyList>, d: &Bound<'_, PyDict>) -> PyResult<()> {
-    if d.len() != nodes.len() || d.keys().iter().zip(nodes.iter()).any(|(k, n)| !k.is(&n)) {
-        return Err(PyNotImplementedError::new_err(
-            "the graph changed since it was converted",
-        ));
+    let changed = || PyNotImplementedError::new_err("the graph changed since it was converted");
+    if d.len() != nodes.len() {
+        return Err(changed());
+    }
+    for (k, n) in d.keys().iter().zip(nodes.iter()) {
+        if !same_node(&k, &n)? {
+            return Err(changed());
+        }
     }
     Ok(())
 }

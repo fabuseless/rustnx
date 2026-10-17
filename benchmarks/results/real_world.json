@@ -1,0 +1,404 @@
+[
+ {
+  "pipeline": "social network (Facebook)",
+  "dataset": "facebook_combined",
+  "nodes": 4039,
+  "edges": 88234,
+  "directed": false,
+  "load": 0.14401424300012877,
+  "steps": [
+   {
+    "step": "degree_centrality",
+    "networkx": 0.001399003000187804,
+    "rustnx": 0.03803764599979331,
+    "match": "same"
+   },
+   {
+    "step": "betweenness_centrality",
+    "networkx": 79.16056232000028,
+    "rustnx": 0.6098206779997781,
+    "match": "close"
+   },
+   {
+    "step": "closeness_centrality",
+    "networkx": 25.009270561999983,
+    "rustnx": 0.010776062000331876,
+    "match": "same"
+   },
+   {
+    "step": "eigenvector_centrality",
+    "networkx": 0.6880939270004092,
+    "rustnx": 0.008142966000377783,
+    "match": "same"
+   },
+   {
+    "step": "pagerank",
+    "networkx": 0.29831347100025596,
+    "rustnx": 0.02327986999989662,
+    "match": "close"
+   },
+   {
+    "step": "clustering",
+    "networkx": 1.9108350199994675,
+    "rustnx": 0.011839864000648959,
+    "match": "same"
+   },
+   {
+    "step": "average_clustering",
+    "networkx": 1.9985838469992814,
+    "rustnx": 0.010678100000404811,
+    "match": "same"
+   },
+   {
+    "step": "transitivity",
+    "networkx": 2.107014206000713,
+    "rustnx": 0.011425556999711262,
+    "match": "same"
+   },
+   {
+    "step": "louvain_communities",
+    "networkx": 0.8999500179997995,
+    "rustnx": 0.17065051299960032,
+    "match": "same"
+   },
+   {
+    "step": "label_propagation_communities",
+    "networkx": 0.3786956359999749,
+    "rustnx": 0.008167502000105742,
+    "match": "same"
+   },
+   {
+    "step": "core_number",
+    "networkx": 0.0745432180001444,
+    "rustnx": 0.0013347809999686433,
+    "match": "same"
+   },
+   {
+    "step": "diameter",
+    "networkx": 24.648441108000043,
+    "rustnx": 0.010367066000071645,
+    "match": "same"
+   },
+   {
+    "step": "average_shortest_path_length",
+    "networkx": 25.36114013599945,
+    "rustnx": 0.009282287000132783,
+    "match": "same"
+   }
+  ],
+  "networkx_total": 162.536842472,
+  "rustnx_total": 0.9238028920008219
+ },
+ {
+  "pipeline": "email network (Enron)",
+  "dataset": "email-Enron",
+  "nodes": 36692,
+  "edges": 183831,
+  "directed": false,
+  "load": 0.5969658320000235,
+  "steps": [
+   {
+    "step": "connected_components",
+    "networkx": 0.04305152199958684,
+    "rustnx": 0.05414629999995668,
+    "match": "same"
+   },
+   {
+    "step": "core_number",
+    "networkx": 0.35930203199950483,
+    "rustnx": 0.00654424200001813,
+    "match": "same"
+   },
+   {
+    "step": "pagerank",
+    "networkx": 0.23896774699915113,
+    "rustnx": 0.08315978700011328,
+    "match": "close"
+   },
+   {
+    "step": "betweenness_centrality (k=1000)",
+    "networkx": 138.42465508200075,
+    "rustnx": 0.745260684000641,
+    "match": "close"
+   },
+   {
+    "step": "clustering",
+    "networkx": 4.480627940000886,
+    "rustnx": 0.03415286200015544,
+    "match": "same"
+   },
+   {
+    "step": "triangles",
+    "networkx": 0.5960574410000845,
+    "rustnx": 0.036811382000450976,
+    "match": "same"
+   },
+   {
+    "step": "louvain_communities",
+    "networkx": 4.37379106500066,
+    "rustnx": 0.5129071210003531,
+    "match": "same"
+   },
+   {
+    "step": "articulation_points",
+    "networkx": 0.21267850999993243,
+    "rustnx": 0.007118565999917337,
+    "match": "same"
+   },
+   {
+    "step": "degree_assortativity_coefficient",
+    "networkx": 0.3993373379998957,
+    "rustnx": 0.09052282200082118,
+    "match": "same"
+   }
+  ],
+  "networkx_total": 149.12846867700046,
+  "rustnx_total": 1.5706237660024271
+ },
+ {
+  "pipeline": "collaboration network (astrophysics)",
+  "dataset": "ca-AstroPh",
+  "nodes": 17903,
+  "edges": 196972,
+  "directed": false,
+  "load": 0.7643561479999335,
+  "steps": [
+   {
+    "step": "closeness_centrality",
+    "networkx": 620.366227208,
+    "rustnx": 0.3393112089997885,
+    "match": "same"
+   },
+   {
+    "step": "eigenvector_centrality",
+    "networkx": 2.0080271890001313,
+    "rustnx": 0.046355923999726656,
+    "match": "same"
+   },
+   {
+    "step": "k_core (k=20)",
+    "networkx": 0.7085043140004927,
+    "rustnx": 0.7413441359994977,
+    "match": "same"
+   },
+   {
+    "step": "average_clustering",
+    "networkx": 3.189625796000655,
+    "rustnx": 0.038483450999592606,
+    "match": "same"
+   },
+   {
+    "step": "bridges",
+    "networkx": 0.8882905680002295,
+    "rustnx": 0.052502800000183925,
+    "match": "same"
+   },
+   {
+    "step": "greedy_color",
+    "networkx": 0.06738568399941869,
+    "rustnx": 0.006657932999587501,
+    "match": "same"
+   },
+   {
+    "step": "label_propagation_communities",
+    "networkx": 1.8252645800002938,
+    "rustnx": 0.0450821120002729,
+    "match": "same"
+   }
+  ],
+  "networkx_total": 629.0533253390013,
+  "rustnx_total": 1.2697375649986498
+ },
+ {
+  "pipeline": "trust network (Epinions)",
+  "dataset": "soc-Epinions1",
+  "nodes": 75879,
+  "edges": 508837,
+  "directed": true,
+  "load": 1.5686421039999914,
+  "steps": [
+   {
+    "step": "strongly_connected_components",
+    "networkx": 0.379051908999827,
+    "rustnx": 0.4808359879998534,
+    "match": "same"
+   },
+   {
+    "step": "weakly_connected_components",
+    "networkx": 0.17002854900056263,
+    "rustnx": 0.023274039999705565,
+    "match": "same"
+   },
+   {
+    "step": "condensation",
+    "networkx": 0.8106423320004978,
+    "rustnx": 0.5253051110003071,
+    "match": "same"
+   },
+   {
+    "step": "pagerank",
+    "networkx": 0.525244579000173,
+    "rustnx": 0.1446814450000602,
+    "match": "close"
+   },
+   {
+    "step": "hits",
+    "networkx": 0.5776893620004557,
+    "rustnx": 0.0991497459999664,
+    "match": "same"
+   },
+   {
+    "step": "in_degree_centrality",
+    "networkx": 0.022325679999994463,
+    "rustnx": 0.012834043000111706,
+    "match": "same"
+   },
+   {
+    "step": "reciprocity",
+    "networkx": 1.3644734690005862,
+    "rustnx": 0.0057446989994787145,
+    "match": "same"
+   },
+   {
+    "step": "katz_centrality",
+    "networkx": 6.37848979499995,
+    "rustnx": 0.03329196499998943,
+    "match": "same"
+   }
+  ],
+  "networkx_total": 10.227945675002047,
+  "rustnx_total": 1.3251170369994725
+ },
+ {
+  "pipeline": "citation network (HEP-PH)",
+  "dataset": "cit-HepPh",
+  "nodes": 34546,
+  "edges": 421534,
+  "directed": true,
+  "load": 0.932137523000165,
+  "steps": [
+   {
+    "step": "pagerank",
+    "networkx": 0.36793681000017386,
+    "rustnx": 0.11024415999963821,
+    "match": "close"
+   },
+   {
+    "step": "strongly_connected_components",
+    "networkx": 0.12697162800031947,
+    "rustnx": 0.1554581269992923,
+    "match": "same"
+   },
+   {
+    "step": "is_directed_acyclic_graph",
+    "networkx": 0.051443700999698194,
+    "rustnx": 0.0030751120002605603,
+    "match": "same"
+   },
+   {
+    "step": "descendants (50 papers)",
+    "networkx": 1.741758027999822,
+    "rustnx": 0.08782147600049939,
+    "match": "same"
+   },
+   {
+    "step": "ancestors (50 papers)",
+    "networkx": 4.820558976999564,
+    "rustnx": 0.4159274710000318,
+    "match": "same"
+   },
+   {
+    "step": "in_degree_centrality",
+    "networkx": 0.03894021199994313,
+    "rustnx": 0.04426919400066254,
+    "match": "same"
+   }
+  ],
+  "networkx_total": 7.147609355999521,
+  "rustnx_total": 0.8167955400003848
+ },
+ {
+  "pipeline": "road routing (Pennsylvania)",
+  "dataset": "roadNet-PA",
+  "nodes": 1088092,
+  "edges": 1541898,
+  "directed": false,
+  "load": 6.925954530000126,
+  "steps": [
+   {
+    "step": "connected_components",
+    "networkx": 0.9281031420005093,
+    "rustnx": 1.0760145180001928,
+    "match": "same"
+   },
+   {
+    "step": "dijkstra_path (20 routes)",
+    "networkx": 58.93930105999971,
+    "rustnx": 3.224164338999799,
+    "match": "same"
+   },
+   {
+    "step": "single_source_dijkstra_path_length",
+    "networkx": 3.5208585629998197,
+    "rustnx": 0.7594643679994988,
+    "match": "same"
+   },
+   {
+    "step": "bfs_edges",
+    "networkx": 5.041802619999544,
+    "rustnx": 1.2341622339999958,
+    "match": "same"
+   },
+   {
+    "step": "minimum_spanning_tree",
+    "networkx": 20.6603758629999,
+    "rustnx": 7.061978863000149,
+    "match": "same"
+   },
+   {
+    "step": "articulation_points",
+    "networkx": 3.6073287569997774,
+    "rustnx": 0.6541182939999999,
+    "match": "same"
+   }
+  ],
+  "networkx_total": 92.69777000499926,
+  "rustnx_total": 14.009902615999636
+ },
+ {
+  "pipeline": "web graph (Google)",
+  "dataset": "web-Google",
+  "nodes": 875713,
+  "edges": 5105039,
+  "directed": true,
+  "load": 17.881824418999713,
+  "steps": [
+   {
+    "step": "pagerank",
+    "networkx": 11.958474961999855,
+    "rustnx": 3.693493903999297,
+    "match": "close"
+   },
+   {
+    "step": "strongly_connected_components",
+    "networkx": 2.930000143000143,
+    "rustnx": 3.5329538380001395,
+    "match": "same"
+   },
+   {
+    "step": "weakly_connected_components",
+    "networkx": 2.907680256000276,
+    "rustnx": 2.934608859999571,
+    "match": "same"
+   },
+   {
+    "step": "in_degree_centrality",
+    "networkx": 0.6698795800002699,
+    "rustnx": 0.22699165599988191,
+    "match": "same"
+   }
+  ],
+  "networkx_total": 18.466034941000544,
+  "rustnx_total": 10.38804825799889
+ }
+]

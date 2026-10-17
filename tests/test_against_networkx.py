@@ -245,6 +245,44 @@ def test_small_graphs_stay_in_networkx(rustnx_priority, caplog):
     assert any("Using backend 'rustnx'" in r.getMessage() for r in caplog.records)
 
 
+def test_quick_checks_wait_for_a_conversion(rustnx_priority, caplog):
+    # Checks NetworkX settles at the first counter-example stay in NetworkX
+    # until the graph has been converted for something else.
+    G = nx.gnm_random_graph(2000, 6000, seed=1)
+    with caplog.at_level(logging.DEBUG, logger="networkx"):
+        assert nx.is_regular(G) is False
+    assert not any("Using backend 'rustnx'" in r.getMessage() for r in caplog.records)
+    nx.pagerank(G)
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger="networkx"):
+        assert nx.is_regular(G) is False
+        assert nx.is_eulerian(G) is False
+    assert sum("Using backend 'rustnx'" in r.getMessage() for r in caplog.records) == 2
+
+
+def test_quick_checks_against_networkx():
+    rng = random.Random(5)
+    for i in range(300):
+        n = rng.randint(1, 10)
+        G = nx.gnp_random_graph(n, rng.random(), seed=i, directed=i % 2 == 0)
+        if i % 3 == 0:
+            G = nx.random_regular_graph(2 * rng.randint(0, 2), 2 * rng.randint(3, 5), seed=i)
+        for _ in range(rng.randint(0, 2)):
+            u = rng.randrange(len(G))
+            G.add_edge(u, u)
+        checks = [("is_regular", ()), ("is_eulerian", ()), ("is_k_regular", (2,)),
+                  ("is_strongly_connected", ())]
+        for name, args in checks:
+            f = getattr(nx, name)
+            try:
+                want = f(G, *args, backend="networkx")
+            except nx.NetworkXException as e:
+                with pytest.raises(type(e)):
+                    f(G, *args, backend="rustnx")
+                continue
+            assert f(G, *args, backend="rustnx") == want, (name, i)
+
+
 @pytest.mark.parametrize(
     "call",
     [
@@ -353,6 +391,21 @@ def test_weakly_connected_components(seed):
     assert ours == ref
     assert nx.number_weakly_connected_components(G, backend="rustnx") == len(ref)
     assert nx.is_weakly_connected(G, backend="rustnx") == nx.is_weakly_connected(G)
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_weakly_connected_components_set_order(seed):
+    # Each component's set is built in NetworkX's discovery order, which
+    # follows G._pred; with colliding hashes (ints 64 apart, in-edges added
+    # in random order) the sets' iteration order depends on it.
+    rnd = random.Random(seed)
+    nodes = [i * 64 + rnd.randrange(3) for i in range(40)]
+    G = nx.DiGraph()
+    G.add_nodes_from(nodes)
+    G.add_edges_from((rnd.choice(nodes), rnd.choice(nodes)) for _ in range(50))
+    ours = [list(c) for c in nx.weakly_connected_components(G, backend="rustnx")]
+    ref = [list(c) for c in nx.weakly_connected_components(G, backend="networkx")]
+    assert ours == ref
 
 
 def test_directed_components_reject_undirected_and_null():
@@ -1675,3 +1728,72 @@ def test_version_numbers_agree():
     expected_cargo = m.group(1) + (f"-{labels[m.group(2)]}.{m.group(3)}" if m.group(2) else "")
     assert cargo.group(1) == expected_cargo
     assert rustnx.__version__ == py_version
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda g, b: nx.reverse(g(directed=True), backend=b),
+        lambda g, b: nx.compose(g(), g(2), backend=b),
+        lambda g, b: nx.disjoint_union(g(), g(2), backend=b),
+        lambda g, b: nx.line_graph(g(), backend=b),
+        lambda g, b: nx.cartesian_product(g(), g(2), backend=b),
+        lambda g, b: nx.intersection(g(), g(), backend=b),
+        lambda g, b: nx.ego_graph(g(), 1000, 2, backend=b),
+        lambda g, b: nx.mycielskian(g(), backend=b),
+        lambda g, b: nx.relabel_nodes(g(), lambda v: -v, backend=b),
+    ],
+)
+def test_operators_accept_unpickled_graphs(call):
+    # Pickle doesn't keep the identity of ints above 256, so an unpickled
+    # graph's `_node` and `_adj` hold equal but separate keys; rustnx used to
+    # decline those graphs.
+    import pickle
+
+    def g(seed=1, directed=False):
+        G = nx.gnm_random_graph(30, 60, seed=seed, directed=directed)
+        G = nx.relabel_nodes(G, {v: v + 1000 for v in G})
+        nx.set_edge_attributes(G, {e: i for i, e in enumerate(G.edges)}, "weight")
+        return pickle.loads(pickle.dumps(G))
+
+    want = call(g, "networkx")
+    got = call(g, "rustnx")
+    assert type(got) is type(want)
+    assert list(got.nodes(data=True)) == list(want.nodes(data=True))
+    assert list(got.edges(data=True)) == list(want.edges(data=True))
+
+
+def test_spanning_tree_copies_attributes():
+    # The tree is filled in Rust; like NetworkX's, it holds fresh copies of
+    # the node and edge attribute dicts, in NetworkX's order.
+    G = nx.gnm_random_graph(300, 900, seed=3)
+    rng = random.Random(3)
+    for u, v, d in G.edges(data=True):
+        d["weight"] = rng.randint(1, 9)
+        d["tag"] = (u, v)
+    G.nodes[7]["color"] = "red"
+    G.graph["name"] = "g"
+    for f in (nx.minimum_spanning_tree, nx.maximum_spanning_tree):
+        want = f(G, backend="networkx")
+        got = f(G, backend="rustnx")
+        assert list(got.nodes(data=True)) == list(want.nodes(data=True))
+        assert list(got.edges(data=True)) == list(want.edges(data=True))
+        assert [list(r) for r in got._adj.values()] == [list(r) for r in want._adj.values()]
+        assert got.graph == want.graph
+        u, v = next(iter(got.edges))
+        assert got[u][v] is got[v][u] and got[u][v] is not G[u][v]
+        assert got.nodes[7] is not G.nodes[7]
+
+
+def test_generators_with_hub_nodes():
+    # Every node of gnc_graph links to node 0, and dense generators pair each
+    # node with many others: keys that once shared one hash bucket.
+    for f in (
+        lambda b: nx.gnc_graph(3000, seed=2, backend=b),
+        lambda b: nx.complete_graph(300, backend=b),
+        lambda b: nx.turan_graph(300, 3, backend=b),
+        lambda b: nx.partial_duplication_graph(400, 100, 0.6, 0.4, seed=2, backend=b),
+    ):
+        want, got = f("networkx"), f("rustnx")
+        assert list(got.edges) == list(want.edges)
+        assert [list(r) for r in got._adj.values()] == [list(r) for r in want._adj.values()]

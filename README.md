@@ -2,7 +2,10 @@
 
 **NetworkX, but fast.** rustnx is a Rust-powered backend for
 [NetworkX](https://networkx.org). You keep writing normal NetworkX code, and
-supported algorithms run in Rust instead of Python, often 50–100× faster.
+supported algorithms run in Rust instead of Python: across the 665 functions
+timed, the median is 10× faster, and the heavy ones (centrality,
+distances, clustering) are 50–600× faster. On seven real-world analysis
+pipelines the whole script ran 1.8–495× faster ([details](docs/BENCHMARKS.md)).
 
 Install with `pip install rustnx` (Python 3.10 or newer, including
 free-threaded 3.14t; prebuilt for Linux, macOS and Windows).
@@ -14,7 +17,7 @@ import rustnx
 rustnx.enable()                           # or see "Turning it on" below
 
 G = nx.barabasi_albert_graph(4000, 4, seed=1)
-nx.betweenness_centrality(G)              # runs in Rust: 0.4s instead of 41s
+nx.betweenness_centrality(G)              # runs in Rust: 0.4s instead of 65s
 ```
 
 Nothing else changes, with one caveat: `betweenness_centrality`,
@@ -35,12 +38,12 @@ reuse it until the graph changes.
 
 | 200,000 nodes / 1M edges | Converting to rustnx | Just walking the graph in pure Python |
 |---|---|---|
-| Undirected, no weights | 0.22 s | 0.13 s |
-| Undirected, with weights | 0.58 s | 0.60 s |
-| Directed, with weights | 0.29 s | 0.29 s |
+| Undirected, no weights | 0.23 s | 0.09 s |
+| Undirected, with weights | 0.59 s | 0.45 s |
+| Directed, with weights | 0.32 s | 0.21 s |
 
-Conversion costs about as much as reading the graph once in Python, which is
-the floor for anything that starts from a NetworkX graph. So:
+Conversion costs one to three times as much as reading the graph once in
+Python, which is the floor for anything that starts from a NetworkX graph. So:
 
 - **Heavy algorithms win right away.** Betweenness, closeness, PageRank,
   distance measures, clustering and the centralities take seconds to minutes
@@ -54,7 +57,14 @@ the floor for anything that starts from a NetworkX graph. So:
 - **Big Python results limit the gain.** Functions that return a path for
   every node (`single_source_shortest_path`, `all_pairs_shortest_path`,
   `all_shortest_paths`) or a new graph (`k_core`, `bfs_tree`) spend most of
-  their time building Python objects, so they speed up 2–8× rather than 50×.
+  their time building Python objects, so they speed up 1–10× rather than 50×.
+- **Quick checks and single queries stay in NetworkX.** `is_regular`,
+  `is_eulerian`, `has_path`, `find_cycle` and the like often finish in
+  microseconds, at the first counter-example or after a few steps, so
+  converting the graph would cost more than NetworkX's whole answer. They
+  run in NetworkX until the graph has been converted for something else;
+  after that rustnx answers in about the same time (NetworkX's dispatch
+  overhead, around 20 µs, is most of either).
 - **Some inputs run in NetworkX:** unsupported functions or parameters,
   callable weights, multigraphs in functions that treat parallel edges
   specially, graphs whose weights mix ints and floats in functions that
@@ -83,9 +93,9 @@ G = rustnx.Graph.from_arrays(src, dst, weights)   # NumPy arrays; nodes 0..n-1
 
 | 1M-edge directed graph | `networkx.DiGraph` | `rustnx.DiGraph(edges)` | `rustnx.DiGraph.from_arrays` |
 |---|---|---|---|
-| Build time | 10.0 s | 2.7 s | 0.48 s |
-| Memory | 323 MiB | ~65 MiB | ~47 MiB |
-| `pagerank`, first call | 4.1 s | 0.04 s | 0.04 s |
+| Build time | 3.53 s | 1.52 s | 0.30 s |
+| Memory (growth of the process) | 357 MiB | 97 MiB | 122 MiB |
+| `pagerank`, first call with rustnx enabled | 0.81 s (converts first) | 0.074 s | 0.062 s |
 
 - **The same results as NetworkX.** Nodes come in order of first
   appearance, each node's neighbors in insertion order, and duplicate edges
@@ -131,9 +141,9 @@ rx.dijkstra_shortest_path_lengths(g, 0, float)
   Not yet: subgraphs, `compose`, contraction, matrix and file I/O, and
   `check_cycle=True`.
 - **Speed:** the algorithms are as fast as rustworkx's or faster
-  (betweenness 1.8×, closeness 23×, strong components 2.5×). Building graphs
-  is slower: the graph is stored in Python, so adding 500k edges takes 0.8 s,
-  against rustworkx's 0.04 s.
+  (betweenness 1.6×, closeness 38×, strong components 1.2×, rustworkx
+  0.18.1). Building graphs is slower: the graph is stored in Python, so
+  adding 500k edges takes 1.1 s, against rustworkx's 0.04 s.
 
 ## Supported algorithms
 
@@ -159,12 +169,12 @@ NetworkX, is in [docs/API.md](docs/API.md).
 | `dijkstra_path`, `dijkstra_path_length`, `single_source_dijkstra`, `single_source_dijkstra_path` | The same paths as NetworkX, ties included. The paths dict follows the installed NetworkX's order, which changed in 3.6. If weights mix ints and floats, functions that return lengths run in NetworkX (whether a length is an int depends on the path). |
 | `all_pairs_shortest_path`, `all_pairs_dijkstra_path`, `all_pairs_dijkstra` | Parallel, in batches. |
 | `descendants`, `ancestors` | Same sets and errors as NetworkX. |
-| `triangles`, `clustering`, `average_clustering`, `transitivity` | Directed and undirected, with `nodes=`. Parallel. Unweighted results are **bit-for-bit identical** to NetworkX. Weighted clustering uses [fast floats](#fast-and-exact-floats) (about 90x faster); with exact floats it runs in NetworkX. |
-| `normalized_laplacian_matrix`, `bethe_hessian_matrix`, `tournament_matrix`, `eigenvector_centrality_numpy`, `hits` | NetworkX's own SciPy code, with the sparse matrix it builds supplied by rustnx: identical inputs, so identical results, 2x to 35x faster. `eigenvector_centrality_numpy` and `hits` (before NetworkX 3.7) use ARPACK, which starts from a random vector, so their last bits vary from run to run in NetworkX itself; rustnx's are as close to NetworkX as NetworkX is to itself. |
-| `k_factor`, `junction_tree`, `find_induced_nodes` | NetworkX's own code with its expensive inner call (`max_weight_matching`, chordal completion and cliques, `is_chordal`) run in Rust. **Bit-for-bit identical**; 1.6x to 35x faster. |
-| `simple_cycles`, `chordless_cycles` | NetworkX's own code picks components, start nodes and stems (all by set order); the cycle searches inside run in Rust on the same neighbor lists. The same cycles in the same order, lazily, multigraphs included; 4x to 10x faster when there are many cycles. |
-| `eulerize`, `local_and_global_consistency`, `harmonic_function` | NetworkX's own code with its matching or adjacency matrix from rustnx. **Bit-for-bit identical**; 1.2x to 5x faster. |
-| `attr_matrix`, `attr_sparse_matrix`, `magnetic_laplacian_matrix` | Built in Rust, **bit-for-bit identical**, 9x to 19x faster. Attribute matrices with `node_attr` fall back. |
+| `triangles`, `clustering`, `average_clustering`, `transitivity` | Directed and undirected, with `nodes=`. Parallel. Unweighted results are **bit-for-bit identical** to NetworkX. Weighted clustering uses [fast floats](#fast-and-exact-floats) (about 70x faster); with exact floats it runs in NetworkX. |
+| `normalized_laplacian_matrix`, `bethe_hessian_matrix`, `tournament_matrix`, `eigenvector_centrality_numpy`, `hits` | NetworkX's own SciPy code, with the sparse matrix it builds supplied by rustnx: identical inputs, so identical results, 2x to 21x faster. `eigenvector_centrality_numpy` and `hits` (before NetworkX 3.7) use ARPACK, which starts from a random vector, so their last bits vary from run to run in NetworkX itself; rustnx's are as close to NetworkX as NetworkX is to itself. |
+| `k_factor`, `junction_tree`, `find_induced_nodes` | NetworkX's own code with its expensive inner call (`max_weight_matching`, chordal completion and cliques, `is_chordal`) run in Rust. **Bit-for-bit identical**; 1.2x to 54x faster. |
+| `simple_cycles`, `chordless_cycles` | NetworkX's own code picks components, start nodes and stems (all by set order); the cycle searches inside run in Rust on the same neighbor lists. The same cycles in the same order, lazily, multigraphs included; 2x to 5x faster. |
+| `eulerize`, `local_and_global_consistency`, `harmonic_function` | NetworkX's own code with its matching or adjacency matrix from rustnx. **Bit-for-bit identical**; 2x to 5x faster. |
+| `attr_matrix`, `attr_sparse_matrix`, `magnetic_laplacian_matrix` | Built in Rust, **bit-for-bit identical**, 6x to 15x faster. Attribute matrices with `node_attr` fall back. |
 | `bidirectional_dijkstra` | Same path and distance as NetworkX, ties included. Also used by weighted `shortest_path(G, source, target)`. |
 | `harmonic_centrality` | Unweighted and `distance=`, `sources=`. Parallel. **Bit-for-bit identical** to NetworkX. A small `nbunch` with many `sources` runs in NetworkX. |
 | `eigenvector_centrality`, `katz_centrality` | All options except Katz's `nstart` and per-node `beta`. **Bit-for-bit identical** to NetworkX, including when they stop. |
@@ -228,32 +238,32 @@ NetworkX, is in [docs/API.md](docs/API.md).
 | `efficiency`, `global_efficiency`, `local_efficiency`, `closeness_vitality`, `gutman_index`, `schultz_index`, `hyper_wiener_index`, `flow_hierarchy`, `voronoi_cells` | Bit-for-bit identical. |
 | `nx.approximation`: `min_weighted_vertex_cover`, `min_weighted_dominating_set`, `min_edge_dominating_set`, `min_maximal_matching`, `greedy_tsp`, `simulated_annealing_tsp`, `threshold_accepting_tsp`, `treewidth_min_fill_in`, `treewidth_decomp`, `diameter`, `one_exchange`, `randomized_partitioning`, `steiner_tree`, `densest_subgraph` | Same results as each NetworkX version, including the random draws for a given seed. Cases that depend on set order run in NetworkX. |
 | `complement`, `power`, `difference`, `symmetric_difference`, `is_kl_connected`, `kl_connected_subgraph` | Same graphs (node and adjacency order) as NetworkX. |
-| `union`, `union_all`, `compose`, `compose_all`, `disjoint_union`, `disjoint_union_all`, `full_join`, `intersection`, `intersection_all`, `reverse`, `moral_graph`, `line_graph`, `ego_graph` | Same graphs as NetworkX: node and adjacency order, and attribute dicts copied, shared or deep-copied as NetworkX does. 2x to 5x faster. Multigraphs, subclasses and views run in NetworkX. |
-| `cartesian_product`, `tensor_product`, `strong_product`, `lexicographic_product`, `rooted_product`, `corona_product` | Same graphs, with attribute tuples in NetworkX's key order. 3.5x to 6.5x faster. |
+| `union`, `union_all`, `compose`, `compose_all`, `disjoint_union`, `disjoint_union_all`, `full_join`, `intersection`, `intersection_all`, `reverse`, `moral_graph`, `line_graph`, `ego_graph` | Same graphs as NetworkX: node and adjacency order, and attribute dicts copied, shared or deep-copied as NetworkX does. 1.4x to 5x faster. Multigraphs, subclasses and views run in NetworkX. |
+| `cartesian_product`, `tensor_product`, `strong_product`, `lexicographic_product`, `rooted_product`, `corona_product` | Same graphs, with attribute tuples in NetworkX's key order. 2x to 7x faster. |
 | `constraint`, `effective_size`, `local_constraint`, `tree_broadcast_center`, `tree_broadcast_time` | **Bit-for-bit identical**, with float sums in NetworkX's set order. `constraint` and `effective_size` with `nodes=None` use SciPy in NetworkX 3.5+ and run there. |
 | `nx.bipartite`: `density`, `degree_centrality`, `projected_graph`, `weighted_projected_graph` | Same results and order as NetworkX. |
-| `to_scipy_sparse_array`, `adjacency_matrix`, `laplacian_matrix`, `incidence_matrix`, `to_numpy_array`, `nx.bipartite.biadjacency_matrix` | The same arrays as NetworkX (dtype, format, index arrays and data). Up to 80x faster (`incidence_matrix`). |
+| `to_scipy_sparse_array`, `adjacency_matrix`, `laplacian_matrix`, `incidence_matrix`, `to_numpy_array`, `nx.bipartite.biadjacency_matrix` | The same arrays as NetworkX (dtype, format, index arrays and data). 11x to 98x faster (`incidence_matrix` the most). |
 | `to_dict_of_lists`, `number_of_selfloops`, `is_weighted`, `is_negatively_weighted`, `get_node_attributes`, `get_edge_attributes`, `relabel_nodes`, `convert_node_labels_to_integers` | Same results as NetworkX. `relabel_nodes(copy=False)` changes the graph in place and runs in NetworkX. |
-| Graph builders: `from_dict_of_lists`, `from_dict_of_dicts`, `from_edgelist`, `from_numpy_array`, `from_scipy_sparse_array`, `nx.bipartite.from_biadjacency_matrix` | The same NetworkX graph, 1.3x to 2.5x faster. |
-| Deterministic generators: `empty_graph`, `complete_graph`, `cycle_graph`, `path_graph`, `star_graph`, `wheel_graph`, `ladder_graph`, `circular_ladder_graph`, `lollipop_graph`, `barbell_graph`, `tadpole_graph`, `full_rary_tree`, `balanced_tree`, `binomial_tree`, `complete_bipartite_graph`, `complete_multipartite_graph`, `turan_graph`, `grid_2d_graph`, `grid_graph`, `hypercube_graph`, `hexagonal_lattice_graph`, `triangular_lattice_graph`, `circulant_graph`, `caveman_graph`, `connected_caveman_graph`, `ring_of_cliques`, `windmill_graph`, `sudoku_graph`, `LCF_graph`, `generalized_petersen_graph`, `dorogovtsev_goltsev_mendes_graph`, `mycielski_graph`, `paley_graph`, `kneser_graph` | Built in Rust straight into a NetworkX graph identical to NetworkX's (node and row order, attributes, multigraph keys), with `create_using`. 1.6x to 19x faster. Periodic hexagonal and triangular lattices run in NetworkX. |
-| Random generators: `gnp_random_graph`, `fast_gnp_random_graph`, `gnm_random_graph`, `dense_gnm_random_graph`, `barabasi_albert_graph`, `dual_barabasi_albert_graph`, `extended_barabasi_albert_graph`, `watts_strogatz_graph`, `newman_watts_strogatz_graph`, `connected_watts_strogatz_graph`, `powerlaw_cluster_graph`, `random_regular_graph`, `gn_graph`, `gnr_graph`, `gnc_graph`, `random_uniform_k_out_graph`, `random_lobster_graph` (`random_lobster` before 3.6), `random_tournament`, `stochastic_block_model`, `random_partition_graph`, `planted_partition_graph`, `random_geometric_graph`, `waxman_graph`, `nx.bipartite.random_graph`, `nx.bipartite.gnmk_random_graph` | The same graph for the same `seed`, and `random.Random` left in the same state, by replaying NetworkX's draws on a copy of CPython's generator. 3x to 350x faster at 100k nodes. NumPy random generators run in NetworkX. |
-| Readers and parsers: `read_edgelist`, `parse_edgelist`, `read_weighted_edgelist`, `read_adjlist`, `parse_adjlist`, `read_multiline_adjlist`, `parse_multiline_adjlist`, `read_leda`, `parse_leda`, `read_pajek`, `parse_pajek`, `read_gml`, `parse_gml`, `read_graph6`, `from_graph6_bytes`, `read_sparse6`, `from_sparse6_bytes`, `node_link_graph`, `adjacency_graph`, `cytoscape_graph`, `tree_graph`, `nx.bipartite.read_edgelist`, `nx.bipartite.parse_edgelist` | Parsed in Rust into the same NetworkX graph (class, node and adjacency order, attribute types, multigraph keys). Files and paths (also `.gz` and `.bz2`) in UTF-8, ASCII or Latin-1; anything else runs in NetworkX. 2x to 15x faster. |
-| `read_graphml`, `parse_graphml`, `read_gexf` | XML parsed in Rust (quick-xml) and NetworkX's reader followed step by step: the same graph class, node and row order, value types, edge ids and keys. yFiles data, ports, hyperedges, nested GraphML graphs, a DOCTYPE or a non-UTF-8 encoding go to NetworkX, and malformed files raise NetworkX's error. About 8x (GraphML) and 5x (GEXF) faster. |
-| `from_pandas_edgelist`, `to_pandas_edgelist`, `from_pandas_adjacency` | `Graph` and `DiGraph` built from, or edge columns gathered out of, NetworkX's dicts in Rust; the same frames and graphs. 1.4x to 5x faster. Need pandas, like NetworkX. |
-| Degree-sequence and tree generators: `configuration_model`, `directed_configuration_model`, `expected_degree_graph`, `havel_hakimi_graph`, `directed_havel_hakimi_graph`, `degree_sequence_tree`, `random_degree_sequence_graph`, `random_powerlaw_tree`, `random_powerlaw_tree_sequence`, `random_labeled_tree`, `random_labeled_rooted_tree`, `random_labeled_rooted_forest`, `random_cograph`, `random_clustered_graph`, `joint_degree_graph`, `directed_joint_degree_graph`, `is_valid_directed_joint_degree`, `nx.bipartite.configuration_model`, `nx.bipartite.havel_hakimi_graph`, `reverse_havel_hakimi_graph`, `alternating_havel_hakimi_graph` | The same graph for the same `seed`, with `random.Random` left in the same state (including CPython's set and `set.pop()` order where NetworkX depends on it). 2x to 15x faster at 100k nodes; `random_degree_sequence_graph` about 1000x. |
-| Growth, geometric and community generators: `duplication_divergence_graph`, `partial_duplication_graph`, `scale_free_graph`, `random_shell_graph`, `relaxed_caveman_graph`, `gaussian_random_partition_graph`, `navigable_small_world_graph`, `geographical_threshold_graph`, `soft_random_geometric_graph`, `thresholded_random_geometric_graph`, `geometric_soft_configuration_graph`, `geometric_edges`, `uniform_random_intersection_graph`, `k_random_intersection_graph`, `general_random_intersection_graph`, `random_k_lift`, `maybe_regular_expander_graph` (`maybe_regular_expander` before 3.6), `random_internet_as_graph`, `nx.bipartite.preferential_attachment_graph` | The same graph for the same `seed` (NetworkX's `random.Random` draws, NumPy's legacy `RandomState` for the expanders, and Python's set order replayed). 1.4x to over 10000x faster. |
-| Generators and transformations: `margulis_gabber_galil_graph`, `chordal_cycle_graph`, `hkn_harary_graph`, `hnm_harary_graph`, `prefix_tree`, `prefix_tree_recursive`, `interval_graph`, `visibility_graph`, `nonisomorphic_trees`, `join_trees`, `mycielskian`, `stochastic_graph`, `contracted_nodes`, `contracted_edge`, `quotient_graph`, `modular_product`, `inverse_line_graph` | Same graphs as NetworkX, with attribute dicts copied or shared as NetworkX does. 1.5x to 500x faster. `quotient_graph` with custom relations or float weights runs in NetworkX. |
-| Cliques, communities and structure: `find_cliques`, `find_cliques_recursive`, `make_max_clique_graph`, `make_clique_bipartite`, `k_clique_communities`, `kernighan_lin_bisection`, `dominating_set`, `maximal_independent_set`, `chordal_graph_cliques`, `find_asteroidal_triple`, `nx.tournament.hamiltonian_path`, `build_auxiliary_node_connectivity`, `build_auxiliary_edge_connectivity` | Same results and order as NetworkX (set order replayed; seeded ones replay `random.Random`). `find_cliques` stays lazy. 2x to 1700x faster. |
+| Graph builders: `from_dict_of_lists`, `from_dict_of_dicts`, `from_edgelist`, `from_numpy_array`, `from_scipy_sparse_array`, `nx.bipartite.from_biadjacency_matrix` | The same NetworkX graph, 1.2x to 2x faster. |
+| Deterministic generators: `empty_graph`, `complete_graph`, `cycle_graph`, `path_graph`, `star_graph`, `wheel_graph`, `ladder_graph`, `circular_ladder_graph`, `lollipop_graph`, `barbell_graph`, `tadpole_graph`, `full_rary_tree`, `balanced_tree`, `binomial_tree`, `complete_bipartite_graph`, `complete_multipartite_graph`, `turan_graph`, `grid_2d_graph`, `grid_graph`, `hypercube_graph`, `hexagonal_lattice_graph`, `triangular_lattice_graph`, `circulant_graph`, `caveman_graph`, `connected_caveman_graph`, `ring_of_cliques`, `windmill_graph`, `sudoku_graph`, `LCF_graph`, `generalized_petersen_graph`, `dorogovtsev_goltsev_mendes_graph`, `mycielski_graph`, `paley_graph`, `kneser_graph` | Built in Rust straight into a NetworkX graph identical to NetworkX's (node and row order, attributes, multigraph keys), with `create_using`. Up to 56x faster (`windmill_graph`); the plainest ones (`complete_graph`, `barbell_graph`, `complete_multipartite_graph`, `turan_graph`), where filling NetworkX's dicts is all the work, are 1.6x to 2.1x faster, and `empty_graph` is slower (0.4x). Periodic hexagonal and triangular lattices run in NetworkX. |
+| Random generators: `gnp_random_graph`, `fast_gnp_random_graph`, `gnm_random_graph`, `dense_gnm_random_graph`, `barabasi_albert_graph`, `dual_barabasi_albert_graph`, `extended_barabasi_albert_graph`, `watts_strogatz_graph`, `newman_watts_strogatz_graph`, `connected_watts_strogatz_graph`, `powerlaw_cluster_graph`, `random_regular_graph`, `gn_graph`, `gnr_graph`, `gnc_graph`, `random_uniform_k_out_graph`, `random_lobster_graph` (`random_lobster` before 3.6), `random_tournament`, `stochastic_block_model`, `random_partition_graph`, `planted_partition_graph`, `random_geometric_graph`, `waxman_graph`, `nx.bipartite.random_graph`, `nx.bipartite.gnmk_random_graph` | The same graph for the same `seed`, and `random.Random` left in the same state, by replaying NetworkX's draws on a copy of CPython's generator. 1.3x to 280x faster; `planted_partition_graph` takes about 0.1 ms on the benchmark's input, against NetworkX's 0.06 ms (0.6x). NumPy random generators run in NetworkX. |
+| Readers and parsers: `read_edgelist`, `parse_edgelist`, `read_weighted_edgelist`, `read_adjlist`, `parse_adjlist`, `read_multiline_adjlist`, `parse_multiline_adjlist`, `read_leda`, `parse_leda`, `read_pajek`, `parse_pajek`, `read_gml`, `parse_gml`, `read_graph6`, `from_graph6_bytes`, `read_sparse6`, `from_sparse6_bytes`, `node_link_graph`, `adjacency_graph`, `cytoscape_graph`, `tree_graph`, `nx.bipartite.read_edgelist`, `nx.bipartite.parse_edgelist` | Parsed in Rust into the same NetworkX graph (class, node and adjacency order, attribute types, multigraph keys). Files and paths (also `.gz` and `.bz2`) in UTF-8, ASCII or Latin-1; anything else runs in NetworkX. 1.5x to 64x faster. |
+| `read_graphml`, `parse_graphml`, `read_gexf` | XML parsed in Rust (quick-xml) and NetworkX's reader followed step by step: the same graph class, node and row order, value types, edge ids and keys. yFiles data, ports, hyperedges, nested GraphML graphs, a DOCTYPE or a non-UTF-8 encoding go to NetworkX, and malformed files raise NetworkX's error. About 7x (GraphML) and 5x (GEXF) faster. |
+| `from_pandas_edgelist`, `to_pandas_edgelist`, `from_pandas_adjacency` | `Graph` and `DiGraph` built from, or edge columns gathered out of, NetworkX's dicts in Rust; the same frames and graphs. 1.3x to 3x faster. Need pandas, like NetworkX. |
+| Degree-sequence and tree generators: `configuration_model`, `directed_configuration_model`, `expected_degree_graph`, `havel_hakimi_graph`, `directed_havel_hakimi_graph`, `degree_sequence_tree`, `random_degree_sequence_graph`, `random_powerlaw_tree`, `random_powerlaw_tree_sequence`, `random_labeled_tree`, `random_labeled_rooted_tree`, `random_labeled_rooted_forest`, `random_cograph`, `random_clustered_graph`, `joint_degree_graph`, `directed_joint_degree_graph`, `is_valid_directed_joint_degree`, `nx.bipartite.configuration_model`, `nx.bipartite.havel_hakimi_graph`, `reverse_havel_hakimi_graph`, `alternating_havel_hakimi_graph` | The same graph for the same `seed`, with `random.Random` left in the same state (including CPython's set and `set.pop()` order where NetworkX depends on it). 1.6x to 140x faster; `random_degree_sequence_graph` about 270x. |
+| Growth, geometric and community generators: `duplication_divergence_graph`, `partial_duplication_graph`, `scale_free_graph`, `random_shell_graph`, `relaxed_caveman_graph`, `gaussian_random_partition_graph`, `navigable_small_world_graph`, `geographical_threshold_graph`, `soft_random_geometric_graph`, `thresholded_random_geometric_graph`, `geometric_soft_configuration_graph`, `geometric_edges`, `uniform_random_intersection_graph`, `k_random_intersection_graph`, `general_random_intersection_graph`, `random_k_lift`, `maybe_regular_expander_graph` (`maybe_regular_expander` before 3.6), `random_internet_as_graph`, `nx.bipartite.preferential_attachment_graph` | The same graph for the same `seed` (NetworkX's `random.Random` draws, NumPy's legacy `RandomState` for the expanders, and Python's set order replayed). 1.2x to 3,600x faster; `relaxed_caveman_graph` takes about 80 µs on the benchmark's input, against NetworkX's 50 µs (0.6x). |
+| Generators and transformations: `margulis_gabber_galil_graph`, `chordal_cycle_graph`, `hkn_harary_graph`, `hnm_harary_graph`, `prefix_tree`, `prefix_tree_recursive`, `interval_graph`, `visibility_graph`, `nonisomorphic_trees`, `join_trees`, `mycielskian`, `stochastic_graph`, `contracted_nodes`, `contracted_edge`, `quotient_graph`, `modular_product`, `inverse_line_graph` | Same graphs as NetworkX, with attribute dicts copied or shared as NetworkX does. 2x to 1,000x faster. `quotient_graph` with custom relations or float weights runs in NetworkX. |
+| Cliques, communities and structure: `find_cliques`, `find_cliques_recursive`, `make_max_clique_graph`, `make_clique_bipartite`, `k_clique_communities`, `kernighan_lin_bisection`, `dominating_set`, `maximal_independent_set`, `chordal_graph_cliques`, `find_asteroidal_triple`, `nx.tournament.hamiltonian_path`, `build_auxiliary_node_connectivity`, `build_auxiliary_edge_connectivity` | Same results and order as NetworkX (set order replayed; seeded ones replay `random.Random`). `find_cliques` stays lazy. 2x to 850x faster. |
 | `nx.approximation`: `max_clique`, `maximum_independent_set`, `clique_removal`, `large_clique_size`, `ramsey_R2`, `treewidth_min_degree`, `metric_closure`, `local_node_connectivity`, `node_connectivity`, `all_pairs_node_connectivity` | Same results as NetworkX. The recursive ones run without recursion, so inputs deep enough to hit Python's recursion limit get an answer where NetworkX raises `RecursionError`. |
-| `nx.bipartite`: `clustering` (`latapy_clustering`), `average_clustering`, `robins_alexander_clustering`, `betweenness_centrality`, `generic_weighted_projected_graph`, `overlap_weighted_projected_graph`, `collaboration_weighted_projected_graph`, `min_edge_cover`, `eppstein_matching`, `maximal_extendability`, `modularity` (3.7+); and `cd_index` | Same results as NetworkX. 4x to 230x faster. |
+| `nx.bipartite`: `clustering` (`latapy_clustering`), `average_clustering`, `robins_alexander_clustering`, `betweenness_centrality`, `generic_weighted_projected_graph`, `overlap_weighted_projected_graph`, `collaboration_weighted_projected_graph`, `min_edge_cover`, `eppstein_matching`, `maximal_extendability`, `modularity` (3.7+); and `cd_index` | Same results as NetworkX. 3x to 235x faster. |
 
-| `nx.nx_pydot.read_dot` | Parsed in Rust with pydot 4.0.1's grammar, then NetworkX's own `from_pydot`; the same graph. Other pydot versions go to pydot. About 100x faster. |
-| `louvain_communities`, `louvain_partitions` | Louvain in Rust with Python's own arithmetic and set operations, for both NetworkX variants (3.4 to 3.6, and 3.7's): the same communities for the same `seed`. 4x to 10x faster. |
-| Randomized measures: `random_reference`, `lattice_reference`, `sigma`, `omega`, `nx.approximation.average_clustering`, `generate_random_paths`, `panther_similarity`, `panther_vector_similarity`, `random_spanning_tree`, `random_walk` | The same results for the same `seed` (Python's `random.Random` and NumPy's legacy `RandomState` replayed, or called in NetworkX's order). 1.5x to 1,400x faster. |
-| `christofides`, `traveling_salesman_problem`, `asadpour_atsp`, `held_karp_ascent`, `nx.approximation.k_components` | NetworkX's own code with its inner work (spanning trees, matchings, arborescences, connectivity) in rustnx. 4x to 30x faster. |
-| `snap_aggregation`, `create_component_structure`, `capacity_scaling`, `spanner`, `k_edge_augmentation` (k >= 3 or `avail`) and its helpers | The same results in the same order (Python's set orders, `id()` tie-breaks and random draws replayed where NetworkX depends on them). 2x to 800x faster. |
-| `lukes_partitioning` | The same partition, with each set in the same order (the root draw, set orders and Python's `sum()` replayed). 100x to 1,000x faster. |
-| `vf2pp_isomorphism`, `vf2pp_all_isomorphisms` and (NetworkX 3.7) the subgraph and monomorphism mappings | The same mappings in the same order (the matching order and candidate set orders replayed). 10x to 25x faster. |
+| `nx.nx_pydot.read_dot` | Parsed in Rust with pydot 4.0.1's grammar, then NetworkX's own `from_pydot`; the same graph. Other pydot versions go to pydot. About 340x faster. |
+| `louvain_communities`, `louvain_partitions` | Louvain in Rust with Python's own arithmetic and set operations, for both NetworkX variants (3.4 to 3.6, and 3.7's): the same communities for the same `seed`. About 11x faster. |
+| Randomized measures: `random_reference`, `lattice_reference`, `sigma`, `omega`, `nx.approximation.average_clustering`, `generate_random_paths`, `panther_similarity`, `panther_vector_similarity`, `random_spanning_tree`, `random_walk` | The same results for the same `seed` (Python's `random.Random` and NumPy's legacy `RandomState` replayed, or called in NetworkX's order). 1.2x to 75x faster. |
+| `christofides`, `traveling_salesman_problem`, `asadpour_atsp`, `held_karp_ascent`, `nx.approximation.k_components` | NetworkX's own code with its inner work (spanning trees, matchings, arborescences, connectivity) in rustnx. 8x to 19x faster (`asadpour_atsp` and `held_karp_ascent` about 30x on the inputs NetworkX finishes). |
+| `snap_aggregation`, `create_component_structure`, `capacity_scaling`, `spanner`, `k_edge_augmentation` (k >= 3 or `avail`) and its helpers | The same results in the same order (Python's set orders, `id()` tie-breaks and random draws replayed where NetworkX depends on them). 1.3x to 160x faster. |
+| `lukes_partitioning` | The same partition, with each set in the same order (the root draw, set orders and Python's `sum()` replayed). 100x to 1,000x faster (650x at 512 nodes). |
+| `vf2pp_isomorphism`, `vf2pp_all_isomorphisms` and (NetworkX 3.7) the subgraph and monomorphism mappings | The same mappings in the same order (the matching order and candidate set orders replayed). 10x to 25x faster on 200- to 500-node regular graphs; 3x to 5x on small ones. |
 The rest of NetworkX's functions run in NetworkX. [docs/COVERAGE.md](docs/COVERAGE.md)
 lists every function NetworkX lets a backend implement and which ones rustnx
 does.
@@ -327,10 +337,10 @@ result on any machine and any thread count.
 
 | Function | Fast floats (default) | Exact floats | Fast vs exact (4 cores) |
 |---|---|---|---|
-| `betweenness_centrality` | Parallel blocks of sources, block sums added at the end | Parallel, each source's share added in NetworkX's order | 0.76 s vs 0.80 s (5,000 nodes) |
-| `edge_betweenness_centrality` | As above | As above | 0.78 s vs 0.85 s (5,000 nodes) |
-| `pagerank` | Power iteration in Rust; multigraphs too | Rust builds the sparse matrix, NetworkX's own SciPy code does the arithmetic; multigraphs run in NetworkX | 0.030 s vs 0.169 s (200,000 nodes; NetworkX takes 5.9 s) |
-| `clustering`, `average_clustering` (weighted) | Cube roots summed in Rust, in parallel | Runs in NetworkX (unweighted is exact in Rust either way) | 0.038 s vs NetworkX's 3.4 s (20,000 nodes, 200,000 edges) |
+| `betweenness_centrality` | Parallel blocks of sources, block sums added at the end | Parallel, each source's share added in NetworkX's order | 0.52 s vs 0.56 s (5,000 nodes; NetworkX takes 164 s) |
+| `edge_betweenness_centrality` | As above | As above | 0.57 s vs 0.64 s (5,000 nodes; NetworkX takes 181 s) |
+| `pagerank` | Power iteration in Rust; multigraphs too | Rust builds the sparse matrix, NetworkX's own SciPy code does the arithmetic; multigraphs run in NetworkX | 0.028 s vs 0.132 s (200,000 nodes; NetworkX takes 1.5 s) |
+| `clustering`, `average_clustering` (weighted) | Cube roots summed in Rust, in parallel | Runs in NetworkX (unweighted is exact in Rust either way) | 0.046 s vs NetworkX's 3.1 s (20,000 nodes, 200,000 edges) |
 
 #### Settings
 
@@ -398,52 +408,96 @@ cause says which setting to change.
 
 ## Benchmarks
 
-`python benchmarks/bench.py` on a 4-core machine (NetworkX 3.6.1):
+### Real-world pipelines
+
+`python benchmarks/real_world.py` runs seven analysis scripts on
+[SNAP](https://snap.stanford.edu/data/) datasets, each step once, as a
+script would. rustnx's time includes converting the graph on its first step.
+Every step's result was checked against NetworkX's (identical, or within
+1e-9 for the fast-float functions). Per-step times are in
+[docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+
+| Pipeline | Nodes / edges | Steps | NetworkX | rustnx | Speedup |
+|---|---|---|---|---|---|
+| Social network (Facebook) | 4,039 / 88,234 | 13 | 163 s | 0.92 s | **176×** |
+| Email network (Enron) | 36,692 / 183,831 | 9 | 149 s | 1.57 s | **95×** |
+| Collaboration network (astrophysics) | 17,903 / 196,972 | 7 | 629 s | 1.27 s | **495×** |
+| Trust network (Epinions) | 75,879 / 508,837 | 8 | 10.2 s | 1.33 s | 7.7× |
+| Citation network (HEP-PH) | 34,546 / 421,534 | 6 | 7.15 s | 0.82 s | 8.8× |
+| Road routing (Pennsylvania) | 1,088,092 / 1,541,898 | 6 | 92.7 s | 14.0 s | 6.6× |
+| Web graph (Google) | 875,713 / 5,105,039 | 4 | 18.5 s | 10.4 s | 1.8× |
+
+The analyses heavy on all-pairs work (betweenness, closeness, distances,
+clustering) gain 100–500×. The directed and road pipelines are mostly
+linear-time steps on big graphs, where converting the graph is a large part
+of rustnx's time: the first step on the 5M-edge web graph spends about 3 s
+converting, `weakly_connected_components` there reads the predecessor
+order from `G._pred` (so its sets iterate exactly as NetworkX's) and gains
+nothing, and `minimum_spanning_tree` on the 1.1M-node road network (2.9×)
+spends most of its time allocating the result graph's 3 million Python
+dicts.
+
+### Every function
+
+`python benchmarks/all_functions.py` times all 667 functions rustnx
+implements, each on an input grown until NetworkX takes about half a second
+(up to 262,144 nodes). 665 were timed (NetworkX can't finish `asadpour_atsp`
+or `held_karp_ascent` at any size tried), and all 665 returned NetworkX's
+results: 660 identical, 5 within 1e-9. On a repeat call the median function
+is **10×** faster: 333 functions are over 10× faster, 72 over 100×, and 13
+are slower, all of them queries NetworkX answers in microseconds or
+functions whose time goes into building Python results (see "When rustnx
+helps" above). The full table, grouped by
+NetworkX module, is in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+
+### Headline functions
+
+`python benchmarks/bench.py` on a 4-core machine (NetworkX 3.7, Python 3.12):
 
 | Function | Graph | NetworkX | rustnx | Speedup |
 |---|---|---|---|---|
-| `betweenness_centrality` | 4,000 nodes / 16k edges | 40.9 s | 0.38 s | **107×** |
-| `betweenness_centrality` (weighted) | 4,000 / 16k | 115.3 s | 1.24 s | **93×** |
-| `edge_betweenness_centrality` | 4,000 / 16k | 42.3 s | 0.46 s | **93×** |
-| `edge_betweenness_centrality` (weighted) | 4,000 / 16k | 106.8 s | 1.33 s | **80×** |
-| `closeness_centrality` | 4,000 / 16k | 5.45 s | 0.0097 s | **562×** |
-| `single_source_dijkstra_path_length` | 160,000 / 319k | 0.38 s | 0.063 s | 6× |
-| `single_source_shortest_path_length` | 160,000 / 319k | 0.11 s | 0.020 s | 5× |
-| `connected_components` | 200,000 / 300k | 0.23 s | 0.040 s | 6× |
-| `pagerank` | 200,000 / 1M (directed) | 5.76 s | 0.024 s | **243×** |
-| `pagerank` (weighted) | 200,000 / 1M (directed) | 3.81 s | 0.024 s | **161×** |
-| `strongly_connected_components` | 200,000 / 1M (directed) | 1.96 s | 0.052 s | **38×** |
-| `topological_sort` | 200,000 / 499k (DAG) | 0.40 s | 0.023 s | 17× |
-| `weakly_connected_components` | 200,000 / 1M (directed) | 0.39 s | 0.036 s | 11× |
-| `diameter` | 5,000 / 15k | 11.2 s | 0.014 s | **807×** |
-| `average_shortest_path_length` | 5,000 / 15k | 10.8 s | 0.014 s | **783×** |
-| `wiener_index` | 5,000 / 15k | 10.0 s | 0.012 s | **829×** |
-| `eccentricity` (weighted) | 5,000 / 15k | 57.0 s | 1.41 s | 40× |
-| `all_pairs_dijkstra_path_length` | 5,000 / 15k | 60.2 s | 4.90 s | 12× |
-| `all_pairs_shortest_path_length` | 5,000 / 15k | 9.6 s | 2.56 s | 4× (building 25M Python dict entries dominates) |
-| `dijkstra_path` (50 pairs) | 200,000 / 1M | 117 s | 3.3 s | **35×** |
-| `single_source_dijkstra_path` | 200,000 / 1M | 4.56 s | 0.83 s | 5.5× |
-| `single_source_shortest_path` | 200,000 / 1M | 1.10 s | 0.57 s | 1.9× (building the path lists dominates) |
-| `clustering` | 100,000 / 500k (Barabási–Albert) | 5.09 s | 0.092 s | **55×** |
-| `transitivity` | 100,000 / 500k (Barabási–Albert) | 5.12 s | 0.088 s | **58×** |
-| `triangles` | 100,000 / 500k (Barabási–Albert) | 1.52 s | 0.091 s | 17× |
-| `katz_centrality` | 200,000 / 1M (directed) | 13.3 s | 0.073 s | **180×** |
-| `core_number` | 200,000 / 1M | 2.88 s | 0.042 s | **69×** |
-| `eigenvector_centrality` | 200,000 / 1M | 10.3 s | 0.18 s | **57×** |
-| `harmonic_centrality` | 3,000 / 12k | 4.56 s | 0.14 s | **33×** |
-| `is_bipartite` | 200,000 / 400k (grid) | 0.33 s | 0.012 s | 27× |
-| `bfs_edges` | 200,000 / 1M | 2.46 s | 0.13 s | 20× |
-| `dfs_edges` | 200,000 / 1M | 2.49 s | 0.15 s | 17× |
-| `bidirectional_dijkstra` (20 pairs) | 200,000 / 1M | 0.24 s | 0.023 s | 11× |
-| `k_core` | 200,000 / 1M | 10.2 s | 7.4 s | 1.4× (copying the subgraph in NetworkX dominates) |
-| `label_propagation_communities` | 100,000 / 500k (Barabási–Albert) | 3.01 s | 0.069 s | **43×** |
-| `greedy_color` | 100,000 / 500k (Barabási–Albert) | 0.28 s | 0.014 s | 21× |
-| `minimum_spanning_tree` | 200,000 / 1M | 7.73 s | 1.01 s | 7.7× |
-| `bfs_tree` | 200,000 / 1M | 3.67 s | 1.08 s | 3.4× (building the tree in NetworkX dominates) |
-| `all_shortest_paths` | 3,600 / 7k (grid, 2.7M paths) | 6.63 s | 2.80 s | 2.4× (building the path lists dominates) |
+| `betweenness_centrality` | 4,000 / 16k | 65.5 s | 0.40 s | **165×** |
+| `betweenness_centrality` (weighted) | 4,000 / 16k | 147.9 s | 1.17 s | **127×** |
+| `edge_betweenness_centrality` | 4,000 / 16k | 78.4 s | 0.37 s | **214×** |
+| `edge_betweenness_centrality` (weighted) | 4,000 / 16k | 161.5 s | 1.26 s | **128×** |
+| `closeness_centrality` | 4,000 / 16k | 6.77 s | 0.0086 s | **787×** |
+| `single_source_dijkstra_path_length` | 160,000 / 319k | 0.36 s | 0.052 s | 6.9× |
+| `single_source_shortest_path_length` | 160,000 / 319k | 0.078 s | 0.019 s | 4.0× |
+| `connected_components` | 200,000 / 300k | 0.21 s | 0.035 s | 6.0× |
+| `pagerank` | 200,000 / 1M (directed) | 1.26 s | 0.027 s | **47×** |
+| `pagerank` (weighted) | 200,000 / 1M (directed) | 1.45 s | 0.025 s | **57×** |
+| `strongly_connected_components` | 200,000 / 1M (directed) | 0.56 s | 0.044 s | 13× |
+| `topological_sort` | 200,000 / 500k (DAG) | 0.32 s | 0.022 s | 15× |
+| `weakly_connected_components` | 200,000 / 1M (directed) | 0.38 s | 0.032 s | 12× |
+| `diameter` | 5,000 / 15k | 11.1 s | 0.015 s | **715×** |
+| `average_shortest_path_length` | 5,000 / 15k | 11.8 s | 0.015 s | **801×** |
+| `wiener_index` | 5,000 / 15k | 11.7 s | 0.017 s | **707×** |
+| `eccentricity` (weighted) | 5,000 / 15k | 63.2 s | 1.66 s | **38×** |
+| `all_pairs_dijkstra_path_length` | 5,000 / 15k | 64.2 s | 7.28 s | 8.8× |
+| `all_pairs_shortest_path_length` | 5,000 / 15k | 11.7 s | 4.72 s | 2.5× (building 25M Python dict entries dominates) |
+| `dijkstra_path` (50 pairs) | 200,000 / 1M | 101.1 s | 3.21 s | **31×** |
+| `single_source_dijkstra_path` | 200,000 / 1M | 3.66 s | 0.39 s | 9.3× |
+| `single_source_shortest_path` | 200,000 / 1M | 0.42 s | 0.16 s | 2.6× (building the path lists dominates) |
+| `clustering` | 100,000 / 500k (Barabási–Albert) | 5.02 s | 0.033 s | **153×** |
+| `transitivity` | 100,000 / 500k (Barabási–Albert) | 5.23 s | 0.036 s | **146×** |
+| `triangles` | 100,000 / 500k (Barabási–Albert) | 1.03 s | 0.041 s | 25× |
+| `katz_centrality` | 200,000 / 1M (directed) | 14.7 s | 0.071 s | **206×** |
+| `core_number` | 200,000 / 1M | 1.61 s | 0.037 s | **44×** |
+| `eigenvector_centrality` | 200,000 / 1M | 8.12 s | 0.18 s | **45×** |
+| `harmonic_centrality` | 3,000 / 12k | 5.07 s | 0.10 s | **51×** |
+| `is_bipartite` | 199,809 / 399k (grid) | 0.36 s | 0.0018 s | **200×** |
+| `bfs_edges` | 200,000 / 1M | 0.45 s | 0.12 s | 3.6× |
+| `dfs_edges` | 200,000 / 1M | 1.74 s | 0.13 s | 13× |
+| `bidirectional_dijkstra` (20 pairs) | 200,000 / 1M | 0.22 s | 0.024 s | 9.1× |
+| `k_core` | 200,000 / 1M | 7.21 s | 6.30 s | 1.1× (copying the subgraph in NetworkX dominates) |
+| `label_propagation_communities` | 100,000 / 500k (Barabási–Albert) | 3.02 s | 0.063 s | **48×** |
+| `greedy_color` | 100,000 / 500k (Barabási–Albert) | 0.25 s | 0.013 s | 18× |
+| `minimum_spanning_tree` | 200,000 / 1M | 6.16 s | 0.55 s | 11× (building the result graph dominates) |
+| `bfs_tree` | 200,000 / 1M | 2.04 s | 0.48 s | 4.2× (building the tree in NetworkX dominates) |
+| `all_shortest_paths` | 3,600 / 7k (grid, 2.7M paths) | 9.76 s | 9.64 s | 1.0× (building the path lists dominates) |
 
 The rustnx column is a repeat call. The first call on a graph also converts
-it to rustnx's format (about 0.15–0.25 s for a 1M-edge directed graph), and
+it to rustnx's format (about 0.2–0.3 s for a 1M-edge directed graph), and
 NetworkX caches that conversion on the graph. For the heavy algorithms
 conversion is negligible. For the linear-time ones, the first call is still
 faster than NetworkX, but by less.
@@ -452,23 +506,24 @@ faster than NetworkX, but by less.
 
 `python benchmarks/compare.py` runs the same calls through each installed
 backend and checks every result against NetworkX (same machine, NetworkX
-3.6.1, rustworkx 0.18.1 via nx-rustworkx 0.2.1, franken-networkx 0.2.1).
+3.7, rustworkx 0.18.1 via nx-rustworkx 0.2.1, franken-networkx 0.2.3).
 Times are repeat calls; the first call also includes conversion.
 
 | Function (graph) | rustnx | nx-rustworkx | FrankenNetworkX |
 |---|---|---|---|
-| `betweenness_centrality` (2k nodes) | **0.099 s** | 0.161 s | 8.23 s (no speedup) |
-| `closeness_centrality` (2k nodes) | **0.0030 s** | 0.104 s | 0.0031 s |
-| `pagerank` (100k nodes, 500k edges) | **0.014 s** | 0.212 s, *differs from NetworkX* | 0.063 s |
-| `single_source_dijkstra_path_length` (90k nodes) | **0.025 s** | 0.094 s | 0.123 s |
-| `connected_components` (200k nodes) | 0.040 s | 0.072 s | **0.036 s** |
-| `strongly_connected_components` (100k nodes) | **0.020 s** | 0.041 s, *different order* | 0.054 s |
-| `topological_sort` (100k nodes) | **0.010 s** | 0.019 s, *different order* | 0.040 s |
+| `betweenness_centrality` (2k nodes) | 0.116 s | 0.158 s | **0.095 s** |
+| `closeness_centrality` (2k nodes) | **0.0035 s** | 0.152 s | fails on NetworkX 3.7 (`TypeError`) |
+| `pagerank` (100k nodes, 500k edges) | **0.0185 s** | 0.203 s, *differs from NetworkX* | 0.027 s |
+| `single_source_dijkstra_path_length` (90k nodes) | **0.030 s** | 0.119 s | 0.075 s |
+| `connected_components` (200k nodes) | **0.047 s** | 0.62 s | 0.081 s |
+| `strongly_connected_components` (100k nodes) | **0.020 s** | 0.048 s, *different order* | 0.052 s |
+| `topological_sort` (100k nodes) | **0.0105 s** | 0.024 s, *different order* | 0.151 s |
 
-rustnx is also the fastest on first calls for all seven, because its
-conversion is about 5–20× quicker than nx-rustworkx's and 25–55× quicker than
-FrankenNetworkX's. It matches NetworkX's output,
-including order, for all seven.
+rustnx is the fastest on first calls for all seven, because converting the
+graph takes it several times less than the others (for `pagerank`, 0.18 s
+against about 1 s for both). FrankenNetworkX is the fastest on repeat calls
+of `betweenness_centrality`. rustnx matches NetworkX's output, including
+order, for all seven.
 
 On small graphs (under 500 nodes), the linear-time functions stay in
 NetworkX automatically, because the dispatch overhead outweighs the work.
@@ -476,10 +531,10 @@ The centrality functions are faster in Rust at every size.
 
 ## Correctness
 
-Results must match NetworkX, or the speed is worthless. Two test layers
+Results must match NetworkX, or the speed is worthless. Three layers
 check that:
 
-1. **`tests/`**: about 1,400 randomized comparisons against NetworkX, run on
+1. **`tests/`**: about 25,500 tests comparing rustnx with NetworkX, run on
    directed and undirected graphs, int, float and missing weights,
    self-loops, and shuffled or non-integer node labels. They check values,
    dict ordering and error messages.
@@ -491,9 +546,12 @@ check that:
        pytest --pyargs networkx
    ```
 
-   Result: 0 failures on NetworkX 3.4.2, 3.5 and 3.7 (9,066 tests passed on
-   3.7), with over 300,000 calls handled by rustnx. CI runs both layers on
-   NetworkX 3.4, 3.5 and the latest release.
+   Result: no failures from rustnx on NetworkX 3.4.2, 3.5 and 3.7. On 3.7,
+   9,173 tests passed, with 417,724 calls to 642 functions handled by
+   rustnx. (NetworkX 3.4's pydot tests fail with pydot 4 with or without
+   rustnx.) CI runs both layers on NetworkX 3.4, 3.5 and the latest release.
+3. **`benchmarks/all_functions.py`** also checks every function's result
+   against NetworkX's on large inputs (see [Benchmarks](#benchmarks)).
 
 rustnx checks every call against the installed NetworkX's own signature.
 If a newer NetworkX adds a parameter, rustnx ignores it while it is left at

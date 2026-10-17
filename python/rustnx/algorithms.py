@@ -5,8 +5,10 @@ counterpart. Inputs rustnx can't handle raise ``NotImplementedError``, which
 makes NetworkX fall back to its own implementation.
 """
 
+import contextlib
 import copy
 import functools
+import gc
 from collections import Counter, defaultdict
 from collections.abc import Set
 import inspect
@@ -675,6 +677,20 @@ def _directed_only(G):
         raise nx.NetworkXNotImplemented("not implemented for undirected type")
 
 
+@contextlib.contextmanager
+def _gc_paused():
+    """Pause Python's cyclic garbage collector while Rust builds millions of
+    dicts at once: every few hundred new containers it would scan, and its
+    full passes walk the whole heap. The dicts hold no cycles."""
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        yield
+    finally:
+        if enabled:
+            gc.enable()
+
+
 class _MutationGuard:
     """Notices when the source NetworkX graph changes during iteration.
 
@@ -925,12 +941,16 @@ def number_strongly_connected_components(G):
 def is_strongly_connected(G):
     _directed_only(G)
     _check_not_null(G)
-    return len(G._core.strongly_connected_components()[0]) == len(G)
+    return G._core.is_strongly_connected()
 
 
 def weakly_connected_components(G):
     _directed_only(G)
-    return _components(G, G._core.weakly_connected_components())
+    # Each component's set is built in NetworkX's discovery order, which
+    # follows G._pred; with colliding hashes the set's iteration order
+    # depends on it.
+    G._ensure_exact_pred()
+    return _components(G, G._core.weakly_connected_components(True))
 
 
 def number_weakly_connected_components(G):
@@ -1999,7 +2019,9 @@ def _mst_algorithms():
     return getattr(mst, "ALGORITHMS", {"kruskal": None, "prim": None, "boruvka": None})
 
 
-def _spanning_edges(G, algorithm, weight, data, maximum, keys=True):
+def _spanning_edges(G, algorithm, weight, data, maximum, keys=True, checks_only=False):
+    """The spanning edges as NetworkX yields them; with ``checks_only``,
+    only NetworkX's argument checks (simple graphs)."""
     if G.is_directed():
         raise nx.NetworkXNotImplemented("not implemented for directed type")
     try:
@@ -2015,6 +2037,8 @@ def _spanning_edges(G, algorithm, weight, data, maximum, keys=True):
         return _b26_multi_kruskal(G, weight, keys, data, not maximum)
     base = _networkx_graph(G)
     _unhidden_weight(G, weight)
+    if checks_only:
+        return None
     us, vs = G._core.kruskal(weight, maximum)
     guard = _MutationGuard(G)
     nodes = G._nodes
@@ -2042,8 +2066,18 @@ def maximum_spanning_edges(G, algorithm="kruskal", weight="weight", keys=True, d
 
 
 def _spanning_tree(G, weight, algorithm, maximum):
-    edges = _spanning_edges(G, algorithm, weight, True, maximum)
     base = _networkx_graph(G)
+    if type(base) is nx.Graph:
+        # NetworkX's `add_nodes_from` / `add_edges_from`, done in Rust.
+        _spanning_edges(G, algorithm, weight, True, maximum, checks_only=True)
+        T = nx.Graph()
+        T.graph.update(base.graph)
+        with _gc_paused():
+            G._core.spanning_tree_into(
+                weight, maximum, list(G._nodes), base._node, base._adj, T._node, T._adj
+            )
+        return T
+    edges = _spanning_edges(G, algorithm, weight, True, maximum)
     T = base.__class__()
     T.graph.update(base.graph)
     T.add_nodes_from(base.nodes.items())
@@ -4634,6 +4668,12 @@ def chain_decomposition(G, root=None):
 
 
 def is_eulerian(G):
+    if not G._multigraph:
+        # NetworkX's order: the degree test (stopping at the first node that
+        # fails), then connectivity (which raises for the null graph).
+        if not G._core.euler_degrees_ok():
+            return False
+        return is_strongly_connected(G) if G.is_directed() else is_connected(G)
     plus_in, plus_out, bad = _b26_euler_balance(G)
     if G.is_directed():
         return not (plus_in or plus_out or bad) and is_strongly_connected(G)

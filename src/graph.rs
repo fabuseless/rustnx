@@ -63,9 +63,9 @@ pub struct CoreGraph {
     pub succ: Csr,
     /// Predecessor rows (directed graphs only), built by transposing `succ`,
     /// so in-edges are ordered by source position rather than by NetworkX's
-    /// insertion order. Only weighted directed closeness can tell the
-    /// difference (tie order changes the last bits of a float sum); it uses
-    /// `exact_pred`, read from `G._pred` on demand.
+    /// insertion order. Results that depend on that order (tie-breaking in
+    /// float sums and path searches, the discovery order that decides a
+    /// set's iteration order) use `exact_pred`, read from `G._pred` on demand.
     pub pred: Option<Csr>,
     pub exact_pred: OnceLock<ExactPred>,
     /// `pred` is already in NetworkX's insertion order (native graphs).

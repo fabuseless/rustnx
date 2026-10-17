@@ -98,7 +98,7 @@ impl OpView {
         let mut nv = Vec::with_capacity(n);
         let mut nd = Vec::with_capacity(n);
         for (i, (k, d)) in node_dict.iter().enumerate() {
-            if !k.is(&nodes.get_item(i)?) {
+            if !same_node(&k, &nodes.get_item(i)?)? {
                 return Err(changed());
             }
             nv.push(k.unbind());
@@ -109,7 +109,7 @@ impl OpView {
         let mut data = Vec::with_capacity(m);
         for (i, (k, row)) in adj.iter().enumerate() {
             let row = row.cast_into::<PyDict>().map_err(|_| changed())?;
-            if !k.is(nv[i].bind(adj.py())) || row.len() != core.succ.range(i).len() {
+            if !same_node(&k, nv[i].bind(adj.py()))? || row.len() != core.succ.range(i).len() {
                 return Err(changed());
             }
             for (key, dd) in row.iter() {
@@ -388,6 +388,13 @@ pub fn tuple_hash(items: &[i64]) -> i64 {
         return 1546275796;
     }
     acc as i64
+}
+
+/// Whether `a` and `b` are the same node: the same object, or equal and
+/// interchangeable (a graph read back from a pickle has separate but equal
+/// int keys in `G._node` and `G._adj`).
+pub(crate) fn same_node(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>) -> PyResult<bool> {
+    Ok(a.is(b) || (a.eq(b)? && same_key(a, b)?))
 }
 
 /// Whether the dict key `a` and the node `b` it equals are interchangeable

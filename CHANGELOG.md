@@ -8,6 +8,11 @@ versions may change behavior.
 ## [Unreleased]
 
 ### Added
+- `benchmarks/all_functions.py` times every function rustnx implements
+  against NetworkX (665 of 667 timed; all results checked against
+  NetworkX's), and `benchmarks/real_world.py` runs seven analysis pipelines
+  on SNAP datasets. Results are in `docs/BENCHMARKS.md`; every number in the
+  README was re-measured on NetworkX 3.7.
 - `random_walk` stepped in Rust: each draw is made on the `random.Random`
   object's own Mersenne Twister state, updated in place (checked against
   Python's own draws first), so the generator stays exactly in step with
@@ -267,6 +272,34 @@ versions may change behavior.
   NetworkX lets a backend implement, and which ones rustnx does.
 
 ### Fixed
+- Slowdowns the full benchmark found:
+  - `is_regular`, `is_k_regular`, `is_eulerian` and
+    `is_strongly_connected` stop at the first counter-example, as
+    NetworkX's do (they read the whole graph first, so on graphs where the
+    answer is no they took milliseconds where NetworkX takes microseconds).
+    Under automatic dispatch, these checks and the single queries NetworkX
+    answers without reading the whole graph (`has_path`, `find_cycle`,
+    `bidirectional_shortest_path`, ...) stay in NetworkX until the graph is
+    converted for something else.
+  - The hasher for pairs of nodes collided on every pair `(u, 0)`, and on
+    pairs sharing their second node, which made generators with a hub or
+    dense rows quadratic: `gnc_graph` was 5x slower than NetworkX, and
+    `partial_duplication_graph`, `complete_graph`, `barbell_graph`,
+    `turan_graph` and `complete_multipartite_graph` 0.6x to 0.9x as fast.
+    They are now faster than NetworkX.
+  - `generate_random_paths` prepares its transition matrix in one parallel
+    pass (it was 0.8x as fast as NetworkX on large graphs).
+  - `minimum_spanning_tree` and `maximum_spanning_tree` fill the result
+    graph in Rust (building it in Python left 1.3x on the 1.1M-node road
+    network).
+- Graph operators (`reverse`, `compose`, `line_graph`, the products and
+  others) accept unpickled graphs. Pickle doesn't keep the identity of ints
+  above 256, so such graphs' `G._node` and `G._adj` hold equal but separate
+  keys, and rustnx handed them to NetworkX.
+- `weakly_connected_components` now builds each component's set in
+  NetworkX's discovery order, which follows `G._pred`. The sets held the same
+  nodes but, where node hashes collide, could iterate them in a different
+  order (found on SNAP's web-Google graph).
 - On Python 3.12+, weighted `wiener_index`, `average_shortest_path_length`
   and `closeness_centrality` now add float distances the way Python 3.12's
   compensated `sum()` does, so the last bits match NetworkX (they differed
